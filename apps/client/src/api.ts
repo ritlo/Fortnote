@@ -55,6 +55,15 @@ export interface NoteSummary {
   contentLength: number;
   version: number;
   isDeleted: boolean | 0 | 1;
+  deletedAt?: string | null;
+  updatedAt: string;
+}
+
+export interface FolderSummary {
+  id: string;
+  name: string;
+  parentFolderId: string | null;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -166,8 +175,8 @@ export function getKeyMaterial(): Promise<KeyMaterialResponse> {
   return apiRequest<KeyMaterialResponse>("/key-material");
 }
 
-export function listNotes(): Promise<{ notes: NoteSummary[] }> {
-  return apiRequest<{ notes: NoteSummary[] }>("/notes");
+export function listNotes(deleted = false): Promise<{ notes: NoteSummary[] }> {
+  return apiRequest<{ notes: NoteSummary[] }>(`/notes?deleted=${String(deleted)}`);
 }
 
 export function createNote(payload: CreateNotePayload): Promise<{ id: string; version: number }> {
@@ -207,4 +216,37 @@ export function downloadAttachment(attachmentId: string): Promise<AttachmentDown
 
 export function deleteAttachment(attachmentId: string): Promise<undefined> {
   return apiRequest<undefined>(`/attachments/${attachmentId}`, { method: "DELETE" });
+}
+
+export function listFolders(): Promise<{ folders: FolderSummary[] }> {
+  return apiRequest<{ folders: FolderSummary[] }>("/folders");
+}
+
+export function createFolder(payload: {
+  name: string;
+  parentFolderId?: string | null;
+}): Promise<{ id: string; name: string; parentFolderId: string | null }> {
+  return apiRequest<{ id: string; name: string; parentFolderId: string | null }>(
+    "/folders",
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export function deleteFolder(folderId: string): Promise<undefined> {
+  return apiRequest<undefined>(`/folders/${folderId}`, { method: "DELETE" });
+}
+
+export function deleteNote(noteId: string): Promise<undefined> {
+  return apiRequest<undefined>(`/notes/${noteId}`, { method: "DELETE" });
+}
+
+export function restoreNote(noteId: string): Promise<{ id: string }> {
+  return apiRequest<{ id: string }>(`/notes/${noteId}/restore`, { method: "POST" });
+}
+
+export function permanentlyDeleteNote(noteId: string): Promise<undefined> {
+  return apiRequest<undefined>(`/notes/${noteId}/permanent`, { method: "DELETE" });
 }

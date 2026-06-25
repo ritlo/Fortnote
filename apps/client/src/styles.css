@@ -25,6 +25,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -35,6 +36,7 @@ button {
 
 button:disabled,
 input:disabled,
+select:disabled,
 textarea:disabled {
   cursor: not-allowed;
   opacity: 0.62;
@@ -100,6 +102,7 @@ label {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid #bbc6bb;
@@ -182,8 +185,25 @@ textarea {
   margin-top: auto;
 }
 
+.folder-list {
+  display: grid;
+  gap: 3px;
+}
+
+.folder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px 30px;
+  align-items: center;
+  gap: 4px;
+}
+
+.folder-row.child {
+  grid-template-columns: minmax(0, 1fr) 30px;
+}
+
 .nav-item {
   width: 100%;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -193,6 +213,20 @@ textarea {
   background: transparent;
   color: var(--text);
   text-align: left;
+}
+
+.nav-item svg {
+  flex: 0 0 auto;
+}
+
+.mini-button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: white;
 }
 
 .nav-item.active {
@@ -213,6 +247,12 @@ textarea {
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
   background: #f9faf8;
+}
+
+.action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .icon-button {

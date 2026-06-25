@@ -2,19 +2,26 @@ import { FileText, Folder, Lock, LogOut, Plus, Search, Settings } from "lucide-r
 import { useEffect, useMemo, useState } from "react";
 import {
   createNote,
+  createFolder,
   deleteAttachment,
+  deleteFolder,
+  deleteNote,
   downloadAttachment,
   getAuthKdfParams,
   getKeyMaterial,
   getMe,
+  listFolders,
   listAttachments,
   listNotes,
+  permanentlyDeleteNote,
   login,
   logout,
   register,
+  restoreNote,
   updateNote,
   uploadAttachment,
   type AttachmentSummary,
+  type FolderSummary,
   type AuthKdfResponse,
   type KeyMaterialResponse,
   type NoteSummary,
@@ -34,6 +41,7 @@ import {
 import "./styles.css";
 
 type AuthMode = "login" | "register";
+type NotesView = "notes" | "trash";
 
 interface DecryptedNote {
   id: string;
@@ -43,6 +51,7 @@ interface DecryptedNote {
   noteKeyBase64: string;
   contentLength: number;
   version: number;
+  isDeleted: boolean;
   updatedAt: string;
 }
 
@@ -53,6 +62,10 @@ export function App() {
   const [username, setUsername] = useState("alice");
   const [password, setPassword] = useState("correct horse battery staple");
   const [notes, setNotes] = useState<DecryptedNote[]>([]);
+  const [trashNotes, setTrashNotes] = useState<DecryptedNote[]>([]);
+  const [folders, setFolders] = useState<FolderSummary[]>([]);
+  const [notesView, setNotesView] = useState<NotesView>("notes");
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [attachmentsByNote, setAttachmentsByNote] = useState<
     Record<string, AttachmentSummary[]>
   >({});
@@ -73,9 +86,16 @@ export function App() {
       });
   }, []);
 
+  const visibleSourceNotes = notesView === "trash" ? trashNotes : notes;
+
+  const folderFilteredNotes =
+    notesView === "trash" || !selectedFolderId
+      ? visibleSourceNotes
+      : visibleSourceNotes.filter((note) => note.folderId === selectedFolderId);
+
   const selectedNote = useMemo(
-    () => notes.find((note) => note.id === selectedNoteId) ?? null,
-    [notes, selectedNoteId]
+    () => visibleSourceNotes.find((note) => note.id === selectedNoteId) ?? null,
+    [selectedNoteId, visibleSourceNotes]
   );
 
   const selectedAttachments = selectedNoteId
@@ -85,15 +105,15 @@ export function App() {
   const filteredNotes = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) {
-      return notes;
+      return folderFilteredNotes;
     }
 
-    return notes.filter(
+    return folderFilteredNotes.filter(
       (note) =>
         note.title.toLowerCase().includes(query) ||
         note.body.toLowerCase().includes(query)
     );
-  }, [notes, search]);
+  }, [folderFilteredNotes, search]);
 
   useEffect(() => {
     if (!selectedNoteId || attachmentsByNote[selectedNoteId]) {
@@ -117,19 +137,32 @@ export function App() {
       });
   }, [attachmentsByNote, selectedNoteId]);
 
-  async function loadDecryptedNotes(currentUser: User, currentRootKey: Uint8Array) {
-    const payload = await listNotes();
+  async function loadDecryptedNotes(
+    currentUser: User,
+    currentRootKey: Uint8Array,
+    deleted = false
+  ) {
+    const payload = await listNotes(deleted);
     const decrypted = await Promise.all(
       payload.notes
-        .filter((note) => !note.isDeleted)
+        .filter((note) => Boolean(note.isDeleted) === deleted)
         .map((note) => decryptNoteSummary(currentUser, currentRootKey, note))
     );
     const nextNotes = decrypted.sort((left, right) =>
       right.updatedAt.localeCompare(left.updatedAt)
     );
-    setNotes(nextNotes);
+    if (deleted) {
+      setTrashNotes(nextNotes);
+    } else {
+      setNotes(nextNotes);
+    }
     setSelectedNoteId(nextNotes[0]?.id ?? null);
     setAttachmentsByNote({});
+  }
+
+  async function loadFolders() {
+    const payload = await listFolders();
+    setFolders(payload.folders);
   }
 
   async function submitAuth() {
@@ -144,6 +177,7 @@ export function App() {
         setRootKey(registration.rootKey);
         setRecoverySecret(registration.recoverySecret);
         setStatus("Signed in and decrypted");
+        await loadFolders();
         await loadDecryptedNotes(currentUser, registration.rootKey);
         return;
       }
@@ -162,6 +196,7 @@ export function App() {
       setUser(currentUser);
       setRootKey(openedVault.rootKey);
       setStatus("Signed in and decrypted");
+      await loadFolders();
       await loadDecryptedNotes(currentUser, openedVault.rootKey);
     } catch (authError) {
       setStatus("Auth failed");
@@ -174,8 +209,12 @@ export function App() {
     setUser(null);
     setRootKey(null);
     setNotes([]);
+    setTrashNotes([]);
+    setFolders([]);
     setAttachmentsByNote({});
     setSelectedNoteId(null);
+    setSelectedFolderId(null);
+    setNotesView("notes");
     setRecoverySecret(null);
     setStatus("Signed out");
   }
@@ -196,6 +235,7 @@ export function App() {
       });
       const created = await createNote({
         id: draft.id,
+        folderId: selectedFolderId,
         title: draft.title,
         encryptedNoteKey: draft.encryptedNoteKey,
         noteKeyNonce: draft.noteKeyNonce,
@@ -211,6 +251,7 @@ export function App() {
         noteKeyBase64: noteKeyToBase64(draft.noteKey),
         contentLength: draft.contentLength,
         version: created.version,
+        isDeleted: false,
         updatedAt: new Date().toISOString()
       };
       setNotes((current) => [note, ...current]);
@@ -261,7 +302,9 @@ export function App() {
     }
   }
 
-  function updateSelectedNote(patch: Partial<Pick<DecryptedNote, "title" | "body">>) {
+  function updateSelectedNote(
+    patch: Partial<Pick<DecryptedNote, "folderId" | "title" | "body">>
+  ) {
     if (!selectedNoteId) {
       return;
     }
@@ -360,6 +403,107 @@ export function App() {
     }
   }
 
+  async function addFolder(parentFolderId: string | null = null) {
+    const name = window.prompt("Folder name");
+    if (!name?.trim()) {
+      return;
+    }
+
+    setError(null);
+    try {
+      await createFolder({ name: name.trim(), parentFolderId });
+      await loadFolders();
+      setStatus("Folder created");
+    } catch (folderError) {
+      setStatus("Folder failed");
+      setError(folderError instanceof Error ? folderError.message : "Unable to create folder");
+    }
+  }
+
+  async function removeFolder(folderId: string) {
+    setError(null);
+    try {
+      await deleteFolder(folderId);
+      await loadFolders();
+      if (selectedFolderId === folderId) {
+        setSelectedFolderId(null);
+      }
+      setStatus("Folder deleted");
+    } catch (folderError) {
+      setStatus("Folder failed");
+      setError(folderError instanceof Error ? folderError.message : "Unable to delete folder");
+    }
+  }
+
+  async function openTrash() {
+    if (!user || !rootKey) {
+      return;
+    }
+
+    setNotesView("trash");
+    setSelectedFolderId(null);
+    await loadDecryptedNotes(user, rootKey, true);
+  }
+
+  function openNotes(folderId: string | null = selectedFolderId) {
+    setNotesView("notes");
+    setSelectedFolderId(folderId);
+    const nextNotes = folderId ? notes.filter((note) => note.folderId === folderId) : notes;
+    setSelectedNoteId(nextNotes[0]?.id ?? null);
+  }
+
+  async function moveSelectedToTrash() {
+    if (!selectedNote) {
+      return;
+    }
+
+    setError(null);
+    try {
+      await deleteNote(selectedNote.id);
+      setNotes((current) => current.filter((note) => note.id !== selectedNote.id));
+      setSelectedNoteId(notes.find((note) => note.id !== selectedNote.id)?.id ?? null);
+      setStatus("Note moved to trash");
+    } catch (deleteError) {
+      setStatus("Delete failed");
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete note");
+    }
+  }
+
+  async function restoreSelectedNote() {
+    if (!user || !rootKey || !selectedNote) {
+      return;
+    }
+
+    setError(null);
+    try {
+      await restoreNote(selectedNote.id);
+      await loadDecryptedNotes(user, rootKey, true);
+      await loadDecryptedNotes(user, rootKey, false);
+      setStatus("Note restored");
+    } catch (restoreError) {
+      setStatus("Restore failed");
+      setError(restoreError instanceof Error ? restoreError.message : "Unable to restore note");
+    }
+  }
+
+  async function deleteSelectedForever() {
+    if (!selectedNote) {
+      return;
+    }
+
+    setError(null);
+    try {
+      await permanentlyDeleteNote(selectedNote.id);
+      const nextTrash = trashNotes.filter((note) => note.id !== selectedNote.id);
+      setTrashNotes(nextTrash);
+      setSelectedNoteId(nextTrash[0]?.id ?? null);
+      setStatus("Note permanently deleted");
+    } catch (deleteError) {
+      setStatus("Delete failed");
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete note");
+    }
+  }
+
   if (!user) {
     return (
       <main className="auth-screen">
@@ -439,16 +583,107 @@ export function App() {
           <div className="brand-mark">CN</div>
           <strong>CipherNotes</strong>
         </div>
-        <button className="nav-item active" type="button">
+        <button
+          className={
+            notesView === "notes" && selectedFolderId === null
+              ? "nav-item active"
+              : "nav-item"
+          }
+          type="button"
+          onClick={() => {
+            openNotes(null);
+          }}
+        >
           <Folder size={17} /> All notes
         </button>
-        <button className="nav-item" type="button">
-          <Folder size={17} /> Work
+        <button
+          className="nav-item"
+          type="button"
+          onClick={() => {
+            void addFolder();
+          }}
+        >
+          <Plus size={17} /> New folder
         </button>
-        <button className="nav-item indented" type="button">
-          <Folder size={17} /> Planning
-        </button>
-        <button className="nav-item" type="button">
+        <div className="folder-list">
+          {folders
+            .filter((folder) => folder.parentFolderId === null)
+            .map((folder) => (
+              <div key={folder.id}>
+                <div className="folder-row">
+                  <button
+                    className={
+                      selectedFolderId === folder.id && notesView === "notes"
+                        ? "nav-item active"
+                        : "nav-item"
+                    }
+                    type="button"
+                    onClick={() => {
+                      openNotes(folder.id);
+                    }}
+                  >
+                    <Folder size={17} /> {folder.name}
+                  </button>
+                  <button
+                    className="mini-button"
+                    type="button"
+                    aria-label={`Add child folder to ${folder.name}`}
+                    onClick={() => {
+                      void addFolder(folder.id);
+                    }}
+                  >
+                    <Plus size={14} />
+                  </button>
+                  <button
+                    className="mini-button"
+                    type="button"
+                    aria-label={`Delete ${folder.name}`}
+                    onClick={() => {
+                      void removeFolder(folder.id);
+                    }}
+                  >
+                    x
+                  </button>
+                </div>
+                {folders
+                  .filter((child) => child.parentFolderId === folder.id)
+                  .map((child) => (
+                    <div className="folder-row child" key={child.id}>
+                      <button
+                        className={
+                          selectedFolderId === child.id && notesView === "notes"
+                            ? "nav-item indented active"
+                            : "nav-item indented"
+                        }
+                        type="button"
+                        onClick={() => {
+                          openNotes(child.id);
+                        }}
+                      >
+                        <Folder size={17} /> {child.name}
+                      </button>
+                      <button
+                        className="mini-button"
+                        type="button"
+                        aria-label={`Delete ${child.name}`}
+                        onClick={() => {
+                          void removeFolder(child.id);
+                        }}
+                      >
+                        x
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            ))}
+        </div>
+        <button
+          className={notesView === "trash" ? "nav-item active" : "nav-item"}
+          type="button"
+          onClick={() => {
+            void openTrash();
+          }}
+        >
           <Lock size={17} /> Trash
         </button>
         <div className="sidebar-footer">
@@ -469,11 +704,12 @@ export function App() {
 
       <section className="notes-pane">
         <header className="pane-header">
-          <h2>Notes</h2>
+          <h2>{notesView === "trash" ? "Trash" : "Notes"}</h2>
           <button
             className="icon-button"
             type="button"
             aria-label="New note"
+            disabled={notesView === "trash"}
             onClick={() => {
               void addNote();
             }}
@@ -495,7 +731,9 @@ export function App() {
         {error ? <p className="pane-error">{error}</p> : null}
         <ul className="note-list">
           {filteredNotes.length === 0 ? (
-            <li className="empty-state">No notes match this view.</li>
+            <li className="empty-state">
+              {notesView === "trash" ? "Trash is empty." : "No notes match this view."}
+            </li>
           ) : (
             filteredNotes.map((note) => (
               <li key={note.id}>
@@ -524,22 +762,75 @@ export function App() {
           <button
             className="primary"
             type="button"
-            disabled={!selectedNote}
+            disabled={!selectedNote || notesView === "trash"}
             onClick={() => {
               void saveSelectedNote();
             }}
           >
             Save
           </button>
+          {notesView === "trash" ? (
+            <div className="action-row">
+              <button
+                className="text-button"
+                type="button"
+                disabled={!selectedNote}
+                onClick={() => {
+                  void restoreSelectedNote();
+                }}
+              >
+                Restore
+              </button>
+              <button
+                className="text-button danger"
+                type="button"
+                disabled={!selectedNote}
+                onClick={() => {
+                  void deleteSelectedForever();
+                }}
+              >
+                Delete forever
+              </button>
+            </div>
+          ) : (
+            <button
+              className="text-button danger"
+              type="button"
+              disabled={!selectedNote}
+              onClick={() => {
+                void moveSelectedToTrash();
+              }}
+            >
+              Delete
+            </button>
+          )}
         </header>
         <div className="editor-grid">
           <div className="editor-column">
             <FileText size={20} />
             <label>
+              Folder
+              <select
+                value={selectedNote?.folderId ?? ""}
+                disabled={!selectedNote || notesView === "trash"}
+                onChange={(event) => {
+                  updateSelectedNote({ folderId: event.target.value || null });
+                }}
+              >
+                <option value="">All notes</option>
+                {folders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>
+                    {folder.parentFolderId ? "  " : ""}
+                    {folder.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
               Title
               <input
                 value={selectedNote?.title ?? ""}
-                disabled={!selectedNote}
+                disabled={!selectedNote || notesView === "trash"}
                 onChange={(event) => {
                   updateSelectedNote({ title: event.target.value });
                 }}
@@ -549,7 +840,7 @@ export function App() {
               Markdown editor
               <textarea
                 value={selectedNote?.body ?? ""}
-                disabled={!selectedNote}
+                disabled={!selectedNote || notesView === "trash"}
                 onChange={(event) => {
                   updateSelectedNote({ body: event.target.value });
                 }}
@@ -559,7 +850,7 @@ export function App() {
               Attach encrypted file
               <input
                 type="file"
-                disabled={!selectedNote}
+                disabled={!selectedNote || notesView === "trash"}
                 onChange={(event) => {
                   void uploadSelectedAttachment(event.target.files?.[0]);
                   event.target.value = "";
@@ -644,6 +935,7 @@ async function decryptNoteSummary(
     noteKeyBase64: noteKeyToBase64(decrypted.noteKey),
     contentLength: note.contentLength,
     version: note.version,
+    isDeleted: Boolean(note.isDeleted),
     updatedAt: note.updatedAt
   };
 }
