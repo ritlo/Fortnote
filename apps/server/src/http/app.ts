@@ -2,6 +2,7 @@ import express from "express";
 import helmet from "helmet";
 import type { AppDb } from "../db/client.js";
 import type { ServerConfig } from "../config.js";
+import { createAuthRouter } from "../auth/routes.js";
 import { csrfGuard } from "./csrf.js";
 
 export interface AppContext {
@@ -19,6 +20,8 @@ export function createApp(context: AppContext) {
   app.get("/api/health", (_request, response) => {
     response.json({ ok: true });
   });
+
+  app.use("/api/auth", createAuthRouter(context));
 
   return app;
 }
