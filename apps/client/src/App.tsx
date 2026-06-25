@@ -1,4 +1,6 @@
 import { FileText, Folder, Lock, LogOut, Plus, Search, Settings } from "lucide-react";
+import DOMPurify from "dompurify";
+import { marked } from "marked";
 import { useEffect, useMemo, useState } from "react";
 import {
   createNote,
@@ -114,6 +116,11 @@ export function App() {
         note.body.toLowerCase().includes(query)
     );
   }, [folderFilteredNotes, search]);
+
+  const previewHtml = useMemo(
+    () => renderMarkdown(selectedNote?.body ?? "Select or create a note."),
+    [selectedNote?.body]
+  );
 
   useEffect(() => {
     if (!selectedNoteId || attachmentsByNote[selectedNoteId]) {
@@ -861,7 +868,7 @@ export function App() {
           <div className="editor-column preview">
             <h3>Preview</h3>
             <div className="preview-body">
-              {selectedNote?.body ?? "Select or create a note."}
+              <div dangerouslySetInnerHTML={{ __html: previewHtml }} />
             </div>
             <div className="attachment-panel">
               <h3>Attachments</h3>
@@ -976,4 +983,25 @@ function formatBytes(bytes: number): string {
     return `${String(Math.round(bytes / 1024))} KB`;
   }
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderMarkdown(markdown: string): string {
+  const rendered = marked.parse(escapeRawHtml(markdown), {
+    async: false,
+    breaks: true,
+    gfm: true
+  });
+
+  return DOMPurify.sanitize(rendered, {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ["script", "style", "iframe", "object", "embed"],
+    FORBID_ATTR: ["onerror", "onload", "onclick", "style"]
+  });
+}
+
+function escapeRawHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
