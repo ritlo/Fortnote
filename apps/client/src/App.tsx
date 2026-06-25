@@ -2,14 +2,19 @@ import { FileText, Folder, Lock, LogOut, Plus, Search, Settings } from "lucide-r
 import { useEffect, useMemo, useState } from "react";
 import {
   createNote,
+  deleteAttachment,
+  downloadAttachment,
   getAuthKdfParams,
   getKeyMaterial,
   getMe,
+  listAttachments,
   listNotes,
   login,
   logout,
   register,
   updateNote,
+  uploadAttachment,
+  type AttachmentSummary,
   type AuthKdfResponse,
   type KeyMaterialResponse,
   type NoteSummary,
@@ -17,8 +22,10 @@ import {
 } from "./api";
 import {
   createEncryptedNoteDraft,
+  createEncryptedAttachmentDraft,
   createLoginAuthVerifier,
   createRegistrationCrypto,
+  decryptAttachmentBytes,
   decryptNote,
   encryptExistingNoteBody,
   noteKeyToBase64,
@@ -46,6 +53,9 @@ export function App() {
   const [username, setUsername] = useState("alice");
   const [password, setPassword] = useState("correct horse battery staple");
   const [notes, setNotes] = useState<DecryptedNote[]>([]);
+  const [attachmentsByNote, setAttachmentsByNote] = useState<
+    Record<string, AttachmentSummary[]>
+  >({});
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [recoverySecret, setRecoverySecret] = useState<string | null>(null);
@@ -68,6 +78,10 @@ export function App() {
     [notes, selectedNoteId]
   );
 
+  const selectedAttachments = selectedNoteId
+    ? attachmentsByNote[selectedNoteId] ?? []
+    : [];
+
   const filteredNotes = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) {
@@ -81,6 +95,28 @@ export function App() {
     );
   }, [notes, search]);
 
+  useEffect(() => {
+    if (!selectedNoteId || attachmentsByNote[selectedNoteId]) {
+      return;
+    }
+
+    void listAttachments(selectedNoteId)
+      .then((payload) => {
+        setAttachmentsByNote((current) => ({
+          ...current,
+          [selectedNoteId]: payload.attachments
+        }));
+      })
+      .catch((attachmentError: unknown) => {
+        setStatus("Attachment load failed");
+        setError(
+          attachmentError instanceof Error
+            ? attachmentError.message
+            : "Unable to load attachments"
+        );
+      });
+  }, [attachmentsByNote, selectedNoteId]);
+
   async function loadDecryptedNotes(currentUser: User, currentRootKey: Uint8Array) {
     const payload = await listNotes();
     const decrypted = await Promise.all(
@@ -93,6 +129,7 @@ export function App() {
     );
     setNotes(nextNotes);
     setSelectedNoteId(nextNotes[0]?.id ?? null);
+    setAttachmentsByNote({});
   }
 
   async function submitAuth() {
@@ -137,6 +174,7 @@ export function App() {
     setUser(null);
     setRootKey(null);
     setNotes([]);
+    setAttachmentsByNote({});
     setSelectedNoteId(null);
     setRecoverySecret(null);
     setStatus("Signed out");
@@ -231,6 +269,95 @@ export function App() {
     setNotes((current) =>
       current.map((note) => (note.id === selectedNoteId ? { ...note, ...patch } : note))
     );
+  }
+
+  async function refreshAttachments(noteId: string) {
+    const payload = await listAttachments(noteId);
+    setAttachmentsByNote((current) => ({
+      ...current,
+      [noteId]: payload.attachments
+    }));
+  }
+
+  async function uploadSelectedAttachment(file: File | undefined) {
+    if (!file || !user || !selectedNote) {
+      return;
+    }
+
+    setError(null);
+    setStatus("Encrypting attachment");
+    try {
+      const encrypted = await createEncryptedAttachmentDraft({
+        userId: user.id,
+        noteId: selectedNote.id,
+        noteKeyBase64: selectedNote.noteKeyBase64,
+        file
+      });
+      await uploadAttachment(selectedNote.id, encrypted);
+      await refreshAttachments(selectedNote.id);
+      setStatus("Attachment encrypted and saved");
+    } catch (uploadError) {
+      setStatus("Attachment failed");
+      setError(
+        uploadError instanceof Error ? uploadError.message : "Unable to upload attachment"
+      );
+    }
+  }
+
+  async function downloadSelectedAttachment(attachment: AttachmentSummary) {
+    if (!user || !selectedNote) {
+      return;
+    }
+
+    setError(null);
+    setStatus("Decrypting attachment");
+    try {
+      const encrypted = await downloadAttachment(attachment.id);
+      const plaintext = await decryptAttachmentBytes({
+        userId: user.id,
+        noteId: selectedNote.id,
+        noteKeyBase64: selectedNote.noteKeyBase64,
+        attachmentId: attachment.id,
+        encryptedAttachmentKey: {
+          cipher: encrypted.encryptedAttachmentKey,
+          nonce: encrypted.attachmentKeyNonce,
+          formatVersion: 1
+        },
+        encryptedBytes: {
+          cipher: encrypted.encryptedBytes,
+          nonce: encrypted.fileNonce,
+          formatVersion: 1
+        }
+      });
+      downloadBytes(plaintext, attachment.filename, attachment.mimeType);
+      setStatus("Attachment decrypted");
+    } catch (downloadError) {
+      setStatus("Attachment failed");
+      setError(
+        downloadError instanceof Error
+          ? downloadError.message
+          : "Unable to download attachment"
+      );
+    }
+  }
+
+  async function removeSelectedAttachment(attachmentId: string) {
+    if (!selectedNote) {
+      return;
+    }
+
+    setError(null);
+    setStatus("Deleting attachment");
+    try {
+      await deleteAttachment(attachmentId);
+      await refreshAttachments(selectedNote.id);
+      setStatus("Attachment deleted");
+    } catch (deleteError) {
+      setStatus("Attachment failed");
+      setError(
+        deleteError instanceof Error ? deleteError.message : "Unable to delete attachment"
+      );
+    }
   }
 
   if (!user) {
@@ -428,11 +555,57 @@ export function App() {
                 }}
               />
             </label>
+            <label>
+              Attach encrypted file
+              <input
+                type="file"
+                disabled={!selectedNote}
+                onChange={(event) => {
+                  void uploadSelectedAttachment(event.target.files?.[0]);
+                  event.target.value = "";
+                }}
+              />
+            </label>
           </div>
           <div className="editor-column preview">
             <h3>Preview</h3>
             <div className="preview-body">
               {selectedNote?.body ?? "Select or create a note."}
+            </div>
+            <div className="attachment-panel">
+              <h3>Attachments</h3>
+              {selectedAttachments.length === 0 ? (
+                <p className="muted">No attachments.</p>
+              ) : (
+                <ul className="attachment-list">
+                  {selectedAttachments.map((attachment) => (
+                    <li key={attachment.id}>
+                      <span>
+                        <strong>{attachment.filename}</strong>
+                        <small>{formatBytes(attachment.size)}</small>
+                      </span>
+                      <button
+                        className="text-button"
+                        type="button"
+                        onClick={() => {
+                          void downloadSelectedAttachment(attachment);
+                        }}
+                      >
+                        Download
+                      </button>
+                      <button
+                        className="text-button danger"
+                        type="button"
+                        onClick={() => {
+                          void removeSelectedAttachment(attachment.id);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
             <div className="notice">Plaintext stays in browser memory.</div>
           </div>
@@ -491,4 +664,24 @@ function vaultKdf(response: KeyMaterialResponse) {
     memLimit: response.kdfMemLimit,
     version: response.kdfVersion
   };
+}
+
+function downloadBytes(bytes: Uint8Array, filename: string, mimeType: string) {
+  const blob = new Blob([bytes.slice()], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${String(bytes)} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${String(Math.round(bytes / 1024))} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

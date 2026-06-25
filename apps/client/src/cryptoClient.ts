@@ -1,4 +1,5 @@
 import {
+  attachmentAssociatedData,
   createKdfParams,
   decryptBytes,
   deriveAuthVerifier,
@@ -23,6 +24,16 @@ function noteKeyAad(userId: string, noteId: string): Uint8Array {
   return utf8(`ciphernotes:note-key:v1:${userId}:${noteId}`);
 }
 
+function attachmentKeyAad(
+  userId: string,
+  noteId: string,
+  attachmentId: string
+): Uint8Array {
+  return utf8(
+    `ciphernotes:attachment-key:v1:${userId}:${noteId}:${attachmentId}`
+  );
+}
+
 export interface RegistrationCrypto {
   payload: RegisterPayload;
   rootKey: Uint8Array;
@@ -44,6 +55,17 @@ export interface EncryptedNoteDraft {
   contentNonce: string;
   contentLength: number;
   noteKey: Uint8Array;
+}
+
+export interface EncryptedAttachmentDraft {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  encryptedAttachmentKey: string;
+  attachmentKeyNonce: string;
+  fileNonce: string;
+  encryptedBytes: string;
 }
 
 export async function createRegistrationCrypto(
@@ -200,6 +222,69 @@ export async function encryptExistingNoteBody(input: {
 
 export function noteKeyToBase64(noteKey: Uint8Array): string {
   return toBase64(noteKey);
+}
+
+export async function createEncryptedAttachmentDraft(input: {
+  userId: string;
+  noteId: string;
+  noteKeyBase64: string;
+  file: File;
+}): Promise<EncryptedAttachmentDraft> {
+  const id = randomUuid();
+  const attachmentKey = randomBytes(32);
+  const noteKey = fromBase64(input.noteKeyBase64);
+  const encryptedAttachmentKey = await encryptBytes(
+    attachmentKey,
+    noteKey,
+    attachmentKeyAad(input.userId, input.noteId, id)
+  );
+  const encryptedFile = await encryptBytes(
+    new Uint8Array(await input.file.arrayBuffer()),
+    attachmentKey,
+    attachmentAssociatedData({
+      userId: input.userId,
+      noteId: input.noteId,
+      attachmentId: id,
+      formatVersion: 1
+    })
+  );
+
+  return {
+    id,
+    filename: input.file.name,
+    mimeType: input.file.type || "application/octet-stream",
+    size: fromBase64(encryptedFile.cipher).byteLength,
+    encryptedAttachmentKey: encryptedAttachmentKey.cipher,
+    attachmentKeyNonce: encryptedAttachmentKey.nonce,
+    fileNonce: encryptedFile.nonce,
+    encryptedBytes: encryptedFile.cipher
+  };
+}
+
+export async function decryptAttachmentBytes(input: {
+  userId: string;
+  noteId: string;
+  noteKeyBase64: string;
+  attachmentId: string;
+  encryptedAttachmentKey: EncryptedPayload;
+  encryptedBytes: EncryptedPayload;
+}): Promise<Uint8Array> {
+  const noteKey = fromBase64(input.noteKeyBase64);
+  const attachmentKey = await decryptBytes(
+    input.encryptedAttachmentKey,
+    noteKey,
+    attachmentKeyAad(input.userId, input.noteId, input.attachmentId)
+  );
+  return decryptBytes(
+    input.encryptedBytes,
+    attachmentKey,
+    attachmentAssociatedData({
+      userId: input.userId,
+      noteId: input.noteId,
+      attachmentId: input.attachmentId,
+      formatVersion: 1
+    })
+  );
 }
 
 function noteBodyAad(userId: string, noteId: string): Uint8Array {

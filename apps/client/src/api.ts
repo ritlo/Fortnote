@@ -78,6 +78,33 @@ export interface UpdateNotePayload {
   version: number;
 }
 
+export interface AttachmentSummary {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  encryptedAttachmentKey: string;
+  attachmentKeyNonce: string;
+  fileNonce: string;
+  createdAt: string;
+}
+
+export interface AttachmentDownload extends AttachmentSummary {
+  noteId: string;
+  encryptedBytes: string;
+}
+
+export interface UploadAttachmentPayload {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  encryptedAttachmentKey: string;
+  attachmentKeyNonce: string;
+  fileNonce: string;
+  encryptedBytes: string;
+}
+
 export async function apiRequest<T>(
   path: string,
   init: RequestInit = {}
@@ -158,4 +185,26 @@ export function updateNote(
     method: "PUT",
     body: JSON.stringify(payload)
   });
+}
+
+export function listAttachments(noteId: string): Promise<{ attachments: AttachmentSummary[] }> {
+  return apiRequest<{ attachments: AttachmentSummary[] }>(`/notes/${noteId}/attachments`);
+}
+
+export function uploadAttachment(
+  noteId: string,
+  payload: UploadAttachmentPayload
+): Promise<{ id: string }> {
+  return apiRequest<{ id: string }>(`/notes/${noteId}/attachments`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function downloadAttachment(attachmentId: string): Promise<AttachmentDownload> {
+  return apiRequest<AttachmentDownload>(`/attachments/${attachmentId}`);
+}
+
+export function deleteAttachment(attachmentId: string): Promise<undefined> {
+  return apiRequest<undefined>(`/attachments/${attachmentId}`, { method: "DELETE" });
 }
