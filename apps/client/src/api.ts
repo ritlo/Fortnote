@@ -23,16 +23,59 @@ export interface User {
   username: string;
 }
 
+export interface AuthKdfResponse {
+  authKdfSalt: string;
+  authKdfOpsLimit: number;
+  authKdfMemLimit: number;
+  authKdfVersion: number;
+  vaultKdfSalt: string;
+  vaultKdfOpsLimit: number;
+  vaultKdfMemLimit: number;
+  vaultKdfVersion: number;
+}
+
+export interface KeyMaterialResponse {
+  encryptedRootKey: string;
+  rootKeyNonce: string;
+  kdfSalt: string;
+  kdfOpsLimit: number;
+  kdfMemLimit: number;
+  kdfVersion: number;
+  keyMaterialVersion: number;
+}
+
 export interface NoteSummary {
   id: string;
   folderId: string | null;
   title: string;
+  encryptedNoteKey: string;
+  noteKeyNonce: string;
   contentCipher: string;
   contentNonce: string;
   contentLength: number;
   version: number;
   isDeleted: boolean | 0 | 1;
   updatedAt: string;
+}
+
+export interface CreateNotePayload {
+  id: string;
+  folderId?: string | null;
+  title: string;
+  encryptedNoteKey: string;
+  noteKeyNonce: string;
+  contentCipher: string;
+  contentNonce: string;
+  contentLength: number;
+}
+
+export interface UpdateNotePayload {
+  title?: string;
+  folderId?: string | null;
+  contentCipher: string;
+  contentNonce: string;
+  contentLength: number;
+  version: number;
 }
 
 export async function apiRequest<T>(
@@ -68,6 +111,12 @@ export function getMe(): Promise<User> {
   return apiRequest<User>("/auth/me");
 }
 
+export function getAuthKdfParams(username: string): Promise<AuthKdfResponse> {
+  return apiRequest<AuthKdfResponse>(
+    `/auth/kdf-params?username=${encodeURIComponent(username)}`
+  );
+}
+
 export function login(username: string, authVerifier: string): Promise<User> {
   return apiRequest<User>("/auth/login", {
     method: "POST",
@@ -86,6 +135,27 @@ export function logout(): Promise<undefined> {
   return apiRequest<undefined>("/auth/logout", { method: "POST" });
 }
 
+export function getKeyMaterial(): Promise<KeyMaterialResponse> {
+  return apiRequest<KeyMaterialResponse>("/key-material");
+}
+
 export function listNotes(): Promise<{ notes: NoteSummary[] }> {
   return apiRequest<{ notes: NoteSummary[] }>("/notes");
+}
+
+export function createNote(payload: CreateNotePayload): Promise<{ id: string; version: number }> {
+  return apiRequest<{ id: string; version: number }>("/notes", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateNote(
+  noteId: string,
+  payload: UpdateNotePayload
+): Promise<{ id: string; version: number }> {
+  return apiRequest<{ id: string; version: number }>(`/notes/${noteId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
 }

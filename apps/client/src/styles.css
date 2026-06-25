@@ -33,6 +33,13 @@ button {
   cursor: pointer;
 }
 
+button:disabled,
+input:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .auth-screen {
   min-height: 100vh;
   display: grid;
@@ -140,6 +147,16 @@ textarea {
   color: var(--danger);
 }
 
+.recovery-code {
+  overflow-wrap: anywhere;
+  border: 1px solid #c9d8ca;
+  border-radius: 7px;
+  padding: 10px;
+  background: #f8fbf8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
 .app-shell {
   height: 100vh;
   display: grid;
@@ -227,6 +244,12 @@ textarea {
   font-weight: 700;
 }
 
+.pane-error {
+  margin: 0 12px 8px;
+  color: var(--danger);
+  font-size: 13px;
+}
+
 .note-list {
   display: grid;
   gap: 8px;
@@ -285,6 +308,12 @@ textarea {
   padding: 12px;
   background: #edf2ee;
   color: var(--muted);
+}
+
+.preview-body {
+  min-height: 320px;
+  white-space: pre-wrap;
+  line-height: 1.55;
 }
 
 @media (max-width: 920px) {
