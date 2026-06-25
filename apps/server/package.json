@@ -8,7 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run src"
   },
   "dependencies": {
     "@ciphernotes/shared": "file:../../packages/shared",
