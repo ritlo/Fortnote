@@ -1,56 +1,6 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
-import { createDb } from "../db/client.js";
-import { createApp } from "../http/app.js";
-
-function createTestApp() {
-  const config = {
-    port: 0,
-    databasePath: ":memory:",
-    dataDir: "data/attachments",
-    cookieSecure: false,
-    allowedOrigin: "http://localhost:5173"
-  };
-  return createApp({ config, db: createDb(config) });
-}
-
-function headers() {
-  return {
-    origin: "http://localhost:5173",
-    "sec-fetch-site": "same-origin"
-  };
-}
-
-function registerPayload(username = "alice") {
-  return {
-    username,
-    authVerifier: "auth_verifier_value_abcdefghijklmnopqrstuvwxyz",
-    authKdf: {
-      salt: "auth_salt_abcdefghijklmnopqrstuvwxyz",
-      opsLimit: 4,
-      memLimit: 67108864,
-      version: 1
-    },
-    vaultKdf: {
-      salt: "vault_salt_abcdefghijklmnopqrstuvwxyz",
-      opsLimit: 4,
-      memLimit: 67108864,
-      version: 1
-    },
-    encryptedRootKey: "encrypted_root_key_abcdefghijklmnopqrstuvwxyz",
-    rootKeyNonce: "root_key_nonce_abcdefghijklmnopqrstuvwxyz",
-    recoveryAuthVerifier: "recovery_auth_verifier_abcdefghijklmnopqrstuvwxyz",
-    recoveryKdf: {
-      salt: "recovery_salt_abcdefghijklmnopqrstuvwxyz",
-      opsLimit: 4,
-      memLimit: 67108864,
-      version: 1
-    },
-    recoveryEncryptedRootKey:
-      "recovery_encrypted_root_key_abcdefghijklmnopqrstuvwxyz",
-    recoveryRootKeyNonce: "recovery_root_nonce_abcdefghijklmnopqrstuvwxyz"
-  };
-}
+import { createTestApp, csrfHeaders, registerPayload } from "../test/http.js";
 
 describe("auth routes", () => {
   it("registers, creates a session, and returns me", async () => {
@@ -59,7 +9,7 @@ describe("auth routes", () => {
 
     const register = await agent
       .post("/api/auth/register")
-      .set(headers())
+      .set(csrfHeaders())
       .send(registerPayload())
       .expect(201);
 
@@ -74,7 +24,7 @@ describe("auth routes", () => {
 
     await request(app)
       .post("/api/auth/register")
-      .set(headers())
+      .set(csrfHeaders())
       .send(registerPayload("bob"))
       .expect(201);
 
@@ -94,13 +44,13 @@ describe("auth routes", () => {
 
     await request(app)
       .post("/api/auth/register")
-      .set(headers())
+      .set(csrfHeaders())
       .send(registerPayload("cara"))
       .expect(201);
 
     await request(app)
       .post("/api/auth/login")
-      .set(headers())
+      .set(csrfHeaders())
       .send({
         username: "cara",
         authVerifier: "wrong_verifier_value_abcdefghijklmnopqrstuvwxyz"
@@ -114,17 +64,17 @@ describe("auth routes", () => {
 
     await agent
       .post("/api/auth/register")
-      .set(headers())
+      .set(csrfHeaders())
       .send(registerPayload("dina"))
       .expect(201);
 
     await agent
       .post("/api/auth/recover")
-      .set(headers())
+      .set(csrfHeaders())
       .send({
         username: "dina",
         recoveryAuthVerifier:
-          "recovery_auth_verifier_abcdefghijklmnopqrstuvwxyz",
+          "recovery_auth_verifier_dina_abcdefghijklmnopqrstuvwxyz",
         newAuthVerifier: "new_auth_verifier_abcdefghijklmnopqrstuvwxyz",
         authKdf: {
           salt: "new_auth_salt_abcdefghijklmnopqrstuvwxyz",
@@ -146,7 +96,7 @@ describe("auth routes", () => {
 
     await request(app)
       .post("/api/auth/login")
-      .set(headers())
+      .set(csrfHeaders())
       .send({
         username: "dina",
         authVerifier: "new_auth_verifier_abcdefghijklmnopqrstuvwxyz"
@@ -160,11 +110,11 @@ describe("auth routes", () => {
 
     await agent
       .post("/api/auth/register")
-      .set(headers())
+      .set(csrfHeaders())
       .send(registerPayload("erin"))
       .expect(201);
 
-    await agent.post("/api/auth/logout").set(headers()).expect(204);
+    await agent.post("/api/auth/logout").set(csrfHeaders()).expect(204);
     await agent.get("/api/auth/me").expect(401);
   });
 });

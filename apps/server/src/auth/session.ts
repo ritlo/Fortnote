@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import type { AppDb } from "../db/client.js";
+import { sendApiError } from "../http/errors.js";
 
 const SESSION_COOKIE = "ciphernotes_session";
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -110,4 +111,18 @@ export function deleteSession(db: AppDb, token: string | null): void {
   }
 
   db.sqlite.prepare("DELETE FROM sessions WHERE session_hash = ?").run(hashToken(token));
+}
+
+export function requireSession(
+  db: AppDb,
+  request: Request,
+  response: Response
+): SessionRecord | null {
+  const session = findSession(db, readSessionToken(request.get("cookie")));
+  if (!session) {
+    sendApiError(response, "unauthorized", "Not signed in");
+    return null;
+  }
+
+  return session;
 }
