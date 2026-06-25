@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { requireSession } from "../auth/session.js";
+import { deleteEncryptedAttachment } from "../attachments/storage.js";
 
 const createNoteSchema = z.object({
   id: z.uuid(),
@@ -316,9 +317,19 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    context.db.sqlite
-      .prepare("DELETE FROM notes WHERE id = ? AND user_id = ?")
-      .run(note.id, session.userId);
+    const rows = context.db.sqlite
+      .prepare("SELECT file_cipher_path AS fileCipherPath FROM attachments WHERE note_id = ? AND user_id = ?")
+      .all(note.id, session.userId) as { fileCipherPath: string }[];
+
+    const remove = context.db.sqlite.transaction(() => {
+      context.db.sqlite
+        .prepare("DELETE FROM notes WHERE id = ? AND user_id = ?")
+        .run(note.id, session.userId);
+    });
+    remove();
+    for (const row of rows) {
+      deleteEncryptedAttachment(context.config, row.fileCipherPath);
+    }
 
     response.status(204).send();
   });

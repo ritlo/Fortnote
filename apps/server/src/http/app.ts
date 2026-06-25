@@ -2,6 +2,7 @@ import express from "express";
 import helmet from "helmet";
 import type { AppDb } from "../db/client.js";
 import type { ServerConfig } from "../config.js";
+import { createAttachmentsRouter } from "../attachments/routes.js";
 import { createAuthRouter } from "../auth/routes.js";
 import { createFoldersRouter } from "../folders/routes.js";
 import { createKeyMaterialRouter } from "../keyMaterial/routes.js";
@@ -25,6 +26,7 @@ export function createApp(context: AppContext) {
   });
 
   app.use("/api/auth", createAuthRouter(context));
+  app.use("/api", createAttachmentsRouter(context));
   app.use("/api/folders", createFoldersRouter(context));
   app.use("/api/key-material", createKeyMaterialRouter(context));
   app.use("/api/notes", createNotesRouter(context));

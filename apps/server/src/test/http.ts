@@ -1,12 +1,16 @@
 import request from "supertest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { createDb } from "../db/client.js";
 import { createApp } from "../http/app.js";
 
 export function createTestApp() {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ciphernotes-test-"));
   const config = {
     port: 0,
     databasePath: ":memory:",
-    dataDir: "data/attachments",
+    dataDir,
     cookieSecure: false,
     allowedOrigin: "http://localhost:5173"
   };
