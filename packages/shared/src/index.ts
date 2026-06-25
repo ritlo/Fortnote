@@ -16,6 +16,7 @@ export type ApiErrorCode =
   | "conflict"
   | "payload_too_large"
   | "quota_exceeded"
+  | "rate_limited"
   | "csrf_failed";
 
 export interface ApiError {

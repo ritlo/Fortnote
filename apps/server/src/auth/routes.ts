@@ -1,5 +1,5 @@
 import argon2 from "argon2";
-import { Router } from "express";
+import { Router, type Request, type RequestHandler } from "express";
 import { z } from "zod";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
@@ -48,10 +48,59 @@ const recoverSchema = z.object({
   keyMaterialVersion: z.number().int().positive()
 });
 
+function createRateLimiter(options: {
+  maxAttempts: number;
+  windowMs: number;
+}): RequestHandler {
+  const attempts = new Map<string, { count: number; resetAt: number }>();
+
+  return (request, response, next) => {
+    const now = Date.now();
+    const key = rateLimitKey(request);
+    const current = attempts.get(key);
+    if (!current || current.resetAt <= now) {
+      attempts.set(key, { count: 1, resetAt: now + options.windowMs });
+      next();
+      return;
+    }
+
+    if (current.count >= options.maxAttempts) {
+      response.setHeader(
+        "Retry-After",
+        String(Math.ceil((current.resetAt - now) / 1000))
+      );
+      sendApiError(response, "rate_limited", "Too many attempts");
+      return;
+    }
+
+    current.count += 1;
+    next();
+  };
+}
+
+function rateLimitKey(request: Request): string {
+  const body = request.body as unknown;
+  const bodyUsername =
+    typeof body === "object" && body !== null && "username" in body
+      ? stringValue(body.username)
+      : "";
+  const queryUsername = stringValue(request.query.username);
+  const username = (bodyUsername || queryUsername).trim().toLowerCase();
+  return `${request.method}:${request.path}:${request.ip ?? "unknown"}:${username}`;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 export function createAuthRouter(context: AppContext): Router {
   const router = Router();
+  const preAuthRateLimit = createRateLimiter({
+    maxAttempts: 20,
+    windowMs: 5 * 60 * 1000
+  });
 
-  router.get("/kdf-params", (request, response) => {
+  router.get("/kdf-params", preAuthRateLimit, (request, response) => {
     const username = z.string().min(1).safeParse(request.query.username);
     if (!username.success) {
       sendApiError(response, "bad_request", "Username is required");
@@ -82,7 +131,7 @@ export function createAuthRouter(context: AppContext): Router {
     response.json(row);
   });
 
-  router.post("/register", async (request, response) => {
+  router.post("/register", preAuthRateLimit, async (request, response) => {
     const parsed = registerSchema.safeParse(request.body);
     if (!parsed.success) {
       sendApiError(response, "bad_request", "Invalid registration payload");
@@ -166,7 +215,7 @@ export function createAuthRouter(context: AppContext): Router {
     response.status(201).json({ id: userId, username: parsed.data.username });
   });
 
-  router.post("/login", async (request, response) => {
+  router.post("/login", preAuthRateLimit, async (request, response) => {
     const parsed = loginSchema.safeParse(request.body);
     if (!parsed.success) {
       sendApiError(response, "bad_request", "Invalid login payload");
@@ -189,7 +238,7 @@ export function createAuthRouter(context: AppContext): Router {
     response.json({ id: row.id, username: parsed.data.username });
   });
 
-  router.post("/recover", async (request, response) => {
+  router.post("/recover", preAuthRateLimit, async (request, response) => {
     const parsed = recoverSchema.safeParse(request.body);
     if (!parsed.success) {
       sendApiError(response, "bad_request", "Invalid recovery payload");

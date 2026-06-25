@@ -117,4 +117,28 @@ describe("auth routes", () => {
     await agent.post("/api/auth/logout").set(csrfHeaders()).expect(204);
     await agent.get("/api/auth/me").expect(401);
   });
+
+  it("rate limits repeated login attempts", async () => {
+    const app = createTestApp();
+
+    for (let index = 0; index < 20; index += 1) {
+      await request(app)
+        .post("/api/auth/login")
+        .set(csrfHeaders())
+        .send({
+          username: "missing",
+          authVerifier: "wrong_verifier_value_abcdefghijklmnopqrstuvwxyz"
+        })
+        .expect(401);
+    }
+
+    await request(app)
+      .post("/api/auth/login")
+      .set(csrfHeaders())
+      .send({
+        username: "missing",
+        authVerifier: "wrong_verifier_value_abcdefghijklmnopqrstuvwxyz"
+      })
+      .expect(429);
+  });
 });

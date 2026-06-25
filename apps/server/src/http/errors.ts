@@ -8,6 +8,7 @@ type ApiErrorCode =
   | "conflict"
   | "payload_too_large"
   | "quota_exceeded"
+  | "rate_limited"
   | "csrf_failed";
 
 interface ApiError {
@@ -23,6 +24,7 @@ const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   conflict: 409,
   payload_too_large: 413,
   quota_exceeded: 413,
+  rate_limited: 429,
   csrf_failed: 403
 };
 
