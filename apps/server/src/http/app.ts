@@ -1,5 +1,6 @@
 import express from "express";
 import helmet from "helmet";
+import { LIMITS } from "@ciphernotes/shared";
 import type { AppDb } from "../db/client.js";
 import type { ServerConfig } from "../config.js";
 import { createAttachmentsRouter } from "../attachments/routes.js";
@@ -37,7 +38,7 @@ export function createApp(context: AppContext) {
       }
     })
   );
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: jsonBodyLimitBytes() }));
   app.use(csrfGuard(context.config.allowedOrigin));
 
   app.get("/api/health", (_request, response) => {
@@ -51,4 +52,8 @@ export function createApp(context: AppContext) {
   app.use("/api/notes", createNotesRouter(context));
 
   return app;
+}
+
+function jsonBodyLimitBytes(): number {
+  return Math.ceil(LIMITS.maxAttachmentBytes * 1.4) + 1024 * 1024;
 }

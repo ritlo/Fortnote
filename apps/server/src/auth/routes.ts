@@ -1,6 +1,7 @@
 import argon2 from "argon2";
 import { Router, type Request, type RequestHandler } from "express";
 import { z } from "zod";
+import { DEFAULT_KDF } from "@ciphernotes/shared";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import {
@@ -47,6 +48,17 @@ const recoverSchema = z.object({
   rootKeyNonce: z.string().min(16),
   keyMaterialVersion: z.number().int().positive()
 });
+
+const UNKNOWN_USER_KDF_RESPONSE = {
+  authKdfSalt: "AAAAAAAAAAAAAAAAAAAAAA==",
+  authKdfOpsLimit: DEFAULT_KDF.opsLimit,
+  authKdfMemLimit: DEFAULT_KDF.memLimit,
+  authKdfVersion: DEFAULT_KDF.version,
+  vaultKdfSalt: "/////////////////////w==",
+  vaultKdfOpsLimit: DEFAULT_KDF.opsLimit,
+  vaultKdfMemLimit: DEFAULT_KDF.memLimit,
+  vaultKdfVersion: DEFAULT_KDF.version
+} as const;
 
 function createRateLimiter(options: {
   maxAttempts: number;
@@ -123,12 +135,7 @@ export function createAuthRouter(context: AppContext): Router {
       )
       .get(username.data);
 
-    if (!row) {
-      sendApiError(response, "not_found", "Account not found");
-      return;
-    }
-
-    response.json(row);
+    response.json(row ?? UNKNOWN_USER_KDF_RESPONSE);
   });
 
   router.get("/recovery-params", preAuthRateLimit, (request, response) => {

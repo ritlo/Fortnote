@@ -39,6 +39,20 @@ describe("auth routes", () => {
     });
   });
 
+  it("returns generic KDF parameters for unknown users", async () => {
+    const app = createTestApp();
+
+    const response = await request(app)
+      .get("/api/auth/kdf-params")
+      .query({ username: "missing_user" })
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      authKdfVersion: 1,
+      vaultKdfVersion: 1
+    });
+  });
+
   it("returns recovery parameters for registered users", async () => {
     const app = createTestApp();
 
