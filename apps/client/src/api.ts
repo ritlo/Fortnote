@@ -34,6 +34,16 @@ export interface AuthKdfResponse {
   vaultKdfVersion: number;
 }
 
+export interface RecoveryParamsResponse {
+  recoveryEncryptedRootKey: string;
+  recoveryRootKeyNonce: string;
+  recoveryKdfSalt: string;
+  recoveryKdfOpsLimit: number;
+  recoveryKdfMemLimit: number;
+  recoveryKdfVersion: number;
+  keyMaterialVersion: number;
+}
+
 export interface KeyMaterialResponse {
   encryptedRootKey: string;
   rootKeyNonce: string;
@@ -133,6 +143,17 @@ export interface UpdateKeyMaterialPayload {
   keyMaterialVersion: number;
 }
 
+export interface RecoverPayload {
+  username: string;
+  recoveryAuthVerifier: string;
+  newAuthVerifier: string;
+  authKdf: KdfParams;
+  vaultKdf: KdfParams;
+  encryptedRootKey: string;
+  rootKeyNonce: string;
+  keyMaterialVersion: number;
+}
+
 export async function apiRequest<T>(
   path: string,
   init: RequestInit = {}
@@ -172,6 +193,12 @@ export function getAuthKdfParams(username: string): Promise<AuthKdfResponse> {
   );
 }
 
+export function getRecoveryParams(username: string): Promise<RecoveryParamsResponse> {
+  return apiRequest<RecoveryParamsResponse>(
+    `/auth/recovery-params?username=${encodeURIComponent(username)}`
+  );
+}
+
 export function login(username: string, authVerifier: string): Promise<User> {
   return apiRequest<User>("/auth/login", {
     method: "POST",
@@ -181,6 +208,13 @@ export function login(username: string, authVerifier: string): Promise<User> {
 
 export function register(payload: RegisterPayload): Promise<User> {
   return apiRequest<User>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function recover(payload: RecoverPayload): Promise<User> {
+  return apiRequest<User>("/auth/recover", {
     method: "POST",
     body: JSON.stringify(payload)
   });

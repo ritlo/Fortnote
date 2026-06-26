@@ -84,6 +84,12 @@ export interface RecoveryRotationCrypto {
   recoveryRootKeyNonce: string;
 }
 
+export interface AccountRecoveryCrypto {
+  rootKey: Uint8Array;
+  recoveryAuthVerifier: string;
+  passwordChange: PasswordChangeCrypto;
+}
+
 export async function createRegistrationCrypto(
   username: string,
   password: string
@@ -206,6 +212,38 @@ export async function createRecoveryRotationCrypto(
     recoveryKdf,
     recoveryEncryptedRootKey: recoveryEncryptedRoot.cipher,
     recoveryRootKeyNonce: recoveryEncryptedRoot.nonce
+  };
+}
+
+export async function createAccountRecoveryCrypto(input: {
+  recoverySecret: string;
+  recoveryKdf: KdfParams;
+  recoveryEncryptedRootKey: string;
+  recoveryRootKeyNonce: string;
+  newPassword: string;
+}): Promise<AccountRecoveryCrypto> {
+  const recoveryAuthVerifier = await deriveRecoveryAuthVerifier(
+    input.recoverySecret,
+    input.recoveryKdf
+  );
+  const recoveryWrappingKey = await deriveRecoveryWrappingKey(
+    input.recoverySecret,
+    input.recoveryKdf
+  );
+  const rootKey = await decryptBytes(
+    {
+      cipher: input.recoveryEncryptedRootKey,
+      nonce: input.recoveryRootKeyNonce,
+      formatVersion: 1
+    },
+    recoveryWrappingKey,
+    ROOT_KEY_AAD
+  );
+
+  return {
+    rootKey,
+    recoveryAuthVerifier: toBase64(recoveryAuthVerifier),
+    passwordChange: await createPasswordChangeCrypto(rootKey, input.newPassword)
   };
 }
 

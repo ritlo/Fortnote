@@ -118,7 +118,7 @@ textarea {
 
 .segmented {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   border: 1px solid #bbc6bb;
   border-radius: 7px;
   overflow: hidden;

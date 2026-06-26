@@ -12,10 +12,12 @@ import {
   getAuthKdfParams,
   getKeyMaterial,
   getMe,
+  getRecoveryParams,
   listFolders,
   listAttachments,
   listNotes,
   permanentlyDeleteNote,
+  recover,
   login,
   logout,
   register,
@@ -28,9 +30,11 @@ import {
   type AuthKdfResponse,
   type KeyMaterialResponse,
   type NoteSummary,
+  type RecoveryParamsResponse,
   type User
 } from "./api";
 import {
+  createAccountRecoveryCrypto,
   createEncryptedNoteDraft,
   createEncryptedAttachmentDraft,
   createLoginAuthVerifier,
@@ -45,7 +49,7 @@ import {
 } from "./cryptoClient";
 import "./styles.css";
 
-type AuthMode = "login" | "register";
+type AuthMode = "login" | "register" | "recover";
 type NotesView = "notes" | "trash" | "settings";
 
 interface DecryptedNote {
@@ -68,6 +72,8 @@ export function App() {
   const [username, setUsername] = useState("alice");
   const [password, setPassword] = useState("correct horse battery staple");
   const [newPassword, setNewPassword] = useState("");
+  const [recoveryInput, setRecoveryInput] = useState("");
+  const [recoveryNewPassword, setRecoveryNewPassword] = useState("");
   const [notes, setNotes] = useState<DecryptedNote[]>([]);
   const [trashNotes, setTrashNotes] = useState<DecryptedNote[]>([]);
   const [folders, setFolders] = useState<FolderSummary[]>([]);
@@ -193,6 +199,37 @@ export function App() {
         setStatus("Signed in and decrypted");
         await loadFolders();
         await loadDecryptedNotes(currentUser, registration.rootKey);
+        return;
+      }
+
+      if (authMode === "recover") {
+        const recoveryParams = await getRecoveryParams(username);
+        const recovery = await createAccountRecoveryCrypto({
+          recoverySecret: recoveryInput,
+          recoveryKdf: recoveryKdf(recoveryParams),
+          recoveryEncryptedRootKey: recoveryParams.recoveryEncryptedRootKey,
+          recoveryRootKeyNonce: recoveryParams.recoveryRootKeyNonce,
+          newPassword: recoveryNewPassword
+        });
+        const currentUser = await recover({
+          username,
+          recoveryAuthVerifier: recovery.recoveryAuthVerifier,
+          newAuthVerifier: recovery.passwordChange.authVerifier,
+          authKdf: recovery.passwordChange.authKdf,
+          vaultKdf: recovery.passwordChange.vaultKdf,
+          encryptedRootKey: recovery.passwordChange.encryptedRootKey,
+          rootKeyNonce: recovery.passwordChange.rootKeyNonce,
+          keyMaterialVersion: recoveryParams.keyMaterialVersion
+        });
+        setUser(currentUser);
+        setRootKey(recovery.rootKey);
+        setKeyMaterialVersion(recoveryParams.keyMaterialVersion + 1);
+        setPassword(recoveryNewPassword);
+        setRecoveryInput("");
+        setRecoveryNewPassword("");
+        setStatus("Recovered and decrypted");
+        await loadFolders();
+        await loadDecryptedNotes(currentUser, recovery.rootKey);
         return;
       }
 
@@ -628,6 +665,15 @@ export function App() {
             >
               Register
             </button>
+            <button
+              className={authMode === "recover" ? "active" : ""}
+              type="button"
+              onClick={() => {
+                setAuthMode("recover");
+              }}
+            >
+              Recover
+            </button>
           </div>
 
           <label>
@@ -639,16 +685,40 @@ export function App() {
               }}
             />
           </label>
-          <label>
-            Account password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => {
-                setPassword(event.target.value);
-              }}
-            />
-          </label>
+          {authMode === "recover" ? (
+            <>
+              <label>
+                Recovery key
+                <input
+                  value={recoveryInput}
+                  onChange={(event) => {
+                    setRecoveryInput(event.target.value);
+                  }}
+                />
+              </label>
+              <label>
+                New account password
+                <input
+                  type="password"
+                  value={recoveryNewPassword}
+                  onChange={(event) => {
+                    setRecoveryNewPassword(event.target.value);
+                  }}
+                />
+              </label>
+            </>
+          ) : (
+            <label>
+              Account password
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                }}
+              />
+            </label>
+          )}
 
           {error ? <p className="error">{error}</p> : null}
           <button
@@ -658,7 +728,11 @@ export function App() {
               void submitAuth();
             }}
           >
-            {authMode === "register" ? "Create encrypted vault" : "Sign in and decrypt"}
+            {authMode === "register"
+              ? "Create encrypted vault"
+              : authMode === "recover"
+                ? "Recover and decrypt"
+                : "Sign in and decrypt"}
           </button>
           <p className="muted">{status}</p>
           {recoverySecret ? (
@@ -1134,6 +1208,15 @@ function vaultKdf(response: KeyMaterialResponse) {
     opsLimit: response.kdfOpsLimit,
     memLimit: response.kdfMemLimit,
     version: response.kdfVersion
+  };
+}
+
+function recoveryKdf(response: RecoveryParamsResponse) {
+  return {
+    salt: response.recoveryKdfSalt,
+    opsLimit: response.recoveryKdfOpsLimit,
+    memLimit: response.recoveryKdfMemLimit,
+    version: response.recoveryKdfVersion
   };
 }
 

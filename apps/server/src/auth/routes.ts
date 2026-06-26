@@ -131,6 +131,36 @@ export function createAuthRouter(context: AppContext): Router {
     response.json(row);
   });
 
+  router.get("/recovery-params", preAuthRateLimit, (request, response) => {
+    const username = z.string().min(1).safeParse(request.query.username);
+    if (!username.success) {
+      sendApiError(response, "bad_request", "Username is required");
+      return;
+    }
+
+    const row = context.db.sqlite
+      .prepare(
+        `SELECT user_key_material.recovery_encrypted_root_key AS recoveryEncryptedRootKey,
+                user_key_material.recovery_root_key_nonce AS recoveryRootKeyNonce,
+                user_key_material.recovery_kdf_salt AS recoveryKdfSalt,
+                user_key_material.recovery_kdf_ops_limit AS recoveryKdfOpsLimit,
+                user_key_material.recovery_kdf_mem_limit AS recoveryKdfMemLimit,
+                user_key_material.recovery_kdf_version AS recoveryKdfVersion,
+                user_key_material.key_material_version AS keyMaterialVersion
+         FROM users
+         JOIN user_key_material ON user_key_material.user_id = users.id
+         WHERE users.username = ?`
+      )
+      .get(username.data);
+
+    if (!row) {
+      sendApiError(response, "not_found", "Account not found");
+      return;
+    }
+
+    response.json(row);
+  });
+
   router.post("/register", preAuthRateLimit, async (request, response) => {
     const parsed = registerSchema.safeParse(request.body);
     if (!parsed.success) {

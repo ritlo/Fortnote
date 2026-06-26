@@ -39,6 +39,29 @@ describe("auth routes", () => {
     });
   });
 
+  it("returns recovery parameters for registered users", async () => {
+    const app = createTestApp();
+
+    await request(app)
+      .post("/api/auth/register")
+      .set(csrfHeaders())
+      .send(registerPayload("recovery_params_user"))
+      .expect(201);
+
+    const response = await request(app)
+      .get("/api/auth/recovery-params")
+      .query({ username: "recovery_params_user" })
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      recoveryKdfVersion: 1,
+      keyMaterialVersion: 1
+    });
+    expect(response.body.recoveryEncryptedRootKey).toContain(
+      "recovery_encrypted_root_key"
+    );
+  });
+
   it("rejects invalid login verifier", async () => {
     const app = createTestApp();
 
