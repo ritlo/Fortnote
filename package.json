@@ -10,6 +10,7 @@
     "build": "pnpm -r build",
     "dev": "pnpm --filter @ciphernotes/client dev",
     "dev:server": "pnpm --filter @ciphernotes/server dev",
+    "e2e": "playwright test",
     "lint": "eslint .",
     "test": "pnpm -r --workspace-concurrency=1 --if-present test",
     "typecheck": "pnpm -r --if-present typecheck"
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.61.1",
     "@types/node": "^26.0.0",
     "eslint": "^10.5.0",
     "globals": "^17.7.0",

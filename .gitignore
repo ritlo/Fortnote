@@ -144,3 +144,5 @@ vite.config.ts.timestamp-*
 
 # Local app runtime data
 apps/server/data/
+test-results/
+playwright-report/
