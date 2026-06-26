@@ -21,6 +21,7 @@ import {
   register,
   restoreNote,
   updateNote,
+  updateKeyMaterial,
   uploadAttachment,
   type AttachmentSummary,
   type FolderSummary,
@@ -33,7 +34,9 @@ import {
   createEncryptedNoteDraft,
   createEncryptedAttachmentDraft,
   createLoginAuthVerifier,
+  createPasswordChangeCrypto,
   createRegistrationCrypto,
+  createRecoveryRotationCrypto,
   decryptAttachmentBytes,
   decryptNote,
   encryptExistingNoteBody,
@@ -43,7 +46,7 @@ import {
 import "./styles.css";
 
 type AuthMode = "login" | "register";
-type NotesView = "notes" | "trash";
+type NotesView = "notes" | "trash" | "settings";
 
 interface DecryptedNote {
   id: string;
@@ -60,9 +63,11 @@ interface DecryptedNote {
 export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [rootKey, setRootKey] = useState<Uint8Array | null>(null);
+  const [keyMaterialVersion, setKeyMaterialVersion] = useState<number | null>(null);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [username, setUsername] = useState("alice");
   const [password, setPassword] = useState("correct horse battery staple");
+  const [newPassword, setNewPassword] = useState("");
   const [notes, setNotes] = useState<DecryptedNote[]>([]);
   const [trashNotes, setTrashNotes] = useState<DecryptedNote[]>([]);
   const [folders, setFolders] = useState<FolderSummary[]>([]);
@@ -88,7 +93,8 @@ export function App() {
       });
   }, []);
 
-  const visibleSourceNotes = notesView === "trash" ? trashNotes : notes;
+  const visibleSourceNotes =
+    notesView === "trash" ? trashNotes : notesView === "settings" ? [] : notes;
 
   const folderFilteredNotes =
     notesView === "trash" || !selectedFolderId
@@ -182,6 +188,7 @@ export function App() {
         const currentUser = await register(registration.payload);
         setUser(currentUser);
         setRootKey(registration.rootKey);
+        setKeyMaterialVersion(1);
         setRecoverySecret(registration.recoverySecret);
         setStatus("Signed in and decrypted");
         await loadFolders();
@@ -202,6 +209,7 @@ export function App() {
       );
       setUser(currentUser);
       setRootKey(openedVault.rootKey);
+      setKeyMaterialVersion(keyMaterial.keyMaterialVersion);
       setStatus("Signed in and decrypted");
       await loadFolders();
       await loadDecryptedNotes(currentUser, openedVault.rootKey);
@@ -215,6 +223,7 @@ export function App() {
     await logout();
     setUser(null);
     setRootKey(null);
+    setKeyMaterialVersion(null);
     setNotes([]);
     setTrashNotes([]);
     setFolders([]);
@@ -223,6 +232,7 @@ export function App() {
     setSelectedFolderId(null);
     setNotesView("notes");
     setRecoverySecret(null);
+    setNewPassword("");
     setStatus("Signed out");
   }
 
@@ -252,7 +262,7 @@ export function App() {
       });
       const note: DecryptedNote = {
         id: draft.id,
-        folderId: null,
+        folderId: selectedFolderId,
         title: draft.title,
         body: "",
         noteKeyBase64: noteKeyToBase64(draft.noteKey),
@@ -511,6 +521,82 @@ export function App() {
     }
   }
 
+  function lockVault() {
+    setRootKey(null);
+    setKeyMaterialVersion(null);
+    setNotes([]);
+    setTrashNotes([]);
+    setFolders([]);
+    setAttachmentsByNote({});
+    setSelectedNoteId(null);
+    setSelectedFolderId(null);
+    setNotesView("notes");
+    setRecoverySecret(null);
+    setStatus("Vault locked. Sign in again to decrypt");
+    setUser(null);
+  }
+
+  async function changePassword() {
+    if (!rootKey || !newPassword.trim()) {
+      return;
+    }
+
+    setError(null);
+    setStatus("Rewrapping vault");
+    try {
+      const current = await getKeyMaterial();
+      const rewrapped = await createPasswordChangeCrypto(rootKey, newPassword);
+      const updated = await updateKeyMaterial({
+        newAuthVerifier: rewrapped.authVerifier,
+        authKdf: rewrapped.authKdf,
+        encryptedRootKey: rewrapped.encryptedRootKey,
+        rootKeyNonce: rewrapped.rootKeyNonce,
+        vaultKdf: rewrapped.vaultKdf,
+        keyMaterialVersion: current.keyMaterialVersion
+      });
+      setKeyMaterialVersion(updated.keyMaterialVersion);
+      setPassword(newPassword);
+      setNewPassword("");
+      setStatus("Password changed and vault rewrapped");
+    } catch (changeError) {
+      setStatus("Password change failed");
+      setError(
+        changeError instanceof Error ? changeError.message : "Unable to change password"
+      );
+    }
+  }
+
+  async function rotateRecoveryKey() {
+    if (!rootKey) {
+      return;
+    }
+
+    setError(null);
+    setStatus("Rotating recovery key");
+    try {
+      const current = await getKeyMaterial();
+      const rotated = await createRecoveryRotationCrypto(rootKey);
+      const updated = await updateKeyMaterial({
+        encryptedRootKey: current.encryptedRootKey,
+        rootKeyNonce: current.rootKeyNonce,
+        vaultKdf: vaultKdf(current),
+        recoveryAuthVerifier: rotated.recoveryAuthVerifier,
+        recoveryKdf: rotated.recoveryKdf,
+        recoveryEncryptedRootKey: rotated.recoveryEncryptedRootKey,
+        recoveryRootKeyNonce: rotated.recoveryRootKeyNonce,
+        keyMaterialVersion: current.keyMaterialVersion
+      });
+      setKeyMaterialVersion(updated.keyMaterialVersion);
+      setRecoverySecret(rotated.recoverySecret);
+      setStatus("Recovery key rotated");
+    } catch (rotateError) {
+      setStatus("Recovery rotation failed");
+      setError(
+        rotateError instanceof Error ? rotateError.message : "Unable to rotate recovery key"
+      );
+    }
+  }
+
   if (!user) {
     return (
       <main className="auth-screen">
@@ -694,7 +780,15 @@ export function App() {
           <Lock size={17} /> Trash
         </button>
         <div className="sidebar-footer">
-          <button className="nav-item" type="button">
+          <button
+            className={notesView === "settings" ? "nav-item active" : "nav-item"}
+            type="button"
+            onClick={() => {
+              setNotesView("settings");
+              setSelectedNoteId(null);
+              setSelectedFolderId(null);
+            }}
+          >
             <Settings size={17} /> Settings
           </button>
           <button
@@ -711,12 +805,18 @@ export function App() {
 
       <section className="notes-pane">
         <header className="pane-header">
-          <h2>{notesView === "trash" ? "Trash" : "Notes"}</h2>
+          <h2>
+            {notesView === "trash"
+              ? "Trash"
+              : notesView === "settings"
+                ? "Settings"
+                : "Notes"}
+          </h2>
           <button
             className="icon-button"
             type="button"
             aria-label="New note"
-            disabled={notesView === "trash"}
+            disabled={notesView !== "notes"}
             onClick={() => {
               void addNote();
             }}
@@ -739,7 +839,11 @@ export function App() {
         <ul className="note-list">
           {filteredNotes.length === 0 ? (
             <li className="empty-state">
-              {notesView === "trash" ? "Trash is empty." : "No notes match this view."}
+              {notesView === "trash"
+                ? "Trash is empty."
+                : notesView === "settings"
+                  ? "Vault controls are open."
+                  : "No notes match this view."}
             </li>
           ) : (
             filteredNotes.map((note) => (
@@ -763,56 +867,123 @@ export function App() {
       <section className="editor-pane">
         <header className="pane-header">
           <div>
-            <h2>{selectedNote?.title ?? "No note selected"}</h2>
-            <p>{user.username} · root key in memory only</p>
+            <h2>
+              {notesView === "settings"
+                ? "Vault settings"
+                : selectedNote?.title ?? "No note selected"}
+            </h2>
+            <p>
+              {user.username} ·{" "}
+              {keyMaterialVersion
+                ? `key material v${String(keyMaterialVersion)}`
+                : "root key in memory only"}
+            </p>
           </div>
-          <button
-            className="primary"
-            type="button"
-            disabled={!selectedNote || notesView === "trash"}
-            onClick={() => {
-              void saveSelectedNote();
-            }}
-          >
-            Save
-          </button>
-          {notesView === "trash" ? (
+          {notesView === "settings" ? (
             <div className="action-row">
               <button
                 className="text-button"
                 type="button"
-                disabled={!selectedNote}
                 onClick={() => {
-                  void restoreSelectedNote();
+                  lockVault();
                 }}
               >
-                Restore
-              </button>
-              <button
-                className="text-button danger"
-                type="button"
-                disabled={!selectedNote}
-                onClick={() => {
-                  void deleteSelectedForever();
-                }}
-              >
-                Delete forever
+                Lock vault
               </button>
             </div>
           ) : (
-            <button
-              className="text-button danger"
-              type="button"
-              disabled={!selectedNote}
-              onClick={() => {
-                void moveSelectedToTrash();
-              }}
-            >
-              Delete
-            </button>
+            <>
+              <button
+                className="primary"
+                type="button"
+                disabled={!selectedNote || notesView === "trash"}
+                onClick={() => {
+                  void saveSelectedNote();
+                }}
+              >
+                Save
+              </button>
+              {notesView === "trash" ? (
+                <div className="action-row">
+                  <button
+                    className="text-button"
+                    type="button"
+                    disabled={!selectedNote}
+                    onClick={() => {
+                      void restoreSelectedNote();
+                    }}
+                  >
+                    Restore
+                  </button>
+                  <button
+                    className="text-button danger"
+                    type="button"
+                    disabled={!selectedNote}
+                    onClick={() => {
+                      void deleteSelectedForever();
+                    }}
+                  >
+                    Delete forever
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className="text-button danger"
+                  type="button"
+                  disabled={!selectedNote}
+                  onClick={() => {
+                    void moveSelectedToTrash();
+                  }}
+                >
+                  Delete
+                </button>
+              )}
+            </>
           )}
         </header>
-        <div className="editor-grid">
+        {notesView === "settings" ? (
+          <div className="settings-panel">
+            <section>
+              <h3>Account password</h3>
+              <label>
+                New password
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(event) => {
+                    setNewPassword(event.target.value);
+                  }}
+                />
+              </label>
+              <button
+                className="primary"
+                type="button"
+                disabled={!newPassword.trim()}
+                onClick={() => {
+                  void changePassword();
+                }}
+              >
+                Change password
+              </button>
+            </section>
+            <section>
+              <h3>Recovery key</h3>
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => {
+                  void rotateRecoveryKey();
+                }}
+              >
+                Rotate recovery key
+              </button>
+              {recoverySecret ? (
+                <p className="recovery-code">Recovery key: {recoverySecret}</p>
+              ) : null}
+            </section>
+          </div>
+        ) : (
+          <div className="editor-grid">
           <div className="editor-column">
             <FileText size={20} />
             <label>
@@ -908,6 +1079,7 @@ export function App() {
             <div className="notice">Plaintext stays in browser memory.</div>
           </div>
         </div>
+        )}
       </section>
     </main>
   );

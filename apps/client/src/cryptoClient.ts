@@ -68,6 +68,22 @@ export interface EncryptedAttachmentDraft {
   encryptedBytes: string;
 }
 
+export interface PasswordChangeCrypto {
+  authVerifier: string;
+  authKdf: KdfParams;
+  vaultKdf: KdfParams;
+  encryptedRootKey: string;
+  rootKeyNonce: string;
+}
+
+export interface RecoveryRotationCrypto {
+  recoverySecret: string;
+  recoveryAuthVerifier: string;
+  recoveryKdf: KdfParams;
+  recoveryEncryptedRootKey: string;
+  recoveryRootKeyNonce: string;
+}
+
 export async function createRegistrationCrypto(
   username: string,
   password: string
@@ -144,6 +160,53 @@ export async function createLoginAuthVerifier(
   authKdf: KdfParams
 ): Promise<string> {
   return toBase64(await deriveAuthVerifier(password, authKdf));
+}
+
+export async function createPasswordChangeCrypto(
+  rootKey: Uint8Array,
+  newPassword: string
+): Promise<PasswordChangeCrypto> {
+  const authKdf = createKdfParams();
+  const vaultKdf = createKdfParams();
+  const authVerifier = await deriveAuthVerifier(newPassword, authKdf);
+  const vaultKey = await deriveVaultWrappingKey(newPassword, vaultKdf);
+  const encryptedRoot = await encryptBytes(rootKey, vaultKey, ROOT_KEY_AAD);
+
+  return {
+    authVerifier: toBase64(authVerifier),
+    authKdf,
+    vaultKdf,
+    encryptedRootKey: encryptedRoot.cipher,
+    rootKeyNonce: encryptedRoot.nonce
+  };
+}
+
+export async function createRecoveryRotationCrypto(
+  rootKey: Uint8Array
+): Promise<RecoveryRotationCrypto> {
+  const recoverySecret = generateRecoverySecret();
+  const recoveryKdf = createKdfParams();
+  const recoveryAuthVerifier = await deriveRecoveryAuthVerifier(
+    recoverySecret,
+    recoveryKdf
+  );
+  const recoveryWrappingKey = await deriveRecoveryWrappingKey(
+    recoverySecret,
+    recoveryKdf
+  );
+  const recoveryEncryptedRoot = await encryptBytes(
+    rootKey,
+    recoveryWrappingKey,
+    ROOT_KEY_AAD
+  );
+
+  return {
+    recoverySecret,
+    recoveryAuthVerifier: toBase64(recoveryAuthVerifier),
+    recoveryKdf,
+    recoveryEncryptedRootKey: recoveryEncryptedRoot.cipher,
+    recoveryRootKeyNonce: recoveryEncryptedRoot.nonce
+  };
 }
 
 export async function createEncryptedNoteDraft(input: {

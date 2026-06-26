@@ -342,6 +342,19 @@ textarea {
   border-right: 0;
 }
 
+.settings-panel {
+  display: grid;
+  align-content: start;
+  gap: 22px;
+  padding: 18px;
+}
+
+.settings-panel section {
+  display: grid;
+  gap: 12px;
+  max-width: 460px;
+}
+
 .notice {
   border-left: 4px solid var(--brand);
   border-radius: 7px;

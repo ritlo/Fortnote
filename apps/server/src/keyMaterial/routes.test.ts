@@ -54,6 +54,54 @@ describe("key material routes", () => {
       .expect(409);
   });
 
+  it("updates account auth verifier with vault envelope", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "password_user");
+
+    await agent
+      .put("/api/key-material")
+      .set(csrfHeaders())
+      .send({
+        newAuthVerifier: "new_auth_verifier_password_user_abcdefghijklmnopqrstuvwxyz",
+        authKdf: {
+          salt: "new_auth_salt_password_user_abcdefghijklmnopqrstuvwxyz",
+          opsLimit: 4,
+          memLimit: 67108864,
+          version: 1
+        },
+        encryptedRootKey: "new_encrypted_root_key_abcdefghijklmnopqrstuvwxyz",
+        rootKeyNonce: "new_root_key_nonce_abcdefghijklmnopqrstuvwxyz",
+        vaultKdf: {
+          salt: "new_vault_salt_abcdefghijklmnopqrstuvwxyz",
+          opsLimit: 4,
+          memLimit: 67108864,
+          version: 1
+        },
+        keyMaterialVersion: 1
+      })
+      .expect(200);
+
+    await agent.post("/api/auth/logout").set(csrfHeaders()).expect(204);
+
+    await request(app)
+      .post("/api/auth/login")
+      .set(csrfHeaders())
+      .send({
+        username: "password_user",
+        authVerifier: "auth_verifier_password_user_abcdefghijklmnopqrstuvwxyz"
+      })
+      .expect(401);
+
+    await request(app)
+      .post("/api/auth/login")
+      .set(csrfHeaders())
+      .send({
+        username: "password_user",
+        authVerifier: "new_auth_verifier_password_user_abcdefghijklmnopqrstuvwxyz"
+      })
+      .expect(200);
+  });
+
   it("requires authentication", async () => {
     const app = createTestApp();
 

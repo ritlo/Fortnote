@@ -41,6 +41,12 @@ export interface KeyMaterialResponse {
   kdfOpsLimit: number;
   kdfMemLimit: number;
   kdfVersion: number;
+  recoveryEncryptedRootKey: string;
+  recoveryRootKeyNonce: string;
+  recoveryKdfSalt: string;
+  recoveryKdfOpsLimit: number;
+  recoveryKdfMemLimit: number;
+  recoveryKdfVersion: number;
   keyMaterialVersion: number;
 }
 
@@ -114,6 +120,19 @@ export interface UploadAttachmentPayload {
   encryptedBytes: string;
 }
 
+export interface UpdateKeyMaterialPayload {
+  newAuthVerifier?: string;
+  authKdf?: KdfParams;
+  encryptedRootKey: string;
+  rootKeyNonce: string;
+  vaultKdf: KdfParams;
+  recoveryAuthVerifier?: string;
+  recoveryKdf?: KdfParams;
+  recoveryEncryptedRootKey?: string;
+  recoveryRootKeyNonce?: string;
+  keyMaterialVersion: number;
+}
+
 export async function apiRequest<T>(
   path: string,
   init: RequestInit = {}
@@ -173,6 +192,15 @@ export function logout(): Promise<undefined> {
 
 export function getKeyMaterial(): Promise<KeyMaterialResponse> {
   return apiRequest<KeyMaterialResponse>("/key-material");
+}
+
+export function updateKeyMaterial(
+  payload: UpdateKeyMaterialPayload
+): Promise<{ keyMaterialVersion: number }> {
+  return apiRequest<{ keyMaterialVersion: number }>("/key-material", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
 }
 
 export function listNotes(deleted = false): Promise<{ notes: NoteSummary[] }> {

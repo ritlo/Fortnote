@@ -13,6 +13,8 @@ const kdfParamsSchema = z.object({
 });
 
 const updateKeyMaterialSchema = z.object({
+  newAuthVerifier: z.string().min(32).optional(),
+  authKdf: kdfParamsSchema.optional(),
   encryptedRootKey: z.string().min(32),
   rootKeyNonce: z.string().min(16),
   vaultKdf: kdfParamsSchema,
@@ -91,11 +93,48 @@ export function createKeyMaterialRouter(context: AppContext): Router {
     }
 
     const {
+      authKdf,
+      newAuthVerifier,
       recoveryAuthVerifier,
       recoveryEncryptedRootKey,
       recoveryKdf,
       recoveryRootKeyNonce
     } = parsed.data;
+
+    if ((authKdf && !newAuthVerifier) || (!authKdf && newAuthVerifier)) {
+      sendApiError(response, "bad_request", "Incomplete auth verifier payload");
+      return;
+    }
+
+    const newAuthVerifierHash = newAuthVerifier
+      ? await argon2.hash(newAuthVerifier)
+      : null;
+
+    const updateUserAuth = () => {
+      if (!authKdf || !newAuthVerifierHash) {
+        return;
+      }
+
+      context.db.sqlite
+        .prepare(
+          `UPDATE users
+           SET auth_verifier_hash = ?,
+               auth_kdf_salt = ?,
+               auth_kdf_ops_limit = ?,
+               auth_kdf_mem_limit = ?,
+               auth_kdf_version = ?,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`
+        )
+        .run(
+          newAuthVerifierHash,
+          authKdf.salt,
+          authKdf.opsLimit,
+          authKdf.memLimit,
+          authKdf.version,
+          session.userId
+        );
+    };
 
     if (
       recoveryEncryptedRootKey &&
@@ -105,7 +144,9 @@ export function createKeyMaterialRouter(context: AppContext): Router {
     ) {
       const recoveryAuthVerifierHash = await argon2.hash(recoveryAuthVerifier);
 
-      context.db.sqlite
+      const update = context.db.sqlite.transaction(() => {
+        updateUserAuth();
+        context.db.sqlite
         .prepare(
           `UPDATE user_key_material
            SET encrypted_root_key = ?,
@@ -141,8 +182,12 @@ export function createKeyMaterialRouter(context: AppContext): Router {
           recoveryKdf.version,
           session.userId
         );
+      });
+      update();
     } else {
-      context.db.sqlite
+      const update = context.db.sqlite.transaction(() => {
+        updateUserAuth();
+        context.db.sqlite
         .prepare(
           `UPDATE user_key_material
            SET encrypted_root_key = ?,
@@ -164,6 +209,8 @@ export function createKeyMaterialRouter(context: AppContext): Router {
           parsed.data.vaultKdf.version,
           session.userId
         );
+      });
+      update();
     }
 
     response.json({ keyMaterialVersion: current.keyMaterialVersion + 1 });
