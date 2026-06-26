@@ -910,6 +910,9 @@ export function App() {
         </div>
         <div className="status-pill">{status}</div>
         {error ? <p className="pane-error">{error}</p> : null}
+        {recoverySecret ? (
+          <p className="recovery-code">Recovery key: {recoverySecret}</p>
+        ) : null}
         <ul className="note-list">
           {filteredNotes.length === 0 ? (
             <li className="empty-state">

@@ -20,7 +20,10 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
   });
   await expect(page.getByText("plan.txt")).toBeVisible();
 
-  await page.getByRole("button", { name: "Delete" }).click();
+  await page
+    .locator(".editor-pane > .pane-header")
+    .getByRole("button", { name: "Delete" })
+    .click();
   await page.getByRole("button", { name: "Trash" }).click();
   await expect(page.getByRole("button", { name: /Launch plan/ })).toBeVisible();
 

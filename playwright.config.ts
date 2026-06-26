@@ -19,7 +19,7 @@ export default defineConfig({
   webServer: [
     {
       command:
-        "DATABASE_PATH=data/e2e.sqlite DATA_DIR=data/e2e-attachments COOKIE_SECURE=false pnpm --filter @ciphernotes/server dev",
+        "DATABASE_PATH=data/e2e.sqlite DATA_DIR=data/e2e-attachments COOKIE_SECURE=false ALLOWED_ORIGIN=http://127.0.0.1:5173 pnpm --filter @ciphernotes/server dev",
       url: "http://127.0.0.1:3001/api/health",
       reuseExistingServer: !process.env.CI,
       timeout: 120_000

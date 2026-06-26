@@ -75,4 +75,29 @@ describe("csrfGuard", () => {
     expect(called).toBe(true);
     expect(response.statusCode).toBe(200);
   });
+
+  it("allows localhost loopback aliases for development servers", () => {
+    const guard = csrfGuard("http://localhost:5173");
+    const request = {
+      method: "POST",
+      get: (name: string) => {
+        if (name === "origin") {
+          return "http://127.0.0.1:5173";
+        }
+        if (name === "sec-fetch-site") {
+          return "same-origin";
+        }
+        return undefined;
+      }
+    };
+    const response = createResponse();
+    let called = false;
+
+    guard(request as never, response as never, () => {
+      called = true;
+    });
+
+    expect(called).toBe(true);
+    expect(response.statusCode).toBe(200);
+  });
 });
