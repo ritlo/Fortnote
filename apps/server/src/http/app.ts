@@ -17,7 +17,26 @@ export interface AppContext {
 export function createApp(context: AppContext) {
   const app = express();
 
-  app.use(helmet());
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          baseUri: ["'self'"],
+          connectSrc: ["'self'"],
+          fontSrc: ["'self'"],
+          formAction: ["'self'"],
+          frameAncestors: ["'none'"],
+          imgSrc: ["'self'", "data:"],
+          mediaSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'"],
+          upgradeInsecureRequests: []
+        }
+      }
+    })
+  );
   app.use(express.json({ limit: "1mb" }));
   app.use(csrfGuard(context.config.allowedOrigin));
 
