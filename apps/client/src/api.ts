@@ -127,7 +127,7 @@ export interface UploadAttachmentPayload {
   encryptedAttachmentKey: string;
   attachmentKeyNonce: string;
   fileNonce: string;
-  encryptedBytes: string;
+  encryptedBytes: Uint8Array;
 }
 
 export interface UpdateKeyMaterialPayload {
@@ -268,7 +268,17 @@ export function uploadAttachment(
 ): Promise<{ id: string }> {
   return apiRequest<{ id: string }>(`/notes/${noteId}/attachments`, {
     method: "POST",
-    body: JSON.stringify(payload)
+    headers: {
+      "content-type": "application/octet-stream",
+      "x-fortnote-attachment-id": payload.id,
+      "x-fortnote-filename": encodeURIComponent(payload.filename),
+      "x-fortnote-mime-type": encodeURIComponent(payload.mimeType),
+      "x-fortnote-size": String(payload.size),
+      "x-fortnote-encrypted-attachment-key": payload.encryptedAttachmentKey,
+      "x-fortnote-attachment-key-nonce": payload.attachmentKeyNonce,
+      "x-fortnote-file-nonce": payload.fileNonce
+    },
+    body: new Blob([payload.encryptedBytes.slice()])
   });
 }
 

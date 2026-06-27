@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import { LIMITS } from "@fortnote/shared";
 import { requireSession } from "../auth/session.js";
@@ -19,9 +19,16 @@ const uploadAttachmentSchema = z.object({
   size: z.number().int().nonnegative(),
   encryptedAttachmentKey: z.string().min(16),
   attachmentKeyNonce: z.string().min(16),
-  fileNonce: z.string().min(16),
-  encryptedBytes: z.string().min(1)
+  fileNonce: z.string().min(16)
 });
+
+type UploadReadResult =
+  | { ok: true; bytes: Buffer }
+  | {
+      ok: false;
+      code: "bad_request" | "payload_too_large";
+      message: string;
+    };
 
 interface NoteOwnerRow {
   id: string;
@@ -83,16 +90,114 @@ function userStorageBytes(context: AppContext, userId: string): number {
   return row.total;
 }
 
+function headerValue(request: Request, name: string): string {
+  const value = request.get(name);
+  return value ? decodeHeaderValue(value) : "";
+}
+
+function decodeHeaderValue(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function uploadMetadata(request: Request) {
+  return {
+    id: headerValue(request, "x-fortnote-attachment-id"),
+    filename: headerValue(request, "x-fortnote-filename"),
+    mimeType: headerValue(request, "x-fortnote-mime-type"),
+    size: Number(headerValue(request, "x-fortnote-size")),
+    encryptedAttachmentKey: headerValue(
+      request,
+      "x-fortnote-encrypted-attachment-key"
+    ),
+    attachmentKeyNonce: headerValue(request, "x-fortnote-attachment-key-nonce"),
+    fileNonce: headerValue(request, "x-fortnote-file-nonce")
+  };
+}
+
+function declaredContentLength(request: Request): number | null {
+  const header = request.get("content-length");
+  if (!header) {
+    return null;
+  }
+
+  const parsed = Number(header);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : Number.NaN;
+}
+
+function requestChunkToBuffer(chunk: unknown): Buffer {
+  if (Buffer.isBuffer(chunk)) {
+    return chunk;
+  }
+  if (chunk instanceof Uint8Array) {
+    return Buffer.from(chunk);
+  }
+  if (typeof chunk === "string") {
+    return Buffer.from(chunk);
+  }
+  throw new Error("Unsupported upload chunk");
+}
+
+async function readEncryptedUpload(
+  request: Request,
+  expectedBytes: number
+): Promise<UploadReadResult> {
+  const contentLength = declaredContentLength(request);
+  if (Number.isNaN(contentLength)) {
+    return { ok: false, code: "bad_request", message: "Invalid Content-Length" };
+  }
+  if (contentLength !== null && contentLength !== expectedBytes) {
+    return {
+      ok: false,
+      code: "bad_request",
+      message: "Attachment size mismatch"
+    };
+  }
+
+  const chunks: Buffer[] = [];
+  let total = 0;
+
+  try {
+    for await (const chunk of request as AsyncIterable<unknown>) {
+      const buffer = requestChunkToBuffer(chunk);
+      total += buffer.byteLength;
+      if (total > LIMITS.maxAttachmentBytes) {
+        return {
+          ok: false,
+          code: "payload_too_large",
+          message: "Attachment too large"
+        };
+      }
+      chunks.push(buffer);
+    }
+  } catch {
+    return { ok: false, code: "bad_request", message: "Unable to read attachment" };
+  }
+
+  if (total !== expectedBytes) {
+    return {
+      ok: false,
+      code: "bad_request",
+      message: "Attachment size mismatch"
+    };
+  }
+
+  return { ok: true, bytes: Buffer.concat(chunks, total) };
+}
+
 export function createAttachmentsRouter(context: AppContext): Router {
   const router = Router();
 
-  router.post("/notes/:noteId/attachments", (request, response) => {
+  router.post("/notes/:noteId/attachments", async (request, response) => {
     const session = requireSession(context.db, request, response);
     if (!session) {
       return;
     }
 
-    const parsed = uploadAttachmentSchema.safeParse(request.body);
+    const parsed = uploadAttachmentSchema.safeParse(uploadMetadata(request));
     if (!parsed.success) {
       sendApiError(response, "bad_request", "Invalid attachment payload");
       return;
@@ -124,15 +229,15 @@ export function createAttachmentsRouter(context: AppContext): Router {
       return;
     }
 
-    const encryptedBytes = Buffer.from(parsed.data.encryptedBytes, "base64");
-    if (encryptedBytes.byteLength !== parsed.data.size) {
-      sendApiError(response, "bad_request", "Attachment size mismatch");
+    const encryptedBytes = await readEncryptedUpload(request, parsed.data.size);
+    if (!encryptedBytes.ok) {
+      sendApiError(response, encryptedBytes.code, encryptedBytes.message);
       return;
     }
 
     const storageId = crypto.randomUUID();
     try {
-      writeEncryptedAttachment(context.config, storageId, parsed.data.encryptedBytes);
+      writeEncryptedAttachment(context.config, storageId, encryptedBytes.bytes);
       context.db.sqlite
         .prepare(
           `INSERT INTO attachments (

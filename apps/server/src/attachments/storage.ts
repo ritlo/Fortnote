@@ -13,10 +13,10 @@ export function attachmentPath(config: ServerConfig, storageId: string): string 
 export function writeEncryptedAttachment(
   config: ServerConfig,
   storageId: string,
-  bytesBase64: string
+  bytes: Buffer
 ): void {
   ensureAttachmentDir(config);
-  fs.writeFileSync(attachmentPath(config, storageId), Buffer.from(bytesBase64, "base64"));
+  fs.writeFileSync(attachmentPath(config, storageId), bytes);
 }
 
 export function readEncryptedAttachment(

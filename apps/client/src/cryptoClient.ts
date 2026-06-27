@@ -65,7 +65,7 @@ export interface EncryptedAttachmentDraft {
   encryptedAttachmentKey: string;
   attachmentKeyNonce: string;
   fileNonce: string;
-  encryptedBytes: string;
+  encryptedBytes: Uint8Array;
 }
 
 export interface PasswordChangeCrypto {
@@ -358,7 +358,7 @@ export async function createEncryptedAttachmentDraft(input: {
     encryptedAttachmentKey: encryptedAttachmentKey.cipher,
     attachmentKeyNonce: encryptedAttachmentKey.nonce,
     fileNonce: encryptedFile.nonce,
-    encryptedBytes: encryptedFile.cipher
+    encryptedBytes: fromBase64(encryptedFile.cipher)
   };
 }
 
