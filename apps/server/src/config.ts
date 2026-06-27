@@ -11,7 +11,7 @@ export interface ServerConfig {
 export function getConfig(): ServerConfig {
   return {
     port: Number(process.env.PORT ?? 3001),
-    databasePath: process.env.DATABASE_PATH ?? "data/ciphernotes.sqlite",
+    databasePath: process.env.DATABASE_PATH ?? "data/fortnote.sqlite",
     dataDir: process.env.DATA_DIR ?? "data/attachments",
     cookieSecure: process.env.COOKIE_SECURE !== "false",
     allowedOrigin: process.env.ALLOWED_ORIGIN ?? "http://localhost:5173"

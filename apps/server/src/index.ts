@@ -7,5 +7,5 @@ const db = createDb(config);
 const app = createApp({ config, db });
 
 app.listen(config.port, () => {
-  console.log(`CipherNotes API listening on ${String(config.port)}`);
+  console.log(`Fortnote API listening on ${String(config.port)}`);
 });

@@ -6,7 +6,7 @@ import { createDb } from "../db/client.js";
 import { createApp } from "../http/app.js";
 
 export function createTestApp() {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ciphernotes-test-"));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fortnote-test-"));
   const config = {
     port: 0,
     databasePath: ":memory:",

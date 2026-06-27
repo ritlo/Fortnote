@@ -1,4 +1,4 @@
-export const APP_NAME = "CipherNotes";
+export const APP_NAME = "Fortnote";
 
 export const CRYPTO_FORMAT_VERSION = 1;
 

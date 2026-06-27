@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { Router } from "express";
 import { z } from "zod";
-import { LIMITS } from "@ciphernotes/shared";
+import { LIMITS } from "@fortnote/shared";
 import { requireSession } from "../auth/session.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";

@@ -15,13 +15,13 @@ import {
   utf8,
   type EncryptedPayload,
   type KdfParams
-} from "@ciphernotes/shared";
+} from "@fortnote/shared";
 import type { RegisterPayload } from "./api";
 
-const ROOT_KEY_AAD = utf8("ciphernotes:root-key:v1");
+const ROOT_KEY_AAD = utf8("fortnote:root-key:v1");
 
 function noteKeyAad(userId: string, noteId: string): Uint8Array {
-  return utf8(`ciphernotes:note-key:v1:${userId}:${noteId}`);
+  return utf8(`fortnote:note-key:v1:${userId}:${noteId}`);
 }
 
 function attachmentKeyAad(
@@ -30,7 +30,7 @@ function attachmentKeyAad(
   attachmentId: string
 ): Uint8Array {
   return utf8(
-    `ciphernotes:attachment-key:v1:${userId}:${noteId}:${attachmentId}`
+    `fortnote:attachment-key:v1:${userId}:${noteId}:${attachmentId}`
   );
 }
 
@@ -389,5 +389,5 @@ export async function decryptAttachmentBytes(input: {
 }
 
 function noteBodyAad(userId: string, noteId: string): Uint8Array {
-  return utf8(`ciphernotes:note-body:v1:${userId}:${noteId}`);
+  return utf8(`fortnote:note-body:v1:${userId}:${noteId}`);
 }

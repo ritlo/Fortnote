@@ -1,5 +1,5 @@
 {
-  "name": "@ciphernotes/server",
+  "name": "@fortnote/server",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "test": "vitest run src"
   },
   "dependencies": {
-    "@ciphernotes/shared": "file:../../packages/shared",
+    "@fortnote/shared": "file:../../packages/shared",
     "argon2": "^0.44.0",
     "better-sqlite3": "^12.11.1",
     "cookie": "^1.1.1",

@@ -641,7 +641,7 @@ export function App() {
           <div className="brand-row">
             <div className="brand-mark">CN</div>
             <div>
-              <h1>CipherNotes</h1>
+              <h1>Fortnote</h1>
               <p>One password signs in and decrypts your vault locally.</p>
             </div>
           </div>
@@ -748,7 +748,7 @@ export function App() {
       <aside className="sidebar">
         <div className="brand-row compact">
           <div className="brand-mark">CN</div>
-          <strong>CipherNotes</strong>
+          <strong>Fortnote</strong>
         </div>
         <button
           className={

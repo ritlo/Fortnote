@@ -4,10 +4,10 @@ export const KEY_BYTES = 32;
 export const XCHACHA_NONCE_BYTES = 24;
 
 export const DOMAIN_LABELS = {
-  auth: "ciphernotes/auth-verifier/v1",
-  vault: "ciphernotes/vault-wrap/v1",
-  recoveryAuth: "ciphernotes/recovery-auth/v1",
-  recoveryVault: "ciphernotes/recovery-wrap/v1"
+  auth: "fortnote/auth-verifier/v1",
+  vault: "fortnote/vault-wrap/v1",
+  recoveryAuth: "fortnote/recovery-auth/v1",
+  recoveryVault: "fortnote/recovery-wrap/v1"
 } as const;
 
 export const DEFAULT_KDF = {

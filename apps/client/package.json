@@ -1,5 +1,5 @@
 {
-  "name": "@ciphernotes/client",
+  "name": "@fortnote/client",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ciphernotes/shared": "file:../../packages/shared",
+    "@fortnote/shared": "file:../../packages/shared",
     "@vitejs/plugin-react": "^6.0.3",
     "dompurify": "^3.4.11",
     "lucide-react": "^1.21.0",

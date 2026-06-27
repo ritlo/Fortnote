@@ -35,7 +35,7 @@ importers:
 
   apps/client:
     dependencies:
-      '@ciphernotes/shared':
+      '@fortnote/shared':
         specifier: file:../../packages/shared
         version: link:../../packages/shared
       '@vitejs/plugin-react':
@@ -75,7 +75,7 @@ importers:
 
   apps/server:
     dependencies:
-      '@ciphernotes/shared':
+      '@fortnote/shared':
         specifier: file:../../packages/shared
         version: link:../../packages/shared
       argon2:

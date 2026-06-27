@@ -1,7 +1,7 @@
 import argon2 from "argon2";
 import { Router, type Request, type RequestHandler } from "express";
 import { z } from "zod";
-import { DEFAULT_KDF } from "@ciphernotes/shared";
+import { DEFAULT_KDF } from "@fortnote/shared";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import {

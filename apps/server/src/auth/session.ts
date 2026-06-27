@@ -3,7 +3,7 @@ import type { Request, Response } from "express";
 import type { AppDb } from "../db/client.js";
 import { sendApiError } from "../http/errors.js";
 
-const SESSION_COOKIE = "ciphernotes_session";
+const SESSION_COOKIE = "fortnote_session";
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const ABSOLUTE_TIMEOUT_MS = 30 * 24 * 60 * 60 * 1000;
 

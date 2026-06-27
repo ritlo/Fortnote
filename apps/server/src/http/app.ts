@@ -1,6 +1,6 @@
 import express from "express";
 import helmet from "helmet";
-import { LIMITS } from "@ciphernotes/shared";
+import { LIMITS } from "@fortnote/shared";
 import type { AppDb } from "../db/client.js";
 import type { ServerConfig } from "../config.js";
 import { createAttachmentsRouter } from "../attachments/routes.js";
