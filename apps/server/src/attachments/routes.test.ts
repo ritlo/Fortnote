@@ -1,5 +1,7 @@
 import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
+import { LIMITS } from "@fortnote/shared";
+import type { AppDb } from "../db/client.js";
 import {
   createTestApp,
   csrfHeaders,
@@ -17,7 +19,7 @@ function attachmentPayload(size = 8) {
     encryptedAttachmentKey: "encrypted_attachment_key_abcdefghijklmnopqrstuvwxyz",
     attachmentKeyNonce: "attachment_key_nonce_abcdefghijklmnopqrstuvwxyz",
     fileNonce: "attachment_file_nonce_abcdefghijklmnopqrstuvwxyz",
-    encryptedBytes: bytes.toString("base64")
+    encryptedBytes: bytes
   };
 }
 
@@ -30,6 +32,31 @@ async function createNote(agent: Awaited<ReturnType<typeof registerAgent>>) {
   return String(note.body.id);
 }
 
+function attachmentHeaders(payload: ReturnType<typeof attachmentPayload>) {
+  return {
+    "content-type": "application/octet-stream",
+    "x-fortnote-attachment-id": payload.id,
+    "x-fortnote-filename": encodeURIComponent(payload.filename),
+    "x-fortnote-mime-type": encodeURIComponent(payload.mimeType),
+    "x-fortnote-size": String(payload.size),
+    "x-fortnote-encrypted-attachment-key": payload.encryptedAttachmentKey,
+    "x-fortnote-attachment-key-nonce": payload.attachmentKeyNonce,
+    "x-fortnote-file-nonce": payload.fileNonce
+  };
+}
+
+function uploadAttachment(
+  agent: Awaited<ReturnType<typeof registerAgent>>,
+  noteId: string,
+  payload: ReturnType<typeof attachmentPayload>
+) {
+  return agent
+    .post(`/api/notes/${noteId}/attachments`)
+    .set(csrfHeaders())
+    .set(attachmentHeaders(payload))
+    .send(payload.encryptedBytes);
+}
+
 describe("attachments routes", () => {
   it("uploads, lists, downloads, and deletes encrypted attachments", async () => {
     const app = createTestApp();
@@ -37,11 +64,7 @@ describe("attachments routes", () => {
     const noteId = await createNote(agent);
     const payload = attachmentPayload();
 
-    await agent
-      .post(`/api/notes/${noteId}/attachments`)
-      .set(csrfHeaders())
-      .send(payload)
-      .expect(201);
+    await uploadAttachment(agent, noteId, payload).expect(201);
 
     const list = await agent
       .get(`/api/notes/${noteId}/attachments`)
@@ -56,7 +79,7 @@ describe("attachments routes", () => {
     const download = await agent.get(`/api/attachments/${payload.id}`).expect(200);
     expect(download.body).toMatchObject({
       id: payload.id,
-      encryptedBytes: payload.encryptedBytes
+      encryptedBytes: payload.encryptedBytes.toString("base64")
     });
 
     await agent
@@ -71,17 +94,68 @@ describe("attachments routes", () => {
     const agent = await registerAgent(app, "bad_attachment_user");
     const noteId = await createNote(agent);
 
-    await agent
-      .post(`/api/notes/${noteId}/attachments`)
-      .set(csrfHeaders())
-      .send({ ...attachmentPayload(), filename: "../secret.txt" })
-      .expect(400);
+    await uploadAttachment(agent, noteId, {
+      ...attachmentPayload(),
+      filename: "../secret.txt"
+    }).expect(400);
 
-    await agent
-      .post(`/api/notes/${noteId}/attachments`)
-      .set(csrfHeaders())
-      .send({ ...attachmentPayload(), size: 99 })
-      .expect(400);
+    await uploadAttachment(agent, noteId, { ...attachmentPayload(), size: 99 }).expect(
+      400
+    );
+  });
+
+  it("rejects oversized attachments before writing bytes", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "oversized_attachment_user");
+    const noteId = await createNote(agent);
+    const payload = {
+      ...attachmentPayload(),
+      size: LIMITS.maxAttachmentBytes + 1
+    };
+
+    await uploadAttachment(agent, noteId, payload).expect(413);
+    await agent.get(`/api/attachments/${payload.id}`).expect(404);
+  });
+
+  it("enforces per-user storage quota", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "quota_attachment_user");
+    const noteId = await createNote(agent);
+    const db = app.locals.db as AppDb;
+    const user = db.sqlite
+      .prepare("SELECT id FROM users WHERE username = ?")
+      .get("quota_attachment_user") as { id: string };
+    db.sqlite
+      .prepare(
+        `INSERT INTO attachments (
+          id,
+          note_id,
+          user_id,
+          filename,
+          mime_type,
+          size,
+          encrypted_attachment_key,
+          attachment_key_nonce,
+          file_cipher_path,
+          file_nonce
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        crypto.randomUUID(),
+        noteId,
+        user.id,
+        "seed.bin",
+        "application/octet-stream",
+        LIMITS.maxUserStorageBytes,
+        "seed_attachment_key_abcdefghijklmnopqrstuvwxyz",
+        "seed_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
+        "seed-storage-id",
+        "seed_file_nonce_abcdefghijklmnopqrstuvwxyz"
+      );
+    const payload = attachmentPayload();
+
+    await uploadAttachment(agent, noteId, payload).expect(413);
+    await agent.get(`/api/attachments/${payload.id}`).expect(404);
   });
 
   it("rejects attachments on deleted notes", async () => {
@@ -91,11 +165,7 @@ describe("attachments routes", () => {
 
     await agent.delete(`/api/notes/${noteId}`).set(csrfHeaders()).expect(204);
 
-    await agent
-      .post(`/api/notes/${noteId}/attachments`)
-      .set(csrfHeaders())
-      .send(attachmentPayload())
-      .expect(409);
+    await uploadAttachment(agent, noteId, attachmentPayload()).expect(409);
   });
 
   it("prevents cross-user attachment access", async () => {
@@ -105,11 +175,7 @@ describe("attachments routes", () => {
     const noteId = await createNote(alice);
     const payload = attachmentPayload();
 
-    await alice
-      .post(`/api/notes/${noteId}/attachments`)
-      .set(csrfHeaders())
-      .send(payload)
-      .expect(201);
+    await uploadAttachment(alice, noteId, payload).expect(201);
 
     await bob.get(`/api/attachments/${payload.id}`).expect(404);
   });
@@ -120,11 +186,7 @@ describe("attachments routes", () => {
     const noteId = await createNote(agent);
     const payload = attachmentPayload();
 
-    await agent
-      .post(`/api/notes/${noteId}/attachments`)
-      .set(csrfHeaders())
-      .send(payload)
-      .expect(201);
+    await uploadAttachment(agent, noteId, payload).expect(201);
 
     await agent
       .delete(`/api/notes/${noteId}/permanent`)

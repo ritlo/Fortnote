@@ -14,7 +14,11 @@ export function createTestApp() {
     cookieSecure: false,
     allowedOrigin: "http://localhost:5173"
   };
-  return createApp({ config, db: createDb(config) });
+  const db = createDb(config);
+  const app = createApp({ config, db });
+  app.locals.db = db;
+  app.locals.config = config;
+  return app;
 }
 
 export function csrfHeaders() {
