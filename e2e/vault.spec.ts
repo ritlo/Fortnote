@@ -52,6 +52,55 @@ test("recovers a vault with the saved recovery key", async ({ page }) => {
   await expect(page.getByRole("button", { name: new RegExp(noteTitle) })).toBeVisible();
 });
 
+test("sanitizes malicious markdown preview content", async ({ page }) => {
+  const account = uniqueAccount("markdown");
+  const noteTitle = `Markdown note ${account.suffix}`;
+  const maliciousBody =
+    "# Safe heading\n\n<script>window.__markdownExecuted = true</script>\n<img src=x onerror=\"window.__markdownExecuted = true\">";
+
+  await register(page, account.username, account.password);
+  await createNote(page, noteTitle, maliciousBody);
+
+  await expect(page.locator(".preview-body h1", { hasText: "Safe heading" })).toBeVisible();
+  await expect(page.locator(".preview-body script")).toHaveCount(0);
+  await expect(page.locator(".preview-body img")).toHaveCount(0);
+  await expect(
+    page.locator(".preview-body", { hasText: "<script>window.__markdownExecuted = true</script>" })
+  ).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => Boolean(window.__markdownExecuted)))
+    .toBe(false);
+});
+
+test("lock and logout clear decrypted note content from the UI", async ({ page }) => {
+  const account = uniqueAccount("lock");
+  const noteTitle = `Lock note ${account.suffix}`;
+  const noteBody = `Sensitive note body ${account.suffix}`;
+
+  await register(page, account.username, account.password);
+  await createNote(page, noteTitle, noteBody);
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Lock vault" }).click();
+
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+  await expect(page.getByText(noteBody)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: new RegExp(noteTitle) })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByLabel("Username").fill(account.username);
+  await page.getByLabel("Account password").fill(account.password);
+  await page.getByRole("button", { name: "Sign in and decrypt" }).click();
+
+  await expect(page.locator(".preview-body", { hasText: noteBody })).toBeVisible();
+
+  await page.getByRole("button", { name: "Logout" }).click();
+
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+  await expect(page.getByText(noteBody)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: new RegExp(noteTitle) })).toHaveCount(0);
+});
+
 async function register(
   page: Page,
   username: string,
