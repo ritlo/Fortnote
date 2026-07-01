@@ -36,15 +36,28 @@ describe("notes and folders routes", () => {
       .expect(200);
 
 	    expect(updated.body).toMatchObject({ version: 2 });
-	    const membership = app.locals.db.sqlite
-	      .prepare(
-	        `SELECT role, status
-	         FROM note_memberships
+    const membership = app.locals.db.sqlite
+      .prepare(
+        `SELECT role, status
+         FROM note_memberships
 	         WHERE note_id = ?`
 	      )
-	      .get(note.body.id) as { role: string; status: string } | undefined;
-	    expect(membership).toEqual({ role: "owner", status: "active" });
-	  });
+      .get(note.body.id) as { role: string; status: string } | undefined;
+    expect(membership).toEqual({ role: "owner", status: "active" });
+
+    const events = app.locals.db.sqlite
+      .prepare(
+        `SELECT event_type AS eventType, note_version AS noteVersion
+         FROM note_events
+         WHERE note_id = ?
+         ORDER BY cursor`
+      )
+      .all(note.body.id) as { eventType: string; noteVersion: number }[];
+    expect(events).toEqual([
+      { eventType: "note.created", noteVersion: 1 },
+      { eventType: "note.updated", noteVersion: 2 }
+    ]);
+  });
 
   it("rejects stale note versions", async () => {
     const app = createTestApp();
@@ -167,5 +180,30 @@ describe("notes and folders routes", () => {
       .expect(204);
 
     await agent.get(`/api/notes/${String(created.body.id)}`).expect(404);
+
+    const events = app.locals.db.sqlite
+      .prepare(
+        `SELECT event_type AS eventType,
+                note_version AS noteVersion,
+                payload_metadata AS payloadMetadata
+         FROM note_events
+         WHERE note_id = ?
+         ORDER BY cursor`
+      )
+      .all(created.body.id) as {
+      eventType: string;
+      noteVersion: number;
+      payloadMetadata: string | null;
+    }[];
+    expect(events.map((event) => event.eventType)).toEqual([
+      "note.created",
+      "note.deleted",
+      "note.restored",
+      "note.permanently_deleted"
+    ]);
+    expect(events.at(-1)?.noteVersion).toBe(1);
+    expect(JSON.parse(events.at(-1)?.payloadMetadata ?? "{}")).toMatchObject({
+      visibleUserIds: [expect.any(String)]
+    });
   });
 });

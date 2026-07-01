@@ -124,7 +124,7 @@ export function runMigrations(sqlite: Database.Database): void {
 	      event_id TEXT NOT NULL UNIQUE,
 	      resource_type TEXT NOT NULL,
 	      resource_id TEXT NOT NULL,
-	      note_id TEXT REFERENCES notes(id) ON DELETE CASCADE,
+	      note_id TEXT,
 	      actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	      event_type TEXT NOT NULL,
 	      note_version INTEGER,
@@ -146,6 +146,7 @@ export function runMigrations(sqlite: Database.Database): void {
 
   addColumnIfMissing(sqlite, "notes", "crypto_owner_id", "TEXT");
   sqlite.exec("UPDATE notes SET crypto_owner_id = user_id WHERE crypto_owner_id IS NULL");
+  removeNoteEventsNoteCascade(sqlite);
   backfillOwnerMemberships(sqlite);
 }
 
@@ -178,6 +179,72 @@ function backfillOwnerMemberships(sqlite: Database.Database): void {
       )
       SELECT id, user_id, 'owner', 'active', created_at, updated_at
       FROM notes`
-    )
-    .run();
+	    )
+	    .run();
+}
+
+function removeNoteEventsNoteCascade(sqlite: Database.Database): void {
+  const foreignKeys = sqlite.prepare("PRAGMA foreign_key_list(note_events)").all() as {
+    table: string;
+    from: string;
+  }[];
+  const hasNoteCascade = foreignKeys.some(
+    (foreignKey) => foreignKey.table === "notes" && foreignKey.from === "note_id"
+  );
+  if (!hasNoteCascade) {
+    return;
+  }
+
+  sqlite.pragma("foreign_keys = OFF");
+  try {
+    sqlite.exec(`
+      ALTER TABLE note_events RENAME TO note_events_old;
+
+      CREATE TABLE note_events (
+        cursor INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL UNIQUE,
+        resource_type TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        note_id TEXT,
+        actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        note_version INTEGER,
+        payload_metadata TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      INSERT INTO note_events (
+        cursor,
+        event_id,
+        resource_type,
+        resource_id,
+        note_id,
+        actor_user_id,
+        event_type,
+        note_version,
+        payload_metadata,
+        created_at
+      )
+      SELECT cursor,
+             event_id,
+             resource_type,
+             resource_id,
+             note_id,
+             actor_user_id,
+             event_type,
+             note_version,
+             payload_metadata,
+             created_at
+      FROM note_events_old;
+
+      DROP TABLE note_events_old;
+
+      CREATE INDEX IF NOT EXISTS idx_note_events_note_cursor
+        ON note_events (note_id, cursor);
+      CREATE INDEX IF NOT EXISTS idx_note_events_resource_cursor
+        ON note_events (resource_type, resource_id, cursor);
+    `);
+  } finally {
+    sqlite.pragma("foreign_keys = ON");
+  }
 }

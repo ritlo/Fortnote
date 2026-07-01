@@ -138,7 +138,7 @@ export const noteEvents = sqliteTable("note_events", {
   eventId: text("event_id").notNull().unique(),
   resourceType: text("resource_type").notNull(),
   resourceId: text("resource_id").notNull(),
-  noteId: text("note_id").references(() => notes.id, { onDelete: "cascade" }),
+  noteId: text("note_id"),
   actorUserId: text("actor_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   eventType: text("event_type").notNull(),
   noteVersion: integer("note_version"),

@@ -5,6 +5,7 @@ import { sendApiError } from "../http/errors.js";
 import { requireSession } from "../auth/session.js";
 import { deleteEncryptedAttachment } from "../attachments/storage.js";
 import { canEditNote, canOwnNote, getNoteAccess } from "./access.js";
+import { writeNoteEvent } from "./events.js";
 
 const createNoteSchema = z.object({
   id: z.uuid(),
@@ -133,6 +134,12 @@ export function createNotesRouter(context: AppContext): Router {
            VALUES (?, ?, 'owner', 'active')`
         )
         .run(parsed.data.id, session.userId);
+      writeNoteEvent(context, {
+        noteId: parsed.data.id,
+        actorUserId: session.userId,
+        eventType: "note.created",
+        noteVersion: 1
+      });
     });
     createOwnedNote();
 
@@ -215,30 +222,40 @@ export function createNotesRouter(context: AppContext): Router {
     }
 
     const title = parsed.data.title ?? undefined;
-    context.db.sqlite
-      .prepare(
-        `UPDATE notes
-         SET folder_id = ?,
-             title = COALESCE(?, title),
-             content_cipher = ?,
-             content_nonce = ?,
-             content_length = ?,
-             content_updated_at = CURRENT_TIMESTAMP,
-             version = version + 1,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ? AND user_id = ?`
-      )
-      .run(
-        folderId,
-        title,
-        parsed.data.contentCipher,
-        parsed.data.contentNonce,
-        parsed.data.contentLength,
-        access.noteId,
-        session.userId
-      );
+    const nextVersion = access.version + 1;
+    const updateNote = context.db.sqlite.transaction(() => {
+      context.db.sqlite
+        .prepare(
+          `UPDATE notes
+           SET folder_id = ?,
+               title = COALESCE(?, title),
+               content_cipher = ?,
+               content_nonce = ?,
+               content_length = ?,
+               content_updated_at = CURRENT_TIMESTAMP,
+               version = version + 1,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND user_id = ?`
+        )
+        .run(
+          folderId,
+          title,
+          parsed.data.contentCipher,
+          parsed.data.contentNonce,
+          parsed.data.contentLength,
+          access.noteId,
+          session.userId
+        );
+      writeNoteEvent(context, {
+        noteId: access.noteId,
+        actorUserId: session.userId,
+        eventType: "note.updated",
+        noteVersion: nextVersion
+      });
+    });
+    updateNote();
 
-    response.json({ id: access.noteId, version: access.version + 1 });
+    response.json({ id: access.noteId, version: nextVersion });
   });
 
   router.delete("/:id", (request, response) => {
@@ -253,15 +270,24 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    context.db.sqlite
-      .prepare(
-        `UPDATE notes
-         SET is_deleted = 1,
-             deleted_at = CURRENT_TIMESTAMP,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ? AND user_id = ?`
-      )
-      .run(access.noteId, session.userId);
+    const deleteNote = context.db.sqlite.transaction(() => {
+      context.db.sqlite
+        .prepare(
+          `UPDATE notes
+           SET is_deleted = 1,
+               deleted_at = CURRENT_TIMESTAMP,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND user_id = ?`
+        )
+        .run(access.noteId, session.userId);
+      writeNoteEvent(context, {
+        noteId: access.noteId,
+        actorUserId: session.userId,
+        eventType: "note.deleted",
+        noteVersion: access.version
+      });
+    });
+    deleteNote();
 
     response.status(204).send();
   });
@@ -278,15 +304,24 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    context.db.sqlite
-      .prepare(
-        `UPDATE notes
-         SET is_deleted = 0,
-             deleted_at = NULL,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ? AND user_id = ?`
-      )
-      .run(access.noteId, session.userId);
+    const restoreNote = context.db.sqlite.transaction(() => {
+      context.db.sqlite
+        .prepare(
+          `UPDATE notes
+           SET is_deleted = 0,
+               deleted_at = NULL,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND user_id = ?`
+        )
+        .run(access.noteId, session.userId);
+      writeNoteEvent(context, {
+        noteId: access.noteId,
+        actorUserId: session.userId,
+        eventType: "note.restored",
+        noteVersion: access.version
+      });
+    });
+    restoreNote();
 
     response.json({ id: access.noteId });
   });
@@ -309,10 +344,27 @@ export function createNotesRouter(context: AppContext): Router {
       )
       .all(access.noteId, session.userId) as { fileCipherPath: string }[];
 
+    const memberRows = context.db.sqlite
+      .prepare(
+        `SELECT user_id AS userId
+         FROM note_memberships
+         WHERE note_id = ? AND status = 'active'`
+      )
+      .all(access.noteId) as { userId: string }[];
+
     const remove = context.db.sqlite.transaction(() => {
       context.db.sqlite
         .prepare("DELETE FROM notes WHERE id = ? AND user_id = ?")
         .run(access.noteId, session.userId);
+      writeNoteEvent(context, {
+        noteId: access.noteId,
+        actorUserId: session.userId,
+        eventType: "note.permanently_deleted",
+        noteVersion: access.version,
+        payloadMetadata: {
+          visibleUserIds: memberRows.map((row) => row.userId)
+        }
+      });
     });
     remove();
     for (const row of rows) {
