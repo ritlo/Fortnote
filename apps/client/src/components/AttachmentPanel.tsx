@@ -1,0 +1,52 @@
+import type { AttachmentSummary } from "../api";
+import { formatBytes } from "../lib/browser";
+
+interface AttachmentPanelProps {
+  selectedAttachments: AttachmentSummary[];
+  downloadSelectedAttachment: (attachment: AttachmentSummary) => Promise<void>;
+  removeSelectedAttachment: (attachmentId: string) => Promise<void>;
+}
+
+export function AttachmentPanel({
+  selectedAttachments,
+  downloadSelectedAttachment,
+  removeSelectedAttachment
+}: AttachmentPanelProps) {
+  return (
+    <div className="attachment-panel">
+      <h3>Attachments</h3>
+      {selectedAttachments.length === 0 ? (
+        <p className="muted">No attachments.</p>
+      ) : (
+        <ul className="attachment-list">
+          {selectedAttachments.map((attachment) => (
+            <li key={attachment.id}>
+              <span>
+                <strong>{attachment.filename}</strong>
+                <small>{formatBytes(attachment.size)}</small>
+              </span>
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => {
+                  void downloadSelectedAttachment(attachment);
+                }}
+              >
+                Download
+              </button>
+              <button
+                className="text-button danger"
+                type="button"
+                onClick={() => {
+                  void removeSelectedAttachment(attachment.id);
+                }}
+              >
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
