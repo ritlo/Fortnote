@@ -162,6 +162,33 @@ export interface PublicSharingKey {
   createdAt: string;
 }
 
+export interface NoteMembership {
+  userId: string;
+  username: string;
+  role: "owner" | "editor" | "viewer";
+  status: "active" | "invited" | "revoked";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InviteNoteMemberPayload {
+  username: string;
+  role: "editor" | "viewer";
+  sharingKeyVersion: number;
+  encryptedNoteKey: string;
+  formatVersion: number;
+}
+
+export interface NoteKeyShare {
+  noteId: string;
+  recipientUserId: string;
+  senderUserId: string;
+  sharingKeyVersion: number;
+  encryptedNoteKey: string;
+  formatVersion: number;
+  createdAt: string;
+}
+
 export interface StoreSharingKeyPayload {
   sharingKeyVersion: number;
   publicKey: string;
@@ -302,6 +329,46 @@ export function updateNote(
     method: "PUT",
     body: JSON.stringify(payload)
   });
+}
+
+export function listNoteMemberships(
+  noteId: string
+): Promise<{ memberships: NoteMembership[] }> {
+  return apiRequest<{ memberships: NoteMembership[] }>(`/notes/${noteId}/memberships`);
+}
+
+export function inviteNoteMember(
+  noteId: string,
+  payload: InviteNoteMemberPayload
+): Promise<NoteMembership> {
+  return apiRequest<NoteMembership>(`/notes/${noteId}/memberships`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateNoteMemberRole(
+  noteId: string,
+  userId: string,
+  role: "editor" | "viewer"
+): Promise<Pick<NoteMembership, "userId" | "role" | "status"> & { noteId: string }> {
+  return apiRequest<Pick<NoteMembership, "userId" | "role" | "status"> & { noteId: string }>(
+    `/notes/${noteId}/memberships/${userId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ role })
+    }
+  );
+}
+
+export function revokeNoteMember(noteId: string, userId: string): Promise<undefined> {
+  return apiRequest<undefined>(`/notes/${noteId}/memberships/${userId}`, {
+    method: "DELETE"
+  });
+}
+
+export function getNoteKeyShare(noteId: string): Promise<NoteKeyShare> {
+  return apiRequest<NoteKeyShare>(`/notes/${noteId}/key-share`);
 }
 
 export function listAttachments(noteId: string): Promise<{ attachments: AttachmentSummary[] }> {

@@ -6,6 +6,16 @@ import {
   registerAgent
 } from "../test/http.js";
 
+function sharingKeyPayload(version = 1) {
+  return {
+    sharingKeyVersion: version,
+    publicKey: `public_sharing_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
+    encryptedPrivateKey: `encrypted_private_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
+    privateKeyNonce: `private_key_nonce_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
+    formatVersion: 1
+  };
+}
+
 describe("notes and folders routes", () => {
 	  it("creates folder and note, then updates with optimistic version", async () => {
 	    const app = createTestApp();
@@ -127,6 +137,119 @@ describe("notes and folders routes", () => {
     await agent.get(`/api/notes/${String(created.body.id)}`).expect(404);
     const listed = await agent.get("/api/notes").expect(200);
     expect(listed.body.notes).toHaveLength(0);
+  });
+
+  it("invites, updates, and revokes note collaborators with key shares", async () => {
+    const app = createTestApp();
+    const alice = await registerAgent(app, "member_alice");
+    const bob = await registerAgent(app, "member_bob");
+    await registerAgent(app, "member_carol");
+
+    const bobSession = await bob.get("/api/auth/me").expect(200);
+    const bobUserId = String(bobSession.body.id);
+
+    await bob
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload())
+      .expect(201);
+
+    const created = await alice
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+
+    await alice
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send({
+        username: "member_carol",
+        role: "viewer",
+        sharingKeyVersion: 1,
+        encryptedNoteKey: "encrypted_share_for_carol_abcdefghijklmnopqrstuvwxyz",
+        formatVersion: 1
+      })
+      .expect(404);
+
+    const invited = await alice
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send({
+        username: "member_bob",
+        role: "editor",
+        sharingKeyVersion: 1,
+        encryptedNoteKey: "encrypted_share_for_bob_abcdefghijklmnopqrstuvwxyz",
+        formatVersion: 1
+      })
+      .expect(201);
+    expect(invited.body).toMatchObject({
+      userId: bobUserId,
+      username: "member_bob",
+      role: "editor",
+      status: "active"
+    });
+
+    const keyShare = await bob.get(`/api/notes/${noteId}/key-share`).expect(200);
+    expect(keyShare.body).toMatchObject({
+      noteId,
+      recipientUserId: bobUserId,
+      senderUserId: expect.any(String),
+      sharingKeyVersion: 1,
+      encryptedNoteKey: "encrypted_share_for_bob_abcdefghijklmnopqrstuvwxyz",
+      formatVersion: 1
+    });
+
+    const memberships = await bob.get(`/api/notes/${noteId}/memberships`).expect(200);
+    expect(memberships.body.memberships).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ username: "member_alice", role: "owner" }),
+        expect.objectContaining({ username: "member_bob", role: "editor" })
+      ])
+    );
+
+    await alice
+      .patch(`/api/notes/${noteId}/memberships/${bobUserId}`)
+      .set(csrfHeaders())
+      .send({ role: "viewer" })
+      .expect(200);
+
+    await alice
+      .delete(`/api/notes/${noteId}/memberships/${bobUserId}`)
+      .set(csrfHeaders())
+      .expect(204);
+
+    await bob.get(`/api/notes/${noteId}/key-share`).expect(404);
+    await bob.get(`/api/notes/${noteId}/memberships`).expect(404);
+
+    const events = app.locals.db.sqlite
+      .prepare(
+        `SELECT event_type AS eventType,
+                resource_type AS resourceType,
+                payload_metadata AS payloadMetadata
+         FROM note_events
+         WHERE note_id = ?
+         ORDER BY cursor`
+      )
+      .all(noteId) as {
+      eventType: string;
+      resourceType: string;
+      payloadMetadata: string | null;
+    }[];
+
+    expect(events.map((event) => event.eventType)).toEqual([
+      "note.created",
+      "membership.added",
+      "membership.role_updated",
+      "membership.revoked"
+    ]);
+    expect(events.slice(1).every((event) => event.resourceType === "membership")).toBe(
+      true
+    );
+    expect(JSON.parse(events.at(-1)?.payloadMetadata ?? "{}")).toMatchObject({
+      membershipUserId: bobUserId
+    });
   });
 
   it("enforces one-level folder nesting", async () => {

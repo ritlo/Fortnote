@@ -6,13 +6,18 @@ export type NoteEventType =
   | "note.updated"
   | "note.deleted"
   | "note.restored"
-  | "note.permanently_deleted";
+  | "note.permanently_deleted"
+  | "membership.added"
+  | "membership.role_updated"
+  | "membership.revoked";
 
 interface WriteNoteEventInput {
   noteId: string;
   actorUserId: string;
   eventType: NoteEventType;
   noteVersion: number | null;
+  resourceType?: "note" | "membership";
+  resourceId?: string;
   payloadMetadata?: Record<string, unknown>;
 }
 
@@ -23,6 +28,8 @@ export function writeNoteEvent(
     actorUserId,
     eventType,
     noteVersion,
+    resourceType = "note",
+    resourceId = noteId,
     payloadMetadata
   }: WriteNoteEventInput
 ): void {
@@ -37,11 +44,12 @@ export function writeNoteEvent(
         event_type,
         note_version,
         payload_metadata
-      ) VALUES (?, 'note', ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       randomUUID(),
-      noteId,
+      resourceType,
+      resourceId,
       noteId,
       actorUserId,
       eventType,

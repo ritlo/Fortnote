@@ -4,7 +4,7 @@ import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { requireSession } from "../auth/session.js";
 import { deleteEncryptedAttachment } from "../attachments/storage.js";
-import { canEditNote, canOwnNote, getNoteAccess } from "./access.js";
+import { canEditNote, canOwnNote, canReadNote, getNoteAccess } from "./access.js";
 import { writeNoteEvent } from "./events.js";
 
 const createNoteSchema = z.object({
@@ -25,6 +25,20 @@ const updateNoteSchema = z.object({
   contentNonce: z.string().min(16),
   contentLength: z.number().int().nonnegative(),
   version: z.number().int().positive()
+});
+
+const memberRoleSchema = z.enum(["editor", "viewer"]);
+
+const inviteMemberSchema = z.object({
+  username: z.string().min(1).max(64),
+  role: memberRoleSchema,
+  sharingKeyVersion: z.number().int().positive(),
+  encryptedNoteKey: z.string().min(32),
+  formatVersion: z.number().int().positive()
+});
+
+const updateMemberSchema = z.object({
+  role: memberRoleSchema
 });
 
 function folderBelongsToUser(
@@ -179,6 +193,308 @@ export function createNotesRouter(context: AppContext): Router {
 
     if (!row) {
       sendApiError(response, "not_found", "Note not found");
+      return;
+    }
+
+    response.json(row);
+  });
+
+  router.get("/:id/memberships", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+
+    const access = getNoteAccess(context, request.params.id, session.userId);
+    if (!canReadNote(access)) {
+      sendApiError(response, "not_found", "Note not found");
+      return;
+    }
+
+    const rows = context.db.sqlite
+      .prepare(
+        `SELECT note_memberships.user_id AS userId,
+                users.username,
+                note_memberships.role,
+                note_memberships.status,
+                note_memberships.created_at AS createdAt,
+                note_memberships.updated_at AS updatedAt
+         FROM note_memberships
+         JOIN users ON users.id = note_memberships.user_id
+         WHERE note_memberships.note_id = ?
+         ORDER BY note_memberships.role = 'owner' DESC, users.username`
+      )
+      .all(access.noteId);
+
+    response.json({ memberships: rows });
+  });
+
+  router.post("/:id/memberships", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+
+    const parsed = inviteMemberSchema.safeParse(request.body);
+    if (!parsed.success) {
+      sendApiError(response, "bad_request", "Invalid membership payload");
+      return;
+    }
+
+    const access = getNoteAccess(context, request.params.id, session.userId);
+    if (!canOwnNote(access)) {
+      sendApiError(response, "not_found", "Note not found");
+      return;
+    }
+
+    const recipient = context.db.sqlite
+      .prepare(
+        `SELECT users.id AS userId,
+                users.username
+         FROM users
+         JOIN user_sharing_keys ON user_sharing_keys.user_id = users.id
+         WHERE users.username = ?
+           AND user_sharing_keys.sharing_key_version = ?`
+      )
+      .get(parsed.data.username, parsed.data.sharingKeyVersion) as
+      | { userId: string; username: string }
+      | undefined;
+
+    if (!recipient) {
+      sendApiError(response, "not_found", "Sharing key not found");
+      return;
+    }
+    if (recipient.userId === session.userId) {
+      sendApiError(response, "bad_request", "Cannot invite yourself");
+      return;
+    }
+
+    const existing = context.db.sqlite
+      .prepare(
+        `SELECT role
+         FROM note_memberships
+         WHERE note_id = ? AND user_id = ?`
+      )
+      .get(access.noteId, recipient.userId) as { role: string } | undefined;
+    if (existing?.role === "owner") {
+      sendApiError(response, "bad_request", "Cannot replace note owner");
+      return;
+    }
+
+    const inviteMember = context.db.sqlite.transaction(() => {
+      context.db.sqlite
+        .prepare(
+          `INSERT INTO note_memberships (note_id, user_id, role, status)
+           VALUES (?, ?, ?, 'active')
+           ON CONFLICT(note_id, user_id) DO UPDATE SET
+             role = excluded.role,
+             status = 'active',
+             updated_at = CURRENT_TIMESTAMP`
+        )
+        .run(access.noteId, recipient.userId, parsed.data.role);
+      context.db.sqlite
+        .prepare(
+          `INSERT INTO note_key_shares (
+            note_id,
+            recipient_user_id,
+            sender_user_id,
+            sharing_key_version,
+            encrypted_note_key,
+            format_version
+          ) VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(note_id, recipient_user_id) DO UPDATE SET
+            sender_user_id = excluded.sender_user_id,
+            sharing_key_version = excluded.sharing_key_version,
+            encrypted_note_key = excluded.encrypted_note_key,
+            format_version = excluded.format_version,
+            created_at = CURRENT_TIMESTAMP`
+        )
+        .run(
+          access.noteId,
+          recipient.userId,
+          session.userId,
+          parsed.data.sharingKeyVersion,
+          parsed.data.encryptedNoteKey,
+          parsed.data.formatVersion
+        );
+      writeNoteEvent(context, {
+        noteId: access.noteId,
+        actorUserId: session.userId,
+        eventType: "membership.added",
+        noteVersion: access.version,
+        resourceType: "membership",
+        resourceId: `${access.noteId}:${recipient.userId}`,
+        payloadMetadata: {
+          membershipUserId: recipient.userId,
+          role: parsed.data.role
+        }
+      });
+    });
+    inviteMember();
+
+    response.status(201).json({
+      noteId: access.noteId,
+      userId: recipient.userId,
+      username: recipient.username,
+      role: parsed.data.role,
+      status: "active"
+    });
+  });
+
+  router.patch("/:id/memberships/:userId", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+
+    const parsed = updateMemberSchema.safeParse(request.body);
+    if (!parsed.success) {
+      sendApiError(response, "bad_request", "Invalid membership payload");
+      return;
+    }
+
+    const access = getNoteAccess(context, request.params.id, session.userId);
+    if (!canOwnNote(access)) {
+      sendApiError(response, "not_found", "Note not found");
+      return;
+    }
+    if (request.params.userId === session.userId) {
+      sendApiError(response, "bad_request", "Cannot change owner role");
+      return;
+    }
+
+    const updateMember = context.db.sqlite.transaction(() => {
+      const result = context.db.sqlite
+        .prepare(
+          `UPDATE note_memberships
+           SET role = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE note_id = ?
+             AND user_id = ?
+             AND role != 'owner'
+             AND status = 'active'`
+        )
+        .run(parsed.data.role, access.noteId, request.params.userId);
+      if (result.changes === 0) {
+        return false;
+      }
+      writeNoteEvent(context, {
+        noteId: access.noteId,
+        actorUserId: session.userId,
+        eventType: "membership.role_updated",
+        noteVersion: access.version,
+        resourceType: "membership",
+        resourceId: `${access.noteId}:${request.params.userId}`,
+        payloadMetadata: {
+          membershipUserId: request.params.userId,
+          role: parsed.data.role
+        }
+      });
+      return true;
+    });
+
+    if (!updateMember()) {
+      sendApiError(response, "not_found", "Membership not found");
+      return;
+    }
+
+    response.json({
+      noteId: access.noteId,
+      userId: request.params.userId,
+      role: parsed.data.role,
+      status: "active"
+    });
+  });
+
+  router.delete("/:id/memberships/:userId", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+
+    const access = getNoteAccess(context, request.params.id, session.userId);
+    if (!canOwnNote(access)) {
+      sendApiError(response, "not_found", "Note not found");
+      return;
+    }
+    if (request.params.userId === session.userId) {
+      sendApiError(response, "bad_request", "Cannot revoke note owner");
+      return;
+    }
+
+    const revokeMember = context.db.sqlite.transaction(() => {
+      const result = context.db.sqlite
+        .prepare(
+          `UPDATE note_memberships
+           SET status = 'revoked', updated_at = CURRENT_TIMESTAMP
+           WHERE note_id = ?
+             AND user_id = ?
+             AND role != 'owner'
+             AND status != 'revoked'`
+        )
+        .run(access.noteId, request.params.userId);
+      if (result.changes === 0) {
+        return false;
+      }
+      context.db.sqlite
+        .prepare(
+          `DELETE FROM note_key_shares
+           WHERE note_id = ? AND recipient_user_id = ?`
+        )
+        .run(access.noteId, request.params.userId);
+      writeNoteEvent(context, {
+        noteId: access.noteId,
+        actorUserId: session.userId,
+        eventType: "membership.revoked",
+        noteVersion: access.version,
+        resourceType: "membership",
+        resourceId: `${access.noteId}:${request.params.userId}`,
+        payloadMetadata: {
+          membershipUserId: request.params.userId
+        }
+      });
+      return true;
+    });
+
+    if (!revokeMember()) {
+      sendApiError(response, "not_found", "Membership not found");
+      return;
+    }
+
+    response.status(204).send();
+  });
+
+  router.get("/:id/key-share", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+
+    const access = getNoteAccess(context, request.params.id, session.userId);
+    if (!canReadNote(access)) {
+      sendApiError(response, "not_found", "Note not found");
+      return;
+    }
+    if (access.role === "owner") {
+      sendApiError(response, "not_found", "Note key share not found");
+      return;
+    }
+
+    const row = context.db.sqlite
+      .prepare(
+        `SELECT note_id AS noteId,
+                recipient_user_id AS recipientUserId,
+                sender_user_id AS senderUserId,
+                sharing_key_version AS sharingKeyVersion,
+                encrypted_note_key AS encryptedNoteKey,
+                format_version AS formatVersion,
+                created_at AS createdAt
+         FROM note_key_shares
+         WHERE note_id = ? AND recipient_user_id = ?`
+      )
+      .get(access.noteId, session.userId);
+
+    if (!row) {
+      sendApiError(response, "not_found", "Note key share not found");
       return;
     }
 
