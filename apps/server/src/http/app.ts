@@ -8,6 +8,7 @@ import { createAuthRouter } from "../auth/routes.js";
 import { createFoldersRouter } from "../folders/routes.js";
 import { createKeyMaterialRouter } from "../keyMaterial/routes.js";
 import { createNotesRouter } from "../notes/routes.js";
+import { createSharingKeysRouter } from "../sharingKeys/routes.js";
 import { csrfGuard } from "./csrf.js";
 
 export interface AppContext {
@@ -50,6 +51,7 @@ export function createApp(context: AppContext) {
   app.use("/api/folders", createFoldersRouter(context));
   app.use("/api/key-material", createKeyMaterialRouter(context));
   app.use("/api/notes", createNotesRouter(context));
+  app.use("/api/sharing-keys", createSharingKeysRouter(context));
 
   return app;
 }

@@ -143,6 +143,33 @@ export interface UpdateKeyMaterialPayload {
   keyMaterialVersion: number;
 }
 
+export interface SharingKeyEnvelope {
+  sharingKeyVersion: number;
+  publicKey: string;
+  encryptedPrivateKey: string;
+  privateKeyNonce: string;
+  formatVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PublicSharingKey {
+  userId: string;
+  username: string;
+  sharingKeyVersion: number;
+  publicKey: string;
+  formatVersion: number;
+  createdAt: string;
+}
+
+export interface StoreSharingKeyPayload {
+  sharingKeyVersion: number;
+  publicKey: string;
+  encryptedPrivateKey: string;
+  privateKeyNonce: string;
+  formatVersion: number;
+}
+
 export interface RecoverPayload {
   username: string;
   recoveryAuthVerifier: string;
@@ -235,6 +262,25 @@ export function updateKeyMaterial(
     method: "PUT",
     body: JSON.stringify(payload)
   });
+}
+
+export function getCurrentSharingKey(): Promise<SharingKeyEnvelope> {
+  return apiRequest<SharingKeyEnvelope>("/sharing-keys/current");
+}
+
+export function storeCurrentSharingKey(
+  payload: StoreSharingKeyPayload
+): Promise<{ sharingKeyVersion: number }> {
+  return apiRequest<{ sharingKeyVersion: number }>("/sharing-keys/current", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function lookupSharingKey(username: string): Promise<PublicSharingKey> {
+  return apiRequest<PublicSharingKey>(
+    `/sharing-keys/lookup?username=${encodeURIComponent(username)}`
+  );
 }
 
 export function listNotes(deleted = false): Promise<{ notes: NoteSummary[] }> {
