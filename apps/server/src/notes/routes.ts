@@ -28,6 +28,7 @@ const updateNoteSchema = z.object({
 interface NoteRow {
   id: string;
   userId: string;
+  cryptoOwnerId: string;
   folderId: string | null;
   version: number;
   isDeleted: 0 | 1;
@@ -36,10 +37,11 @@ interface NoteRow {
 function getNote(context: AppContext, noteId: string): NoteRow | undefined {
   return context.db.sqlite
     .prepare(
-      `SELECT id,
-              user_id AS userId,
-              folder_id AS folderId,
-              version,
+	      `SELECT id,
+	              user_id AS userId,
+	              crypto_owner_id AS cryptoOwnerId,
+	              folder_id AS folderId,
+	              version,
               is_deleted AS isDeleted
        FROM notes
        WHERE id = ?`
@@ -115,32 +117,43 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    context.db.sqlite
-      .prepare(
-        `INSERT INTO notes (
-          id,
-          user_id,
-          folder_id,
-          title,
-          encrypted_note_key,
-          note_key_nonce,
-          content_cipher,
-          content_nonce,
-          content_length,
-          content_updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
-      )
-      .run(
-        parsed.data.id,
-        session.userId,
-        folderId,
-        parsed.data.title,
-        parsed.data.encryptedNoteKey,
-        parsed.data.noteKeyNonce,
-        parsed.data.contentCipher,
-        parsed.data.contentNonce,
-        parsed.data.contentLength
-      );
+    const createOwnedNote = context.db.sqlite.transaction(() => {
+      context.db.sqlite
+        .prepare(
+          `INSERT INTO notes (
+            id,
+            user_id,
+            crypto_owner_id,
+            folder_id,
+            title,
+            encrypted_note_key,
+            note_key_nonce,
+            content_cipher,
+            content_nonce,
+            content_length,
+            content_updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+        )
+        .run(
+          parsed.data.id,
+          session.userId,
+          session.userId,
+          folderId,
+          parsed.data.title,
+          parsed.data.encryptedNoteKey,
+          parsed.data.noteKeyNonce,
+          parsed.data.contentCipher,
+          parsed.data.contentNonce,
+          parsed.data.contentLength
+        );
+      context.db.sqlite
+        .prepare(
+          `INSERT INTO note_memberships (note_id, user_id, role, status)
+           VALUES (?, ?, 'owner', 'active')`
+        )
+        .run(parsed.data.id, session.userId);
+    });
+    createOwnedNote();
 
     response.status(201).json({ id: parsed.data.id, version: 1 });
   });

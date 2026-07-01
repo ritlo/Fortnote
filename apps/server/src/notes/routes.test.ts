@@ -7,9 +7,9 @@ import {
 } from "../test/http.js";
 
 describe("notes and folders routes", () => {
-  it("creates folder and note, then updates with optimistic version", async () => {
-    const app = createTestApp();
-    const agent = await registerAgent(app, "notes_user");
+	  it("creates folder and note, then updates with optimistic version", async () => {
+	    const app = createTestApp();
+	    const agent = await registerAgent(app, "notes_user");
 
     const folder = await agent
       .post("/api/folders")
@@ -23,7 +23,7 @@ describe("notes and folders routes", () => {
       .send(notePayload(folder.body.id as string))
       .expect(201);
 
-    const updated = await agent
+	    const updated = await agent
       .put(`/api/notes/${String(note.body.id)}`)
       .set(csrfHeaders())
       .send({
@@ -35,8 +35,16 @@ describe("notes and folders routes", () => {
       })
       .expect(200);
 
-    expect(updated.body).toMatchObject({ version: 2 });
-  });
+	    expect(updated.body).toMatchObject({ version: 2 });
+	    const membership = app.locals.db.sqlite
+	      .prepare(
+	        `SELECT role, status
+	         FROM note_memberships
+	         WHERE note_id = ?`
+	      )
+	      .get(note.body.id) as { role: string; status: string } | undefined;
+	    expect(membership).toEqual({ role: "owner", status: "active" });
+	  });
 
   it("rejects stale note versions", async () => {
     const app = createTestApp();

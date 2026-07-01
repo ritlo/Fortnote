@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
@@ -55,6 +55,9 @@ export const folders = sqliteTable("folders", {
 export const notes = sqliteTable("notes", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  cryptoOwnerId: text("crypto_owner_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   folderId: text("folder_id"),
   title: text("title").notNull(),
   encryptedNoteKey: text("encrypted_note_key").notNull(),
@@ -81,5 +84,64 @@ export const attachments = sqliteTable("attachments", {
   attachmentKeyNonce: text("attachment_key_nonce").notNull(),
   fileCipherPath: text("file_cipher_path").notNull(),
   fileNonce: text("file_nonce").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`)
+});
+
+export const userSharingKeys = sqliteTable(
+  "user_sharing_keys",
+  {
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    sharingKeyVersion: integer("sharing_key_version").notNull(),
+    publicKey: text("public_key").notNull(),
+    encryptedPrivateKey: text("encrypted_private_key").notNull(),
+    privateKeyNonce: text("private_key_nonce").notNull(),
+    formatVersion: integer("format_version").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`)
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.sharingKeyVersion] })]
+);
+
+export const noteMemberships = sqliteTable(
+  "note_memberships",
+  {
+    noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    status: text("status").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`)
+  },
+  (table) => [primaryKey({ columns: [table.noteId, table.userId] })]
+);
+
+export const noteKeyShares = sqliteTable(
+  "note_key_shares",
+  {
+    noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    recipientUserId: text("recipient_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    senderUserId: text("sender_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    sharingKeyVersion: integer("sharing_key_version").notNull(),
+    encryptedNoteKey: text("encrypted_note_key").notNull(),
+    formatVersion: integer("format_version").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`)
+  },
+  (table) => [primaryKey({ columns: [table.noteId, table.recipientUserId] })]
+);
+
+export const noteEvents = sqliteTable("note_events", {
+  cursor: integer("cursor").primaryKey({ autoIncrement: true }),
+  eventId: text("event_id").notNull().unique(),
+  resourceType: text("resource_type").notNull(),
+  resourceId: text("resource_id").notNull(),
+  noteId: text("note_id").references(() => notes.id, { onDelete: "cascade" }),
+  actorUserId: text("actor_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull(),
+  noteVersion: integer("note_version"),
+  payloadMetadata: text("payload_metadata"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`)
 });
