@@ -64,8 +64,8 @@ export interface NoteSummary {
   id: string;
   folderId: string | null;
   title: string;
-  encryptedNoteKey: string;
-  noteKeyNonce: string;
+  encryptedNoteKey: string | null;
+  noteKeyNonce: string | null;
   contentCipher: string;
   contentNonce: string;
   contentLength: number;
@@ -73,6 +73,9 @@ export interface NoteSummary {
   isDeleted: boolean | 0 | 1;
   deletedAt?: string | null;
   updatedAt: string;
+  ownerUserId: string;
+  cryptoOwnerId: string;
+  role: "owner" | "editor" | "viewer";
 }
 
 export interface FolderSummary {

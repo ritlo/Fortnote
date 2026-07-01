@@ -201,6 +201,46 @@ describe("notes and folders routes", () => {
       formatVersion: 1
     });
 
+    const bobList = await bob.get("/api/notes").expect(200);
+    expect(bobList.body.notes).toHaveLength(1);
+    expect(bobList.body.notes[0]).toMatchObject({
+      id: noteId,
+      role: "editor",
+      encryptedNoteKey: null,
+      noteKeyNonce: null,
+      cryptoOwnerId: expect.any(String),
+      ownerUserId: expect.any(String)
+    });
+
+    const bobRead = await bob.get(`/api/notes/${noteId}`).expect(200);
+    expect(bobRead.body).toMatchObject({
+      id: noteId,
+      role: "editor",
+      encryptedNoteKey: null,
+      noteKeyNonce: null
+    });
+
+    await bob
+      .put(`/api/notes/${noteId}`)
+      .set(csrfHeaders())
+      .send({
+        title: "Shared edit",
+        contentCipher: "shared_updated_content_cipher_abcdefghijklmnopqrstuvwxyz",
+        contentNonce: "shared_updated_content_nonce_abcdefghijklmnopqrstuvwxyz",
+        contentLength: 512,
+        version: 1
+      })
+      .expect(200);
+
+    const aliceRead = await alice.get(`/api/notes/${noteId}`).expect(200);
+    expect(aliceRead.body).toMatchObject({
+      title: "Shared edit",
+      version: 2,
+      encryptedNoteKey: expect.any(String),
+      noteKeyNonce: expect.any(String),
+      role: "owner"
+    });
+
     const memberships = await bob.get(`/api/notes/${noteId}/memberships`).expect(200);
     expect(memberships.body.memberships).toEqual(
       expect.arrayContaining([
@@ -214,6 +254,17 @@ describe("notes and folders routes", () => {
       .set(csrfHeaders())
       .send({ role: "viewer" })
       .expect(200);
+
+    await bob
+      .put(`/api/notes/${noteId}`)
+      .set(csrfHeaders())
+      .send({
+        contentCipher: "viewer_updated_content_cipher_abcdefghijklmnopqrstuvwxyz",
+        contentNonce: "viewer_updated_content_nonce_abcdefghijklmnopqrstuvwxyz",
+        contentLength: 1024,
+        version: 2
+      })
+      .expect(404);
 
     await alice
       .delete(`/api/notes/${noteId}/memberships/${bobUserId}`)
@@ -241,10 +292,17 @@ describe("notes and folders routes", () => {
     expect(events.map((event) => event.eventType)).toEqual([
       "note.created",
       "membership.added",
+      "note.updated",
       "membership.role_updated",
       "membership.revoked"
     ]);
     expect(events.slice(1).every((event) => event.resourceType === "membership")).toBe(
+      false
+    );
+    expect(events.filter((event) => event.resourceType === "membership")).toHaveLength(
+      3
+    );
+    expect(events.slice(3).every((event) => event.resourceType === "membership")).toBe(
       true
     );
     expect(JSON.parse(events.at(-1)?.payloadMetadata ?? "{}")).toMatchObject({

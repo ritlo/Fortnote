@@ -71,8 +71,14 @@ export function createNotesRouter(context: AppContext): Router {
 	        `SELECT notes.id,
 	                notes.folder_id AS folderId,
 	                notes.title,
-	                notes.encrypted_note_key AS encryptedNoteKey,
-	                notes.note_key_nonce AS noteKeyNonce,
+	                CASE
+	                  WHEN note_memberships.role = 'owner' THEN notes.encrypted_note_key
+	                  ELSE NULL
+	                END AS encryptedNoteKey,
+	                CASE
+	                  WHEN note_memberships.role = 'owner' THEN notes.note_key_nonce
+	                  ELSE NULL
+	                END AS noteKeyNonce,
 	                notes.content_cipher AS contentCipher,
 	                notes.content_nonce AS contentNonce,
 	                notes.content_length AS contentLength,
@@ -81,11 +87,13 @@ export function createNotesRouter(context: AppContext): Router {
 	                notes.is_deleted AS isDeleted,
 	                notes.deleted_at AS deletedAt,
 	                notes.created_at AS createdAt,
-	                notes.updated_at AS updatedAt
+	                notes.updated_at AS updatedAt,
+	                notes.user_id AS ownerUserId,
+	                notes.crypto_owner_id AS cryptoOwnerId,
+	                note_memberships.role
          FROM notes
          JOIN note_memberships ON note_memberships.note_id = notes.id
          WHERE note_memberships.user_id = ?
-           AND note_memberships.role = 'owner'
            AND note_memberships.status = 'active'
            AND notes.is_deleted = ?
          ORDER BY notes.updated_at DESC`
@@ -171,8 +179,14 @@ export function createNotesRouter(context: AppContext): Router {
 	        `SELECT notes.id,
 	                notes.folder_id AS folderId,
 	                notes.title,
-	                notes.encrypted_note_key AS encryptedNoteKey,
-	                notes.note_key_nonce AS noteKeyNonce,
+	                CASE
+	                  WHEN note_memberships.role = 'owner' THEN notes.encrypted_note_key
+	                  ELSE NULL
+	                END AS encryptedNoteKey,
+	                CASE
+	                  WHEN note_memberships.role = 'owner' THEN notes.note_key_nonce
+	                  ELSE NULL
+	                END AS noteKeyNonce,
 	                notes.content_cipher AS contentCipher,
 	                notes.content_nonce AS contentNonce,
 	                notes.content_length AS contentLength,
@@ -181,12 +195,14 @@ export function createNotesRouter(context: AppContext): Router {
 	                notes.is_deleted AS isDeleted,
 	                notes.deleted_at AS deletedAt,
 	                notes.created_at AS createdAt,
-	                notes.updated_at AS updatedAt
+	                notes.updated_at AS updatedAt,
+	                notes.user_id AS ownerUserId,
+	                notes.crypto_owner_id AS cryptoOwnerId,
+	                note_memberships.role
          FROM notes
          JOIN note_memberships ON note_memberships.note_id = notes.id
          WHERE notes.id = ?
            AND note_memberships.user_id = ?
-           AND note_memberships.role = 'owner'
            AND note_memberships.status = 'active'`
       )
       .get(request.params.id, session.userId);
@@ -518,10 +534,6 @@ export function createNotesRouter(context: AppContext): Router {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
-    if (access.role !== "owner") {
-      sendApiError(response, "not_found", "Note not found");
-      return;
-    }
     if (access.isDeleted) {
       sendApiError(response, "conflict", "Restore note before updating");
       return;
@@ -532,7 +544,15 @@ export function createNotesRouter(context: AppContext): Router {
     }
 
     const folderId = parsed.data.folderId ?? access.folderId;
-    if (!folderBelongsToUser(context, session.userId, folderId)) {
+    if (
+      access.role !== "owner" &&
+      parsed.data.folderId !== undefined &&
+      parsed.data.folderId !== access.folderId
+    ) {
+      sendApiError(response, "bad_request", "Shared notes cannot be moved");
+      return;
+    }
+    if (access.role === "owner" && !folderBelongsToUser(context, session.userId, folderId)) {
       sendApiError(response, "bad_request", "Invalid folder");
       return;
     }
@@ -551,7 +571,7 @@ export function createNotesRouter(context: AppContext): Router {
                content_updated_at = CURRENT_TIMESTAMP,
                version = version + 1,
                updated_at = CURRENT_TIMESTAMP
-           WHERE id = ? AND user_id = ?`
+           WHERE id = ?`
         )
         .run(
           folderId,
@@ -559,8 +579,7 @@ export function createNotesRouter(context: AppContext): Router {
           parsed.data.contentCipher,
           parsed.data.contentNonce,
           parsed.data.contentLength,
-          access.noteId,
-          session.userId
+          access.noteId
         );
       writeNoteEvent(context, {
         noteId: access.noteId,

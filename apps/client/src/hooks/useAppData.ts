@@ -11,6 +11,7 @@ export async function loadDecryptedNotes(
   const decrypted = await Promise.all(
     payload.notes
       .filter((note) => Boolean(note.isDeleted) === deleted)
+      .filter((note) => note.role === "owner")
       .map((note) => decryptNoteSummary(currentUser, currentRootKey, note))
   );
   const nextNotes = decrypted.sort((left, right) =>

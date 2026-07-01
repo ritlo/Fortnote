@@ -13,6 +13,10 @@ export async function decryptNoteSummary(
   rootKey: Uint8Array,
   note: NoteSummary
 ): Promise<DecryptedNote> {
+  if (!note.encryptedNoteKey || !note.noteKeyNonce) {
+    throw new Error("Shared note key is not loaded");
+  }
+
   const decrypted = await decryptNote({
     userId: user.id,
     rootKey,
