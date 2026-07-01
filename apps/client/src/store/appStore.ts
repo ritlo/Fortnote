@@ -60,6 +60,7 @@ export interface AppStore {
   setRecoverySecret: StoreSetter<string | null>;
   setError: StoreSetter<string | null>;
   setStatus: StoreSetter<string>;
+  resetVaultState: (nextStatus: string) => void;
 }
 
 function resolveState<T>(value: StateUpdate<T>, current: T): T {
@@ -156,5 +157,22 @@ export const useAppStore = create<AppStore>((set) => ({
   },
   setStatus: (value) => {
     set((state) => ({ status: resolveState(value, state.status) }));
+  },
+  resetVaultState: (nextStatus) => {
+    set({
+      rootKey: null,
+      keyMaterialVersion: null,
+      notes: [],
+      trashNotes: [],
+      folders: [],
+      attachmentsByNote: {},
+      selectedNoteId: null,
+      selectedFolderId: null,
+      notesView: "notes",
+      recoverySecret: null,
+      newPassword: "",
+      user: null,
+      status: nextStatus
+    });
   }
 }));

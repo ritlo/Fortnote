@@ -53,16 +53,10 @@ export function useAuthActions() {
   const setNewPassword = useAppStore((state) => state.setNewPassword);
   const setRecoveryInput = useAppStore((state) => state.setRecoveryInput);
   const setRecoveryNewPassword = useAppStore((state) => state.setRecoveryNewPassword);
-  const setNotes = useAppStore((state) => state.setNotes);
-  const setTrashNotes = useAppStore((state) => state.setTrashNotes);
-  const setFolders = useAppStore((state) => state.setFolders);
-  const setNotesView = useAppStore((state) => state.setNotesView);
-  const setSelectedFolderId = useAppStore((state) => state.setSelectedFolderId);
-  const setAttachmentsByNote = useAppStore((state) => state.setAttachmentsByNote);
-  const setSelectedNoteId = useAppStore((state) => state.setSelectedNoteId);
   const setRecoverySecret = useAppStore((state) => state.setRecoverySecret);
   const setError = useAppStore((state) => state.setError);
   const setStatus = useAppStore((state) => state.setStatus);
+  const resetVaultState = useAppStore((state) => state.resetVaultState);
 
   async function submitAuth() {
     setError(null);
@@ -204,22 +198,6 @@ export function useAuthActions() {
         rotateError instanceof Error ? rotateError.message : "Unable to rotate recovery key"
       );
     }
-  }
-
-  function resetVaultState(nextStatus: string) {
-    setUser(null);
-    setRootKey(null);
-    setKeyMaterialVersion(null);
-    setNotes([]);
-    setTrashNotes([]);
-    setFolders([]);
-    setAttachmentsByNote({});
-    setSelectedNoteId(null);
-    setSelectedFolderId(null);
-    setNotesView("notes");
-    setRecoverySecret(null);
-    setNewPassword("");
-    setStatus(nextStatus);
   }
 
   return {
