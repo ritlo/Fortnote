@@ -10,7 +10,9 @@ export default tseslint.config(
       "coverage/**",
       "eslint.config.js",
       "mockups/**",
-      ".codegraph/**"
+      ".codegraph/**",
+      "playwright-report/**",
+      "test-results/**"
     ]
   },
   js.configs.recommended,
