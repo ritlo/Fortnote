@@ -93,6 +93,29 @@ describe("notes and folders routes", () => {
       .expect(400);
   });
 
+  it("requires an active owner membership to read notes", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "membership_user");
+    const created = await agent
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+
+    await agent.get(`/api/notes/${String(created.body.id)}`).expect(200);
+    app.locals.db.sqlite
+      .prepare(
+        `UPDATE note_memberships
+         SET status = 'revoked'
+         WHERE note_id = ?`
+      )
+      .run(created.body.id);
+
+    await agent.get(`/api/notes/${String(created.body.id)}`).expect(404);
+    const listed = await agent.get("/api/notes").expect(200);
+    expect(listed.body.notes).toHaveLength(0);
+  });
+
   it("enforces one-level folder nesting", async () => {
     const app = createTestApp();
     const agent = await registerAgent(app, "folder_user");

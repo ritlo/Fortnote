@@ -4,6 +4,7 @@ import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { requireSession } from "../auth/session.js";
 import { deleteEncryptedAttachment } from "../attachments/storage.js";
+import { canEditNote, canOwnNote, getNoteAccess } from "./access.js";
 
 const createNoteSchema = z.object({
   id: z.uuid(),
@@ -24,30 +25,6 @@ const updateNoteSchema = z.object({
   contentLength: z.number().int().nonnegative(),
   version: z.number().int().positive()
 });
-
-interface NoteRow {
-  id: string;
-  userId: string;
-  cryptoOwnerId: string;
-  folderId: string | null;
-  version: number;
-  isDeleted: 0 | 1;
-}
-
-function getNote(context: AppContext, noteId: string): NoteRow | undefined {
-  return context.db.sqlite
-    .prepare(
-	      `SELECT id,
-	              user_id AS userId,
-	              crypto_owner_id AS cryptoOwnerId,
-	              folder_id AS folderId,
-	              version,
-              is_deleted AS isDeleted
-       FROM notes
-       WHERE id = ?`
-    )
-    .get(noteId) as NoteRow | undefined;
-}
 
 function folderBelongsToUser(
   context: AppContext,
@@ -76,23 +53,27 @@ export function createNotesRouter(context: AppContext): Router {
     const includeDeleted = request.query.deleted === "true";
     const rows = context.db.sqlite
       .prepare(
-        `SELECT id,
-                folder_id AS folderId,
-                title,
-                encrypted_note_key AS encryptedNoteKey,
-                note_key_nonce AS noteKeyNonce,
-                content_cipher AS contentCipher,
-                content_nonce AS contentNonce,
-                content_length AS contentLength,
-                content_updated_at AS contentUpdatedAt,
-                version,
-                is_deleted AS isDeleted,
-                deleted_at AS deletedAt,
-                created_at AS createdAt,
-                updated_at AS updatedAt
+	        `SELECT notes.id,
+	                notes.folder_id AS folderId,
+	                notes.title,
+	                notes.encrypted_note_key AS encryptedNoteKey,
+	                notes.note_key_nonce AS noteKeyNonce,
+	                notes.content_cipher AS contentCipher,
+	                notes.content_nonce AS contentNonce,
+	                notes.content_length AS contentLength,
+	                notes.content_updated_at AS contentUpdatedAt,
+	                notes.version,
+	                notes.is_deleted AS isDeleted,
+	                notes.deleted_at AS deletedAt,
+	                notes.created_at AS createdAt,
+	                notes.updated_at AS updatedAt
          FROM notes
-         WHERE user_id = ? AND is_deleted = ?
-         ORDER BY updated_at DESC`
+         JOIN note_memberships ON note_memberships.note_id = notes.id
+         WHERE note_memberships.user_id = ?
+           AND note_memberships.role = 'owner'
+           AND note_memberships.status = 'active'
+           AND notes.is_deleted = ?
+         ORDER BY notes.updated_at DESC`
       )
       .all(session.userId, includeDeleted ? 1 : 0);
 
@@ -166,22 +147,26 @@ export function createNotesRouter(context: AppContext): Router {
 
     const row = context.db.sqlite
       .prepare(
-        `SELECT id,
-                folder_id AS folderId,
-                title,
-                encrypted_note_key AS encryptedNoteKey,
-                note_key_nonce AS noteKeyNonce,
-                content_cipher AS contentCipher,
-                content_nonce AS contentNonce,
-                content_length AS contentLength,
-                content_updated_at AS contentUpdatedAt,
-                version,
-                is_deleted AS isDeleted,
-                deleted_at AS deletedAt,
-                created_at AS createdAt,
-                updated_at AS updatedAt
+	        `SELECT notes.id,
+	                notes.folder_id AS folderId,
+	                notes.title,
+	                notes.encrypted_note_key AS encryptedNoteKey,
+	                notes.note_key_nonce AS noteKeyNonce,
+	                notes.content_cipher AS contentCipher,
+	                notes.content_nonce AS contentNonce,
+	                notes.content_length AS contentLength,
+	                notes.content_updated_at AS contentUpdatedAt,
+	                notes.version,
+	                notes.is_deleted AS isDeleted,
+	                notes.deleted_at AS deletedAt,
+	                notes.created_at AS createdAt,
+	                notes.updated_at AS updatedAt
          FROM notes
-         WHERE id = ? AND user_id = ?`
+         JOIN note_memberships ON note_memberships.note_id = notes.id
+         WHERE notes.id = ?
+           AND note_memberships.user_id = ?
+           AND note_memberships.role = 'owner'
+           AND note_memberships.status = 'active'`
       )
       .get(request.params.id, session.userId);
 
@@ -205,25 +190,25 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const note = getNote(context, request.params.id);
-    if (!note) {
+    const access = getNoteAccess(context, request.params.id, session.userId);
+    if (!canEditNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
-    if (note.userId !== session.userId) {
+    if (access.role !== "owner") {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
-    if (note.isDeleted) {
+    if (access.isDeleted) {
       sendApiError(response, "conflict", "Restore note before updating");
       return;
     }
-    if (note.version !== parsed.data.version) {
+    if (access.version !== parsed.data.version) {
       sendApiError(response, "conflict", "Note version conflict");
       return;
     }
 
-    const folderId = parsed.data.folderId ?? note.folderId;
+    const folderId = parsed.data.folderId ?? access.folderId;
     if (!folderBelongsToUser(context, session.userId, folderId)) {
       sendApiError(response, "bad_request", "Invalid folder");
       return;
@@ -249,11 +234,11 @@ export function createNotesRouter(context: AppContext): Router {
         parsed.data.contentCipher,
         parsed.data.contentNonce,
         parsed.data.contentLength,
-        note.id,
+        access.noteId,
         session.userId
       );
 
-    response.json({ id: note.id, version: note.version + 1 });
+    response.json({ id: access.noteId, version: access.version + 1 });
   });
 
   router.delete("/:id", (request, response) => {
@@ -262,12 +247,8 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const note = getNote(context, request.params.id);
-    if (!note) {
-      sendApiError(response, "not_found", "Note not found");
-      return;
-    }
-    if (note.userId !== session.userId) {
+    const access = getNoteAccess(context, request.params.id, session.userId);
+    if (!canOwnNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
@@ -280,7 +261,7 @@ export function createNotesRouter(context: AppContext): Router {
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ? AND user_id = ?`
       )
-      .run(note.id, session.userId);
+      .run(access.noteId, session.userId);
 
     response.status(204).send();
   });
@@ -291,12 +272,8 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const note = getNote(context, request.params.id);
-    if (!note) {
-      sendApiError(response, "not_found", "Note not found");
-      return;
-    }
-    if (note.userId !== session.userId) {
+    const access = getNoteAccess(context, request.params.id, session.userId);
+    if (!canOwnNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
@@ -309,9 +286,9 @@ export function createNotesRouter(context: AppContext): Router {
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ? AND user_id = ?`
       )
-      .run(note.id, session.userId);
+      .run(access.noteId, session.userId);
 
-    response.json({ id: note.id });
+    response.json({ id: access.noteId });
   });
 
   router.delete("/:id/permanent", (request, response) => {
@@ -320,24 +297,22 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const note = getNote(context, request.params.id);
-    if (!note) {
-      sendApiError(response, "not_found", "Note not found");
-      return;
-    }
-    if (note.userId !== session.userId) {
+    const access = getNoteAccess(context, request.params.id, session.userId);
+    if (!canOwnNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
 
     const rows = context.db.sqlite
-      .prepare("SELECT file_cipher_path AS fileCipherPath FROM attachments WHERE note_id = ? AND user_id = ?")
-      .all(note.id, session.userId) as { fileCipherPath: string }[];
+      .prepare(
+        "SELECT file_cipher_path AS fileCipherPath FROM attachments WHERE note_id = ? AND user_id = ?"
+      )
+      .all(access.noteId, session.userId) as { fileCipherPath: string }[];
 
     const remove = context.db.sqlite.transaction(() => {
       context.db.sqlite
         .prepare("DELETE FROM notes WHERE id = ? AND user_id = ?")
-        .run(note.id, session.userId);
+        .run(access.noteId, session.userId);
     });
     remove();
     for (const row of rows) {
