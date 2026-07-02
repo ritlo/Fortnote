@@ -82,16 +82,60 @@ export function parseRealtimeMessage(data: unknown): RealtimeMessage | null {
 }
 
 function isRealtimeMessage(value: unknown): value is RealtimeMessage {
-  if (typeof value !== "object" || value === null || !("type" in value)) {
+  if (!isRecord(value) || typeof value.type !== "string") {
     return false;
   }
 
-  const { type } = value;
+  switch (value.type) {
+    case "connected":
+      return typeof value.userId === "string" && typeof value.username === "string";
+    case "replay":
+      return Array.isArray(value.events) && value.events.every(isCollaborationEvent);
+    case "event":
+      return isCollaborationEvent(value.event);
+    case "presence":
+      return (
+        typeof value.noteId === "string" &&
+        Array.isArray(value.users) &&
+        value.users.every(isPresenceUser)
+      );
+    case "pong":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isCollaborationEvent(value: unknown): value is CollaborationEvent {
+  if (!isRecord(value)) {
+    return false;
+  }
   return (
-    type === "connected" ||
-    type === "replay" ||
-    type === "event" ||
-    type === "presence" ||
-    type === "pong"
+    typeof value.cursor === "number" &&
+    typeof value.eventId === "string" &&
+    typeof value.type === "string" &&
+    typeof value.resourceType === "string" &&
+    typeof value.resourceId === "string" &&
+    (typeof value.noteId === "string" || value.noteId === null) &&
+    typeof value.actorUserId === "string" &&
+    (typeof value.version === "number" || value.version === null) &&
+    (isRecord(value.metadata) || value.metadata === null) &&
+    typeof value.createdAt === "string"
   );
+}
+
+function isPresenceUser(value: unknown): value is PresenceUser {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value.userId === "string" &&
+    typeof value.username === "string" &&
+    (value.state === "idle" || value.state === "editing") &&
+    typeof value.updatedAt === "string"
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
