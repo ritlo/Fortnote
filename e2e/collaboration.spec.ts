@@ -60,6 +60,9 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     await expect(alicePage.locator(".preview-body", { hasText: bobBody })).toBeVisible({
       timeout: 10_000
     });
+    await changeMemberRole(alicePage, bob.username, "viewer");
+    await expect(bobPage.getByLabel("Markdown editor")).toBeDisabled({ timeout: 10_000 });
+    await expect(bobPage.getByRole("button", { name: "Save" })).toBeDisabled();
 
     carolPage = await newUserPage(browser, baseURL, contexts);
     await signIn(carolPage, carol.username, carol.password);
@@ -180,6 +183,23 @@ async function revokeMember(page: Page, username: string): Promise<void> {
     .click();
   await revoked;
   await expect(page.getByText("Collaborator revoked")).toBeVisible();
+}
+
+async function changeMemberRole(
+  page: Page,
+  username: string,
+  role: "editor" | "viewer"
+): Promise<void> {
+  const updated = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().includes("/memberships/") &&
+      response.ok()
+  );
+  await page.getByLabel(`Role for ${username}`).selectOption(role);
+  await updated;
+  await expect(page.getByText("Collaborator role updated")).toBeVisible();
+  await expect(page.getByLabel(`Role for ${username}`)).toHaveValue(role);
 }
 
 async function openNote(page: Page, title: string): Promise<void> {
