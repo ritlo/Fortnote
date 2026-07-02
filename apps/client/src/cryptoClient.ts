@@ -2,6 +2,7 @@ import {
   attachmentAssociatedData,
   createKdfParams,
   createSharingKeyPair,
+  cryptoReady,
   decryptBytes,
   deriveAuthVerifier,
   deriveRecoveryAuthVerifier,
@@ -113,6 +114,7 @@ export async function createRegistrationCrypto(
   username: string,
   password: string
 ): Promise<RegistrationCrypto> {
+  await cryptoReady();
   const authKdf = createKdfParams();
   const vaultKdf = createKdfParams();
   const recoveryKdf = createKdfParams();
@@ -191,6 +193,7 @@ export async function createPasswordChangeCrypto(
   rootKey: Uint8Array,
   newPassword: string
 ): Promise<PasswordChangeCrypto> {
+  await cryptoReady();
   const authKdf = createKdfParams();
   const vaultKdf = createKdfParams();
   const authVerifier = await deriveAuthVerifier(newPassword, authKdf);
@@ -209,6 +212,7 @@ export async function createPasswordChangeCrypto(
 export async function createRecoveryRotationCrypto(
   rootKey: Uint8Array
 ): Promise<RecoveryRotationCrypto> {
+  await cryptoReady();
   const recoverySecret = generateRecoverySecret();
   const recoveryKdf = createKdfParams();
   const recoveryAuthVerifier = await deriveRecoveryAuthVerifier(
@@ -339,6 +343,7 @@ export async function createEncryptedNoteDraft(input: {
   title: string;
   body: string;
 }): Promise<EncryptedNoteDraft> {
+  await cryptoReady();
   const id = randomUuid();
   const noteKey = randomBytes(32);
   const encryptedNoteKey = await encryptBytes(
@@ -431,6 +436,7 @@ export async function createEncryptedAttachmentDraft(input: {
   noteKeyBase64: string;
   file: File;
 }): Promise<EncryptedAttachmentDraft> {
+  await cryptoReady();
   const id = randomUuid();
   const attachmentKey = randomBytes(32);
   const noteKey = fromBase64(input.noteKeyBase64);

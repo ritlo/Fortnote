@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
   attachmentAssociatedData,
   createKdfParams,
+  cryptoReady,
   createSharingKeyPair,
   decryptBytes,
   deriveAuthVerifier,
@@ -20,6 +21,10 @@ import {
 } from "./crypto.js";
 
 describe("crypto helpers", () => {
+  beforeAll(async () => {
+    await cryptoReady();
+  });
+
   it("derives separate auth and vault keys from one password", async () => {
     const params = createKdfParams();
     const auth = await deriveAuthVerifier("correct horse", params);
