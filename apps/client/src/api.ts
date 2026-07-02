@@ -233,6 +233,21 @@ export interface RecoverPayload {
   keyMaterialVersion: number;
 }
 
+export class ApiRequestError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+    message: string
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
+export function isApiRequestError(error: unknown): error is ApiRequestError {
+  return error instanceof ApiRequestError;
+}
+
 export async function apiRequest<T>(
   path: string,
   init: RequestInit = {}
@@ -250,9 +265,13 @@ export async function apiRequest<T>(
 
   if (!response.ok) {
     const error = (await response.json().catch(() => undefined)) as
-      | { message?: string }
+      | { code?: string; message?: string }
       | undefined;
-    throw new Error(error?.message ?? `Request failed: ${String(response.status)}`);
+    throw new ApiRequestError(
+      response.status,
+      error?.code ?? "request_failed",
+      error?.message ?? `Request failed: ${String(response.status)}`
+    );
   }
 
   if (response.status === 204) {

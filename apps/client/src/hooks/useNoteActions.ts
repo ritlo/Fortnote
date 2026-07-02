@@ -3,6 +3,7 @@ import {
   createNote,
   deleteFolder,
   deleteNote,
+  isApiRequestError,
   permanentlyDeleteNote,
   restoreNote,
   updateNote
@@ -118,9 +119,43 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       );
       setStatus("Note encrypted and saved");
     } catch (saveError) {
+      if (isApiRequestError(saveError) && saveError.code === "conflict" && rootKey) {
+        await preserveDraftAfterSaveConflict(noteToSave);
+        return;
+      }
+
       setStatus("Save failed");
       setError(saveError instanceof Error ? saveError.message : "Unable to save note");
     }
+  }
+
+  async function preserveDraftAfterSaveConflict(noteToSave: DecryptedNote) {
+    if (!user || !rootKey) {
+      return;
+    }
+
+    setStatus("Resolving save conflict");
+    await loadDecryptedNotes(user, rootKey, false);
+
+    const latestNote = useAppStore
+      .getState()
+      .notes.find((note) => note.id === noteToSave.id);
+    if (!latestNote) {
+      setStatus("Save conflict");
+      setError("Note changed elsewhere, but the latest copy could not be loaded.");
+      return;
+    }
+
+    setNotes((current) =>
+      current.map((note) =>
+        note.id === noteToSave.id
+          ? mergeDraftAfterConflict(latestNote, noteToSave)
+          : note
+      )
+    );
+    setSelectedNoteId(noteToSave.id);
+    setStatus("Save conflict");
+    setError("Note changed elsewhere. Your draft is still open; review it before saving again.");
   }
 
   function updateSelectedNote(
@@ -256,4 +291,17 @@ async function waitForPendingEditorUpdates(): Promise<void> {
       resolve();
     });
   });
+}
+
+export function mergeDraftAfterConflict(
+  latestNote: DecryptedNote,
+  draft: DecryptedNote
+): DecryptedNote {
+  return {
+    ...latestNote,
+    body: draft.body,
+    contentLength: new TextEncoder().encode(draft.body).length,
+    folderId: draft.folderId,
+    title: draft.title
+  };
 }
