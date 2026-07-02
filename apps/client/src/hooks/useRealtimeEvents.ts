@@ -1,6 +1,8 @@
 import { useEffect } from "react";
+import type { CollaborationEvent } from "../api";
 import { connectRealtime } from "../realtime/client";
 import { useAppStore } from "../store/appStore";
+import { loadDecryptedNotes } from "./useAppData";
 
 export function useRealtimeEvents() {
   const user = useAppStore((state) => state.user);
@@ -29,10 +31,12 @@ export function useRealtimeEvents() {
       onMessage: (message) => {
         if (message.type === "replay") {
           addCollaborationEvents(message.events);
+          void reloadAfterEvents(message.events);
           return;
         }
         if (message.type === "event") {
           addCollaborationEvents([message.event]);
+          void reloadAfterEvents([message.event]);
         }
       }
     });
@@ -41,4 +45,25 @@ export function useRealtimeEvents() {
       connection.close();
     };
   }, [addCollaborationEvents, rootKey, setRealtimeStatus, user]);
+}
+
+async function reloadAfterEvents(events: CollaborationEvent[]): Promise<void> {
+  if (!events.some((event) => shouldReloadNotes(event))) {
+    return;
+  }
+
+  const { rootKey, user } = useAppStore.getState();
+  if (!rootKey || !user) {
+    return;
+  }
+
+  await loadDecryptedNotes(user, rootKey, false);
+}
+
+function shouldReloadNotes(event: CollaborationEvent): boolean {
+  return (
+    event.resourceType === "note" ||
+    event.resourceType === "membership" ||
+    event.resourceType === "attachment"
+  );
 }
