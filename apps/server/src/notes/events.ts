@@ -32,8 +32,8 @@ export function writeNoteEvent(
     resourceId = noteId,
     payloadMetadata
   }: WriteNoteEventInput
-): void {
-  context.db.sqlite
+): number {
+  const result = context.db.sqlite
     .prepare(
       `INSERT INTO note_events (
         event_id,
@@ -56,4 +56,5 @@ export function writeNoteEvent(
       noteVersion,
       payloadMetadata ? JSON.stringify(payloadMetadata) : null
     );
+  return Number(result.lastInsertRowid);
 }

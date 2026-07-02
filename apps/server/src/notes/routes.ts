@@ -56,6 +56,10 @@ function folderBelongsToUser(
   return Boolean(row);
 }
 
+function publishEventCursors(context: AppContext, cursors: number[]): void {
+  context.realtime?.publishEvents(cursors);
+}
+
 export function createNotesRouter(context: AppContext): Router {
   const router = Router();
 
@@ -156,14 +160,14 @@ export function createNotesRouter(context: AppContext): Router {
            VALUES (?, ?, 'owner', 'active')`
         )
         .run(parsed.data.id, session.userId);
-      writeNoteEvent(context, {
+      return writeNoteEvent(context, {
         noteId: parsed.data.id,
         actorUserId: session.userId,
         eventType: "note.created",
         noteVersion: 1
       });
     });
-    createOwnedNote();
+    publishEventCursors(context, [createOwnedNote()]);
 
     response.status(201).json({ id: parsed.data.id, version: 1 });
   });
@@ -333,7 +337,7 @@ export function createNotesRouter(context: AppContext): Router {
           parsed.data.encryptedNoteKey,
           parsed.data.formatVersion
         );
-      writeNoteEvent(context, {
+      return writeNoteEvent(context, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "membership.added",
@@ -346,7 +350,7 @@ export function createNotesRouter(context: AppContext): Router {
         }
       });
     });
-    inviteMember();
+    publishEventCursors(context, [inviteMember()]);
 
     response.status(201).json({
       noteId: access.noteId,
@@ -391,9 +395,9 @@ export function createNotesRouter(context: AppContext): Router {
         )
         .run(parsed.data.role, access.noteId, request.params.userId);
       if (result.changes === 0) {
-        return false;
+        return null;
       }
-      writeNoteEvent(context, {
+      return writeNoteEvent(context, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "membership.role_updated",
@@ -405,13 +409,14 @@ export function createNotesRouter(context: AppContext): Router {
           role: parsed.data.role
         }
       });
-      return true;
     });
 
-    if (!updateMember()) {
+    const updateCursor = updateMember();
+    if (updateCursor === null) {
       sendApiError(response, "not_found", "Membership not found");
       return;
     }
+    publishEventCursors(context, [updateCursor]);
 
     response.json({
       noteId: access.noteId,
@@ -449,7 +454,7 @@ export function createNotesRouter(context: AppContext): Router {
         )
         .run(access.noteId, request.params.userId);
       if (result.changes === 0) {
-        return false;
+        return null;
       }
       context.db.sqlite
         .prepare(
@@ -457,7 +462,7 @@ export function createNotesRouter(context: AppContext): Router {
            WHERE note_id = ? AND recipient_user_id = ?`
         )
         .run(access.noteId, request.params.userId);
-      writeNoteEvent(context, {
+      return writeNoteEvent(context, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "membership.revoked",
@@ -468,13 +473,14 @@ export function createNotesRouter(context: AppContext): Router {
           membershipUserId: request.params.userId
         }
       });
-      return true;
     });
 
-    if (!revokeMember()) {
+    const revokeCursor = revokeMember();
+    if (revokeCursor === null) {
       sendApiError(response, "not_found", "Membership not found");
       return;
     }
+    publishEventCursors(context, [revokeCursor]);
 
     response.status(204).send();
   });
@@ -581,14 +587,14 @@ export function createNotesRouter(context: AppContext): Router {
           parsed.data.contentLength,
           access.noteId
         );
-      writeNoteEvent(context, {
+      return writeNoteEvent(context, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "note.updated",
         noteVersion: nextVersion
       });
     });
-    updateNote();
+    publishEventCursors(context, [updateNote()]);
 
     response.json({ id: access.noteId, version: nextVersion });
   });
@@ -615,14 +621,14 @@ export function createNotesRouter(context: AppContext): Router {
            WHERE id = ? AND user_id = ?`
         )
         .run(access.noteId, session.userId);
-      writeNoteEvent(context, {
+      return writeNoteEvent(context, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "note.deleted",
         noteVersion: access.version
       });
     });
-    deleteNote();
+    publishEventCursors(context, [deleteNote()]);
 
     response.status(204).send();
   });
@@ -649,14 +655,14 @@ export function createNotesRouter(context: AppContext): Router {
            WHERE id = ? AND user_id = ?`
         )
         .run(access.noteId, session.userId);
-      writeNoteEvent(context, {
+      return writeNoteEvent(context, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "note.restored",
         noteVersion: access.version
       });
     });
-    restoreNote();
+    publishEventCursors(context, [restoreNote()]);
 
     response.json({ id: access.noteId });
   });
@@ -691,7 +697,7 @@ export function createNotesRouter(context: AppContext): Router {
       context.db.sqlite
         .prepare("DELETE FROM notes WHERE id = ? AND user_id = ?")
         .run(access.noteId, session.userId);
-      writeNoteEvent(context, {
+      return writeNoteEvent(context, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "note.permanently_deleted",
@@ -701,7 +707,7 @@ export function createNotesRouter(context: AppContext): Router {
         }
       });
     });
-    remove();
+    publishEventCursors(context, [remove()]);
     for (const row of rows) {
       deleteEncryptedAttachment(context.config, row.fileCipherPath);
     }

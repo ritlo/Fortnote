@@ -1,11 +1,17 @@
+import { createServer } from "node:http";
 import { getConfig } from "./config.js";
 import { createDb } from "./db/client.js";
 import { createApp } from "./http/app.js";
+import { RealtimeHub } from "./realtime/hub.js";
+import { attachRealtimeServer } from "./realtime/server.js";
 
 const config = getConfig();
 const db = createDb(config);
-const app = createApp({ config, db });
+const realtime = new RealtimeHub();
+const app = createApp({ config, db, realtime });
+const server = createServer(app);
+attachRealtimeServer({ config, db, realtime }, server, realtime);
 
-app.listen(config.port, () => {
+server.listen(config.port, () => {
   console.log(`Fortnote API listening on ${String(config.port)}`);
 });

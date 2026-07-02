@@ -3,6 +3,7 @@ import helmet from "helmet";
 import { LIMITS } from "@fortnote/shared";
 import type { AppDb } from "../db/client.js";
 import type { ServerConfig } from "../config.js";
+import type { RealtimePublisher } from "../realtime/types.js";
 import { createAttachmentsRouter } from "../attachments/routes.js";
 import { createAuthRouter } from "../auth/routes.js";
 import { createEventsRouter } from "../events/routes.js";
@@ -15,6 +16,7 @@ import { csrfGuard } from "./csrf.js";
 export interface AppContext {
   config: ServerConfig;
   db: AppDb;
+  realtime?: RealtimePublisher;
 }
 
 export function createApp(context: AppContext) {
