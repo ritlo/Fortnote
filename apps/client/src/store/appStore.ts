@@ -199,12 +199,22 @@ export const useAppStore = create<AppStore>((set) => ({
       if (events.length === 0) {
         return {};
       }
+      const seenEventIds = new Set(
+        state.collaborationEvents.map((event) => event.eventId)
+      );
+      const newEvents = events.filter((event) => {
+        if (seenEventIds.has(event.eventId)) {
+          return false;
+        }
+        seenEventIds.add(event.eventId);
+        return true;
+      });
       const nextCursor = Math.max(
         state.eventCursor,
         ...events.map((event) => event.cursor)
       );
       return {
-        collaborationEvents: [...state.collaborationEvents, ...events].slice(-200),
+        collaborationEvents: [...state.collaborationEvents, ...newEvents].slice(-200),
         eventCursor: nextCursor
       };
     });
