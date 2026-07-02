@@ -123,9 +123,7 @@ async function createNote(page: Page, title: string, body: string): Promise<void
   await expect(page.getByRole("button", { name: /Untitled note/ })).toBeVisible();
   const titleInput = page.getByLabel("Title");
   await expect(titleInput).toHaveValue("Untitled note");
-  await titleInput.click();
-  await titleInput.press("ControlOrMeta+A");
-  await titleInput.pressSequentially(title);
+  await titleInput.fill(title);
   await expect(titleInput).toHaveValue(title);
   await expect(page.getByRole("button", { name: new RegExp(title) })).toBeVisible();
   await page.getByLabel("Markdown editor").fill(body);
