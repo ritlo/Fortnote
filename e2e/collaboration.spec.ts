@@ -45,6 +45,11 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     await expect(carolPage.locator(".preview-body", { hasText: aliceBody })).toBeVisible();
     await expect(carolPage.getByLabel("Markdown editor")).toBeDisabled();
     await expect(carolPage.getByRole("button", { name: "Save" })).toBeDisabled();
+    await revokeMember(alicePage, carol.username);
+    await expect(carolPage.getByRole("button", { name: noteTitlePattern(noteTitle) })).toHaveCount(
+      0
+    );
+    await expect(carolPage.locator(".preview-body", { hasText: aliceBody })).toHaveCount(0);
     await closePageContext(carolPage, contexts);
 
     await editSelectedNote(bobPage, bobBody);
@@ -54,8 +59,10 @@ test("syncs a shared note for an online editor and offline viewer", async ({
 
     carolPage = await newUserPage(browser, baseURL, contexts);
     await signIn(carolPage, carol.username, carol.password);
-    await openNote(carolPage, noteTitle);
-    await expect(carolPage.locator(".preview-body", { hasText: bobBody })).toBeVisible();
+    await expect(carolPage.getByRole("button", { name: noteTitlePattern(noteTitle) })).toHaveCount(
+      0
+    );
+    await expect(carolPage.locator(".preview-body", { hasText: bobBody })).toHaveCount(0);
   } finally {
     await Promise.all(contexts.splice(0).map((context) => context.close()));
   }
@@ -154,6 +161,21 @@ async function shareNote(
   await shared;
   await expect(page.getByText("Note shared")).toBeVisible();
   await expect(page.locator(".membership-list li", { hasText: username })).toBeVisible();
+}
+
+async function revokeMember(page: Page, username: string): Promise<void> {
+  const revoked = page.waitForResponse(
+    (response) =>
+      response.request().method() === "DELETE" &&
+      response.url().includes("/memberships/") &&
+      response.ok()
+  );
+  await page
+    .locator(".membership-list li", { hasText: username })
+    .getByRole("button", { name: "Revoke" })
+    .click();
+  await revoked;
+  await expect(page.getByText("Collaborator revoked")).toBeVisible();
 }
 
 async function openNote(page: Page, title: string): Promise<void> {

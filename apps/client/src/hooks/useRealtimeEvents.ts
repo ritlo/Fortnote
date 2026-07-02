@@ -13,6 +13,7 @@ export function useRealtimeEvents() {
   const rootKey = useAppStore((state) => state.rootKey);
   const selectedNoteId = useAppStore((state) => state.selectedNoteId);
   const addCollaborationEvents = useAppStore((state) => state.addCollaborationEvents);
+  const removeNoteAccess = useAppStore((state) => state.removeNoteAccess);
   const setNotePresence = useAppStore((state) => state.setNotePresence);
   const setRealtimeStatus = useAppStore((state) => state.setRealtimeStatus);
   const connectionRef = useRef<RealtimeConnection | null>(null);
@@ -82,11 +83,13 @@ export function useRealtimeEvents() {
         onMessage: (message) => {
           if (message.type === "replay") {
             addCollaborationEvents(message.events);
+            removeRevokedNotes(message.events);
             void reloadAfterEvents(message.events, { skipOwnEvents: true });
             return;
           }
           if (message.type === "event") {
             addCollaborationEvents([message.event]);
+            removeRevokedNotes([message.event]);
             void reloadAfterEvents([message.event], { skipOwnEvents: true });
             return;
           }
@@ -112,7 +115,14 @@ export function useRealtimeEvents() {
       connectionRef.current = null;
       connection?.close();
     };
-  }, [addCollaborationEvents, rootKey, setNotePresence, setRealtimeStatus, user]);
+  }, [
+    addCollaborationEvents,
+    removeNoteAccess,
+    rootKey,
+    setNotePresence,
+    setRealtimeStatus,
+    user
+  ]);
 
   useEffect(() => {
     selectedNoteIdRef.current = selectedNoteId;
@@ -121,6 +131,20 @@ export function useRealtimeEvents() {
     }
     connectionRef.current?.sendPresence(selectedNoteId, "idle");
   }, [selectedNoteId]);
+}
+
+function removeRevokedNotes(events: CollaborationEvent[]): void {
+  const { removeNoteAccess, user } = useAppStore.getState();
+  if (!user) {
+    return;
+  }
+
+  for (const event of events) {
+    if (!isOwnRevocation(event, user.id) || !event.noteId) {
+      continue;
+    }
+    removeNoteAccess(event.noteId);
+  }
 }
 
 async function reloadAfterEvents(
@@ -140,6 +164,13 @@ async function reloadAfterEvents(
   }
 
   await loadDecryptedNotes(user, rootKey, false);
+}
+
+function isOwnRevocation(event: CollaborationEvent, userId: string): boolean {
+  return (
+    event.type === "membership.revoked" &&
+    event.metadata?.membershipUserId === userId
+  );
 }
 
 function shouldReloadNotes(event: CollaborationEvent): boolean {

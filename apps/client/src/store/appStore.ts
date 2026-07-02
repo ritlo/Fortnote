@@ -77,6 +77,7 @@ export interface AppStore {
   setRealtimeStatus: StoreSetter<RealtimeStatus>;
   setEventCursor: StoreSetter<number>;
   addCollaborationEvents: (events: CollaborationEvent[]) => void;
+  removeNoteAccess: (noteId: string) => void;
   setNotePresence: (noteId: string, users: PresenceUser[]) => void;
   setOpenedSharingKey: StoreSetter<OpenedSharingKey | null>;
   setError: StoreSetter<string | null>;
@@ -199,6 +200,20 @@ export const useAppStore = create<AppStore>((set) => ({
       };
     });
   },
+  removeNoteAccess: (noteId) => {
+    set((state) => {
+      const notes = state.notes.filter((note) => note.id !== noteId);
+      const trashNotes = state.trashNotes.filter((note) => note.id !== noteId);
+      return {
+        attachmentsByNote: omitRecordKey(state.attachmentsByNote, noteId),
+        notes,
+        presenceByNote: omitRecordKey(state.presenceByNote, noteId),
+        selectedNoteId:
+          state.selectedNoteId === noteId ? (notes[0]?.id ?? null) : state.selectedNoteId,
+        trashNotes
+      };
+    });
+  },
   setNotePresence: (noteId, users) => {
     set((state) => ({
       presenceByNote: {
@@ -241,3 +256,9 @@ export const useAppStore = create<AppStore>((set) => ({
     });
   }
 }));
+
+function omitRecordKey<T>(record: Record<string, T>, keyToRemove: string): Record<string, T> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([key]) => key !== keyToRemove)
+  );
+}
