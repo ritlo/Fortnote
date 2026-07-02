@@ -23,7 +23,13 @@ export function EditorHeader({
   moveSelectedToTrash,
   restoreSelectedNote,
   saveSelectedNote
-}: EditorHeaderProps) {
+	}: EditorHeaderProps) {
+  const canSave =
+    selectedNote?.role !== undefined &&
+    selectedNote.role !== "viewer" &&
+    notesView !== "trash";
+  const canDelete = selectedNote?.role === "owner";
+
   return (
     <header className="pane-header">
       <div>
@@ -53,13 +59,13 @@ export function EditorHeader({
         </div>
       ) : (
         <>
-          <button
-            className="primary"
-            type="button"
-            disabled={!selectedNote || notesView === "trash"}
-            onClick={() => {
-              void saveSelectedNote();
-            }}
+	          <button
+	            className="primary"
+	            type="button"
+	            disabled={!canSave}
+	            onClick={() => {
+	              void saveSelectedNote();
+	            }}
           >
             Save
           </button>
@@ -87,13 +93,13 @@ export function EditorHeader({
               </button>
             </div>
           ) : (
-            <button
-              className="text-button danger"
-              type="button"
-              disabled={!selectedNote}
-              onClick={() => {
-                void moveSelectedToTrash();
-              }}
+	            <button
+	              className="text-button danger"
+	              type="button"
+	              disabled={!canDelete}
+	              onClick={() => {
+	                void moveSelectedToTrash();
+	              }}
             >
               Delete
             </button>

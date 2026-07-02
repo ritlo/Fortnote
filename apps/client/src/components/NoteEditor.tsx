@@ -1,6 +1,7 @@
 import { FileText } from "lucide-react";
 import type { FolderSummary } from "../api";
 import type { DecryptedNote, NotesView } from "../store/appStore";
+import { SharingPanel } from "./SharingPanel";
 
 interface NoteEditorProps {
   folders: FolderSummary[];
@@ -18,7 +19,13 @@ export function NoteEditor({
   selectedNote,
   updateSelectedNote,
   uploadSelectedAttachment
-}: NoteEditorProps) {
+	}: NoteEditorProps) {
+  const canEdit =
+    selectedNote?.role !== undefined &&
+    selectedNote.role !== "viewer" &&
+    notesView !== "trash";
+  const canMove = selectedNote?.role === "owner" && notesView !== "trash";
+
   return (
     <div className="editor-column">
       <FileText size={20} />
@@ -26,7 +33,7 @@ export function NoteEditor({
         Folder
         <select
           value={selectedNote?.folderId ?? ""}
-          disabled={!selectedNote || notesView === "trash"}
+          disabled={!canMove}
           onChange={(event) => {
             updateSelectedNote({ folderId: event.target.value || null });
           }}
@@ -44,7 +51,7 @@ export function NoteEditor({
         Title
         <input
           value={selectedNote?.title ?? ""}
-          disabled={!selectedNote || notesView === "trash"}
+          disabled={!canEdit}
           onChange={(event) => {
             updateSelectedNote({ title: event.target.value });
           }}
@@ -54,7 +61,7 @@ export function NoteEditor({
         Markdown editor
         <textarea
           value={selectedNote?.body ?? ""}
-          disabled={!selectedNote || notesView === "trash"}
+          disabled={!canEdit}
           onChange={(event) => {
             updateSelectedNote({ body: event.target.value });
           }}
@@ -64,13 +71,14 @@ export function NoteEditor({
         Attach encrypted file
         <input
           type="file"
-          disabled={!selectedNote || notesView === "trash"}
+          disabled={!canEdit}
           onChange={(event) => {
             void uploadSelectedAttachment(event.target.files?.[0]);
             event.target.value = "";
           }}
         />
       </label>
+      <SharingPanel selectedNote={selectedNote} disabled={notesView === "trash"} />
     </div>
   );
 }
