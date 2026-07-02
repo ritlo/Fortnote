@@ -460,6 +460,16 @@ textarea {
   color: var(--muted);
 }
 
+.membership-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.membership-actions select {
+  min-width: 100px;
+}
+
 .text-button {
   border: 1px solid var(--line);
   border-radius: 7px;

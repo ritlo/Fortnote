@@ -4,6 +4,8 @@ import {
   inviteNoteMember,
   listNoteMemberships,
   lookupSharingKey,
+  revokeNoteMember,
+  updateNoteMemberRole,
   type NoteMembership
 } from "../api";
 import { encryptNoteKeyShare } from "../cryptoClient";
@@ -79,6 +81,40 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     }
   }
 
+  async function changeMemberRole(member: NoteMembership, nextRole: "editor" | "viewer") {
+    if (selectedNote?.role !== "owner" || member.role === "owner") {
+      return;
+    }
+
+    setError(null);
+    try {
+      await updateNoteMemberRole(selectedNote.id, member.userId, nextRole);
+      const payload = await listNoteMemberships(selectedNote.id);
+      setMemberships(payload.memberships);
+      setStatus("Collaborator role updated");
+    } catch (roleError) {
+      setStatus("Share update failed");
+      setError(roleError instanceof Error ? roleError.message : "Unable to update role");
+    }
+  }
+
+  async function revokeMember(member: NoteMembership) {
+    if (selectedNote?.role !== "owner" || member.role === "owner") {
+      return;
+    }
+
+    setError(null);
+    try {
+      await revokeNoteMember(selectedNote.id, member.userId);
+      const payload = await listNoteMemberships(selectedNote.id);
+      setMemberships(payload.memberships);
+      setStatus("Collaborator revoked");
+    } catch (revokeError) {
+      setStatus("Revoke failed");
+      setError(revokeError instanceof Error ? revokeError.message : "Unable to revoke");
+    }
+  }
+
   const canInvite = selectedNote?.role === "owner" && !disabled;
 
   return (
@@ -127,7 +163,36 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
               <strong>{membership.username}</strong>
               <small>{membership.status}</small>
             </span>
-            <small>{membership.role}</small>
+            {canInvite && membership.role !== "owner" ? (
+              <div className="membership-actions">
+                <select
+                  aria-label={`Role for ${membership.username}`}
+                  value={membership.role}
+                  disabled={membership.status !== "active"}
+                  onChange={(event) => {
+                    void changeMemberRole(
+                      membership,
+                      event.target.value as "editor" | "viewer"
+                    );
+                  }}
+                >
+                  <option value="editor">Editor</option>
+                  <option value="viewer">Viewer</option>
+                </select>
+                <button
+                  className="text-button danger"
+                  type="button"
+                  disabled={membership.status === "revoked"}
+                  onClick={() => {
+                    void revokeMember(membership);
+                  }}
+                >
+                  Revoke
+                </button>
+              </div>
+            ) : (
+              <small>{membership.role}</small>
+            )}
           </li>
         ))}
       </ul>
