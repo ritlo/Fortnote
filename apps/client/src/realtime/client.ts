@@ -64,12 +64,17 @@ function realtimeUrl(after: number): string {
   return `${protocol}//${window.location.host}/api/realtime?after=${String(after)}`;
 }
 
-function parseRealtimeMessage(data: unknown): RealtimeMessage | null {
+export function parseRealtimeMessage(data: unknown): RealtimeMessage | null {
   if (typeof data !== "string") {
     return null;
   }
 
-  const parsed = JSON.parse(data) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data) as unknown;
+  } catch {
+    return null;
+  }
   if (!isRealtimeMessage(parsed)) {
     return null;
   }
