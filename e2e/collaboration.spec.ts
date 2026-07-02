@@ -122,8 +122,13 @@ async function waitForSharingKey(page: Page): Promise<void> {
 async function createNote(page: Page, title: string, body: string): Promise<void> {
   await page.getByLabel("New note").click();
   await expect(page.getByRole("button", { name: /Untitled note/ })).toBeVisible();
-  await expect(page.getByLabel("Title")).toHaveValue("Untitled note");
-  await page.getByLabel("Title").fill(title);
+  const titleInput = page.getByLabel("Title");
+  await expect(titleInput).toHaveValue("Untitled note");
+  await titleInput.click();
+  await titleInput.press("ControlOrMeta+A");
+  await titleInput.pressSequentially(title);
+  await expect(titleInput).toHaveValue(title);
+  await expect(page.getByRole("button", { name: noteTitlePattern(title) })).toBeVisible();
   await page.getByLabel("Markdown editor").fill(body);
   const saved = waitForNoteSave(page);
   await page.getByRole("button", { name: "Save" }).click();
