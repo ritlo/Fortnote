@@ -11,6 +11,8 @@ import {
   safeDisplayFilename,
   writeEncryptedAttachment
 } from "./storage.js";
+import { canEditNote, canReadNote, getNoteAccess } from "../notes/access.js";
+import { writeNoteEvent } from "../notes/events.js";
 
 const uploadAttachmentSchema = z.object({
   id: z.uuid(),
@@ -30,12 +32,6 @@ type UploadReadResult =
       message: string;
     };
 
-interface NoteOwnerRow {
-  id: string;
-  userId: string;
-  isDeleted: 0 | 1;
-}
-
 interface AttachmentRow {
   id: string;
   noteId: string;
@@ -48,16 +44,6 @@ interface AttachmentRow {
   fileCipherPath: string;
   fileNonce: string;
   createdAt: string;
-}
-
-function getNote(context: AppContext, noteId: string): NoteOwnerRow | undefined {
-  return context.db.sqlite
-    .prepare(
-      `SELECT id, user_id AS userId, is_deleted AS isDeleted
-       FROM notes
-       WHERE id = ?`
-    )
-    .get(noteId) as NoteOwnerRow | undefined;
 }
 
 function getAttachment(
@@ -88,6 +74,10 @@ function userStorageBytes(context: AppContext, userId: string): number {
     .prepare("SELECT COALESCE(SUM(size), 0) AS total FROM attachments WHERE user_id = ?")
     .get(userId) as { total: number };
   return row.total;
+}
+
+function publishEventCursor(context: AppContext, cursor: number): void {
+  context.realtime?.publishEvents([cursor]);
 }
 
 function headerValue(request: Request, name: string): string {
@@ -203,16 +193,12 @@ export function createAttachmentsRouter(context: AppContext): Router {
       return;
     }
 
-    const note = getNote(context, request.params.noteId);
-    if (!note) {
+    const access = getNoteAccess(context, request.params.noteId, session.userId);
+    if (!canEditNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
-    if (note.userId !== session.userId) {
-      sendApiError(response, "not_found", "Note not found");
-      return;
-    }
-    if (note.isDeleted) {
+    if (access.isDeleted) {
       sendApiError(response, "conflict", "Restore note before attaching files");
       return;
     }
@@ -224,7 +210,10 @@ export function createAttachmentsRouter(context: AppContext): Router {
       sendApiError(response, "payload_too_large", "Attachment too large");
       return;
     }
-    if (userStorageBytes(context, session.userId) + parsed.data.size > LIMITS.maxUserStorageBytes) {
+    if (
+      userStorageBytes(context, access.ownerUserId) + parsed.data.size >
+      LIMITS.maxUserStorageBytes
+    ) {
       sendApiError(response, "quota_exceeded", "Storage quota exceeded");
       return;
     }
@@ -235,39 +224,53 @@ export function createAttachmentsRouter(context: AppContext): Router {
       return;
     }
 
-    const storageId = crypto.randomUUID();
-    try {
-      writeEncryptedAttachment(context.config, storageId, encryptedBytes.bytes);
-      context.db.sqlite
-        .prepare(
-          `INSERT INTO attachments (
-            id,
-            note_id,
-            user_id,
-            filename,
-            mime_type,
-            size,
-            encrypted_attachment_key,
-            attachment_key_nonce,
-            file_cipher_path,
-            file_nonce
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          parsed.data.id,
-          note.id,
-          session.userId,
-          parsed.data.filename.trim(),
-          parsed.data.mimeType,
-          parsed.data.size,
-          parsed.data.encryptedAttachmentKey,
-          parsed.data.attachmentKeyNonce,
-          storageId,
-          parsed.data.fileNonce
-        );
-    } catch (error) {
-      deleteEncryptedAttachment(context.config, storageId);
-      throw error;
+	    const storageId = crypto.randomUUID();
+	    try {
+	      writeEncryptedAttachment(context.config, storageId, encryptedBytes.bytes);
+	      const insertAttachment = context.db.sqlite.transaction(() => {
+	        context.db.sqlite
+	          .prepare(
+	            `INSERT INTO attachments (
+	              id,
+	              note_id,
+	              user_id,
+	              filename,
+	              mime_type,
+	              size,
+	              encrypted_attachment_key,
+	              attachment_key_nonce,
+	              file_cipher_path,
+	              file_nonce
+	            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	          )
+	          .run(
+	            parsed.data.id,
+	            access.noteId,
+	            access.ownerUserId,
+	            parsed.data.filename.trim(),
+	            parsed.data.mimeType,
+	            parsed.data.size,
+	            parsed.data.encryptedAttachmentKey,
+	            parsed.data.attachmentKeyNonce,
+	            storageId,
+	            parsed.data.fileNonce
+	          );
+	        return writeNoteEvent(context, {
+	          noteId: access.noteId,
+	          actorUserId: session.userId,
+	          eventType: "attachment.created",
+	          noteVersion: access.version,
+	          resourceType: "attachment",
+	          resourceId: parsed.data.id,
+	          payloadMetadata: {
+	            attachmentId: parsed.data.id
+	          }
+	        });
+	      });
+	      publishEventCursor(context, insertAttachment());
+	    } catch (error) {
+	      deleteEncryptedAttachment(context.config, storageId);
+	      throw error;
     }
 
     response.status(201).json({ id: parsed.data.id });
@@ -279,12 +282,8 @@ export function createAttachmentsRouter(context: AppContext): Router {
       return;
     }
 
-    const note = getNote(context, request.params.noteId);
-    if (!note) {
-      sendApiError(response, "not_found", "Note not found");
-      return;
-    }
-    if (note.userId !== session.userId) {
+    const access = getNoteAccess(context, request.params.noteId, session.userId);
+    if (!canReadNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
@@ -300,10 +299,10 @@ export function createAttachmentsRouter(context: AppContext): Router {
                 file_nonce AS fileNonce,
                 created_at AS createdAt
          FROM attachments
-         WHERE note_id = ? AND user_id = ?
-         ORDER BY created_at DESC`
-      )
-      .all(note.id, session.userId);
+	         WHERE note_id = ?
+	         ORDER BY created_at DESC`
+	      )
+	      .all(access.noteId);
 
     response.json({ attachments: rows });
   });
@@ -319,7 +318,8 @@ export function createAttachmentsRouter(context: AppContext): Router {
       sendApiError(response, "not_found", "Attachment not found");
       return;
     }
-    if (attachment.userId !== session.userId) {
+    const access = getNoteAccess(context, attachment.noteId, session.userId);
+    if (!canReadNote(access)) {
       sendApiError(response, "not_found", "Attachment not found");
       return;
     }
@@ -341,14 +341,27 @@ export function createAttachmentsRouter(context: AppContext): Router {
       sendApiError(response, "not_found", "Attachment not found");
       return;
     }
-    if (attachment.userId !== session.userId) {
+    const access = getNoteAccess(context, attachment.noteId, session.userId);
+    if (!canEditNote(access)) {
       sendApiError(response, "not_found", "Attachment not found");
       return;
     }
 
-    context.db.sqlite
-      .prepare("DELETE FROM attachments WHERE id = ? AND user_id = ?")
-      .run(attachment.id, session.userId);
+    const deleteAttachmentRow = context.db.sqlite.transaction(() => {
+      context.db.sqlite.prepare("DELETE FROM attachments WHERE id = ?").run(attachment.id);
+      return writeNoteEvent(context, {
+        noteId: attachment.noteId,
+        actorUserId: session.userId,
+        eventType: "attachment.deleted",
+        noteVersion: access.version,
+        resourceType: "attachment",
+        resourceId: attachment.id,
+        payloadMetadata: {
+          attachmentId: attachment.id
+        }
+      });
+    });
+    publishEventCursor(context, deleteAttachmentRow());
     deleteEncryptedAttachment(context.config, attachment.fileCipherPath);
 
     response.status(204).send();

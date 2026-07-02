@@ -9,14 +9,16 @@ export type NoteEventType =
   | "note.permanently_deleted"
   | "membership.added"
   | "membership.role_updated"
-  | "membership.revoked";
+  | "membership.revoked"
+  | "attachment.created"
+  | "attachment.deleted";
 
 interface WriteNoteEventInput {
   noteId: string;
   actorUserId: string;
   eventType: NoteEventType;
   noteVersion: number | null;
-  resourceType?: "note" | "membership";
+  resourceType?: "note" | "membership" | "attachment";
   resourceId?: string;
   payloadMetadata?: Record<string, unknown>;
 }

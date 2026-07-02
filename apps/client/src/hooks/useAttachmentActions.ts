@@ -59,10 +59,10 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
     setError(null);
     setStatus("Encrypting attachment");
     try {
-      const encrypted = await createEncryptedAttachmentDraft({
-        userId: user.id,
-        noteId: selectedNote.id,
-        noteKeyBase64: selectedNote.noteKeyBase64,
+	      const encrypted = await createEncryptedAttachmentDraft({
+	        userId: selectedNote.cryptoOwnerId,
+	        noteId: selectedNote.id,
+	        noteKeyBase64: selectedNote.noteKeyBase64,
         file
       });
       await uploadAttachment(selectedNote.id, encrypted);
@@ -85,9 +85,9 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
     setStatus("Decrypting attachment");
     try {
       const encrypted = await downloadAttachment(attachment.id);
-      const plaintext = await decryptAttachmentBytes({
-        userId: user.id,
-        noteId: selectedNote.id,
+	      const plaintext = await decryptAttachmentBytes({
+	        userId: selectedNote.cryptoOwnerId,
+	        noteId: selectedNote.id,
         noteKeyBase64: selectedNote.noteKeyBase64,
         attachmentId: attachment.id,
         encryptedAttachmentKey: {
