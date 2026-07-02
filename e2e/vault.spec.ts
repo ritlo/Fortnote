@@ -121,6 +121,7 @@ async function register(
 async function createNote(page: Page, title: string, body: string): Promise<void> {
   await page.getByLabel("New note").click();
   await expect(page.getByRole("button", { name: /Untitled note/ })).toBeVisible();
+  await expect(page.getByText("Note encrypted and saved")).toBeVisible();
   const titleInput = page.getByLabel("Title");
   await expect(titleInput).toHaveValue("Untitled note");
   await titleInput.fill(title);
