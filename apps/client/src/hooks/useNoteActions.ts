@@ -82,27 +82,34 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       return;
     }
 
+    await waitForPendingEditorUpdates();
+    const noteToSave =
+      useAppStore.getState().notes.find((note) => note.id === selectedNote.id) ??
+      selectedNote;
     setError(null);
     setStatus("Encrypting note");
     try {
       const encrypted = await encryptExistingNoteBody({
-        userId: selectedNote.cryptoOwnerId,
-        noteId: selectedNote.id,
-        noteKeyBase64: selectedNote.noteKeyBase64,
-        body: selectedNote.body
+        userId: noteToSave.cryptoOwnerId,
+        noteId: noteToSave.id,
+        noteKeyBase64: noteToSave.noteKeyBase64,
+        body: noteToSave.body
       });
-      const saved = await updateNote(selectedNote.id, {
-        title: selectedNote.title,
-        folderId: selectedNote.folderId,
-        version: selectedNote.version,
+      const saved = await updateNote(noteToSave.id, {
+        title: noteToSave.title,
+        folderId: noteToSave.folderId,
+        version: noteToSave.version,
         ...encrypted
       });
       setNotes((current) =>
         current.map((note) =>
-          note.id === selectedNote.id
+          note.id === noteToSave.id
             ? {
                 ...note,
+                body: noteToSave.body,
                 contentLength: encrypted.contentLength,
+                folderId: noteToSave.folderId,
+                title: noteToSave.title,
                 version: saved.version,
                 updatedAt: new Date().toISOString()
               }
@@ -241,4 +248,12 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     saveSelectedNote,
     updateSelectedNote
   };
+}
+
+async function waitForPendingEditorUpdates(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => {
+      resolve();
+    });
+  });
 }
