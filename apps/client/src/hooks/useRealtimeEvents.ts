@@ -43,7 +43,7 @@ export function useRealtimeEvents() {
         }
         if (message.type === "event") {
           addCollaborationEvents([message.event]);
-          void reloadAfterEvents([message.event]);
+          void reloadAfterEvents([message.event], { skipOwnEvents: true });
           return;
         }
         if (message.type === "presence") {
@@ -72,13 +72,19 @@ export function useRealtimeEvents() {
   }, [selectedNoteId]);
 }
 
-async function reloadAfterEvents(events: CollaborationEvent[]): Promise<void> {
-  if (!events.some((event) => shouldReloadNotes(event))) {
+async function reloadAfterEvents(
+  events: CollaborationEvent[],
+  options: { skipOwnEvents?: boolean } = {}
+): Promise<void> {
+  const { rootKey, user } = useAppStore.getState();
+  if (!rootKey || !user) {
     return;
   }
 
-  const { rootKey, user } = useAppStore.getState();
-  if (!rootKey || !user) {
+  const reloadEvents = options.skipOwnEvents
+    ? events.filter((event) => event.actorUserId !== user.id)
+    : events;
+  if (!reloadEvents.some((event) => shouldReloadNotes(event))) {
     return;
   }
 

@@ -6,7 +6,8 @@ import {
   lookupSharingKey,
   revokeNoteMember,
   updateNoteMemberRole,
-  type NoteMembership
+  type NoteMembership,
+  type PresenceUser
 } from "../api";
 import { encryptNoteKeyShare } from "../cryptoClient";
 import type { DecryptedNote } from "../store/appStore";
@@ -17,6 +18,8 @@ interface SharingPanelProps {
   disabled: boolean;
 }
 
+const EMPTY_PRESENCE: PresenceUser[] = [];
+
 export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   const [memberships, setMemberships] = useState<NoteMembership[]>([]);
   const [username, setUsername] = useState("");
@@ -25,7 +28,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   const setError = useAppStore((state) => state.setError);
   const setStatus = useAppStore((state) => state.setStatus);
   const presence = useAppStore((state) =>
-    selectedNote ? (state.presenceByNote[selectedNote.id] ?? []) : []
+    selectedNote ? (state.presenceByNote[selectedNote.id] ?? EMPTY_PRESENCE) : EMPTY_PRESENCE
   );
 
   useEffect(() => {
