@@ -1,8 +1,14 @@
 import { create } from "zustand";
-import type { AttachmentSummary, FolderSummary, User } from "../api";
+import type {
+  AttachmentSummary,
+  CollaborationEvent,
+  FolderSummary,
+  User
+} from "../api";
 
 export type AuthMode = "login" | "register" | "recover";
 export type NotesView = "notes" | "trash" | "settings";
+export type RealtimeStatus = "idle" | "connecting" | "connected" | "disconnected";
 
 export interface DecryptedNote {
   id: string;
@@ -38,6 +44,9 @@ export interface AppStore {
   selectedNoteId: string | null;
   search: string;
   recoverySecret: string | null;
+  realtimeStatus: RealtimeStatus;
+  eventCursor: number;
+  collaborationEvents: CollaborationEvent[];
   error: string | null;
   status: string;
   setUser: StoreSetter<User | null>;
@@ -58,6 +67,9 @@ export interface AppStore {
   setSelectedNoteId: StoreSetter<string | null>;
   setSearch: StoreSetter<string>;
   setRecoverySecret: StoreSetter<string | null>;
+  setRealtimeStatus: StoreSetter<RealtimeStatus>;
+  setEventCursor: StoreSetter<number>;
+  addCollaborationEvents: (events: CollaborationEvent[]) => void;
   setError: StoreSetter<string | null>;
   setStatus: StoreSetter<string>;
   resetVaultState: (nextStatus: string) => void;
@@ -86,6 +98,9 @@ export const useAppStore = create<AppStore>((set) => ({
   selectedNoteId: null,
   search: "",
   recoverySecret: null,
+  realtimeStatus: "idle",
+  eventCursor: 0,
+  collaborationEvents: [],
   error: null,
   status: "Checking session",
   setUser: (value) => {
@@ -152,6 +167,27 @@ export const useAppStore = create<AppStore>((set) => ({
       recoverySecret: resolveState(value, state.recoverySecret)
     }));
   },
+  setRealtimeStatus: (value) => {
+    set((state) => ({ realtimeStatus: resolveState(value, state.realtimeStatus) }));
+  },
+  setEventCursor: (value) => {
+    set((state) => ({ eventCursor: resolveState(value, state.eventCursor) }));
+  },
+  addCollaborationEvents: (events) => {
+    set((state) => {
+      if (events.length === 0) {
+        return {};
+      }
+      const nextCursor = Math.max(
+        state.eventCursor,
+        ...events.map((event) => event.cursor)
+      );
+      return {
+        collaborationEvents: [...state.collaborationEvents, ...events].slice(-200),
+        eventCursor: nextCursor
+      };
+    });
+  },
   setError: (value) => {
     set((state) => ({ error: resolveState(value, state.error) }));
   },
@@ -170,6 +206,9 @@ export const useAppStore = create<AppStore>((set) => ({
       selectedFolderId: null,
       notesView: "notes",
       recoverySecret: null,
+      realtimeStatus: "idle",
+      eventCursor: 0,
+      collaborationEvents: [],
       newPassword: "",
       user: null,
       status: nextStatus
