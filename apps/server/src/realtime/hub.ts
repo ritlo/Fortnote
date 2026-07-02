@@ -13,6 +13,11 @@ export interface RealtimeClient {
 
 export type PresenceState = "idle" | "editing";
 
+interface RealtimeHubOptions {
+  presenceTtlMs?: number;
+  presenceSweepIntervalMs?: number;
+}
+
 interface PresenceEntry {
   clientId: string;
   userId: string;
@@ -21,13 +26,37 @@ interface PresenceEntry {
   updatedAt: string;
 }
 
+const DEFAULT_PRESENCE_TTL_MS = 45_000;
+const DEFAULT_PRESENCE_SWEEP_INTERVAL_MS = 15_000;
+
 export class RealtimeHub implements RealtimePublisher {
   private readonly clients = new Set<RealtimeClient>();
   private readonly presenceByNote = new Map<string, Map<string, PresenceEntry>>();
+  private readonly presenceTtlMs: number;
+  private readonly presenceSweepInterval: ReturnType<typeof setInterval> | null;
   private context: AppContext | null = null;
+
+  constructor(options: RealtimeHubOptions = {}) {
+    this.presenceTtlMs = options.presenceTtlMs ?? DEFAULT_PRESENCE_TTL_MS;
+    const sweepIntervalMs =
+      options.presenceSweepIntervalMs ?? DEFAULT_PRESENCE_SWEEP_INTERVAL_MS;
+    this.presenceSweepInterval =
+      sweepIntervalMs > 0
+        ? setInterval(() => {
+            this.sweepStalePresence();
+          }, sweepIntervalMs)
+        : null;
+    this.presenceSweepInterval?.unref();
+  }
 
   attachContext(context: AppContext): void {
     this.context = context;
+  }
+
+  close(): void {
+    if (this.presenceSweepInterval) {
+      clearInterval(this.presenceSweepInterval);
+    }
   }
 
   addClient(input: { userId: string; username: string; socket: WebSocket }): RealtimeClient {
@@ -86,6 +115,27 @@ export class RealtimeHub implements RealtimePublisher {
   private clearPresence(client: RealtimeClient): void {
     for (const [noteId, notePresence] of this.presenceByNote.entries()) {
       if (!notePresence.delete(client.id)) {
+        continue;
+      }
+      if (notePresence.size === 0) {
+        this.presenceByNote.delete(noteId);
+      }
+      this.broadcastPresence(noteId);
+    }
+  }
+
+  private sweepStalePresence(now = Date.now()): void {
+    for (const [noteId, notePresence] of this.presenceByNote.entries()) {
+      let changed = false;
+      for (const [clientId, entry] of notePresence.entries()) {
+        if (Date.parse(entry.updatedAt) + this.presenceTtlMs > now) {
+          continue;
+        }
+        notePresence.delete(clientId);
+        changed = true;
+      }
+
+      if (!changed) {
         continue;
       }
       if (notePresence.size === 0) {

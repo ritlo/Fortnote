@@ -19,6 +19,11 @@ interface TestServer {
   url: string;
 }
 
+interface TestServerOptions {
+  presenceSweepIntervalMs?: number;
+  presenceTtlMs?: number;
+}
+
 interface SocketClient {
   socket: WebSocket;
   next: (label: string) => Promise<Record<string, unknown>>;
@@ -26,10 +31,14 @@ interface SocketClient {
 
 const openServers: Server[] = [];
 const openSockets: WebSocket[] = [];
+const openHubs: RealtimeHub[] = [];
 
 afterEach(async () => {
   for (const socket of openSockets.splice(0)) {
     socket.close();
+  }
+  for (const hub of openHubs.splice(0)) {
+    hub.close();
   }
   await Promise.all(
     openServers.splice(0).map(
@@ -196,12 +205,66 @@ describe("realtime server", () => {
     );
     await expectNoMessage(mallorySocket, "mallory forbidden presence");
   });
+
+  it("expires stale note presence", async () => {
+    const server = await createRealtimeTestServer({
+      presenceSweepIntervalMs: 10,
+      presenceTtlMs: 30
+    });
+    const alice = await register(server.url, "presence_expiry_alice");
+    const bob = await register(server.url, "presence_expiry_bob");
+    const created = await authed(server.url, alice.cookie)
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+    await authed(server.url, bob.cookie)
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload("presence_expiry_bob"))
+      .expect(201);
+    await authed(server.url, alice.cookie)
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send(invitePayload("presence_expiry_bob", "editor"))
+      .expect(201);
+
+    const aliceSocket = await connect(server.url, alice.cookie, 0);
+    const bobSocket = await connect(server.url, bob.cookie, 0);
+    await aliceSocket.next("alice connected");
+    await aliceSocket.next("alice replay");
+    await bobSocket.next("bob connected");
+    await bobSocket.next("bob replay");
+
+    bobSocket.socket.send(
+      JSON.stringify({ type: "presence", noteId, state: "idle" })
+    );
+
+    expect(await aliceSocket.next("alice presence")).toMatchObject({
+      type: "presence",
+      noteId,
+      users: [
+        {
+          username: "presence_expiry_bob",
+          state: "idle"
+        }
+      ]
+    });
+    expect(await aliceSocket.next("alice expired presence")).toMatchObject({
+      type: "presence",
+      noteId,
+      users: []
+    });
+  });
 });
 
-async function createRealtimeTestServer(): Promise<TestServer> {
+async function createRealtimeTestServer(
+  options: TestServerOptions = {}
+): Promise<TestServer> {
   const config = { ...getConfig(), port: 0, databasePath: ":memory:" };
   const db = createDb(config);
-  const realtime = new RealtimeHub();
+  const realtime = new RealtimeHub(options);
   const context = { config, db, realtime };
   const app = createApp(context);
   const httpServer = createServer(app);
@@ -210,6 +273,7 @@ async function createRealtimeTestServer(): Promise<TestServer> {
     httpServer.listen(0, resolve);
   });
   openServers.push(httpServer);
+  openHubs.push(realtime);
   const address = httpServer.address() as AddressInfo;
   return {
     db,
