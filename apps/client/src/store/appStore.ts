@@ -4,6 +4,7 @@ import type {
   AttachmentSummary,
   CollaborationEvent,
   FolderSummary,
+  PresenceUser,
   User
 } from "../api";
 
@@ -51,6 +52,7 @@ export interface AppStore {
   realtimeStatus: RealtimeStatus;
   eventCursor: number;
   collaborationEvents: CollaborationEvent[];
+  presenceByNote: Record<string, PresenceUser[]>;
   openedSharingKey: OpenedSharingKey | null;
   error: string | null;
   status: string;
@@ -75,6 +77,7 @@ export interface AppStore {
   setRealtimeStatus: StoreSetter<RealtimeStatus>;
   setEventCursor: StoreSetter<number>;
   addCollaborationEvents: (events: CollaborationEvent[]) => void;
+  setNotePresence: (noteId: string, users: PresenceUser[]) => void;
   setOpenedSharingKey: StoreSetter<OpenedSharingKey | null>;
   setError: StoreSetter<string | null>;
   setStatus: StoreSetter<string>;
@@ -107,6 +110,7 @@ export const useAppStore = create<AppStore>((set) => ({
   realtimeStatus: "idle",
   eventCursor: 0,
   collaborationEvents: [],
+  presenceByNote: {},
   openedSharingKey: null,
   error: null,
   status: "Checking session",
@@ -195,6 +199,14 @@ export const useAppStore = create<AppStore>((set) => ({
       };
     });
   },
+  setNotePresence: (noteId, users) => {
+    set((state) => ({
+      presenceByNote: {
+        ...state.presenceByNote,
+        [noteId]: users
+      }
+    }));
+  },
   setOpenedSharingKey: (value) => {
     set((state) => ({
       openedSharingKey: resolveState(value, state.openedSharingKey)
@@ -221,6 +233,7 @@ export const useAppStore = create<AppStore>((set) => ({
       realtimeStatus: "idle",
       eventCursor: 0,
       collaborationEvents: [],
+      presenceByNote: {},
       openedSharingKey: null,
       newPassword: "",
       user: null,

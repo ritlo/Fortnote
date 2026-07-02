@@ -205,6 +205,13 @@ export interface CollaborationEvent {
   createdAt: string;
 }
 
+export interface PresenceUser {
+  userId: string;
+  username: string;
+  state: "idle" | "editing";
+  updatedAt: string;
+}
+
 export interface StoreSharingKeyPayload {
   sharingKeyVersion: number;
   publicKey: string;

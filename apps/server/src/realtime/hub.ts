@@ -1,27 +1,48 @@
 import { WebSocket } from "ws";
 import type { AppContext } from "../http/app.js";
 import { listVisibleEvents } from "../events/replay.js";
+import { canReadNote, getNoteAccess } from "../notes/access.js";
 import type { RealtimePublisher } from "./types.js";
 
-interface RealtimeClient {
+export interface RealtimeClient {
+  id: string;
   userId: string;
+  username: string;
   socket: WebSocket;
+}
+
+export type PresenceState = "idle" | "editing";
+
+interface PresenceEntry {
+  clientId: string;
+  userId: string;
+  username: string;
+  state: PresenceState;
+  updatedAt: string;
 }
 
 export class RealtimeHub implements RealtimePublisher {
   private readonly clients = new Set<RealtimeClient>();
+  private readonly presenceByNote = new Map<string, Map<string, PresenceEntry>>();
   private context: AppContext | null = null;
 
   attachContext(context: AppContext): void {
     this.context = context;
   }
 
-  addClient(userId: string, socket: WebSocket): void {
-    const client = { userId, socket };
+  addClient(input: { userId: string; username: string; socket: WebSocket }): RealtimeClient {
+    const client = {
+      id: crypto.randomUUID(),
+      userId: input.userId,
+      username: input.username,
+      socket: input.socket
+    };
     this.clients.add(client);
-    socket.on("close", () => {
+    input.socket.on("close", () => {
       this.clients.delete(client);
+      this.clearPresence(client);
     });
+    return client;
   }
 
   publishEvents(cursors: number[]): void {
@@ -37,6 +58,67 @@ export class RealtimeHub implements RealtimePublisher {
         }
         sendJson(client.socket, { type: "event", event });
       }
+    }
+  }
+
+  updatePresence(client: RealtimeClient, noteId: string, state: PresenceState): void {
+    if (!this.context) {
+      return;
+    }
+
+    const access = getNoteAccess(this.context, noteId, client.userId);
+    if (!canReadNote(access)) {
+      return;
+    }
+
+    const notePresence = this.presenceByNote.get(noteId) ?? new Map<string, PresenceEntry>();
+    notePresence.set(client.id, {
+      clientId: client.id,
+      userId: client.userId,
+      username: client.username,
+      state,
+      updatedAt: new Date().toISOString()
+    });
+    this.presenceByNote.set(noteId, notePresence);
+    this.broadcastPresence(noteId);
+  }
+
+  private clearPresence(client: RealtimeClient): void {
+    for (const [noteId, notePresence] of this.presenceByNote.entries()) {
+      if (!notePresence.delete(client.id)) {
+        continue;
+      }
+      if (notePresence.size === 0) {
+        this.presenceByNote.delete(noteId);
+      }
+      this.broadcastPresence(noteId);
+    }
+  }
+
+  private broadcastPresence(noteId: string): void {
+    if (!this.context) {
+      return;
+    }
+
+    const usersById = new Map<string, Omit<PresenceEntry, "clientId">>();
+    for (const entry of this.presenceByNote.get(noteId)?.values() ?? []) {
+      usersById.set(entry.userId, {
+        userId: entry.userId,
+        username: entry.username,
+        state: entry.state,
+        updatedAt: entry.updatedAt
+      });
+    }
+    const users = [...usersById.values()].sort((left, right) =>
+      left.username.localeCompare(right.username)
+    );
+
+    for (const client of this.clients) {
+      const access = getNoteAccess(this.context, noteId, client.userId);
+      if (!canReadNote(access)) {
+        continue;
+      }
+      sendJson(client.socket, { type: "presence", noteId, users });
     }
   }
 }

@@ -1,9 +1,10 @@
-import type { CollaborationEvent } from "../api";
+import type { CollaborationEvent, PresenceUser } from "../api";
 
 export type RealtimeMessage =
   | { type: "connected"; userId: string; username: string }
   | { type: "replay"; events: CollaborationEvent[] }
   | { type: "event"; event: CollaborationEvent }
+  | { type: "presence"; noteId: string; users: PresenceUser[] }
   | { type: "pong" };
 
 interface RealtimeClientOptions {
@@ -16,6 +17,7 @@ interface RealtimeClientOptions {
 
 export interface RealtimeConnection {
   close: () => void;
+  sendPresence: (noteId: string, state: "idle" | "editing") => void;
 }
 
 export function connectRealtime({
@@ -43,6 +45,12 @@ export function connectRealtime({
   });
 
   return {
+    sendPresence: (noteId, state) => {
+      if (socket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      socket.send(JSON.stringify({ type: "presence", noteId, state }));
+    },
     close: () => {
       socket.close();
     }
@@ -76,6 +84,7 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
     type === "connected" ||
     type === "replay" ||
     type === "event" ||
+    type === "presence" ||
     type === "pong"
   );
 }

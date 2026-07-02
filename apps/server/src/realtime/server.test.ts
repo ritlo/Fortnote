@@ -139,6 +139,63 @@ describe("realtime server", () => {
     bobSocket.socket.close();
     carolSocket.socket.close();
   });
+
+  it("broadcasts note presence only to active members", async () => {
+    const server = await createRealtimeTestServer();
+    const alice = await register(server.url, "presence_alice");
+    const bob = await register(server.url, "presence_bob");
+    const mallory = await register(server.url, "presence_mallory");
+    const created = await authed(server.url, alice.cookie)
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+    await authed(server.url, bob.cookie)
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload("presence_bob"))
+      .expect(201);
+    await authed(server.url, alice.cookie)
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send(invitePayload("presence_bob", "editor"))
+      .expect(201);
+
+    const aliceSocket = await connect(server.url, alice.cookie, 0);
+    const bobSocket = await connect(server.url, bob.cookie, 0);
+    const mallorySocket = await connect(server.url, mallory.cookie, 0);
+    await aliceSocket.next("alice connected");
+    await aliceSocket.next("alice replay");
+    await bobSocket.next("bob connected");
+    await bobSocket.next("bob replay");
+    await mallorySocket.next("mallory connected");
+    await mallorySocket.next("mallory replay");
+
+    bobSocket.socket.send(
+      JSON.stringify({ type: "presence", noteId, state: "editing" })
+    );
+
+    expect(await aliceSocket.next("alice presence")).toMatchObject({
+      type: "presence",
+      noteId,
+      users: [
+        {
+          username: "presence_bob",
+          state: "editing"
+        }
+      ]
+    });
+    expect(await bobSocket.next("bob own presence")).toMatchObject({
+      type: "presence",
+      noteId
+    });
+
+    mallorySocket.socket.send(
+      JSON.stringify({ type: "presence", noteId, state: "editing" })
+    );
+    await expectNoMessage(mallorySocket, "mallory forbidden presence");
+  });
 });
 
 async function createRealtimeTestServer(): Promise<TestServer> {
@@ -264,6 +321,23 @@ async function nextMessage(
       resolve(message);
     });
   });
+}
+
+async function expectNoMessage(socket: SocketClient, label: string): Promise<void> {
+  await expect(
+    new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(resolve, 100);
+      socket.socket.once("message", (data) => {
+        clearTimeout(timeout);
+        const message = parseSocketMessage(data);
+        reject(new Error(`Unexpected websocket message: ${JSON.stringify(message)}`));
+      });
+    }).catch((error: unknown) => {
+      throw error instanceof Error
+        ? new Error(`${label}: ${error.message}`)
+        : new Error(label);
+    })
+  ).resolves.toBeUndefined();
 }
 
 function parseSocketMessage(data: RawData): Record<string, unknown> {

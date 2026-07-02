@@ -24,6 +24,9 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const setError = useAppStore((state) => state.setError);
   const setStatus = useAppStore((state) => state.setStatus);
+  const presence = useAppStore((state) =>
+    selectedNote ? (state.presenceByNote[selectedNote.id] ?? []) : []
+  );
 
   useEffect(() => {
     let isActive = true;
@@ -161,7 +164,15 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
           <li key={membership.userId}>
             <span>
               <strong>{membership.username}</strong>
-              <small>{membership.status}</small>
+              <small>
+                {membership.status}
+                {presence.some((user) => user.userId === membership.userId)
+                  ? ` · ${
+                      presence.find((user) => user.userId === membership.userId)?.state ??
+                      "online"
+                    }`
+                  : ""}
+              </small>
             </span>
             {canInvite && membership.role !== "owner" ? (
               <div className="membership-actions">

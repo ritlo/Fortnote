@@ -1,14 +1,17 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { CollaborationEvent } from "../api";
-import { connectRealtime } from "../realtime/client";
+import { connectRealtime, type RealtimeConnection } from "../realtime/client";
 import { useAppStore } from "../store/appStore";
 import { loadDecryptedNotes } from "./useAppData";
 
 export function useRealtimeEvents() {
   const user = useAppStore((state) => state.user);
   const rootKey = useAppStore((state) => state.rootKey);
+  const selectedNoteId = useAppStore((state) => state.selectedNoteId);
   const addCollaborationEvents = useAppStore((state) => state.addCollaborationEvents);
+  const setNotePresence = useAppStore((state) => state.setNotePresence);
   const setRealtimeStatus = useAppStore((state) => state.setRealtimeStatus);
+  const connectionRef = useRef<RealtimeConnection | null>(null);
 
   useEffect(() => {
     if (!user || !rootKey) {
@@ -37,14 +40,27 @@ export function useRealtimeEvents() {
         if (message.type === "event") {
           addCollaborationEvents([message.event]);
           void reloadAfterEvents([message.event]);
+          return;
+        }
+        if (message.type === "presence") {
+          setNotePresence(message.noteId, message.users);
         }
       }
     });
+    connectionRef.current = connection;
 
     return () => {
+      connectionRef.current = null;
       connection.close();
     };
-  }, [addCollaborationEvents, rootKey, setRealtimeStatus, user]);
+  }, [addCollaborationEvents, rootKey, setNotePresence, setRealtimeStatus, user]);
+
+  useEffect(() => {
+    if (!selectedNoteId) {
+      return;
+    }
+    connectionRef.current?.sendPresence(selectedNoteId, "idle");
+  }, [selectedNoteId]);
 }
 
 async function reloadAfterEvents(events: CollaborationEvent[]): Promise<void> {

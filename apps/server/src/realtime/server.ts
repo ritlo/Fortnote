@@ -9,11 +9,19 @@ import {
 } from "../auth/session.js";
 import { listVisibleEvents } from "../events/replay.js";
 import type { AppContext } from "../http/app.js";
-import { RealtimeHub, sendJson } from "./hub.js";
+import { RealtimeHub, sendJson, type RealtimeClient } from "./hub.js";
 
 const realtimeQuerySchema = z.object({
   after: z.coerce.number().int().nonnegative().default(0)
 });
+
+const clientMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("presence"),
+    noteId: z.uuid(),
+    state: z.enum(["idle", "editing"])
+  })
+]);
 
 export function attachRealtimeServer(
   context: AppContext,
@@ -58,9 +66,13 @@ function connectClient(
   session: SessionRecord,
   after: number
 ): void {
-  hub.addClient(session.userId, socket);
+  const client = hub.addClient({
+    userId: session.userId,
+    username: session.username,
+    socket
+  });
   socket.on("message", (message) => {
-    handleClientMessage(socket, message);
+    handleClientMessage(hub, client, socket, message);
   });
 
   sendJson(socket, {
@@ -74,11 +86,34 @@ function connectClient(
   });
 }
 
-function handleClientMessage(socket: WebSocket, message: RawData): void {
+function handleClientMessage(
+  hub: RealtimeHub,
+  client: RealtimeClient,
+  socket: WebSocket,
+  message: RawData
+): void {
   const raw = rawDataToString(message);
   if (raw === "ping") {
     sendJson(socket, { type: "pong" });
+    return;
   }
+
+  const parsed = parseClientMessage(raw);
+  if (!parsed) {
+    return;
+  }
+  hub.updatePresence(client, parsed.noteId, parsed.state);
+}
+
+function parseClientMessage(raw: string): z.infer<typeof clientMessageSchema> | null {
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+  const parsed = clientMessageSchema.safeParse(parsedJson);
+  return parsed.success ? parsed.data : null;
 }
 
 function rawDataToString(message: RawData): string {
