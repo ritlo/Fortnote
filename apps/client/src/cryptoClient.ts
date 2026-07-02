@@ -1,6 +1,7 @@
 import {
   attachmentAssociatedData,
   createKdfParams,
+  createSharingKeyPair,
   decryptBytes,
   deriveAuthVerifier,
   deriveRecoveryAuthVerifier,
@@ -9,16 +10,23 @@ import {
   encryptBytes,
   fromBase64,
   generateRecoverySecret,
+  openSealedBytes,
   randomBytes,
   randomUuid,
+  sealBytes,
   toBase64,
   utf8,
   type EncryptedPayload,
   type KdfParams
 } from "@fortnote/shared";
-import type { RegisterPayload } from "./api";
+import type {
+  SharingKeyEnvelope,
+  StoreSharingKeyPayload,
+  RegisterPayload
+} from "./api";
 
 const ROOT_KEY_AAD = utf8("fortnote:root-key:v1");
+const SHARING_PRIVATE_KEY_AAD = utf8("fortnote:sharing-private-key:v1");
 
 function noteKeyAad(userId: string, noteId: string): Uint8Array {
   return utf8(`fortnote:note-key:v1:${userId}:${noteId}`);
@@ -88,6 +96,17 @@ export interface AccountRecoveryCrypto {
   rootKey: Uint8Array;
   recoveryAuthVerifier: string;
   passwordChange: PasswordChangeCrypto;
+}
+
+export interface OpenedSharingKey {
+  publicKey: string;
+  privateKey: string;
+  sharingKeyVersion: number;
+}
+
+export interface CreatedSharingKey {
+  payload: StoreSharingKeyPayload;
+  opened: OpenedSharingKey;
 }
 
 export async function createRegistrationCrypto(
@@ -245,6 +264,73 @@ export async function createAccountRecoveryCrypto(input: {
     recoveryAuthVerifier: toBase64(recoveryAuthVerifier),
     passwordChange: await createPasswordChangeCrypto(rootKey, input.newPassword)
   };
+}
+
+export async function createUserSharingKey(
+  rootKey: Uint8Array
+): Promise<CreatedSharingKey> {
+  const keyPair = await createSharingKeyPair();
+  const encryptedPrivateKey = await encryptBytes(
+    fromBase64(keyPair.privateKey),
+    rootKey,
+    SHARING_PRIVATE_KEY_AAD
+  );
+
+  return {
+    payload: {
+      sharingKeyVersion: 1,
+      publicKey: keyPair.publicKey,
+      encryptedPrivateKey: encryptedPrivateKey.cipher,
+      privateKeyNonce: encryptedPrivateKey.nonce,
+      formatVersion: 1
+    },
+    opened: {
+      publicKey: keyPair.publicKey,
+      privateKey: keyPair.privateKey,
+      sharingKeyVersion: 1
+    }
+  };
+}
+
+export async function openUserSharingKey(input: {
+  rootKey: Uint8Array;
+  envelope: SharingKeyEnvelope;
+}): Promise<OpenedSharingKey> {
+  const privateKey = await decryptBytes(
+    {
+      cipher: input.envelope.encryptedPrivateKey,
+      nonce: input.envelope.privateKeyNonce,
+      formatVersion: input.envelope.formatVersion
+    },
+    input.rootKey,
+    SHARING_PRIVATE_KEY_AAD
+  );
+
+  return {
+    publicKey: input.envelope.publicKey,
+    privateKey: toBase64(privateKey),
+    sharingKeyVersion: input.envelope.sharingKeyVersion
+  };
+}
+
+export async function encryptNoteKeyShare(input: {
+  noteKeyBase64: string;
+  recipientPublicKey: string;
+}): Promise<string> {
+  return sealBytes(fromBase64(input.noteKeyBase64), input.recipientPublicKey);
+}
+
+export async function decryptNoteKeyShare(input: {
+  encryptedNoteKey: string;
+  publicKey: string;
+  privateKey: string;
+}): Promise<string> {
+  const noteKey = await openSealedBytes({
+    cipher: input.encryptedNoteKey,
+    publicKey: input.publicKey,
+    privateKey: input.privateKey
+  });
+  return toBase64(noteKey);
 }
 
 export async function createEncryptedNoteDraft(input: {

@@ -29,6 +29,11 @@ export interface EncryptedPayload {
   formatVersion: number;
 }
 
+export interface SharingKeyPair {
+  publicKey: string;
+  privateKey: string;
+}
+
 export async function cryptoReady(): Promise<void> {
   await sodium.ready;
 }
@@ -145,6 +150,36 @@ export async function decryptBytes(
     associatedData,
     fromBase64(payload.nonce),
     key
+  );
+}
+
+export async function createSharingKeyPair(): Promise<SharingKeyPair> {
+  await cryptoReady();
+  const keyPair = sodium.crypto_box_keypair();
+  return {
+    publicKey: toBase64(keyPair.publicKey),
+    privateKey: toBase64(keyPair.privateKey)
+  };
+}
+
+export async function sealBytes(
+  plaintext: Uint8Array,
+  publicKey: string
+): Promise<string> {
+  await cryptoReady();
+  return toBase64(sodium.crypto_box_seal(plaintext, fromBase64(publicKey)));
+}
+
+export async function openSealedBytes(input: {
+  cipher: string;
+  publicKey: string;
+  privateKey: string;
+}): Promise<Uint8Array> {
+  await cryptoReady();
+  return sodium.crypto_box_seal_open(
+    fromBase64(input.cipher),
+    fromBase64(input.publicKey),
+    fromBase64(input.privateKey)
   );
 }
 
