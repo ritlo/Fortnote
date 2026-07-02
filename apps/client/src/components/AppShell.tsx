@@ -19,6 +19,7 @@ export function AppShell() {
   const recoverySecret = useAppStore((state) => state.recoverySecret);
   const error = useAppStore((state) => state.error);
   const status = useAppStore((state) => state.status);
+  const realtimeStatus = useAppStore((state) => state.realtimeStatus);
   const setNewPassword = useAppStore((state) => state.setNewPassword);
   const setNotesView = useAppStore((state) => state.setNotesView);
   const setSelectedFolderId = useAppStore((state) => state.setSelectedFolderId);
@@ -60,6 +61,7 @@ export function AppShell() {
         selectedNoteId={selectedNoteId}
         setSearch={setSearch}
         setSelectedNoteId={setSelectedNoteId}
+        realtimeStatus={realtimeStatus}
         status={status}
       />
       <EditorPane

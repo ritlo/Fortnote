@@ -1,10 +1,11 @@
 import { Plus, Search } from "lucide-react";
-import type { DecryptedNote, NotesView } from "../store/appStore";
+import type { DecryptedNote, NotesView, RealtimeStatus } from "../store/appStore";
 
 interface NotesPaneProps {
   error: string | null;
   filteredNotes: DecryptedNote[];
   notesView: NotesView;
+  realtimeStatus: RealtimeStatus;
   recoverySecret: string | null;
   search: string;
   selectedNoteId: string | null;
@@ -18,6 +19,7 @@ export function NotesPane({
   error,
   filteredNotes,
   notesView,
+  realtimeStatus,
   recoverySecret,
   search,
   selectedNoteId,
@@ -58,7 +60,10 @@ export function NotesPane({
           }}
         />
       </div>
-      <div className="status-pill">{status}</div>
+      <div className="status-row">
+        <div className="status-pill">{status}</div>
+        <div className={`sync-pill ${realtimeStatus}`}>{syncLabel(realtimeStatus)}</div>
+      </div>
       {error ? <p className="pane-error">{error}</p> : null}
       {recoverySecret ? (
         <p className="recovery-code">Recovery key: {recoverySecret}</p>
@@ -91,4 +96,17 @@ export function NotesPane({
       </ul>
     </section>
   );
+}
+
+function syncLabel(status: RealtimeStatus): string {
+  switch (status) {
+    case "connected":
+      return "Sync connected";
+    case "connecting":
+      return "Sync connecting";
+    case "disconnected":
+      return "Sync offline";
+    case "idle":
+      return "Sync idle";
+  }
 }
