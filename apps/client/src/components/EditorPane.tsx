@@ -54,6 +54,11 @@ export function EditorPane({
   updateSelectedNote,
   uploadSelectedAttachment
 }: EditorPaneProps) {
+  const canDeleteAttachments =
+    selectedNote?.role !== undefined &&
+    selectedNote.role !== "viewer" &&
+    notesView !== "trash";
+
   return (
     <section className="editor-pane">
       <EditorHeader
@@ -85,6 +90,7 @@ export function EditorPane({
             uploadSelectedAttachment={uploadSelectedAttachment}
           />
           <PreviewPane
+            canDeleteAttachments={canDeleteAttachments}
             downloadSelectedAttachment={downloadSelectedAttachment}
             previewHtml={previewHtml}
             removeSelectedAttachment={removeSelectedAttachment}

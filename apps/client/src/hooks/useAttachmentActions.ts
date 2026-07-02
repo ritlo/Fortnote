@@ -114,7 +114,7 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
   }
 
   async function removeSelectedAttachment(attachmentId: string) {
-    if (!selectedNote) {
+    if (!selectedNote || selectedNote.role === "viewer") {
       return;
     }
 

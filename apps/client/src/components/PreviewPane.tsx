@@ -2,6 +2,7 @@ import type { AttachmentSummary } from "../api";
 import { AttachmentPanel } from "./AttachmentPanel";
 
 interface PreviewPaneProps {
+  canDeleteAttachments: boolean;
   previewHtml: string;
   selectedAttachments: AttachmentSummary[];
   downloadSelectedAttachment: (attachment: AttachmentSummary) => Promise<void>;
@@ -9,6 +10,7 @@ interface PreviewPaneProps {
 }
 
 export function PreviewPane({
+  canDeleteAttachments,
   previewHtml,
   selectedAttachments,
   downloadSelectedAttachment,
@@ -21,6 +23,7 @@ export function PreviewPane({
         <div dangerouslySetInnerHTML={{ __html: previewHtml }} />
       </div>
       <AttachmentPanel
+        canDeleteAttachments={canDeleteAttachments}
         downloadSelectedAttachment={downloadSelectedAttachment}
         removeSelectedAttachment={removeSelectedAttachment}
         selectedAttachments={selectedAttachments}
