@@ -192,6 +192,19 @@ export interface NoteKeyShare {
   createdAt: string;
 }
 
+export interface CollaborationEvent {
+  cursor: number;
+  eventId: string;
+  type: string;
+  resourceType: string;
+  resourceId: string;
+  noteId: string | null;
+  actorUserId: string;
+  version: number | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
 export interface StoreSharingKeyPayload {
   sharingKeyVersion: number;
   publicKey: string;
@@ -372,6 +385,15 @@ export function revokeNoteMember(noteId: string, userId: string): Promise<undefi
 
 export function getNoteKeyShare(noteId: string): Promise<NoteKeyShare> {
   return apiRequest<NoteKeyShare>(`/notes/${noteId}/key-share`);
+}
+
+export function listCollaborationEvents(
+  after: number,
+  limit = 100
+): Promise<{ events: CollaborationEvent[] }> {
+  return apiRequest<{ events: CollaborationEvent[] }>(
+    `/events?after=${String(after)}&limit=${String(limit)}`
+  );
 }
 
 export function listAttachments(noteId: string): Promise<{ attachments: AttachmentSummary[] }> {
