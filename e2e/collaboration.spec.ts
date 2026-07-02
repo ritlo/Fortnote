@@ -30,6 +30,10 @@ test("syncs a shared note for an online editor and offline viewer", async ({
 
     await openNote(bobPage, noteTitle);
     await expect(bobPage.locator(".preview-body", { hasText: "Initial body" })).toBeVisible();
+    await bobPage.getByLabel("Markdown editor").focus();
+    await expect(
+      alicePage.locator(".membership-list li", { hasText: bob.username })
+    ).toContainText("editing");
     await expect(
       alicePage.locator(".membership-list li", { hasText: bob.username }).getByText(/active/)
     ).toBeVisible();

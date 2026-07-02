@@ -200,6 +200,14 @@ describe("realtime server", () => {
       noteId
     });
 
+    bobSocket.socket.send(JSON.stringify({ type: "presence", noteId, state: "left" }));
+
+    expect(await aliceSocket.next("alice presence left")).toMatchObject({
+      type: "presence",
+      noteId,
+      users: []
+    });
+
     mallorySocket.socket.send(
       JSON.stringify({ type: "presence", noteId, state: "editing" })
     );

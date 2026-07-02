@@ -1,6 +1,10 @@
 import { useEffect, useRef } from "react";
 import type { CollaborationEvent } from "../api";
-import { connectRealtime, type RealtimeConnection } from "../realtime/client";
+import {
+  connectRealtime,
+  type ClientPresenceState,
+  type RealtimeConnection
+} from "../realtime/client";
 import { useAppStore } from "../store/appStore";
 import { loadDecryptedNotes } from "./useAppData";
 
@@ -11,6 +15,7 @@ const PRESENCE_HEARTBEAT_MS = 15_000;
 export function useRealtimeEvents() {
   const user = useAppStore((state) => state.user);
   const rootKey = useAppStore((state) => state.rootKey);
+  const localPresenceState = useAppStore((state) => state.localPresenceState);
   const selectedNoteId = useAppStore((state) => state.selectedNoteId);
   const addCollaborationEvents = useAppStore((state) => state.addCollaborationEvents);
   const removeNoteAccess = useAppStore((state) => state.removeNoteAccess);
@@ -19,6 +24,8 @@ export function useRealtimeEvents() {
   const connectionRef = useRef<RealtimeConnection | null>(null);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
+  const localPresenceStateRef = useRef(localPresenceState);
+  const previousSelectedNoteIdRef = useRef<string | null>(selectedNoteId);
   const selectedNoteIdRef = useRef<string | null>(selectedNoteId);
 
   useEffect(() => {
@@ -66,7 +73,11 @@ export function useRealtimeEvents() {
           }
           reconnectAttemptRef.current = 0;
           setRealtimeStatus("connected");
-          sendSelectedNotePresence(connectionRef.current, selectedNoteIdRef.current);
+          sendSelectedNotePresence(
+            connectionRef.current,
+            selectedNoteIdRef.current,
+            localPresenceStateRef.current
+          );
         },
         onClose: () => {
           if (connectionRef.current === connection) {
@@ -103,7 +114,11 @@ export function useRealtimeEvents() {
 
     startConnection();
     const heartbeatId = window.setInterval(() => {
-      sendSelectedNotePresence(connectionRef.current, selectedNoteIdRef.current);
+      sendSelectedNotePresence(
+        connectionRef.current,
+        selectedNoteIdRef.current,
+        localPresenceStateRef.current
+      );
     }, PRESENCE_HEARTBEAT_MS);
 
     return () => {
@@ -125,12 +140,21 @@ export function useRealtimeEvents() {
   ]);
 
   useEffect(() => {
+    if (previousSelectedNoteIdRef.current && previousSelectedNoteIdRef.current !== selectedNoteId) {
+      connectionRef.current?.sendPresence(previousSelectedNoteIdRef.current, "left");
+    }
+    previousSelectedNoteIdRef.current = selectedNoteId;
     selectedNoteIdRef.current = selectedNoteId;
     if (!selectedNoteId) {
       return;
     }
-    connectionRef.current?.sendPresence(selectedNoteId, "idle");
+    connectionRef.current?.sendPresence(selectedNoteId, localPresenceStateRef.current);
   }, [selectedNoteId]);
+
+  useEffect(() => {
+    localPresenceStateRef.current = localPresenceState;
+    sendSelectedNotePresence(connectionRef.current, selectedNoteIdRef.current, localPresenceState);
+  }, [localPresenceState]);
 }
 
 function removeRevokedNotes(events: CollaborationEvent[]): void {
@@ -183,10 +207,11 @@ function shouldReloadNotes(event: CollaborationEvent): boolean {
 
 function sendSelectedNotePresence(
   connection: RealtimeConnection | null,
-  noteId: string | null
+  noteId: string | null,
+  state: ClientPresenceState
 ): void {
   if (!noteId) {
     return;
   }
-  connection?.sendPresence(noteId, "idle");
+  connection?.sendPresence(noteId, state);
 }

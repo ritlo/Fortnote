@@ -12,6 +12,7 @@ export interface RealtimeClient {
 }
 
 export type PresenceState = "idle" | "editing";
+export type ClientPresenceState = PresenceState | "left";
 
 interface RealtimeHubOptions {
   presenceTtlMs?: number;
@@ -90,8 +91,13 @@ export class RealtimeHub implements RealtimePublisher {
     }
   }
 
-  updatePresence(client: RealtimeClient, noteId: string, state: PresenceState): void {
+  updatePresence(client: RealtimeClient, noteId: string, state: ClientPresenceState): void {
     if (!this.context) {
+      return;
+    }
+
+    if (state === "left") {
+      this.clearNotePresence(client, noteId);
       return;
     }
 
@@ -122,6 +128,17 @@ export class RealtimeHub implements RealtimePublisher {
       }
       this.broadcastPresence(noteId);
     }
+  }
+
+  private clearNotePresence(client: RealtimeClient, noteId: string): void {
+    const notePresence = this.presenceByNote.get(noteId);
+    if (!notePresence?.delete(client.id)) {
+      return;
+    }
+    if (notePresence.size === 0) {
+      this.presenceByNote.delete(noteId);
+    }
+    this.broadcastPresence(noteId);
   }
 
   private sweepStalePresence(now = Date.now()): void {

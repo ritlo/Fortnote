@@ -1,4 +1,6 @@
-import type { CollaborationEvent, PresenceUser } from "../api";
+import type { CollaborationEvent, PresenceState, PresenceUser } from "../api";
+
+export type ClientPresenceState = PresenceState | "left";
 
 export type RealtimeMessage =
   | { type: "connected"; userId: string; username: string }
@@ -17,7 +19,7 @@ interface RealtimeClientOptions {
 
 export interface RealtimeConnection {
   close: () => void;
-  sendPresence: (noteId: string, state: "idle" | "editing") => void;
+  sendPresence: (noteId: string, state: ClientPresenceState) => void;
 }
 
 export function connectRealtime({

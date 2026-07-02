@@ -205,10 +205,12 @@ export interface CollaborationEvent {
   createdAt: string;
 }
 
+export type PresenceState = "idle" | "editing";
+
 export interface PresenceUser {
   userId: string;
   username: string;
-  state: "idle" | "editing";
+  state: PresenceState;
   updatedAt: string;
 }
 

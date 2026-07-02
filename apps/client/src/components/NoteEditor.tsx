@@ -1,6 +1,7 @@
 import { FileText } from "lucide-react";
 import type { FolderSummary } from "../api";
 import type { DecryptedNote, NotesView } from "../store/appStore";
+import { useAppStore } from "../store/appStore";
 import { SharingPanel } from "./SharingPanel";
 
 interface NoteEditorProps {
@@ -25,6 +26,17 @@ export function NoteEditor({
     selectedNote.role !== "viewer" &&
     notesView !== "trash";
   const canMove = selectedNote?.role === "owner" && notesView !== "trash";
+  const setLocalPresenceState = useAppStore((state) => state.setLocalPresenceState);
+
+  function markEditing() {
+    if (canEdit) {
+      setLocalPresenceState("editing");
+    }
+  }
+
+  function markIdle() {
+    setLocalPresenceState("idle");
+  }
 
   return (
     <div className="editor-column">
@@ -52,9 +64,12 @@ export function NoteEditor({
         <input
           value={selectedNote?.title ?? ""}
           disabled={!canEdit}
+          onBlur={markIdle}
           onChange={(event) => {
+            markEditing();
             updateSelectedNote({ title: event.target.value });
           }}
+          onFocus={markEditing}
         />
       </label>
       <label>
@@ -62,9 +77,12 @@ export function NoteEditor({
         <textarea
           value={selectedNote?.body ?? ""}
           disabled={!canEdit}
+          onBlur={markIdle}
           onChange={(event) => {
+            markEditing();
             updateSelectedNote({ body: event.target.value });
           }}
+          onFocus={markEditing}
         />
       </label>
       <label>

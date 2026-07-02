@@ -4,6 +4,7 @@ import type {
   AttachmentSummary,
   CollaborationEvent,
   FolderSummary,
+  PresenceState,
   PresenceUser,
   User
 } from "../api";
@@ -50,6 +51,7 @@ export interface AppStore {
   search: string;
   recoverySecret: string | null;
   realtimeStatus: RealtimeStatus;
+  localPresenceState: PresenceState;
   eventCursor: number;
   collaborationEvents: CollaborationEvent[];
   presenceByNote: Record<string, PresenceUser[]>;
@@ -75,6 +77,7 @@ export interface AppStore {
   setSearch: StoreSetter<string>;
   setRecoverySecret: StoreSetter<string | null>;
   setRealtimeStatus: StoreSetter<RealtimeStatus>;
+  setLocalPresenceState: StoreSetter<PresenceState>;
   setEventCursor: StoreSetter<number>;
   addCollaborationEvents: (events: CollaborationEvent[]) => void;
   removeNoteAccess: (noteId: string) => void;
@@ -109,6 +112,7 @@ export const useAppStore = create<AppStore>((set) => ({
   search: "",
   recoverySecret: null,
   realtimeStatus: "idle",
+  localPresenceState: "idle",
   eventCursor: 0,
   collaborationEvents: [],
   presenceByNote: {},
@@ -182,6 +186,11 @@ export const useAppStore = create<AppStore>((set) => ({
   setRealtimeStatus: (value) => {
     set((state) => ({ realtimeStatus: resolveState(value, state.realtimeStatus) }));
   },
+  setLocalPresenceState: (value) => {
+    set((state) => ({
+      localPresenceState: resolveState(value, state.localPresenceState)
+    }));
+  },
   setEventCursor: (value) => {
     set((state) => ({ eventCursor: resolveState(value, state.eventCursor) }));
   },
@@ -246,6 +255,7 @@ export const useAppStore = create<AppStore>((set) => ({
       notesView: "notes",
       recoverySecret: null,
       realtimeStatus: "idle",
+      localPresenceState: "idle",
       eventCursor: 0,
       collaborationEvents: [],
       presenceByNote: {},

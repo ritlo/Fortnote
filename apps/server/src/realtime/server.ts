@@ -19,7 +19,7 @@ const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("presence"),
     noteId: z.uuid(),
-    state: z.enum(["idle", "editing"])
+    state: z.enum(["idle", "editing", "left"])
   })
 ]);
 
