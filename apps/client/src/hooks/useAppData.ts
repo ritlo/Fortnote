@@ -13,10 +13,15 @@ import {
 import { decryptNoteSummary } from "../lib/keyMaterial";
 import { useAppStore } from "../store/appStore";
 
+interface LoadDecryptedNotesOptions {
+  preserveSelection?: boolean;
+}
+
 export async function loadDecryptedNotes(
   currentUser: User,
   currentRootKey: Uint8Array,
-  deleted = false
+  deleted = false,
+  options: LoadDecryptedNotesOptions = {}
 ) {
   const payload = await listNotes(deleted);
   const openedSharingKey = useAppStore.getState().openedSharingKey;
@@ -38,7 +43,12 @@ export async function loadDecryptedNotes(
   } else {
     setNotes(nextNotes);
   }
-  setSelectedNoteId(nextNotes[0]?.id ?? null);
+  const selectedNoteId = useAppStore.getState().selectedNoteId;
+  const nextSelectedNoteId =
+    options.preserveSelection && nextNotes.some((note) => note.id === selectedNoteId)
+      ? selectedNoteId
+      : (nextNotes[0]?.id ?? null);
+  setSelectedNoteId(nextSelectedNoteId);
   setAttachmentsByNote({});
 }
 

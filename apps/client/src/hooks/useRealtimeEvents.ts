@@ -187,7 +187,7 @@ async function reloadAfterEvents(
     return;
   }
 
-  await loadDecryptedNotes(user, rootKey, false);
+  await loadDecryptedNotes(user, rootKey, false, { preserveSelection: true });
 }
 
 function isOwnRevocation(event: CollaborationEvent, userId: string): boolean {
