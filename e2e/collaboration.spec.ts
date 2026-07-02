@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 
 test("syncs a shared note for an online editor and offline viewer", async ({
@@ -10,6 +11,7 @@ test("syncs a shared note for an online editor and offline viewer", async ({
   const carol = uniqueAccount("collab-carol");
   const noteTitle = `Collaboration note ${alice.suffix}`;
   const aliceBody = `Alice online update ${alice.suffix}`;
+  const attachmentName = `shared-${alice.suffix}.txt`;
   const bobBody = `Bob editor update ${alice.suffix}`;
 
   try {
@@ -38,6 +40,11 @@ test("syncs a shared note for an online editor and offline viewer", async ({
       alicePage.locator(".membership-list li", { hasText: bob.username }).getByText(/active/)
     ).toBeVisible();
 
+    await uploadAttachment(alicePage, attachmentName, `Shared attachment ${alice.suffix}`);
+    const bobAttachment = bobPage.locator(".attachment-list li", { hasText: attachmentName });
+    await expect(bobAttachment).toBeVisible({ timeout: 10_000 });
+    await expect(bobAttachment.getByRole("button", { name: "Delete" })).toBeVisible();
+
     await editSelectedNote(alicePage, aliceBody);
     await expect(bobPage.locator(".preview-body", { hasText: aliceBody })).toBeVisible({
       timeout: 10_000
@@ -47,6 +54,9 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     await signIn(carolPage, carol.username, carol.password);
     await openNote(carolPage, noteTitle);
     await expect(carolPage.locator(".preview-body", { hasText: aliceBody })).toBeVisible();
+    const carolAttachment = carolPage.locator(".attachment-list li", { hasText: attachmentName });
+    await expect(carolAttachment).toBeVisible();
+    await expect(carolAttachment.getByRole("button", { name: "Delete" })).toHaveCount(0);
     await expect(carolPage.getByLabel("Markdown editor")).toBeDisabled();
     await expect(carolPage.getByRole("button", { name: "Save" })).toBeDisabled();
     await revokeMember(alicePage, carol.username);
@@ -215,6 +225,27 @@ async function editSelectedNote(page: Page, body: string): Promise<void> {
   await page.getByRole("button", { name: "Save" }).click();
   await saved;
   await expect(page.getByText("Note encrypted and saved")).toBeVisible();
+}
+
+async function uploadAttachment(
+  page: Page,
+  filename: string,
+  contents: string
+): Promise<void> {
+  const uploaded = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes("/api/notes/") &&
+      response.url().includes("/attachments") &&
+      response.ok()
+  );
+  await page.getByLabel("Attach encrypted file").setInputFiles({
+    name: filename,
+    mimeType: "text/plain",
+    buffer: Buffer.from(contents)
+  });
+  await uploaded;
+  await expect(page.getByText("Attachment encrypted and saved")).toBeVisible();
 }
 
 async function waitForNoteSave(page: Page) {
