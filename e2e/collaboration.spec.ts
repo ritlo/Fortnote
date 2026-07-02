@@ -57,6 +57,7 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     const carolAttachment = carolPage.locator(".attachment-list li", { hasText: attachmentName });
     await expect(carolAttachment).toBeVisible();
     await expect(carolAttachment.getByRole("button", { name: "Delete" })).toHaveCount(0);
+    await expect(carolPage.getByLabel("Attach encrypted file")).toBeDisabled();
     await expect(carolPage.getByLabel("Markdown editor")).toBeDisabled();
     await expect(carolPage.getByRole("button", { name: "Save" })).toBeDisabled();
     await revokeMember(alicePage, carol.username);
