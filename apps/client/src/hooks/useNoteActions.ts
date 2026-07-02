@@ -63,7 +63,10 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         contentLength: draft.contentLength,
         version: created.version,
         isDeleted: false,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        ownerUserId: user.id,
+        cryptoOwnerId: user.id,
+        role: "owner"
       };
       setNotes((current) => [note, ...current]);
       setSelectedNoteId(note.id);
@@ -83,7 +86,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     setStatus("Encrypting note");
     try {
       const encrypted = await encryptExistingNoteBody({
-        userId: user.id,
+        userId: selectedNote.cryptoOwnerId,
         noteId: selectedNote.id,
         noteKeyBase64: selectedNote.noteKeyBase64,
         body: selectedNote.body

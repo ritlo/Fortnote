@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { OpenedSharingKey } from "../cryptoClient";
 import type {
   AttachmentSummary,
   CollaborationEvent,
@@ -20,6 +21,9 @@ export interface DecryptedNote {
   version: number;
   isDeleted: boolean;
   updatedAt: string;
+  ownerUserId: string;
+  cryptoOwnerId: string;
+  role: "owner" | "editor" | "viewer";
 }
 
 type StateUpdate<T> = T | ((current: T) => T);
@@ -47,6 +51,7 @@ export interface AppStore {
   realtimeStatus: RealtimeStatus;
   eventCursor: number;
   collaborationEvents: CollaborationEvent[];
+  openedSharingKey: OpenedSharingKey | null;
   error: string | null;
   status: string;
   setUser: StoreSetter<User | null>;
@@ -70,6 +75,7 @@ export interface AppStore {
   setRealtimeStatus: StoreSetter<RealtimeStatus>;
   setEventCursor: StoreSetter<number>;
   addCollaborationEvents: (events: CollaborationEvent[]) => void;
+  setOpenedSharingKey: StoreSetter<OpenedSharingKey | null>;
   setError: StoreSetter<string | null>;
   setStatus: StoreSetter<string>;
   resetVaultState: (nextStatus: string) => void;
@@ -101,6 +107,7 @@ export const useAppStore = create<AppStore>((set) => ({
   realtimeStatus: "idle",
   eventCursor: 0,
   collaborationEvents: [],
+  openedSharingKey: null,
   error: null,
   status: "Checking session",
   setUser: (value) => {
@@ -188,6 +195,11 @@ export const useAppStore = create<AppStore>((set) => ({
       };
     });
   },
+  setOpenedSharingKey: (value) => {
+    set((state) => ({
+      openedSharingKey: resolveState(value, state.openedSharingKey)
+    }));
+  },
   setError: (value) => {
     set((state) => ({ error: resolveState(value, state.error) }));
   },
@@ -209,6 +221,7 @@ export const useAppStore = create<AppStore>((set) => ({
       realtimeStatus: "idle",
       eventCursor: 0,
       collaborationEvents: [],
+      openedSharingKey: null,
       newPassword: "",
       user: null,
       status: nextStatus

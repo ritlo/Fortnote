@@ -20,7 +20,7 @@ import {
 } from "../cryptoClient";
 import { authKdf, recoveryKdf, vaultKdf } from "../lib/keyMaterial";
 import { useAppStore } from "../store/appStore";
-import { loadDecryptedNotes, loadFolders } from "./useAppData";
+import { ensureSharingKey, loadDecryptedNotes, loadFolders } from "./useAppData";
 
 export function useSessionBootstrap() {
   const setUsername = useAppStore((state) => state.setUsername);
@@ -71,6 +71,7 @@ export function useAuthActions() {
         setKeyMaterialVersion(1);
         setRecoverySecret(registration.recoverySecret);
         setStatus("Signed in and decrypted");
+        await ensureSharingKey(registration.rootKey);
         await loadFolders();
         await loadDecryptedNotes(currentUser, registration.rootKey);
         return;
@@ -102,6 +103,7 @@ export function useAuthActions() {
         setRecoveryInput("");
         setRecoveryNewPassword("");
         setStatus("Recovered and decrypted");
+        await ensureSharingKey(recovery.rootKey);
         await loadFolders();
         await loadDecryptedNotes(currentUser, recovery.rootKey);
         return;
@@ -122,6 +124,7 @@ export function useAuthActions() {
       setRootKey(openedVault.rootKey);
       setKeyMaterialVersion(keyMaterial.keyMaterialVersion);
       setStatus("Signed in and decrypted");
+      await ensureSharingKey(openedVault.rootKey);
       await loadFolders();
       await loadDecryptedNotes(currentUser, openedVault.rootKey);
     } catch (authError) {

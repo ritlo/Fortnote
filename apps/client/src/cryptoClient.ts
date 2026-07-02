@@ -388,6 +388,20 @@ export async function decryptNote(input: {
   };
 }
 
+export async function decryptNoteBodyWithKey(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  noteKeyBase64: string;
+  encryptedBody: EncryptedPayload;
+}): Promise<string> {
+  const bodyBytes = await decryptBytes(
+    input.encryptedBody,
+    fromBase64(input.noteKeyBase64),
+    noteBodyAad(input.cryptoOwnerId, input.noteId)
+  );
+  return new TextDecoder().decode(bodyBytes);
+}
+
 export async function encryptExistingNoteBody(input: {
   userId: string;
   noteId: string;
