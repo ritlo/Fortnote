@@ -72,7 +72,7 @@ export function useRealtimeEvents() {
         if (!isActive) {
           return;
         }
-        setEventCursor((current) => Math.max(current, cursor));
+        setEventCursor((current) => mergeEventCursor(current, cursor));
       } catch {
         if (!isActive) {
           return;
@@ -178,23 +178,32 @@ export function useRealtimeEvents() {
   }, [localPresenceState]);
 }
 
-function processCollaborationEvents(
+interface ProcessCollaborationEventsOptions {
+  acknowledgeEvents?: (cursor: number) => Promise<undefined>;
+  removeRevoked?: (events: CollaborationEvent[]) => void;
+}
+
+export function processCollaborationEvents(
   events: CollaborationEvent[],
-  addCollaborationEvents: (events: CollaborationEvent[]) => void
+  addCollaborationEvents: (events: CollaborationEvent[]) => void,
+  {
+    acknowledgeEvents = acknowledgeCollaborationEvents,
+    removeRevoked = removeRevokedNotes
+  }: ProcessCollaborationEventsOptions = {}
 ): void {
   if (events.length === 0) {
     return;
   }
 
   addCollaborationEvents(events);
-  removeRevokedNotes(events);
+  removeRevoked(events);
   const cursor = Math.max(...events.map((event) => event.cursor));
-  void acknowledgeCollaborationEvents(cursor).catch(() => {
+  void acknowledgeEvents(cursor).catch(() => {
     // Reconnect/replay will retry acknowledgement from the stored cursor.
   });
 }
 
-function removeRevokedNotes(events: CollaborationEvent[]): void {
+export function removeRevokedNotes(events: CollaborationEvent[]): void {
   const { removeNoteAccess, user } = useAppStore.getState();
   if (!user) {
     return;
@@ -217,29 +226,41 @@ async function reloadAfterEvents(
     return;
   }
 
-  const reloadEvents = options.skipOwnEvents
-    ? events.filter((event) => event.actorUserId !== user.id)
-    : events;
-  if (!reloadEvents.some((event) => shouldReloadNotes(event))) {
+  if (!eventsRequireNoteReload(events, user.id, options)) {
     return;
   }
 
   await loadDecryptedNotes(user, rootKey, false, { preserveSelection: true });
 }
 
-function isOwnRevocation(event: CollaborationEvent, userId: string): boolean {
+export function isOwnRevocation(event: CollaborationEvent, userId: string): boolean {
   return (
     event.type === "membership.revoked" &&
     event.metadata?.membershipUserId === userId
   );
 }
 
-function shouldReloadNotes(event: CollaborationEvent): boolean {
+export function eventsRequireNoteReload(
+  events: CollaborationEvent[],
+  userId: string,
+  options: { skipOwnEvents?: boolean } = {}
+): boolean {
+  const reloadEvents = options.skipOwnEvents
+    ? events.filter((event) => event.actorUserId !== userId)
+    : events;
+  return reloadEvents.some((event) => shouldReloadNotes(event));
+}
+
+export function shouldReloadNotes(event: CollaborationEvent): boolean {
   return (
     event.resourceType === "note" ||
     event.resourceType === "membership" ||
     event.resourceType === "attachment"
   );
+}
+
+export function mergeEventCursor(current: number, acknowledged: number): number {
+  return Math.max(current, acknowledged);
 }
 
 function sendSelectedNotePresence(
