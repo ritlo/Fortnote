@@ -6,6 +6,8 @@ import {
   notePayload,
   registerAgent
 } from "../test/http.js";
+import type { AppContext } from "../http/app.js";
+import { pruneAcknowledgedEvents } from "./replay.js";
 
 function sharingKeyPayload(username: string) {
   return {
@@ -154,6 +156,63 @@ describe("event replay routes", () => {
       .query({ after: revokeCursor })
       .expect(200);
     expect(carolAfterRevoke.body.events).toEqual([]);
+  });
+
+  it("prunes only events acknowledged by every user", async () => {
+    const app = createTestApp();
+    const alice = await registerAgent(app, "retention_alice");
+    const bob = await registerAgent(app, "retention_bob");
+    const context = { db: app.locals.db } as AppContext;
+
+    await bob
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload("retention_bob"))
+      .expect(201);
+
+    const created = await alice
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+
+    await alice
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send(invitePayload("retention_bob", "editor"))
+      .expect(201);
+
+    const latest = app.locals.db.sqlite
+      .prepare("SELECT MAX(cursor) AS cursor FROM note_events")
+      .get() as { cursor: number };
+    expect(latest.cursor).toBeGreaterThan(0);
+
+    await alice
+      .post("/api/events/ack")
+      .set(csrfHeaders())
+      .send({ cursor: latest.cursor })
+      .expect(204);
+    expect(pruneAcknowledgedEvents(context)).toMatchObject({
+      retainedCursorFloor: 0,
+      deletedEvents: 0
+    });
+
+    await bob
+      .post("/api/events/ack")
+      .set(csrfHeaders())
+      .send({ cursor: latest.cursor })
+      .expect(204);
+    const result = pruneAcknowledgedEvents(context);
+    expect(result).toMatchObject({
+      retainedCursorFloor: latest.cursor
+    });
+    expect(result.deletedEvents).toBeGreaterThan(0);
+
+    const remaining = app.locals.db.sqlite
+      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?")
+      .get(latest.cursor) as { count: number };
+    expect(remaining.count).toBe(0);
   });
 
   it("rejects unauthenticated replay requests", async () => {

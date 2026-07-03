@@ -13,6 +13,12 @@ export interface CollaborationEvent {
   createdAt: string;
 }
 
+export interface EventRetentionResult {
+  retainedCursorFloor: number;
+  deletedEvents: number;
+  deletedAcknowledgements: number;
+}
+
 interface EventRow {
   cursor: number;
   eventId: string;
@@ -137,4 +143,46 @@ export function getAcknowledgedEventCursor(
     .prepare("SELECT cursor FROM event_cursors WHERE user_id = ?")
     .get(userId) as { cursor: number } | undefined;
   return row?.cursor ?? 0;
+}
+
+export function getEventRetentionCursorFloor(context: AppContext): number {
+  const row = context.db.sqlite
+    .prepare(
+      `SELECT MIN(COALESCE(event_cursors.cursor, 0)) AS cursor
+       FROM users
+       LEFT JOIN event_cursors ON event_cursors.user_id = users.id`
+    )
+    .get() as { cursor: number | null } | undefined;
+  return row?.cursor ?? 0;
+}
+
+export function pruneAcknowledgedEvents(
+  context: AppContext,
+  beforeCursor = Number.POSITIVE_INFINITY
+): EventRetentionResult {
+  const retainedCursorFloor = Math.min(
+    getEventRetentionCursorFloor(context),
+    beforeCursor
+  );
+  if (!Number.isFinite(retainedCursorFloor) || retainedCursorFloor <= 0) {
+    return {
+      retainedCursorFloor: Math.max(0, retainedCursorFloor),
+      deletedEvents: 0,
+      deletedAcknowledgements: 0
+    };
+  }
+
+  return context.db.sqlite.transaction(() => {
+    const deletedEvents = context.db.sqlite
+      .prepare("DELETE FROM note_events WHERE cursor <= ?")
+      .run(retainedCursorFloor).changes;
+    const deletedAcknowledgements = context.db.sqlite
+      .prepare("DELETE FROM event_acknowledgements WHERE cursor <= ?")
+      .run(retainedCursorFloor).changes;
+    return {
+      retainedCursorFloor,
+      deletedEvents,
+      deletedAcknowledgements
+    };
+  })();
 }
