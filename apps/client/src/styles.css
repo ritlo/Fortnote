@@ -356,6 +356,32 @@ textarea {
   color: var(--muted);
 }
 
+.note-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.note-title-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-badge {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid #c9d8d2;
+  border-radius: 999px;
+  color: #315f57;
+  background: #edf7f4;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .note-card.active {
   border-color: #b9dad5;
   background: #e8f4f2;

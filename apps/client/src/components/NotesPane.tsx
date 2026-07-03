@@ -87,7 +87,12 @@ export function NotesPane({
                   setSelectedNoteId(note.id);
                 }}
               >
-                <strong>{note.title}</strong>
+                <span className="note-title-row">
+                  <strong>{note.title}</strong>
+                  {note.role !== "owner" ? (
+                    <small className="role-badge">{roleLabel(note.role)}</small>
+                  ) : null}
+                </span>
                 <span>{String(note.contentLength)} encrypted bytes</span>
               </button>
             </li>
@@ -96,6 +101,17 @@ export function NotesPane({
       </ul>
     </section>
   );
+}
+
+export function roleLabel(role: DecryptedNote["role"]): string {
+  switch (role) {
+    case "owner":
+      return "Owner";
+    case "editor":
+      return "Editor";
+    case "viewer":
+      return "Viewer";
+  }
 }
 
 function syncLabel(status: RealtimeStatus): string {
