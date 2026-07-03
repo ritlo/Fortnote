@@ -26,6 +26,29 @@ const updateNoteSchema = z.object({
   contentLength: z.number().int().nonnegative(),
   version: z.number().int().positive()
 });
+const rotateNoteKeySchema = z.object({
+  encryptedNoteKey: z.string().min(16),
+  noteKeyNonce: z.string().min(16),
+  contentCipher: z.string().min(1),
+  contentNonce: z.string().min(16),
+  contentLength: z.number().int().nonnegative(),
+  version: z.number().int().positive(),
+  shares: z.array(
+    z.object({
+      recipientUserId: z.uuid(),
+      sharingKeyVersion: z.number().int().positive(),
+      encryptedNoteKey: z.string().min(32),
+      formatVersion: z.number().int().positive()
+    })
+  ),
+  attachmentKeys: z.array(
+    z.object({
+      attachmentId: z.uuid(),
+      encryptedAttachmentKey: z.string().min(16),
+      attachmentKeyNonce: z.string().min(16)
+    })
+  )
+});
 
 const memberRoleSchema = z.enum(["editor", "viewer"]);
 
@@ -58,6 +81,14 @@ function folderBelongsToUser(
 
 function publishEventCursors(context: AppContext, cursors: number[]): void {
   context.realtime?.publishEvents(cursors);
+}
+
+function sameMembers(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  const rightSet = new Set(right);
+  return left.every((value) => rightSet.has(value));
 }
 
 export function createNotesRouter(context: AppContext): Router {
@@ -521,6 +552,170 @@ export function createNotesRouter(context: AppContext): Router {
     }
 
     response.json(row);
+  });
+
+  router.post("/:id/key-rotation", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+
+    const parsed = rotateNoteKeySchema.safeParse(request.body);
+    if (!parsed.success) {
+      sendApiError(response, "bad_request", "Invalid key rotation payload");
+      return;
+    }
+
+    const access = getNoteAccess(context, request.params.id, session.userId);
+    if (!canOwnNote(access)) {
+      sendApiError(response, "not_found", "Note not found");
+      return;
+    }
+    if (access.isDeleted) {
+      sendApiError(response, "conflict", "Restore note before rotating keys");
+      return;
+    }
+    if (access.version !== parsed.data.version) {
+      sendApiError(response, "conflict", "Note version conflict");
+      return;
+    }
+
+    const activeMembers = context.db.sqlite
+      .prepare(
+        `SELECT user_id AS userId
+         FROM note_memberships
+         WHERE note_id = ?
+           AND status = 'active'
+           AND role != 'owner'`
+      )
+      .all(access.noteId) as { userId: string }[];
+    const activeMemberIds = activeMembers.map((member) => member.userId);
+    const shareRecipientIds = parsed.data.shares.map((share) => share.recipientUserId);
+    if (!sameMembers(activeMemberIds, shareRecipientIds)) {
+      sendApiError(response, "bad_request", "Key shares must cover all active members");
+      return;
+    }
+
+    const validShareRows = parsed.data.shares.length
+      ? (context.db.sqlite
+          .prepare(
+            `SELECT user_id AS userId,
+                    sharing_key_version AS sharingKeyVersion
+             FROM user_sharing_keys
+             WHERE (user_id, sharing_key_version) IN (
+               ${parsed.data.shares.map(() => "(?, ?)").join(", ")}
+             )`
+          )
+          .all(
+            ...parsed.data.shares.flatMap((share) => [
+              share.recipientUserId,
+              share.sharingKeyVersion
+            ])
+          ) as { userId: string; sharingKeyVersion: number }[])
+      : [];
+    const validShareKeys = new Set(
+      validShareRows.map((row) => `${row.userId}:${String(row.sharingKeyVersion)}`)
+    );
+    if (
+      parsed.data.shares.some(
+        (share) =>
+          !validShareKeys.has(`${share.recipientUserId}:${String(share.sharingKeyVersion)}`)
+      )
+    ) {
+      sendApiError(response, "bad_request", "Invalid sharing key version");
+      return;
+    }
+
+    const attachmentRows = context.db.sqlite
+      .prepare("SELECT id FROM attachments WHERE note_id = ?")
+      .all(access.noteId) as { id: string }[];
+    const attachmentIds = attachmentRows.map((attachment) => attachment.id);
+    const rotatedAttachmentIds = parsed.data.attachmentKeys.map(
+      (attachment) => attachment.attachmentId
+    );
+    if (!sameMembers(attachmentIds, rotatedAttachmentIds)) {
+      sendApiError(response, "bad_request", "Attachment keys must cover all attachments");
+      return;
+    }
+
+    const nextVersion = access.version + 1;
+    const rotateNoteKey = context.db.sqlite.transaction(() => {
+      context.db.sqlite
+        .prepare(
+          `UPDATE notes
+           SET encrypted_note_key = ?,
+               note_key_nonce = ?,
+               content_cipher = ?,
+               content_nonce = ?,
+               content_length = ?,
+               content_updated_at = CURRENT_TIMESTAMP,
+               version = version + 1,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`
+        )
+        .run(
+          parsed.data.encryptedNoteKey,
+          parsed.data.noteKeyNonce,
+          parsed.data.contentCipher,
+          parsed.data.contentNonce,
+          parsed.data.contentLength,
+          access.noteId
+        );
+      for (const share of parsed.data.shares) {
+        context.db.sqlite
+          .prepare(
+            `INSERT INTO note_key_shares (
+              note_id,
+              recipient_user_id,
+              sender_user_id,
+              sharing_key_version,
+              encrypted_note_key,
+              format_version
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(note_id, recipient_user_id) DO UPDATE SET
+              sender_user_id = excluded.sender_user_id,
+              sharing_key_version = excluded.sharing_key_version,
+              encrypted_note_key = excluded.encrypted_note_key,
+              format_version = excluded.format_version,
+              created_at = CURRENT_TIMESTAMP`
+          )
+          .run(
+            access.noteId,
+            share.recipientUserId,
+            session.userId,
+            share.sharingKeyVersion,
+            share.encryptedNoteKey,
+            share.formatVersion
+          );
+      }
+      for (const attachmentKey of parsed.data.attachmentKeys) {
+        context.db.sqlite
+          .prepare(
+            `UPDATE attachments
+             SET encrypted_attachment_key = ?,
+                 attachment_key_nonce = ?
+             WHERE id = ? AND note_id = ?`
+          )
+          .run(
+            attachmentKey.encryptedAttachmentKey,
+            attachmentKey.attachmentKeyNonce,
+            attachmentKey.attachmentId,
+            access.noteId
+          );
+      }
+      return writeNoteEvent(context, {
+        noteId: access.noteId,
+        actorUserId: session.userId,
+        eventType: "note.updated",
+        noteVersion: nextVersion,
+        payloadMetadata: {
+          keyRotated: true
+        }
+      });
+    });
+    publishEventCursors(context, [rotateNoteKey()]);
+
+    response.json({ id: access.noteId, version: nextVersion });
   });
 
   router.put("/:id", (request, response) => {

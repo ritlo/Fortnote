@@ -106,6 +106,26 @@ export interface UpdateNotePayload {
   version: number;
 }
 
+export interface RotateNoteKeyPayload {
+  encryptedNoteKey: string;
+  noteKeyNonce: string;
+  contentCipher: string;
+  contentNonce: string;
+  contentLength: number;
+  version: number;
+  shares: {
+    recipientUserId: string;
+    sharingKeyVersion: number;
+    encryptedNoteKey: string;
+    formatVersion: number;
+  }[];
+  attachmentKeys: {
+    attachmentId: string;
+    encryptedAttachmentKey: string;
+    attachmentKeyNonce: string;
+  }[];
+}
+
 export interface AttachmentSummary {
   id: string;
   filename: string;
@@ -371,6 +391,16 @@ export function updateNote(
 ): Promise<{ id: string; version: number }> {
   return apiRequest<{ id: string; version: number }>(`/notes/${noteId}`, {
     method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function rotateNoteKey(
+  noteId: string,
+  payload: RotateNoteKeyPayload
+): Promise<{ id: string; version: number }> {
+  return apiRequest<{ id: string; version: number }>(`/notes/${noteId}/key-rotation`, {
+    method: "POST",
     body: JSON.stringify(payload)
   });
 }

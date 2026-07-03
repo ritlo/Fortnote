@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
 import {
   createTestApp,
@@ -355,6 +356,182 @@ describe("notes and folders routes", () => {
     expect(JSON.parse(events.at(-1)?.payloadMetadata ?? "{}")).toMatchObject({
       membershipUserId: bobUserId
     });
+  });
+
+  it("rotates note keys for all active members and attachments", async () => {
+    const app = createTestApp();
+    const alice = await registerAgent(app, "rotate_alice");
+    const bob = await registerAgent(app, "rotate_bob");
+    const bobSession = await bob.get("/api/auth/me").expect(200);
+    const bobUserId = String(bobSession.body.id);
+
+    await bob
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload(2))
+      .expect(201);
+    const created = await alice
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+    await alice
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send({
+        username: "rotate_bob",
+        role: "editor",
+        sharingKeyVersion: 2,
+        encryptedNoteKey: "old_share_for_bob_abcdefghijklmnopqrstuvwxyz",
+        formatVersion: 1
+      })
+      .expect(201);
+    await alice
+      .post(`/api/notes/${noteId}/attachments`)
+      .set(csrfHeaders())
+      .set({
+        "content-type": "application/octet-stream",
+        "x-fortnote-attachment-id": "00000000-0000-4000-8000-000000000001",
+        "x-fortnote-filename": "rotate.txt",
+        "x-fortnote-mime-type": "text/plain",
+        "x-fortnote-size": "8",
+        "x-fortnote-encrypted-attachment-key":
+          "old_attachment_key_abcdefghijklmnopqrstuvwxyz",
+        "x-fortnote-attachment-key-nonce":
+          "old_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
+        "x-fortnote-file-nonce": "file_nonce_abcdefghijklmnopqrstuvwxyz"
+      })
+      .send(Buffer.from("ciphered"))
+      .expect(201);
+
+    const rotated = await alice
+      .post(`/api/notes/${noteId}/key-rotation`)
+      .set(csrfHeaders())
+      .send({
+        encryptedNoteKey: "rotated_owner_note_key_abcdefghijklmnopqrstuvwxyz",
+        noteKeyNonce: "rotated_owner_nonce_abcdefghijklmnopqrstuvwxyz",
+        contentCipher: "rotated_content_cipher_abcdefghijklmnopqrstuvwxyz",
+        contentNonce: "rotated_content_nonce_abcdefghijklmnopqrstuvwxyz",
+        contentLength: 777,
+        version: 1,
+        shares: [
+          {
+            recipientUserId: bobUserId,
+            sharingKeyVersion: 2,
+            encryptedNoteKey: "rotated_share_for_bob_abcdefghijklmnopqrstuvwxyz",
+            formatVersion: 1
+          }
+        ],
+        attachmentKeys: [
+          {
+            attachmentId: "00000000-0000-4000-8000-000000000001",
+            encryptedAttachmentKey: "rotated_attachment_key_abcdefghijklmnopqrstuvwxyz",
+            attachmentKeyNonce: "rotated_attachment_nonce_abcdefghijklmnopqrstuvwxyz"
+          }
+        ]
+      })
+      .expect(200);
+    expect(rotated.body).toMatchObject({ id: noteId, version: 2 });
+
+    const note = app.locals.db.sqlite
+      .prepare(
+        `SELECT encrypted_note_key AS encryptedNoteKey,
+                note_key_nonce AS noteKeyNonce,
+                content_cipher AS contentCipher,
+                content_length AS contentLength,
+                version
+         FROM notes
+         WHERE id = ?`
+      )
+      .get(noteId) as {
+      contentCipher: string;
+      contentLength: number;
+      encryptedNoteKey: string;
+      noteKeyNonce: string;
+      version: number;
+    };
+    expect(note).toEqual({
+      contentCipher: "rotated_content_cipher_abcdefghijklmnopqrstuvwxyz",
+      contentLength: 777,
+      encryptedNoteKey: "rotated_owner_note_key_abcdefghijklmnopqrstuvwxyz",
+      noteKeyNonce: "rotated_owner_nonce_abcdefghijklmnopqrstuvwxyz",
+      version: 2
+    });
+    const share = app.locals.db.sqlite
+      .prepare(
+        `SELECT encrypted_note_key AS encryptedNoteKey,
+                sharing_key_version AS sharingKeyVersion
+         FROM note_key_shares
+         WHERE note_id = ? AND recipient_user_id = ?`
+      )
+      .get(noteId, bobUserId) as {
+      encryptedNoteKey: string;
+      sharingKeyVersion: number;
+    };
+    expect(share).toEqual({
+      encryptedNoteKey: "rotated_share_for_bob_abcdefghijklmnopqrstuvwxyz",
+      sharingKeyVersion: 2
+    });
+    const attachment = app.locals.db.sqlite
+      .prepare(
+        `SELECT encrypted_attachment_key AS encryptedAttachmentKey,
+                attachment_key_nonce AS attachmentKeyNonce
+         FROM attachments
+         WHERE id = ?`
+      )
+      .get("00000000-0000-4000-8000-000000000001") as {
+      attachmentKeyNonce: string;
+      encryptedAttachmentKey: string;
+    };
+    expect(attachment).toEqual({
+      attachmentKeyNonce: "rotated_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
+      encryptedAttachmentKey: "rotated_attachment_key_abcdefghijklmnopqrstuvwxyz"
+    });
+  });
+
+  it("rejects partial key rotations", async () => {
+    const app = createTestApp();
+    const alice = await registerAgent(app, "partial_rotate_alice");
+    const bob = await registerAgent(app, "partial_rotate_bob");
+
+    await bob
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload())
+      .expect(201);
+    const created = await alice
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+    await alice
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send({
+        username: "partial_rotate_bob",
+        role: "viewer",
+        sharingKeyVersion: 1,
+        encryptedNoteKey: "old_share_for_bob_abcdefghijklmnopqrstuvwxyz",
+        formatVersion: 1
+      })
+      .expect(201);
+
+    await alice
+      .post(`/api/notes/${noteId}/key-rotation`)
+      .set(csrfHeaders())
+      .send({
+        encryptedNoteKey: "rotated_owner_note_key_abcdefghijklmnopqrstuvwxyz",
+        noteKeyNonce: "rotated_owner_nonce_abcdefghijklmnopqrstuvwxyz",
+        contentCipher: "rotated_content_cipher_abcdefghijklmnopqrstuvwxyz",
+        contentNonce: "rotated_content_nonce_abcdefghijklmnopqrstuvwxyz",
+        contentLength: 777,
+        version: 1,
+        shares: [],
+        attachmentKeys: []
+      })
+      .expect(400);
   });
 
   it("rolls back membership invites when event writes fail", async () => {
