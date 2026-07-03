@@ -6,8 +6,6 @@ import {
   notePayload,
   registerAgent
 } from "../test/http.js";
-import type { AppContext } from "../http/app.js";
-import { pruneAcknowledgedEvents } from "./replay.js";
 
 function sharingKeyPayload(username: string) {
   return {
@@ -162,7 +160,6 @@ describe("event replay routes", () => {
     const app = createTestApp();
     const alice = await registerAgent(app, "retention_alice");
     const bob = await registerAgent(app, "retention_bob");
-    const context = { db: app.locals.db } as AppContext;
 
     await bob
       .put("/api/sharing-keys/current")
@@ -193,21 +190,16 @@ describe("event replay routes", () => {
       .set(csrfHeaders())
       .send({ cursor: latest.cursor })
       .expect(204);
-    expect(pruneAcknowledgedEvents(context)).toMatchObject({
-      retainedCursorFloor: 0,
-      deletedEvents: 0
-    });
+    const remainingAfterAliceAck = app.locals.db.sqlite
+      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?")
+      .get(latest.cursor) as { count: number };
+    expect(remainingAfterAliceAck.count).toBeGreaterThan(0);
 
     await bob
       .post("/api/events/ack")
       .set(csrfHeaders())
       .send({ cursor: latest.cursor })
       .expect(204);
-    const result = pruneAcknowledgedEvents(context);
-    expect(result).toMatchObject({
-      retainedCursorFloor: latest.cursor
-    });
-    expect(result.deletedEvents).toBeGreaterThan(0);
 
     const remaining = app.locals.db.sqlite
       .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?")

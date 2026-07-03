@@ -6,7 +6,8 @@ import { sendApiError } from "../http/errors.js";
 import {
   acknowledgeVisibleEvents,
   getAcknowledgedEventCursor,
-  listVisibleEvents
+  listVisibleEvents,
+  pruneAcknowledgedEvents
 } from "./replay.js";
 
 const listEventsQuerySchema = z.object({
@@ -59,6 +60,7 @@ export function createEventsRouter(context: AppContext): Router {
     }
 
     acknowledgeVisibleEvents(context, session.userId, parsed.data.cursor);
+    pruneAcknowledgedEvents(context);
     response.status(204).send();
   });
 
