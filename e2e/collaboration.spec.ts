@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { readFile } from "node:fs/promises";
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 
 test("syncs a shared note for an online editor and offline viewer", async ({
@@ -12,6 +13,7 @@ test("syncs a shared note for an online editor and offline viewer", async ({
   const noteTitle = `Collaboration note ${alice.suffix}`;
   const aliceBody = `Alice online update ${alice.suffix}`;
   const attachmentName = `shared-${alice.suffix}.txt`;
+  const attachmentBody = `Shared attachment ${alice.suffix}`;
   const bobBody = `Bob editor update ${alice.suffix}`;
 
   try {
@@ -40,10 +42,11 @@ test("syncs a shared note for an online editor and offline viewer", async ({
       alicePage.locator(".membership-list li", { hasText: bob.username }).getByText(/active/)
     ).toBeVisible();
 
-    await uploadAttachment(alicePage, attachmentName, `Shared attachment ${alice.suffix}`);
+    await uploadAttachment(alicePage, attachmentName, attachmentBody);
     const bobAttachment = bobPage.locator(".attachment-list li", { hasText: attachmentName });
     await expect(bobAttachment).toBeVisible({ timeout: 10_000 });
     await expect(bobAttachment.getByRole("button", { name: "Delete" })).toBeVisible();
+    await verifyAttachmentDownload(bobPage, attachmentName, attachmentBody);
 
     await editSelectedNote(alicePage, aliceBody);
     await expect(bobPage.locator(".preview-body", { hasText: aliceBody })).toBeVisible({
@@ -56,6 +59,7 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     await expect(carolPage.locator(".preview-body", { hasText: aliceBody })).toBeVisible();
     const carolAttachment = carolPage.locator(".attachment-list li", { hasText: attachmentName });
     await expect(carolAttachment).toBeVisible();
+    await verifyAttachmentDownload(carolPage, attachmentName, attachmentBody);
     await expect(carolAttachment.getByRole("button", { name: "Delete" })).toHaveCount(0);
     await expect(carolPage.getByLabel("Attach encrypted file")).toBeDisabled();
     await expect(carolPage.getByLabel("Markdown editor")).toBeDisabled();
@@ -247,6 +251,24 @@ async function uploadAttachment(
   });
   await uploaded;
   await expect(page.getByText("Attachment encrypted and saved")).toBeVisible();
+}
+
+async function verifyAttachmentDownload(
+  page: Page,
+  filename: string,
+  contents: string
+): Promise<void> {
+  const downloaded = page.waitForEvent("download");
+  await page
+    .locator(".attachment-list li", { hasText: filename })
+    .getByRole("button", { name: "Download" })
+    .click();
+  const download = await downloaded;
+  expect(download.suggestedFilename()).toBe(filename);
+  const path = await download.path();
+  expect(path).toBeTruthy();
+  expect(await readFile(path, "utf8")).toBe(contents);
+  await expect(page.getByText("Attachment decrypted")).toBeVisible();
 }
 
 async function waitForNoteSave(page: Page) {
