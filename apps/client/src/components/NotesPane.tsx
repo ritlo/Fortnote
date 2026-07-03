@@ -36,7 +36,9 @@ export function NotesPane({
             ? "Trash"
             : notesView === "settings"
               ? "Settings"
-              : "Notes"}
+              : notesView === "shared"
+                ? "Shared"
+                : "Notes"}
         </h2>
         <button
           className="icon-button"
@@ -75,7 +77,9 @@ export function NotesPane({
               ? "Trash is empty."
               : notesView === "settings"
                 ? "Vault controls are open."
-                : "No notes match this view."}
+                : notesView === "shared"
+                  ? "No shared notes."
+                  : "No notes match this view."}
           </li>
         ) : (
           filteredNotes.map((note) => (

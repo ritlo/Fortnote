@@ -10,7 +10,7 @@ import type {
 } from "../api";
 
 export type AuthMode = "login" | "register" | "recover";
-export type NotesView = "notes" | "trash" | "settings";
+export type NotesView = "notes" | "shared" | "trash" | "settings";
 export type RealtimeStatus = "idle" | "connecting" | "connected" | "disconnected";
 
 export interface DecryptedNote {
@@ -223,12 +223,16 @@ export const useAppStore = create<AppStore>((set) => ({
     set((state) => {
       const notes = state.notes.filter((note) => note.id !== noteId);
       const trashNotes = state.trashNotes.filter((note) => note.id !== noteId);
+      const nextSelectedNoteId =
+        state.notesView === "shared"
+          ? (notes.find((note) => note.role !== "owner")?.id ?? null)
+          : (notes[0]?.id ?? null);
       return {
         attachmentsByNote: omitRecordKey(state.attachmentsByNote, noteId),
         notes,
         presenceByNote: omitRecordKey(state.presenceByNote, noteId),
         selectedNoteId:
-          state.selectedNoteId === noteId ? (notes[0]?.id ?? null) : state.selectedNoteId,
+          state.selectedNoteId === noteId ? nextSelectedNoteId : state.selectedNoteId,
         trashNotes
       };
     });

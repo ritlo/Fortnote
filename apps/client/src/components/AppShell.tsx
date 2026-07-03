@@ -41,6 +41,7 @@ export function AppShell() {
         folders={folders}
         notesView={notesView}
         openNotes={noteActions.openNotes}
+        openSharedNotes={noteActions.openSharedNotes}
         openSettings={() => {
           setNotesView("settings");
           setSelectedNoteId(null);

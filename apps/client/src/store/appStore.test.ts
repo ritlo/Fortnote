@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CollaborationEvent } from "../api";
+import type { DecryptedNote } from "./appStore";
 import { useAppStore } from "./appStore";
 
 describe("collaboration event store", () => {
@@ -33,6 +34,20 @@ describe("collaboration event store", () => {
       "event_5"
     ]);
   });
+
+  it("keeps selection inside shared notes after access is revoked in the shared view", () => {
+    useAppStore.getState().setNotes([
+      note({ id: "owner_note", role: "owner" }),
+      note({ id: "revoked_note", role: "editor" }),
+      note({ id: "next_shared_note", role: "viewer" })
+    ]);
+    useAppStore.getState().setNotesView("shared");
+    useAppStore.getState().setSelectedNoteId("revoked_note");
+
+    useAppStore.getState().removeNoteAccess("revoked_note");
+
+    expect(useAppStore.getState().selectedNoteId).toBe("next_shared_note");
+  });
 });
 
 function collaborationEvent(
@@ -48,6 +63,24 @@ function collaborationEvent(
     resourceId: "note_1",
     resourceType: "note",
     type: "note.updated",
+    version: 1,
+    ...overrides
+  };
+}
+
+function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
+  return {
+    body: "",
+    contentLength: 0,
+    cryptoOwnerId: "alice",
+    folderId: null,
+    id: "note_1",
+    isDeleted: false,
+    noteKeyBase64: "note-key",
+    ownerUserId: "alice",
+    role: "owner",
+    title: "Title",
+    updatedAt: "2026-07-02T00:00:00.000Z",
     version: 1,
     ...overrides
   };

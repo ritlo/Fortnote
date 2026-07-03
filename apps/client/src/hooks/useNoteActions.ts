@@ -219,6 +219,12 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     setSelectedNoteId(nextNotes[0]?.id ?? null);
   }
 
+  function openSharedNotes() {
+    setNotesView("shared");
+    setSelectedFolderId(null);
+    setSelectedNoteId(notes.find((note) => note.role !== "owner")?.id ?? null);
+  }
+
   async function moveSelectedToTrash() {
     if (!selectedNote) {
       return;
@@ -277,6 +283,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     deleteSelectedForever,
     moveSelectedToTrash,
     openNotes,
+    openSharedNotes,
     openTrash,
     removeFolder,
     restoreSelectedNote,
