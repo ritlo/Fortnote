@@ -8,7 +8,6 @@ import {
   decryptNoteKeyShare,
   decryptNote,
   encryptNoteKeyShare,
-  formatSharingKeyFingerprint,
   noteKeyToBase64,
   openUserSharingKey,
   openVault
@@ -94,21 +93,6 @@ describe("client crypto workflows", () => {
     });
 
     expect(opened).toEqual(sharingKey.opened);
-  });
-
-  it("formats stable sharing key fingerprints", async () => {
-    const aliceSharingKey = await createUserSharingKey(new Uint8Array(32).fill(1));
-    const bobSharingKey = await createUserSharingKey(new Uint8Array(32).fill(2));
-
-    await expect(
-      formatSharingKeyFingerprint(aliceSharingKey.opened.publicKey)
-    ).resolves.toMatch(/^[0-9A-F]{4}( [0-9A-F]{4}){5}$/);
-    await expect(
-      formatSharingKeyFingerprint(aliceSharingKey.opened.publicKey)
-    ).resolves.toBe(await formatSharingKeyFingerprint(aliceSharingKey.opened.publicKey));
-    await expect(
-      formatSharingKeyFingerprint(aliceSharingKey.opened.publicKey)
-    ).resolves.not.toBe(await formatSharingKeyFingerprint(bobSharingKey.opened.publicKey));
   });
 
   it("encrypts note key shares for one collaborator", async () => {

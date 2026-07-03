@@ -324,17 +324,6 @@ export async function encryptNoteKeyShare(input: {
   return sealBytes(fromBase64(input.noteKeyBase64), input.recipientPublicKey);
 }
 
-export async function formatSharingKeyFingerprint(publicKey: string): Promise<string> {
-  const publicKeyBytes = Uint8Array.from(fromBase64(publicKey));
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", publicKeyBytes));
-  return Array.from(digest.slice(0, 12))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
-    .toUpperCase()
-    .match(/.{1,4}/g)
-    ?.join(" ") ?? "";
-}
-
 export async function decryptNoteKeyShare(input: {
   encryptedNoteKey: string;
   publicKey: string;
