@@ -70,10 +70,11 @@ export function useAuthActions() {
         setRootKey(registration.rootKey);
         setKeyMaterialVersion(1);
         setRecoverySecret(registration.recoverySecret);
-        setStatus("Signed in and decrypted");
+        setStatus("Loading vault");
         await ensureSharingKey(registration.rootKey);
         await loadFolders();
         await loadDecryptedNotes(currentUser, registration.rootKey);
+        setStatus("Signed in and decrypted");
         return;
       }
 
@@ -102,10 +103,11 @@ export function useAuthActions() {
         setPassword(recoveryNewPassword);
         setRecoveryInput("");
         setRecoveryNewPassword("");
-        setStatus("Recovered and decrypted");
+        setStatus("Loading vault");
         await ensureSharingKey(recovery.rootKey);
         await loadFolders();
         await loadDecryptedNotes(currentUser, recovery.rootKey);
+        setStatus("Recovered and decrypted");
         return;
       }
 
@@ -123,10 +125,11 @@ export function useAuthActions() {
       setUser(currentUser);
       setRootKey(openedVault.rootKey);
       setKeyMaterialVersion(keyMaterial.keyMaterialVersion);
-      setStatus("Signed in and decrypted");
+      setStatus("Loading vault");
       await ensureSharingKey(openedVault.rootKey);
       await loadFolders();
       await loadDecryptedNotes(currentUser, openedVault.rootKey);
+      setStatus("Signed in and decrypted");
     } catch (authError) {
       setStatus("Auth failed");
       setError(authError instanceof Error ? authError.message : "Unable to sign in");
