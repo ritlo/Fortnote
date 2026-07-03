@@ -45,6 +45,41 @@ export function createSharingKeysRouter(context: AppContext): Router {
     response.json(row);
   });
 
+  router.get("/versions/:version", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+
+    const version = z.coerce.number().int().positive().safeParse(request.params.version);
+    if (!version.success) {
+      sendApiError(response, "bad_request", "Invalid sharing key version");
+      return;
+    }
+
+    const row = context.db.sqlite
+      .prepare(
+        `SELECT sharing_key_version AS sharingKeyVersion,
+                public_key AS publicKey,
+                encrypted_private_key AS encryptedPrivateKey,
+                private_key_nonce AS privateKeyNonce,
+                format_version AS formatVersion,
+                created_at AS createdAt,
+                updated_at AS updatedAt
+         FROM user_sharing_keys
+         WHERE user_id = ?
+           AND sharing_key_version = ?`
+      )
+      .get(session.userId, version.data);
+
+    if (!row) {
+      sendApiError(response, "not_found", "Sharing key not found");
+      return;
+    }
+
+    response.json(row);
+  });
+
   router.put("/current", (request, response) => {
     const session = requireSession(context.db, request, response);
     if (!session) {

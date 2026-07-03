@@ -80,6 +80,7 @@ export function AppShell() {
         removeSelectedAttachment={attachmentActions.removeSelectedAttachment}
         restoreSelectedNote={noteActions.restoreSelectedNote}
         rotateRecoveryKey={authActions.rotateRecoveryKey}
+        rotateSharingKey={authActions.rotateSharingKey}
         saveSelectedNote={noteActions.saveSelectedNote}
         selectedAttachments={noteView.selectedAttachments}
         selectedNote={noteView.selectedNote}

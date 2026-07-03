@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import {
   getAuthKdfParams,
+  getCurrentSharingKey,
   getKeyMaterial,
   getMe,
   getRecoveryParams,
@@ -8,6 +9,7 @@ import {
   logout,
   recover,
   register,
+  storeCurrentSharingKey,
   updateKeyMaterial
 } from "../api";
 import {
@@ -16,6 +18,7 @@ import {
   createPasswordChangeCrypto,
   createRegistrationCrypto,
   createRecoveryRotationCrypto,
+  createUserSharingKey,
   openVault
 } from "../cryptoClient";
 import { authKdf, recoveryKdf, vaultKdf } from "../lib/keyMaterial";
@@ -54,6 +57,7 @@ export function useAuthActions() {
   const setRecoveryInput = useAppStore((state) => state.setRecoveryInput);
   const setRecoveryNewPassword = useAppStore((state) => state.setRecoveryNewPassword);
   const setRecoverySecret = useAppStore((state) => state.setRecoverySecret);
+  const setOpenedSharingKey = useAppStore((state) => state.setOpenedSharingKey);
   const setError = useAppStore((state) => state.setError);
   const setStatus = useAppStore((state) => state.setStatus);
   const resetVaultState = useAppStore((state) => state.resetVaultState);
@@ -206,10 +210,32 @@ export function useAuthActions() {
     }
   }
 
+  async function rotateSharingKey() {
+    if (!rootKey) {
+      return;
+    }
+
+    setError(null);
+    setStatus("Rotating sharing key");
+    try {
+      const current = await getCurrentSharingKey();
+      const created = await createUserSharingKey(rootKey, current.sharingKeyVersion + 1);
+      await storeCurrentSharingKey(created.payload);
+      setOpenedSharingKey(created.opened);
+      setStatus("Sharing key rotated");
+    } catch (rotateError) {
+      setStatus("Sharing key rotation failed");
+      setError(
+        rotateError instanceof Error ? rotateError.message : "Unable to rotate sharing key"
+      );
+    }
+  }
+
   return {
     changePassword,
     lockVault,
     rotateRecoveryKey,
+    rotateSharingKey,
     submitAuth,
     submitLogout
   };

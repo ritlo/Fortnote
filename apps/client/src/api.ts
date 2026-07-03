@@ -359,6 +359,10 @@ export function getCurrentSharingKey(): Promise<SharingKeyEnvelope> {
   return apiRequest<SharingKeyEnvelope>("/sharing-keys/current");
 }
 
+export function getSharingKeyVersion(version: number): Promise<SharingKeyEnvelope> {
+  return apiRequest<SharingKeyEnvelope>(`/sharing-keys/versions/${String(version)}`);
+}
+
 export function storeCurrentSharingKey(
   payload: StoreSharingKeyPayload
 ): Promise<{ sharingKeyVersion: number }> {

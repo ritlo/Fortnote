@@ -10,9 +10,10 @@ import {
   decryptNoteBodyWithKey,
   decryptNoteKeyShare,
   noteKeyToBase64,
+  openUserSharingKey,
   type OpenedSharingKey
 } from "../cryptoClient";
-import { getNoteKeyShare } from "../api";
+import { getNoteKeyShare, getSharingKeyVersion } from "../api";
 import type { DecryptedNote } from "../store/appStore";
 
 export async function decryptNoteSummary(
@@ -24,7 +25,7 @@ export async function decryptNoteSummary(
   const decrypted =
     note.role === "owner"
       ? await decryptOwnedNote(user, rootKey, note)
-      : await decryptSharedNote(note, openedSharingKey);
+      : await decryptSharedNote(rootKey, note, openedSharingKey);
 
   return {
     id: note.id,
@@ -73,18 +74,22 @@ async function decryptOwnedNote(
 }
 
 async function decryptSharedNote(
+  rootKey: Uint8Array,
   note: NoteSummary,
   openedSharingKey: OpenedSharingKey | null
 ): Promise<{ body: string; noteKeyBase64: string }> {
-  if (!openedSharingKey) {
-    throw new Error("Sharing key is not loaded");
-  }
-
   const keyShare = await getNoteKeyShare(note.id);
+  const sharingKey =
+    openedSharingKey?.sharingKeyVersion === keyShare.sharingKeyVersion
+      ? openedSharingKey
+      : await openUserSharingKey({
+          rootKey,
+          envelope: await getSharingKeyVersion(keyShare.sharingKeyVersion)
+        });
   const noteKeyBase64 = await decryptNoteKeyShare({
     encryptedNoteKey: keyShare.encryptedNoteKey,
-    publicKey: openedSharingKey.publicKey,
-    privateKey: openedSharingKey.privateKey
+    publicKey: sharingKey.publicKey,
+    privateKey: sharingKey.privateKey
   });
   const body = await decryptNoteBodyWithKey({
     cryptoOwnerId: note.cryptoOwnerId,

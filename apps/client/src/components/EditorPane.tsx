@@ -23,6 +23,7 @@ interface EditorPaneProps {
   removeSelectedAttachment: (attachmentId: string) => Promise<void>;
   restoreSelectedNote: () => Promise<void>;
   rotateRecoveryKey: () => Promise<void>;
+  rotateSharingKey: () => Promise<void>;
   saveSelectedNote: () => Promise<void>;
   setNewPassword: (value: string) => void;
   updateSelectedNote: (
@@ -49,6 +50,7 @@ export function EditorPane({
   removeSelectedAttachment,
   restoreSelectedNote,
   rotateRecoveryKey,
+  rotateSharingKey,
   saveSelectedNote,
   setNewPassword,
   updateSelectedNote,
@@ -78,6 +80,7 @@ export function EditorPane({
           newPassword={newPassword}
           recoverySecret={recoverySecret}
           rotateRecoveryKey={rotateRecoveryKey}
+          rotateSharingKey={rotateSharingKey}
           setNewPassword={setNewPassword}
         />
       ) : (

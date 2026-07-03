@@ -286,7 +286,8 @@ export async function createAccountRecoveryCrypto(input: {
 }
 
 export async function createUserSharingKey(
-  rootKey: Uint8Array
+  rootKey: Uint8Array,
+  sharingKeyVersion = 1
 ): Promise<CreatedSharingKey> {
   const keyPair = await createSharingKeyPair();
   const encryptedPrivateKey = await encryptBytes(
@@ -297,7 +298,7 @@ export async function createUserSharingKey(
 
   return {
     payload: {
-      sharingKeyVersion: 1,
+      sharingKeyVersion,
       publicKey: keyPair.publicKey,
       encryptedPrivateKey: encryptedPrivateKey.cipher,
       privateKeyNonce: encryptedPrivateKey.nonce,
@@ -306,7 +307,7 @@ export async function createUserSharingKey(
     opened: {
       publicKey: keyPair.publicKey,
       privateKey: keyPair.privateKey,
-      sharingKeyVersion: 1
+      sharingKeyVersion
     }
   };
 }
