@@ -110,6 +110,21 @@ export interface CreatedSharingKey {
   opened: OpenedSharingKey;
 }
 
+export interface RotatedNoteKeyMaterial {
+  contentCipher: string;
+  contentLength: number;
+  contentNonce: string;
+  encryptedNoteKey: string;
+  noteKeyBase64: string;
+  noteKeyNonce: string;
+}
+
+export interface RewrappedAttachmentKey {
+  attachmentId: string;
+  encryptedAttachmentKey: string;
+  attachmentKeyNonce: string;
+}
+
 export async function createRegistrationCrypto(
   username: string,
   password: string
@@ -428,6 +443,66 @@ export async function encryptExistingNoteBody(input: {
 
 export function noteKeyToBase64(noteKey: Uint8Array): string {
   return toBase64(noteKey);
+}
+
+export async function rotateNoteKeyMaterial(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  rootKey: Uint8Array;
+  body: string;
+}): Promise<RotatedNoteKeyMaterial> {
+  const noteKey = randomBytes(32);
+  const encryptedNoteKey = await encryptBytes(
+    noteKey,
+    input.rootKey,
+    noteKeyAad(input.cryptoOwnerId, input.noteId)
+  );
+  const encryptedBody = await encryptBytes(
+    utf8(input.body),
+    noteKey,
+    noteBodyAad(input.cryptoOwnerId, input.noteId)
+  );
+
+  return {
+    contentCipher: encryptedBody.cipher,
+    contentLength: encryptedBody.cipher.length,
+    contentNonce: encryptedBody.nonce,
+    encryptedNoteKey: encryptedNoteKey.cipher,
+    noteKeyBase64: toBase64(noteKey),
+    noteKeyNonce: encryptedNoteKey.nonce
+  };
+}
+
+export async function rewrapAttachmentKey(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  oldNoteKeyBase64: string;
+  newNoteKeyBase64: string;
+  attachmentId: string;
+  encryptedAttachmentKey: string;
+  attachmentKeyNonce: string;
+}): Promise<RewrappedAttachmentKey> {
+  const aad = attachmentKeyAad(input.cryptoOwnerId, input.noteId, input.attachmentId);
+  const attachmentKey = await decryptBytes(
+    {
+      cipher: input.encryptedAttachmentKey,
+      nonce: input.attachmentKeyNonce,
+      formatVersion: 1
+    },
+    fromBase64(input.oldNoteKeyBase64),
+    aad
+  );
+  const encryptedAttachmentKey = await encryptBytes(
+    attachmentKey,
+    fromBase64(input.newNoteKeyBase64),
+    aad
+  );
+
+  return {
+    attachmentId: input.attachmentId,
+    encryptedAttachmentKey: encryptedAttachmentKey.cipher,
+    attachmentKeyNonce: encryptedAttachmentKey.nonce
+  };
 }
 
 export async function createEncryptedAttachmentDraft(input: {
