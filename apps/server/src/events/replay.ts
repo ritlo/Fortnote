@@ -101,6 +101,16 @@ export function acknowledgeVisibleEvents(
 ): void {
   context.db.sqlite
     .prepare(
+      `INSERT INTO event_cursors (user_id, cursor, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(user_id) DO UPDATE SET
+         cursor = MAX(event_cursors.cursor, excluded.cursor),
+         updated_at = CURRENT_TIMESTAMP`
+    )
+    .run(userId, cursor);
+
+  context.db.sqlite
+    .prepare(
       `INSERT INTO event_acknowledgements (user_id, note_id, cursor, updated_at)
        SELECT ?,
               note_events.note_id,
@@ -117,4 +127,14 @@ export function acknowledgeVisibleEvents(
          updated_at = CURRENT_TIMESTAMP`
     )
     .run(userId, cursor, userId);
+}
+
+export function getAcknowledgedEventCursor(
+  context: AppContext,
+  userId: string
+): number {
+  const row = context.db.sqlite
+    .prepare("SELECT cursor FROM event_cursors WHERE user_id = ?")
+    .get(userId) as { cursor: number } | undefined;
+  return row?.cursor ?? 0;
 }

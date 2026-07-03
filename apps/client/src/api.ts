@@ -424,6 +424,10 @@ export function listCollaborationEvents(
   );
 }
 
+export function getCollaborationEventCursor(): Promise<{ cursor: number }> {
+  return apiRequest<{ cursor: number }>("/events/cursor");
+}
+
 export function acknowledgeCollaborationEvents(cursor: number): Promise<undefined> {
   return apiRequest<undefined>("/events/ack", {
     method: "POST",

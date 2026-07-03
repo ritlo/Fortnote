@@ -1,5 +1,9 @@
 import { useEffect, useRef } from "react";
-import { acknowledgeCollaborationEvents, type CollaborationEvent } from "../api";
+import {
+  acknowledgeCollaborationEvents,
+  getCollaborationEventCursor,
+  type CollaborationEvent
+} from "../api";
 import {
   connectRealtime,
   type ClientPresenceState,
@@ -19,6 +23,7 @@ export function useRealtimeEvents() {
   const selectedNoteId = useAppStore((state) => state.selectedNoteId);
   const addCollaborationEvents = useAppStore((state) => state.addCollaborationEvents);
   const removeNoteAccess = useAppStore((state) => state.removeNoteAccess);
+  const setEventCursor = useAppStore((state) => state.setEventCursor);
   const setNotePresence = useAppStore((state) => state.setNotePresence);
   const setRealtimeStatus = useAppStore((state) => state.setRealtimeStatus);
   const connectionRef = useRef<RealtimeConnection | null>(null);
@@ -58,6 +63,22 @@ export function useRealtimeEvents() {
         reconnectTimerRef.current = null;
         startConnection();
       }, delay);
+    }
+
+    async function bootstrapConnection() {
+      setRealtimeStatus("connecting");
+      try {
+        const { cursor } = await getCollaborationEventCursor();
+        if (!isActive) {
+          return;
+        }
+        setEventCursor((current) => Math.max(current, cursor));
+      } catch {
+        if (!isActive) {
+          return;
+        }
+      }
+      startConnection();
     }
 
     function startConnection() {
@@ -111,7 +132,7 @@ export function useRealtimeEvents() {
       connectionRef.current = connection;
     }
 
-    startConnection();
+    void bootstrapConnection();
     const heartbeatId = window.setInterval(() => {
       sendSelectedNotePresence(
         connectionRef.current,
@@ -133,6 +154,7 @@ export function useRealtimeEvents() {
     addCollaborationEvents,
     removeNoteAccess,
     rootKey,
+    setEventCursor,
     setNotePresence,
     setRealtimeStatus,
     user

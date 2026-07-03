@@ -36,6 +36,7 @@ describe("event replay routes", () => {
 
     const carolSession = await carol.get("/api/auth/me").expect(200);
     const carolUserId = String(carolSession.body.id);
+    await carol.get("/api/events/cursor").expect(200, { cursor: 0 });
 
     await bob
       .put("/api/sharing-keys/current")
@@ -121,6 +122,14 @@ describe("event replay routes", () => {
       .set(csrfHeaders())
       .send({ cursor: revokeCursor })
       .expect(204);
+    await carol.get("/api/events/cursor").expect(200, { cursor: revokeCursor });
+
+    await carol
+      .post("/api/events/ack")
+      .set(csrfHeaders())
+      .send({ cursor: revokeCursor - 1 })
+      .expect(204);
+    await carol.get("/api/events/cursor").expect(200, { cursor: revokeCursor });
 
     const carolAfterAckFromStart = await carol
       .get("/api/events")
@@ -150,6 +159,7 @@ describe("event replay routes", () => {
   it("rejects unauthenticated replay requests", async () => {
     const app = createTestApp();
     await request(app).get("/api/events").expect(401);
+    await request(app).get("/api/events/cursor").expect(401);
   });
 
   it("rejects unauthenticated acknowledgement requests", async () => {

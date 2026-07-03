@@ -3,7 +3,11 @@ import { z } from "zod";
 import { requireSession } from "../auth/session.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
-import { acknowledgeVisibleEvents, listVisibleEvents } from "./replay.js";
+import {
+  acknowledgeVisibleEvents,
+  getAcknowledgedEventCursor,
+  listVisibleEvents
+} from "./replay.js";
 
 const listEventsQuerySchema = z.object({
   after: z.coerce.number().int().nonnegative().default(0),
@@ -31,6 +35,15 @@ export function createEventsRouter(context: AppContext): Router {
     response.json({
       events: listVisibleEvents(context, session.userId, parsed.data.after, parsed.data.limit)
     });
+  });
+
+  router.get("/cursor", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+
+    response.json({ cursor: getAcknowledgedEventCursor(context, session.userId) });
   });
 
   router.post("/ack", (request, response) => {

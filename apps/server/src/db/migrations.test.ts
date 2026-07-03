@@ -234,5 +234,21 @@ describe("database migrations", () => {
     expect(indexes.some((index) => index.name === "idx_event_acknowledgements_user_cursor")).toBe(
       true
     );
+
+    const cursorColumns = sqlite.prepare("PRAGMA table_info(event_cursors)").all() as {
+      name: string;
+    }[];
+    expect(cursorColumns.map((column) => column.name)).toEqual([
+      "user_id",
+      "cursor",
+      "updated_at"
+    ]);
+
+    const cursorIndexes = sqlite.prepare("PRAGMA index_list(event_cursors)").all() as {
+      name: string;
+    }[];
+    expect(cursorIndexes.some((index) => index.name === "idx_event_cursors_cursor")).toBe(
+      true
+    );
   });
 });

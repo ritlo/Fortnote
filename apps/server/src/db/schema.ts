@@ -156,3 +156,9 @@ export const eventAcknowledgements = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.userId, table.noteId] })]
 );
+
+export const eventCursors = sqliteTable("event_cursors", {
+  userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  cursor: integer("cursor").notNull().default(0),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`)
+});

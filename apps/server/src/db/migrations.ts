@@ -140,6 +140,12 @@ export function runMigrations(sqlite: Database.Database): void {
 	      PRIMARY KEY (user_id, note_id)
 	    );
 
+	    CREATE TABLE IF NOT EXISTS event_cursors (
+	      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+	      cursor INTEGER NOT NULL DEFAULT 0,
+	      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+	    );
+
 	    CREATE INDEX IF NOT EXISTS idx_note_memberships_user_status
 	      ON note_memberships (user_id, status);
 	    CREATE INDEX IF NOT EXISTS idx_note_memberships_note
@@ -152,6 +158,8 @@ export function runMigrations(sqlite: Database.Database): void {
 	      ON note_events (resource_type, resource_id, cursor);
 	    CREATE INDEX IF NOT EXISTS idx_event_acknowledgements_user_cursor
 	      ON event_acknowledgements (user_id, cursor);
+	    CREATE INDEX IF NOT EXISTS idx_event_cursors_cursor
+	      ON event_cursors (cursor);
 	  `);
 
   addColumnIfMissing(sqlite, "notes", "crypto_owner_id", "TEXT");
