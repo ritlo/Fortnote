@@ -16,6 +16,7 @@ interface EditorPaneProps {
   selectedNote: DecryptedNote | null;
   user: User;
   changePassword: () => Promise<void>;
+  cleanupSharingKeys: () => Promise<void>;
   deleteSelectedForever: () => Promise<void>;
   downloadSelectedAttachment: (attachment: AttachmentSummary) => Promise<void>;
   lockVault: () => void;
@@ -43,6 +44,7 @@ export function EditorPane({
   selectedNote,
   user,
   changePassword,
+  cleanupSharingKeys,
   deleteSelectedForever,
   downloadSelectedAttachment,
   lockVault,
@@ -77,6 +79,7 @@ export function EditorPane({
       {notesView === "settings" ? (
         <SettingsPanel
           changePassword={changePassword}
+          cleanupSharingKeys={cleanupSharingKeys}
           newPassword={newPassword}
           recoverySecret={recoverySecret}
           rotateRecoveryKey={rotateRecoveryKey}

@@ -122,6 +122,34 @@ export function createSharingKeysRouter(context: AppContext): Router {
     });
   });
 
+  router.post("/cleanup", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+
+    const result = context.db.sqlite
+      .prepare(
+        `DELETE FROM user_sharing_keys
+         WHERE user_id = ?
+           AND sharing_key_version < (
+             SELECT MAX(current_keys.sharing_key_version)
+             FROM user_sharing_keys AS current_keys
+             WHERE current_keys.user_id = user_sharing_keys.user_id
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM note_key_shares
+             WHERE note_key_shares.recipient_user_id = user_sharing_keys.user_id
+               AND note_key_shares.sharing_key_version =
+                 user_sharing_keys.sharing_key_version
+           )`
+      )
+      .run(session.userId);
+
+    response.json({ deleted: result.changes });
+  });
+
   router.get("/lookup", (request, response) => {
     const session = requireSession(context.db, request, response);
     if (!session) {

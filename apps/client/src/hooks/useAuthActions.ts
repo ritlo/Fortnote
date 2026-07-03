@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import {
+  cleanupRetiredSharingKeys,
   getAuthKdfParams,
   getCurrentSharingKey,
   getKeyMaterial,
@@ -231,8 +232,27 @@ export function useAuthActions() {
     }
   }
 
+  async function cleanupSharingKeys() {
+    setError(null);
+    setStatus("Cleaning up sharing keys");
+    try {
+      const result = await cleanupRetiredSharingKeys();
+      setStatus(
+        result.deleted > 0
+          ? `Cleaned up ${String(result.deleted)} sharing key${result.deleted === 1 ? "" : "s"}`
+          : "No retired sharing keys to clean up"
+      );
+    } catch (cleanupError) {
+      setStatus("Sharing key cleanup failed");
+      setError(
+        cleanupError instanceof Error ? cleanupError.message : "Unable to clean up sharing keys"
+      );
+    }
+  }
+
   return {
     changePassword,
+    cleanupSharingKeys,
     lockVault,
     rotateRecoveryKey,
     rotateSharingKey,

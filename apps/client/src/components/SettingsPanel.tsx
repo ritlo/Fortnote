@@ -2,6 +2,7 @@ interface SettingsPanelProps {
   newPassword: string;
   recoverySecret: string | null;
   changePassword: () => Promise<void>;
+  cleanupSharingKeys: () => Promise<void>;
   rotateRecoveryKey: () => Promise<void>;
   rotateSharingKey: () => Promise<void>;
   setNewPassword: (value: string) => void;
@@ -11,6 +12,7 @@ export function SettingsPanel({
   newPassword,
   recoverySecret,
   changePassword,
+  cleanupSharingKeys,
   rotateRecoveryKey,
   rotateSharingKey,
   setNewPassword
@@ -65,6 +67,15 @@ export function SettingsPanel({
           }}
         >
           Rotate sharing key
+        </button>
+        <button
+          className="text-button"
+          type="button"
+          onClick={() => {
+            void cleanupSharingKeys();
+          }}
+        >
+          Clean up old sharing keys
         </button>
       </section>
     </div>

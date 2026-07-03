@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createTestApp, csrfHeaders, registerAgent } from "../test/http.js";
+import {
+  createTestApp,
+  csrfHeaders,
+  notePayload,
+  registerAgent
+} from "../test/http.js";
 
-const sharingKeyPayload = {
-  sharingKeyVersion: 1,
-  publicKey: "public_sharing_key_abcdefghijklmnopqrstuvwxyz",
-  encryptedPrivateKey: "encrypted_private_key_abcdefghijklmnopqrstuvwxyz",
-  privateKeyNonce: "private_key_nonce_abcdefghijklmnopqrstuvwxyz",
-  formatVersion: 1
-};
+const sharingKeyPayload = buildSharingKeyPayload(1);
 
 describe("sharing key routes", () => {
   it("stores and returns the signed-in user's current sharing key", async () => {
@@ -70,4 +69,98 @@ describe("sharing key routes", () => {
       .query({ username: "sharing_no_key" })
       .expect(404);
   });
+
+  it("cleans up retired sharing keys that no shares reference", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "cleanup_unused");
+    const user = await agent.get("/api/auth/me").expect(200);
+
+    await agent
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(buildSharingKeyPayload(1))
+      .expect(201);
+    await agent
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(buildSharingKeyPayload(2))
+      .expect(201);
+
+    const cleanup = await agent
+      .post("/api/sharing-keys/cleanup")
+      .set(csrfHeaders())
+      .expect(200);
+
+    expect(cleanup.body).toEqual({ deleted: 1 });
+    expect(sharingKeyVersions(app, String(user.body.id))).toEqual([2]);
+  });
+
+  it("keeps retired sharing keys that existing shares still reference", async () => {
+    const app = createTestApp();
+    const owner = await registerAgent(app, "cleanup_owner");
+    const recipient = await registerAgent(app, "cleanup_recipient");
+    const recipientUser = await recipient.get("/api/auth/me").expect(200);
+
+    await recipient
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(buildSharingKeyPayload(1))
+      .expect(201);
+    await recipient
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(buildSharingKeyPayload(2))
+      .expect(201);
+
+    const note = await owner
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    await owner
+      .post(`/api/notes/${String(note.body.id)}/memberships`)
+      .set(csrfHeaders())
+      .send({
+        username: "cleanup_recipient",
+        role: "viewer",
+        sharingKeyVersion: 1,
+        encryptedNoteKey: "encrypted_share_for_cleanup_abcdefghijklmnopqrstuvwxyz",
+        formatVersion: 1
+      })
+      .expect(201);
+
+    const cleanup = await recipient
+      .post("/api/sharing-keys/cleanup")
+      .set(csrfHeaders())
+      .expect(200);
+
+    expect(cleanup.body).toEqual({ deleted: 0 });
+    expect(sharingKeyVersions(app, String(recipientUser.body.id))).toEqual([1, 2]);
+  });
 });
+
+function buildSharingKeyPayload(version: number) {
+  return {
+    sharingKeyVersion: version,
+    publicKey: `public_sharing_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
+    encryptedPrivateKey: `encrypted_private_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
+    privateKeyNonce: `private_key_nonce_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
+    formatVersion: 1
+  };
+}
+
+function sharingKeyVersions(
+  app: ReturnType<typeof createTestApp>,
+  userId: string
+): number[] {
+  const rows = app.locals.db.sqlite
+    .prepare(
+      `SELECT sharing_key_version AS sharingKeyVersion
+       FROM user_sharing_keys
+       WHERE user_id = ?
+       ORDER BY sharing_key_version`
+    )
+    .all(userId) as { sharingKeyVersion: number }[];
+
+  return rows.map((row) => row.sharingKeyVersion);
+}

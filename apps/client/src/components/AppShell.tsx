@@ -67,6 +67,7 @@ export function AppShell() {
       />
       <EditorPane
         changePassword={authActions.changePassword}
+        cleanupSharingKeys={authActions.cleanupSharingKeys}
         deleteSelectedForever={noteActions.deleteSelectedForever}
         downloadSelectedAttachment={attachmentActions.downloadSelectedAttachment}
         folders={folders}

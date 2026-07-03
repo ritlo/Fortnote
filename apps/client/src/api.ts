@@ -372,6 +372,12 @@ export function storeCurrentSharingKey(
   });
 }
 
+export function cleanupRetiredSharingKeys(): Promise<{ deleted: number }> {
+  return apiRequest<{ deleted: number }>("/sharing-keys/cleanup", {
+    method: "POST"
+  });
+}
+
 export function lookupSharingKey(username: string): Promise<PublicSharingKey> {
   return apiRequest<PublicSharingKey>(
     `/sharing-keys/lookup?username=${encodeURIComponent(username)}`
