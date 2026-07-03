@@ -1,5 +1,6 @@
-import type { User } from "../api";
+import type { PresenceUser, User } from "../api";
 import type { DecryptedNote, NotesView } from "../store/appStore";
+import { useAppStore } from "../store/appStore";
 
 interface EditorHeaderProps {
   keyMaterialVersion: number | null;
@@ -29,6 +30,13 @@ export function EditorHeader({
     selectedNote.role !== "viewer" &&
     notesView !== "trash";
   const canDelete = selectedNote?.role === "owner";
+  const presenceByNote = useAppStore((state) => state.presenceByNote);
+  const presence = selectedNote
+    ? (presenceByNote[selectedNote.id] ?? []).filter(
+        (presenceUser) => presenceUser.userId !== user.id
+      )
+    : [];
+  const presenceSummary = formatPresenceSummary(presence);
 
   return (
     <header className="pane-header">
@@ -44,6 +52,7 @@ export function EditorHeader({
             ? `key material v${String(keyMaterialVersion)}`
             : "root key in memory only"}
         </p>
+        {presenceSummary ? <p className="presence-summary">{presenceSummary}</p> : null}
       </div>
       {notesView === "settings" ? (
         <div className="action-row">
@@ -108,4 +117,14 @@ export function EditorHeader({
       )}
     </header>
   );
+}
+
+export function formatPresenceSummary(presence: PresenceUser[]): string {
+  if (presence.length === 0) {
+    return "";
+  }
+
+  return presence
+    .map((presenceUser) => `${presenceUser.username} ${presenceUser.state}`)
+    .join(", ");
 }

@@ -94,6 +94,16 @@ p {
   color: var(--muted);
 }
 
+.pane-header .presence-summary {
+  margin-top: 4px;
+  max-width: 42ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #315f57;
+  font-weight: 700;
+}
+
 label {
   display: grid;
   gap: 6px;
