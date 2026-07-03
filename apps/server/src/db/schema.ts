@@ -145,3 +145,14 @@ export const noteEvents = sqliteTable("note_events", {
   payloadMetadata: text("payload_metadata"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`)
 });
+
+export const eventAcknowledgements = sqliteTable(
+  "event_acknowledgements",
+  {
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    noteId: text("note_id").notNull(),
+    cursor: integer("cursor").notNull(),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`)
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.noteId] })]
+);

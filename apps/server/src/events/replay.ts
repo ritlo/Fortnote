@@ -49,18 +49,25 @@ export function listVisibleEvents(
          ON note_memberships.note_id = note_events.note_id
         AND note_memberships.user_id = ?
         AND note_memberships.status = 'active'
+       LEFT JOIN event_acknowledgements
+         ON event_acknowledgements.note_id = note_events.note_id
+        AND event_acknowledgements.user_id = ?
        WHERE note_events.cursor > ?
          AND (
            note_memberships.user_id IS NOT NULL
            OR (
              note_events.event_type = 'membership.revoked'
              AND json_extract(note_events.payload_metadata, '$.membershipUserId') = ?
+             AND (
+               event_acknowledgements.cursor IS NULL
+               OR event_acknowledgements.cursor < note_events.cursor
+             )
            )
          )
        ORDER BY note_events.cursor
        LIMIT ?`
     )
-    .all(userId, after, userId, limit) as EventRow[];
+    .all(userId, userId, after, userId, limit) as EventRow[];
 
   return rows.map((row) => ({
     cursor: row.cursor,
@@ -85,4 +92,29 @@ function parseMetadata(value: string | null): Record<string, unknown> | null {
   return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
     ? (parsed as Record<string, unknown>)
     : null;
+}
+
+export function acknowledgeVisibleEvents(
+  context: AppContext,
+  userId: string,
+  cursor: number
+): void {
+  context.db.sqlite
+    .prepare(
+      `INSERT INTO event_acknowledgements (user_id, note_id, cursor, updated_at)
+       SELECT ?,
+              note_events.note_id,
+              MAX(note_events.cursor),
+              CURRENT_TIMESTAMP
+       FROM note_events
+       WHERE note_events.cursor <= ?
+         AND note_events.note_id IS NOT NULL
+         AND note_events.event_type = 'membership.revoked'
+         AND json_extract(note_events.payload_metadata, '$.membershipUserId') = ?
+       GROUP BY note_events.note_id
+       ON CONFLICT(user_id, note_id) DO UPDATE SET
+         cursor = MAX(event_acknowledgements.cursor, excluded.cursor),
+         updated_at = CURRENT_TIMESTAMP`
+    )
+    .run(userId, cursor, userId);
 }

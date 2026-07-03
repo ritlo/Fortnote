@@ -424,6 +424,13 @@ export function listCollaborationEvents(
   );
 }
 
+export function acknowledgeCollaborationEvents(cursor: number): Promise<undefined> {
+  return apiRequest<undefined>("/events/ack", {
+    method: "POST",
+    body: JSON.stringify({ cursor })
+  });
+}
+
 export function listAttachments(noteId: string): Promise<{ attachments: AttachmentSummary[] }> {
   return apiRequest<{ attachments: AttachmentSummary[] }>(`/notes/${noteId}/attachments`);
 }

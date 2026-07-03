@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { CollaborationEvent } from "../api";
+import { acknowledgeCollaborationEvents, type CollaborationEvent } from "../api";
 import {
   connectRealtime,
   type ClientPresenceState,
@@ -93,15 +93,14 @@ export function useRealtimeEvents() {
         },
         onMessage: (message) => {
           if (message.type === "replay") {
-            addCollaborationEvents(message.events);
-            removeRevokedNotes(message.events);
+            processCollaborationEvents(message.events, addCollaborationEvents);
             void reloadAfterEvents(message.events, { skipOwnEvents: true });
             return;
           }
           if (message.type === "event") {
-            addCollaborationEvents([message.event]);
-            removeRevokedNotes([message.event]);
-            void reloadAfterEvents([message.event], { skipOwnEvents: true });
+            const events = [message.event];
+            processCollaborationEvents(events, addCollaborationEvents);
+            void reloadAfterEvents(events, { skipOwnEvents: true });
             return;
           }
           if (message.type === "presence") {
@@ -155,6 +154,22 @@ export function useRealtimeEvents() {
     localPresenceStateRef.current = localPresenceState;
     sendSelectedNotePresence(connectionRef.current, selectedNoteIdRef.current, localPresenceState);
   }, [localPresenceState]);
+}
+
+function processCollaborationEvents(
+  events: CollaborationEvent[],
+  addCollaborationEvents: (events: CollaborationEvent[]) => void
+): void {
+  if (events.length === 0) {
+    return;
+  }
+
+  addCollaborationEvents(events);
+  removeRevokedNotes(events);
+  const cursor = Math.max(...events.map((event) => event.cursor));
+  void acknowledgeCollaborationEvents(cursor).catch(() => {
+    // Reconnect/replay will retry acknowledgement from the stored cursor.
+  });
 }
 
 function removeRevokedNotes(events: CollaborationEvent[]): void {

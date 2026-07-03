@@ -116,6 +116,18 @@ describe("event replay routes", () => {
     });
     const revokeCursor = Number(carolRevoked.body.events[0].cursor);
 
+    await carol
+      .post("/api/events/ack")
+      .set(csrfHeaders())
+      .send({ cursor: revokeCursor })
+      .expect(204);
+
+    const carolAfterAckFromStart = await carol
+      .get("/api/events")
+      .query({ after: 0 })
+      .expect(200);
+    expect(carolAfterAckFromStart.body.events).toEqual([]);
+
     await bob
       .put(`/api/notes/${noteId}`)
       .set(csrfHeaders())
@@ -138,5 +150,14 @@ describe("event replay routes", () => {
   it("rejects unauthenticated replay requests", async () => {
     const app = createTestApp();
     await request(app).get("/api/events").expect(401);
+  });
+
+  it("rejects unauthenticated acknowledgement requests", async () => {
+    const app = createTestApp();
+    await request(app)
+      .post("/api/events/ack")
+      .set(csrfHeaders())
+      .send({ cursor: 1 })
+      .expect(401);
   });
 });

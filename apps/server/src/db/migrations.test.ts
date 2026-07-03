@@ -210,4 +210,29 @@ describe("database migrations", () => {
       .get("event-1") as { eventType: string } | undefined;
     expect(event).toEqual({ eventType: "note.created" });
   });
+
+  it("creates event acknowledgement storage idempotently", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+
+    runMigrations(sqlite);
+    runMigrations(sqlite);
+
+    const columns = sqlite.prepare("PRAGMA table_info(event_acknowledgements)").all() as {
+      name: string;
+    }[];
+    expect(columns.map((column) => column.name)).toEqual([
+      "user_id",
+      "note_id",
+      "cursor",
+      "updated_at"
+    ]);
+
+    const indexes = sqlite.prepare("PRAGMA index_list(event_acknowledgements)").all() as {
+      name: string;
+    }[];
+    expect(indexes.some((index) => index.name === "idx_event_acknowledgements_user_cursor")).toBe(
+      true
+    );
+  });
 });
