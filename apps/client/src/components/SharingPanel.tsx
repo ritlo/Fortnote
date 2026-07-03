@@ -9,7 +9,7 @@ import {
   type NoteMembership,
   type PresenceUser
 } from "../api";
-import { encryptNoteKeyShare } from "../cryptoClient";
+import { encryptNoteKeyShare, formatSharingKeyFingerprint } from "../cryptoClient";
 import type { DecryptedNote } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
 
@@ -19,17 +19,25 @@ interface SharingPanelProps {
 }
 
 const EMPTY_PRESENCE: PresenceUser[] = [];
+const SHARING_KEY_LOOKUP_DELAY_MS = 350;
+
+interface SharingKeyPreview {
+  fingerprint: string;
+  username: string;
+}
 
 export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   const [memberships, setMemberships] = useState<NoteMembership[]>([]);
   const [username, setUsername] = useState("");
   const [role, setRole] = useState<"editor" | "viewer">("editor");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [sharingKeyPreview, setSharingKeyPreview] = useState<SharingKeyPreview | null>(null);
   const setError = useAppStore((state) => state.setError);
   const setStatus = useAppStore((state) => state.setStatus);
   const presence = useAppStore((state) =>
     selectedNote ? (state.presenceByNote[selectedNote.id] ?? EMPTY_PRESENCE) : EMPTY_PRESENCE
   );
+  const canInvite = selectedNote?.role === "owner" && !disabled;
 
   useEffect(() => {
     let isActive = true;
@@ -54,6 +62,40 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
       isActive = false;
     };
   }, [selectedNote]);
+
+  useEffect(() => {
+    let isActive = true;
+    const lookupUsername = username.trim();
+    setSharingKeyPreview(null);
+    if (!canInvite || !lookupUsername) {
+      return () => {
+        isActive = false;
+      };
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void lookupSharingKey(lookupUsername)
+        .then(async (publicKey) => ({
+          fingerprint: await formatSharingKeyFingerprint(publicKey.publicKey),
+          username: publicKey.username
+        }))
+        .then((preview) => {
+          if (isActive) {
+            setSharingKeyPreview(preview);
+          }
+        })
+        .catch(() => {
+          if (isActive) {
+            setSharingKeyPreview(null);
+          }
+        });
+    }, SHARING_KEY_LOOKUP_DELAY_MS);
+
+    return () => {
+      isActive = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [canInvite, username]);
 
   async function submitInvite() {
     if (selectedNote?.role !== "owner" || !username.trim()) {
@@ -121,8 +163,6 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     }
   }
 
-  const canInvite = selectedNote?.role === "owner" && !disabled;
-
   return (
     <section className="sharing-panel">
       <div className="section-title">
@@ -130,37 +170,44 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
         <h3>Sharing</h3>
       </div>
       {canInvite ? (
-        <div className="share-form">
-          <input
-            aria-label="Collaborator username"
-            placeholder="Username"
-            value={username}
-            onChange={(event) => {
-              setUsername(event.target.value);
-            }}
-          />
-          <select
-            aria-label="Collaborator role"
-            value={role}
-            onChange={(event) => {
-              setRole(event.target.value as "editor" | "viewer");
-            }}
-          >
-            <option value="editor">Editor</option>
-            <option value="viewer">Viewer</option>
-          </select>
-          <button
-            className="icon-button"
-            type="button"
-            aria-label="Share note"
-            disabled={!username.trim() || isSubmitting}
-            onClick={() => {
-              void submitInvite();
-            }}
-          >
-            <UserPlus size={16} />
-          </button>
-        </div>
+        <>
+          <div className="share-form">
+            <input
+              aria-label="Collaborator username"
+              placeholder="Username"
+              value={username}
+              onChange={(event) => {
+                setUsername(event.target.value);
+              }}
+            />
+            <select
+              aria-label="Collaborator role"
+              value={role}
+              onChange={(event) => {
+                setRole(event.target.value as "editor" | "viewer");
+              }}
+            >
+              <option value="editor">Editor</option>
+              <option value="viewer">Viewer</option>
+            </select>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Share note"
+              disabled={!username.trim() || isSubmitting}
+              onClick={() => {
+                void submitInvite();
+              }}
+            >
+              <UserPlus size={16} />
+            </button>
+          </div>
+          {sharingKeyPreview ? (
+            <p className="key-fingerprint" aria-live="polite">
+              {sharingKeyPreview.username} key {sharingKeyPreview.fingerprint}
+            </p>
+          ) : null}
+        </>
       ) : null}
       <ul className="membership-list">
         {memberships.map((membership) => (
