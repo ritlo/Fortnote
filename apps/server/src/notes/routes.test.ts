@@ -90,6 +90,53 @@ describe("notes and folders routes", () => {
       .expect(409);
   });
 
+  it("rolls back note updates when event writes fail", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "rollback_update_user");
+    const created = await agent
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+
+    failNoteEventWrites(app);
+
+    await agent
+      .put(`/api/notes/${noteId}`)
+      .set(csrfHeaders())
+      .send({
+        title: "Should roll back",
+        contentCipher: "rollback_content_cipher_abcdefghijklmnopqrstuvwxyz",
+        contentNonce: "rollback_content_nonce_abcdefghijklmnopqrstuvwxyz",
+        contentLength: 512,
+        version: 1
+      })
+      .expect(500);
+
+    const note = app.locals.db.sqlite
+      .prepare(
+        `SELECT title,
+                content_cipher AS contentCipher,
+                content_length AS contentLength,
+                version
+         FROM notes
+         WHERE id = ?`
+      )
+      .get(noteId) as {
+      contentCipher: string;
+      contentLength: number;
+      title: string;
+      version: number;
+    };
+    expect(note).toEqual({
+      contentCipher: "content_cipher_abcdefghijklmnopqrstuvwxyz",
+      contentLength: 128,
+      title: "Encrypted note",
+      version: 1
+    });
+  });
+
   it("prevents cross-user note reads and folder assignment", async () => {
     const app = createTestApp();
     const alice = await registerAgent(app, "alice_notes");
@@ -310,6 +357,59 @@ describe("notes and folders routes", () => {
     });
   });
 
+  it("rolls back membership invites when event writes fail", async () => {
+    const app = createTestApp();
+    const alice = await registerAgent(app, "rollback_member_alice");
+    const bob = await registerAgent(app, "rollback_member_bob");
+    const bobSession = await bob.get("/api/auth/me").expect(200);
+    const bobUserId = String(bobSession.body.id);
+
+    await bob
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload())
+      .expect(201);
+
+    const created = await alice
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+
+    failNoteEventWrites(app);
+
+    await alice
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send({
+        username: "rollback_member_bob",
+        role: "editor",
+        sharingKeyVersion: 1,
+        encryptedNoteKey: "rollback_share_for_bob_abcdefghijklmnopqrstuvwxyz",
+        formatVersion: 1
+      })
+      .expect(500);
+
+    const membership = app.locals.db.sqlite
+      .prepare(
+        `SELECT role
+         FROM note_memberships
+         WHERE note_id = ? AND user_id = ?`
+      )
+      .get(noteId, bobUserId);
+    expect(membership).toBeUndefined();
+
+    const keyShare = app.locals.db.sqlite
+      .prepare(
+        `SELECT encrypted_note_key AS encryptedNoteKey
+         FROM note_key_shares
+         WHERE note_id = ? AND recipient_user_id = ?`
+      )
+      .get(noteId, bobUserId);
+    expect(keyShare).toBeUndefined();
+  });
+
   it("enforces one-level folder nesting", async () => {
     const app = createTestApp();
     const agent = await registerAgent(app, "folder_user");
@@ -388,3 +488,13 @@ describe("notes and folders routes", () => {
     });
   });
 });
+
+function failNoteEventWrites(app: ReturnType<typeof createTestApp>): void {
+  app.locals.db.sqlite.exec(`
+    CREATE TRIGGER fail_note_events_insert
+    BEFORE INSERT ON note_events
+    BEGIN
+      SELECT RAISE(ABORT, 'note event failure');
+    END;
+  `);
+}
