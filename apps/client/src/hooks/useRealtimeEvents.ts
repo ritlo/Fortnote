@@ -14,6 +14,7 @@ import { loadDecryptedNotes } from "./useAppData";
 
 const RECONNECT_BASE_DELAY_MS = 500;
 const RECONNECT_MAX_DELAY_MS = 10_000;
+const ACKNOWLEDGE_RETRY_DELAY_MS = 2_000;
 const PRESENCE_HEARTBEAT_MS = 15_000;
 
 export function useRealtimeEvents() {
@@ -29,6 +30,7 @@ export function useRealtimeEvents() {
   const connectionRef = useRef<RealtimeConnection | null>(null);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
+  const acknowledgeRetryTimersRef = useRef<number[]>([]);
   const localPresenceStateRef = useRef(localPresenceState);
   const previousSelectedNoteIdRef = useRef<string | null>(selectedNoteId);
   const selectedNoteIdRef = useRef<string | null>(selectedNoteId);
@@ -48,6 +50,27 @@ export function useRealtimeEvents() {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
+
+    function clearAcknowledgeRetryTimers() {
+      acknowledgeRetryTimersRef.current.forEach((timerId) => {
+        window.clearTimeout(timerId);
+      });
+      acknowledgeRetryTimersRef.current = [];
+    }
+
+    const acknowledgeEventCursor = createEventAcknowledger({
+      acknowledgeEvents: acknowledgeCollaborationEvents,
+      isActive: () => isActive,
+      scheduleRetry: (retry) => {
+        const timerId = window.setTimeout(() => {
+          acknowledgeRetryTimersRef.current = acknowledgeRetryTimersRef.current.filter(
+            (storedTimerId) => storedTimerId !== timerId
+          );
+          retry();
+        }, ACKNOWLEDGE_RETRY_DELAY_MS);
+        acknowledgeRetryTimersRef.current.push(timerId);
+      }
+    });
 
     function scheduleReconnect() {
       if (!isActive || reconnectTimerRef.current !== null) {
@@ -114,13 +137,17 @@ export function useRealtimeEvents() {
         },
         onMessage: (message) => {
           if (message.type === "replay") {
-            processCollaborationEvents(message.events, addCollaborationEvents);
+            processCollaborationEvents(message.events, addCollaborationEvents, {
+              acknowledgeEvents: acknowledgeEventCursor
+            });
             void reloadAfterEvents(message.events, { skipOwnEvents: true });
             return;
           }
           if (message.type === "event") {
             const events = [message.event];
-            processCollaborationEvents(events, addCollaborationEvents);
+            processCollaborationEvents(events, addCollaborationEvents, {
+              acknowledgeEvents: acknowledgeEventCursor
+            });
             void reloadAfterEvents(events, { skipOwnEvents: true });
             return;
           }
@@ -144,6 +171,7 @@ export function useRealtimeEvents() {
     return () => {
       isActive = false;
       clearReconnectTimer();
+      clearAcknowledgeRetryTimers();
       window.clearInterval(heartbeatId);
       reconnectAttemptRef.current = 0;
       const connection = connectionRef.current;
@@ -183,6 +211,12 @@ interface ProcessCollaborationEventsOptions {
   removeRevoked?: (events: CollaborationEvent[]) => void;
 }
 
+interface EventAcknowledgerOptions {
+  acknowledgeEvents: (cursor: number) => Promise<undefined>;
+  isActive?: () => boolean;
+  scheduleRetry: (retry: () => void) => void;
+}
+
 export function processCollaborationEvents(
   events: CollaborationEvent[],
   addCollaborationEvents: (events: CollaborationEvent[]) => void,
@@ -199,8 +233,52 @@ export function processCollaborationEvents(
   removeRevoked(events);
   const cursor = Math.max(...events.map((event) => event.cursor));
   void acknowledgeEvents(cursor).catch(() => {
-    // Reconnect/replay will retry acknowledgement from the stored cursor.
+    // The hook supplies a retried acknowledger; direct callers can ignore failures.
   });
+}
+
+export function createEventAcknowledger({
+  acknowledgeEvents,
+  isActive = () => true,
+  scheduleRetry
+}: EventAcknowledgerOptions): (cursor: number) => Promise<undefined> {
+  let pendingCursor: number | null = null;
+  let isAcknowledging = false;
+  let retryScheduled = false;
+
+  async function flushPendingCursor(): Promise<void> {
+    if (!isActive() || isAcknowledging || pendingCursor === null) {
+      return;
+    }
+
+    const cursor = pendingCursor;
+    isAcknowledging = true;
+    try {
+      await acknowledgeEvents(cursor);
+      if (pendingCursor <= cursor) {
+        pendingCursor = null;
+      }
+    } catch {
+      if (!retryScheduled && isActive()) {
+        retryScheduled = true;
+        scheduleRetry(() => {
+          retryScheduled = false;
+          void flushPendingCursor();
+        });
+      }
+    } finally {
+      isAcknowledging = false;
+      if (pendingCursor !== null && pendingCursor > cursor) {
+        void flushPendingCursor();
+      }
+    }
+  }
+
+  return (cursor: number) => {
+    pendingCursor = Math.max(pendingCursor ?? 0, cursor);
+    void flushPendingCursor();
+    return Promise.resolve(undefined);
+  };
 }
 
 export function removeRevokedNotes(events: CollaborationEvent[]): void {

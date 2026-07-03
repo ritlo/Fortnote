@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CollaborationEvent } from "../api";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
 import {
+  createEventAcknowledger,
   eventsRequireNoteReload,
   isOwnRevocation,
   mergeEventCursor,
@@ -32,6 +33,68 @@ describe("realtime event processing", () => {
     expect(addCollaborationEvents).toHaveBeenCalledWith(events);
     expect(removeRevoked).toHaveBeenCalledWith(events);
     expect(acknowledgeEvents).toHaveBeenCalledWith(9);
+  });
+
+  it("retries failed event acknowledgements", async () => {
+    const retryCallbacks: (() => void)[] = [];
+    const acknowledgeEvents = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("network offline"))
+      .mockResolvedValueOnce(undefined);
+    const acknowledgeCursor = createEventAcknowledger({
+      acknowledgeEvents,
+      scheduleRetry: (retry) => {
+        retryCallbacks.push(retry);
+      }
+    });
+
+    await acknowledgeCursor(7);
+    await flushPromises();
+
+    expect(acknowledgeEvents).toHaveBeenCalledWith(7);
+    expect(retryCallbacks).toHaveLength(1);
+
+    const retry = retryCallbacks[0];
+    if (!retry) {
+      throw new Error("Expected acknowledgement retry callback");
+    }
+    retry();
+    await flushPromises();
+
+    expect(acknowledgeEvents).toHaveBeenCalledTimes(2);
+    expect(acknowledgeEvents).toHaveBeenLastCalledWith(7);
+  });
+
+  it("acknowledges the latest cursor after a failed acknowledgement", async () => {
+    const retryCallbacks: (() => void)[] = [];
+    const acknowledgeEvents = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("network offline"))
+      .mockResolvedValue(undefined);
+    const acknowledgeCursor = createEventAcknowledger({
+      acknowledgeEvents,
+      scheduleRetry: (retry) => {
+        retryCallbacks.push(retry);
+      }
+    });
+
+    await acknowledgeCursor(4);
+    await flushPromises();
+    await acknowledgeCursor(9);
+    await flushPromises();
+
+    expect(retryCallbacks).toHaveLength(1);
+    expect(acknowledgeEvents).toHaveBeenCalledTimes(2);
+    expect(acknowledgeEvents).toHaveBeenLastCalledWith(9);
+
+    const retry = retryCallbacks[0];
+    if (!retry) {
+      throw new Error("Expected acknowledgement retry callback");
+    }
+    retry();
+    await flushPromises();
+
+    expect(acknowledgeEvents).toHaveBeenCalledTimes(2);
   });
 
   it("ignores empty event batches", () => {
@@ -165,4 +228,9 @@ function note(id: string): DecryptedNote {
     updatedAt: "2026-07-03T00:00:00.000Z",
     version: 1
   };
+}
+
+async function flushPromises(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
 }
