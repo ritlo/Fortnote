@@ -90,6 +90,121 @@ test("syncs a shared note for an online editor and offline viewer", async ({
   }
 });
 
+test("blocks sharing when a trusted sharing key changes", async ({ baseURL, browser }) => {
+  const contexts: BrowserContext[] = [];
+  const alice = uniqueAccount("trust-alice");
+  const bob = uniqueAccount("trust-bob");
+  const mallory = uniqueAccount("trust-mallory");
+  const trustedNoteTitle = `Trusted note ${alice.suffix}`;
+  const blockedNoteTitle = `Blocked note ${alice.suffix}`;
+  let membershipPosted = false;
+
+  try {
+    const bobPage = await newUserPage(browser, baseURL, contexts);
+    await register(bobPage, bob.username, bob.password);
+    await waitForSharingKey(bobPage);
+
+    const malloryPage = await newUserPage(browser, baseURL, contexts);
+    await register(malloryPage, mallory.username, mallory.password);
+    await waitForSharingKey(malloryPage);
+    await closePageContext(malloryPage, contexts);
+
+    const alicePage = await newUserPage(browser, baseURL, contexts);
+    await register(alicePage, alice.username, alice.password);
+    await createNote(alicePage, trustedNoteTitle, `Trusted body ${alice.suffix}`);
+    await shareNote(alicePage, bob.username, "editor");
+
+    const bobKey = await lookupPublicSharingKey(alicePage, bob.username);
+    const malloryKey = await lookupPublicSharingKey(alicePage, mallory.username);
+    await alicePage.route("**/api/sharing-keys/lookup**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get("username") !== bob.username) {
+        await route.continue();
+        return;
+      }
+
+      await route.fulfill({
+        contentType: "application/json",
+        status: 200,
+        body: JSON.stringify({
+          ...bobKey,
+          publicKey: malloryKey.publicKey
+        })
+      });
+    });
+    alicePage.on("response", (response) => {
+      if (
+        response.request().method() === "POST" &&
+        response.url().includes("/memberships") &&
+        response.ok()
+      ) {
+        membershipPosted = true;
+      }
+    });
+
+    await createNote(alicePage, blockedNoteTitle, `Blocked body ${alice.suffix}`);
+    await pageAttemptShare(alicePage, bob.username, "editor");
+
+    await expect(alicePage.getByText("Share blocked")).toBeVisible();
+    await expect(alicePage.getByText(/Sharing key changed/)).toBeVisible();
+    expect(membershipPosted).toBe(false);
+  } finally {
+    await Promise.all(contexts.splice(0).map((context) => context.close()));
+  }
+});
+
+test("retries failed revocation key rotation", async ({ baseURL, browser }) => {
+  const contexts: BrowserContext[] = [];
+  const alice = uniqueAccount("retry-alice");
+  const bob = uniqueAccount("retry-bob");
+  const noteTitle = `Retry rotation note ${alice.suffix}`;
+  let failNextRotation = true;
+
+  try {
+    const bobPage = await newUserPage(browser, baseURL, contexts);
+    await register(bobPage, bob.username, bob.password);
+    await waitForSharingKey(bobPage);
+
+    const alicePage = await newUserPage(browser, baseURL, contexts);
+    await register(alicePage, alice.username, alice.password);
+    await createNote(alicePage, noteTitle, `Retry body ${alice.suffix}`);
+    await shareNote(alicePage, bob.username, "editor");
+    await alicePage.route("**/api/notes/*/key-rotation", async (route) => {
+      if (!failNextRotation) {
+        await route.continue();
+        return;
+      }
+      failNextRotation = false;
+      await route.fulfill({
+        contentType: "application/json",
+        status: 500,
+        body: JSON.stringify({
+          code: "forced_rotation_failure",
+          message: "Forced rotation failure"
+        })
+      });
+    });
+
+    await revokeMember(alicePage, bob.username);
+    await expect(alicePage.getByText("Key rotation incomplete")).toBeVisible();
+    const retryButton = alicePage.getByRole("button", { name: "Retry rotation", exact: true });
+    await expect(retryButton).toBeVisible();
+
+    const retried = alicePage.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes("/key-rotation") &&
+        response.ok()
+    );
+    await retryButton.click();
+    await retried;
+    await expect(alicePage.getByText("Keys rotated after revoke")).toBeVisible();
+    await expect(alicePage.getByText("Key rotation incomplete")).toHaveCount(0);
+  } finally {
+    await Promise.all(contexts.splice(0).map((context) => context.close()));
+  }
+});
+
 interface Account {
   password: string;
   suffix: string;
@@ -171,6 +286,23 @@ async function shareNote(
   username: string,
   role: "editor" | "viewer"
 ): Promise<void> {
+  await pageAttemptShare(page, username, role);
+  const trustButton = page.getByRole("button", { name: "Trust key" });
+  await trustButton
+    .waitFor({ state: "visible", timeout: 5_000 })
+    .then(async () => {
+      await trustButton.click();
+    })
+    .catch(() => undefined);
+  await expect(page.getByText("Note shared")).toBeVisible();
+  await expect(page.locator(".membership-list li", { hasText: username })).toBeVisible();
+}
+
+async function pageAttemptShare(
+  page: Page,
+  username: string,
+  role: "editor" | "viewer"
+): Promise<void> {
   await page.getByLabel("Collaborator username").fill(username);
   await page.getByLabel("Collaborator role").selectOption(role);
   const shared = page.waitForResponse(
@@ -180,16 +312,11 @@ async function shareNote(
       response.ok()
   );
   await page.getByRole("button", { name: "Share note" }).click();
-  const trustButton = page.getByRole("button", { name: "Trust key" });
-  await trustButton
-    .waitFor({ state: "visible", timeout: 5_000 })
-    .then(async () => {
-      await trustButton.click();
-    })
-    .catch(() => undefined);
-  await shared;
-  await expect(page.getByText("Note shared")).toBeVisible();
-  await expect(page.locator(".membership-list li", { hasText: username })).toBeVisible();
+  await Promise.race([
+    shared.catch(() => undefined),
+    page.getByRole("button", { name: "Trust key" }).waitFor({ state: "visible" }),
+    page.getByText("Share blocked").waitFor({ state: "visible" })
+  ]);
 }
 
 async function revokeMember(page: Page, username: string): Promise<void> {
@@ -285,6 +412,28 @@ async function waitForNoteSave(page: Page) {
       response.url().includes("/api/notes/") &&
       response.ok()
   );
+}
+
+async function lookupPublicSharingKey(page: Page, username: string): Promise<PublicSharingKey> {
+  return page.evaluate(async (targetUsername) => {
+    const response = await fetch(
+      `/api/sharing-keys/lookup?username=${encodeURIComponent(targetUsername)}`,
+      { credentials: "include" }
+    );
+    if (!response.ok) {
+      throw new Error(`Unable to look up sharing key for ${targetUsername}`);
+    }
+    return (await response.json()) as PublicSharingKey;
+  }, username);
+}
+
+interface PublicSharingKey {
+  userId: string;
+  username: string;
+  sharingKeyVersion: number;
+  publicKey: string;
+  formatVersion: number;
+  createdAt: string;
 }
 
 function noteTitlePattern(title: string): RegExp {
