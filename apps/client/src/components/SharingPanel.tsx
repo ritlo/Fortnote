@@ -10,7 +10,8 @@ import {
   updateNoteMemberRole,
   type AttachmentSummary,
   type NoteMembership,
-  type PresenceUser
+  type PresenceUser,
+  type PublicSharingKey
 } from "../api";
 import {
   encryptNoteKeyShare,
@@ -19,6 +20,10 @@ import {
 } from "../cryptoClient";
 import type { DecryptedNote } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
+import {
+  getSharingKeyTrustDecision,
+  trustSharingKey
+} from "../lib/sharingKeyTrust";
 
 interface SharingPanelProps {
   selectedNote: DecryptedNote | null;
@@ -27,11 +32,20 @@ interface SharingPanelProps {
 
 const EMPTY_PRESENCE: PresenceUser[] = [];
 
+interface PendingSharingTrust {
+  publicKey: PublicSharingKey;
+  fingerprint: string;
+  role: "editor" | "viewer";
+  username: string;
+}
+
 export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   const [memberships, setMemberships] = useState<NoteMembership[]>([]);
   const [username, setUsername] = useState("");
   const [role, setRole] = useState<"editor" | "viewer">("editor");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingTrust, setPendingTrust] = useState<PendingSharingTrust | null>(null);
+  const user = useAppStore((state) => state.user);
   const rootKey = useAppStore((state) => state.rootKey);
   const setAttachmentsByNote = useAppStore((state) => state.setAttachmentsByNote);
   const setError = useAppStore((state) => state.setError);
@@ -74,27 +88,92 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     setError(null);
     try {
       const publicKey = await lookupSharingKey(username.trim());
-      const encryptedNoteKey = await encryptNoteKeyShare({
-        noteKeyBase64: selectedNote.noteKeyBase64,
-        recipientPublicKey: publicKey.publicKey
+      if (!user || !rootKey) {
+        throw new Error("Vault is locked");
+      }
+      const trust = await getSharingKeyTrustDecision({
+        ownerUserId: user.id,
+        rootKey,
+        publicKey
       });
-      await inviteNoteMember(selectedNote.id, {
-        username: username.trim(),
-        role,
-        sharingKeyVersion: publicKey.sharingKeyVersion,
-        encryptedNoteKey,
-        formatVersion: 1
-      });
-      const payload = await listNoteMemberships(selectedNote.id);
-      setMemberships(payload.memberships);
-      setUsername("");
-      setStatus("Note shared");
+      if (trust.status === "mismatch") {
+        setStatus("Share blocked");
+        setError(
+          `Sharing key changed for ${publicKey.username}. Previously trusted ${trust.trustedFingerprint}; server returned ${trust.fingerprint}.`
+        );
+        return;
+      }
+      if (trust.status === "untrusted") {
+        setPendingTrust({
+          publicKey,
+          fingerprint: trust.fingerprint,
+          role,
+          username: username.trim()
+        });
+        setStatus("Confirm collaborator key");
+        return;
+      }
+      await shareWithPublicKey(publicKey, role, username.trim());
     } catch (inviteError) {
       setStatus("Share failed");
       setError(inviteError instanceof Error ? inviteError.message : "Unable to share note");
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  async function confirmPendingTrust() {
+    if (!pendingTrust || !user || !rootKey) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      await trustSharingKey({
+        ownerUserId: user.id,
+        rootKey,
+        publicKey: pendingTrust.publicKey,
+        fingerprint: pendingTrust.fingerprint
+      });
+      await shareWithPublicKey(
+        pendingTrust.publicKey,
+        pendingTrust.role,
+        pendingTrust.username
+      );
+      setPendingTrust(null);
+    } catch (trustError) {
+      setStatus("Share failed");
+      setError(trustError instanceof Error ? trustError.message : "Unable to trust key");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function shareWithPublicKey(
+    publicKey: PublicSharingKey,
+    memberRole: "editor" | "viewer",
+    collaboratorUsername: string
+  ) {
+    if (selectedNote?.role !== "owner") {
+      return;
+    }
+
+    const encryptedNoteKey = await encryptNoteKeyShare({
+      noteKeyBase64: selectedNote.noteKeyBase64,
+      recipientPublicKey: publicKey.publicKey
+    });
+    await inviteNoteMember(selectedNote.id, {
+      username: collaboratorUsername,
+      role: memberRole,
+      sharingKeyVersion: publicKey.sharingKeyVersion,
+      encryptedNoteKey,
+      formatVersion: 1
+    });
+    const payload = await listNoteMemberships(selectedNote.id);
+    setMemberships(payload.memberships);
+    setUsername("");
+    setStatus("Note shared");
   }
 
   async function changeMemberRole(member: NoteMembership, nextRole: "editor" | "viewer") {
@@ -158,7 +237,21 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     });
     const shares = await Promise.all(
       remainingMembers.map(async (membership) => {
+        if (!user) {
+          throw new Error("Vault is locked");
+        }
         const publicKey = await lookupSharingKey(membership.username);
+        const trust = await getSharingKeyTrustDecision({
+          ownerUserId: user.id,
+          rootKey: vaultRootKey,
+          publicKey
+        });
+        if (trust.status === "mismatch") {
+          throw new Error(`Sharing key changed for ${membership.username}`);
+        }
+        if (trust.status === "untrusted") {
+          throw new Error(`Trust sharing key for ${membership.username} before rotating keys`);
+        }
         return {
           recipientUserId: membership.userId,
           sharingKeyVersion: publicKey.sharingKeyVersion,
@@ -223,37 +316,72 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
         <h3>Sharing</h3>
       </div>
       {canInvite ? (
-        <div className="share-form">
-          <input
-            aria-label="Collaborator username"
-            placeholder="Username"
-            value={username}
-            onChange={(event) => {
-              setUsername(event.target.value);
-            }}
-          />
-          <select
-            aria-label="Collaborator role"
-            value={role}
-            onChange={(event) => {
-              setRole(event.target.value as "editor" | "viewer");
-            }}
-          >
-            <option value="editor">Editor</option>
-            <option value="viewer">Viewer</option>
-          </select>
-          <button
-            className="icon-button"
-            type="button"
-            aria-label="Share note"
-            disabled={!username.trim() || isSubmitting}
-            onClick={() => {
-              void submitInvite();
-            }}
-          >
-            <UserPlus size={16} />
-          </button>
-        </div>
+        <>
+          <div className="share-form">
+            <input
+              aria-label="Collaborator username"
+              placeholder="Username"
+              value={username}
+              onChange={(event) => {
+                setUsername(event.target.value);
+                setPendingTrust(null);
+              }}
+            />
+            <select
+              aria-label="Collaborator role"
+              value={role}
+              onChange={(event) => {
+                setRole(event.target.value as "editor" | "viewer");
+                setPendingTrust(null);
+              }}
+            >
+              <option value="editor">Editor</option>
+              <option value="viewer">Viewer</option>
+            </select>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Share note"
+              disabled={!username.trim() || isSubmitting}
+              onClick={() => {
+                void submitInvite();
+              }}
+            >
+              <UserPlus size={16} />
+            </button>
+          </div>
+          {pendingTrust ? (
+            <div className="trust-confirmation">
+              <span>
+                <strong>{pendingTrust.publicKey.username}</strong>
+                <code>{pendingTrust.fingerprint}</code>
+              </span>
+              <div>
+                <button
+                  className="text-button"
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    void confirmPendingTrust();
+                  }}
+                >
+                  Trust key
+                </button>
+                <button
+                  className="text-button"
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    setPendingTrust(null);
+                    setStatus("Share cancelled");
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </>
       ) : null}
       <ul className="membership-list">
         {memberships.map((membership) => (

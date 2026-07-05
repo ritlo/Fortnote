@@ -499,6 +499,31 @@ textarea {
   gap: 8px;
 }
 
+.trust-confirmation {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px;
+}
+
+.trust-confirmation span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.trust-confirmation code {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.trust-confirmation div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .membership-list {
   display: grid;
   gap: 8px;
