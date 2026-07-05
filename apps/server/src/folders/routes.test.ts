@@ -47,6 +47,51 @@ describe("folders routes", () => {
     expect(bobEvents.body.events).toEqual([]);
   });
 
+  it("rolls back folder creates when event writes fail", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "folder_create_rollback_user");
+    const db = app.locals.db as AppDb;
+    const folderId = crypto.randomUUID();
+
+    failNoteEventWrites(app);
+
+    await agent
+      .post("/api/folders")
+      .set(csrfHeaders())
+      .send({ id: folderId, name: "Drafts" })
+      .expect(500);
+
+    const storedFolder = db.sqlite
+      .prepare("SELECT id FROM folders WHERE id = ?")
+      .get(folderId);
+    expect(storedFolder).toBeUndefined();
+  });
+
+  it("rolls back folder updates when event writes fail", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "folder_update_rollback_user");
+    const db = app.locals.db as AppDb;
+    const folder = await agent
+      .post("/api/folders")
+      .set(csrfHeaders())
+      .send({ name: "Inbox" })
+      .expect(201);
+    const folderId = String(folder.body.id);
+
+    failNoteEventWrites(app);
+
+    await agent
+      .put(`/api/folders/${folderId}`)
+      .set(csrfHeaders())
+      .send({ name: "Renamed" })
+      .expect(500);
+
+    const storedFolder = db.sqlite
+      .prepare("SELECT name FROM folders WHERE id = ?")
+      .get(folderId);
+    expect(storedFolder).toEqual({ name: "Inbox" });
+  });
+
   it("rolls back folder deletes when event writes fail", async () => {
     const app = createTestApp();
     const agent = await registerAgent(app, "folder_rollback_user");
