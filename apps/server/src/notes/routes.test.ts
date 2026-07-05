@@ -587,6 +587,115 @@ describe("notes and folders routes", () => {
     expect(keyShare).toBeUndefined();
   });
 
+  it("rolls back membership role updates when event writes fail", async () => {
+    const app = createTestApp();
+    const alice = await registerAgent(app, "rollback_role_alice");
+    const bob = await registerAgent(app, "rollback_role_bob");
+    const bobSession = await bob.get("/api/auth/me").expect(200);
+    const bobUserId = String(bobSession.body.id);
+
+    await bob
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload())
+      .expect(201);
+
+    const created = await alice
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+
+    await alice
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send({
+        username: "rollback_role_bob",
+        role: "editor",
+        sharingKeyVersion: 1,
+        encryptedNoteKey: "rollback_role_share_for_bob_abcdefghijklmnopqrstuvwxyz",
+        formatVersion: 1
+      })
+      .expect(201);
+
+    failNoteEventWrites(app);
+
+    await alice
+      .patch(`/api/notes/${noteId}/memberships/${bobUserId}`)
+      .set(csrfHeaders())
+      .send({ role: "viewer" })
+      .expect(500);
+
+    const membership = app.locals.db.sqlite
+      .prepare(
+        `SELECT role, status
+         FROM note_memberships
+         WHERE note_id = ? AND user_id = ?`
+      )
+      .get(noteId, bobUserId);
+    expect(membership).toEqual({ role: "editor", status: "active" });
+  });
+
+  it("rolls back membership revokes when event writes fail", async () => {
+    const app = createTestApp();
+    const alice = await registerAgent(app, "rollback_revoke_alice");
+    const bob = await registerAgent(app, "rollback_revoke_bob");
+    const bobSession = await bob.get("/api/auth/me").expect(200);
+    const bobUserId = String(bobSession.body.id);
+
+    await bob
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload())
+      .expect(201);
+
+    const created = await alice
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+
+    await alice
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send({
+        username: "rollback_revoke_bob",
+        role: "editor",
+        sharingKeyVersion: 1,
+        encryptedNoteKey: "rollback_revoke_share_for_bob_abcdefghijklmnopqrstuvwxyz",
+        formatVersion: 1
+      })
+      .expect(201);
+
+    failNoteEventWrites(app);
+
+    await alice
+      .delete(`/api/notes/${noteId}/memberships/${bobUserId}`)
+      .set(csrfHeaders())
+      .expect(500);
+
+    const membership = app.locals.db.sqlite
+      .prepare(
+        `SELECT role, status
+         FROM note_memberships
+         WHERE note_id = ? AND user_id = ?`
+      )
+      .get(noteId, bobUserId);
+    expect(membership).toEqual({ role: "editor", status: "active" });
+    const keyShare = app.locals.db.sqlite
+      .prepare(
+        `SELECT encrypted_note_key AS encryptedNoteKey
+         FROM note_key_shares
+         WHERE note_id = ? AND recipient_user_id = ?`
+      )
+      .get(noteId, bobUserId);
+    expect(keyShare).toEqual({
+      encryptedNoteKey: "rollback_revoke_share_for_bob_abcdefghijklmnopqrstuvwxyz"
+    });
+  });
+
   it("enforces one-level folder nesting", async () => {
     const app = createTestApp();
     const agent = await registerAgent(app, "folder_user");
