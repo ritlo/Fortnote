@@ -14,7 +14,7 @@ export interface CollaborationEvent {
 }
 
 export interface EventRetentionResult {
-  retainedCursorFloor: number;
+  prunedThroughCursor: number;
   deletedEvents: number;
   deletedAcknowledgements: number;
 }
@@ -164,13 +164,12 @@ export function pruneAcknowledgedEvents(
   context: AppContext,
   beforeCursor = Number.POSITIVE_INFINITY
 ): EventRetentionResult {
-  const retainedCursorFloor = Math.min(
-    getEventRetentionCursorFloor(context),
-    beforeCursor
-  );
-  if (!Number.isFinite(retainedCursorFloor) || retainedCursorFloor <= 0) {
+  const prunedThroughCursor = Number.isFinite(beforeCursor)
+    ? beforeCursor
+    : Number.MAX_SAFE_INTEGER;
+  if (prunedThroughCursor <= 0) {
     return {
-      retainedCursorFloor: Math.max(0, retainedCursorFloor),
+      prunedThroughCursor: Math.max(0, prunedThroughCursor),
       deletedEvents: 0,
       deletedAcknowledgements: 0
     };
@@ -178,13 +177,55 @@ export function pruneAcknowledgedEvents(
 
   return context.db.sqlite.transaction(() => {
     const deletedEvents = context.db.sqlite
-      .prepare("DELETE FROM note_events WHERE cursor <= ?")
-      .run(retainedCursorFloor).changes;
+      .prepare(
+        `DELETE FROM note_events
+         WHERE cursor <= ?
+           AND NOT EXISTS (
+             SELECT 1
+             FROM note_memberships
+             LEFT JOIN event_cursors
+               ON event_cursors.user_id = note_memberships.user_id
+             WHERE note_events.note_id IS NOT NULL
+               AND note_memberships.note_id = note_events.note_id
+               AND note_memberships.status = 'active'
+               AND COALESCE(event_cursors.cursor, 0) < note_events.cursor
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM users AS actor
+             LEFT JOIN event_cursors
+               ON event_cursors.user_id = actor.id
+             WHERE note_events.note_id IS NULL
+               AND actor.id = note_events.actor_user_id
+               AND COALESCE(event_cursors.cursor, 0) < note_events.cursor
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM users AS revoked_user
+             LEFT JOIN event_cursors
+               ON event_cursors.user_id = revoked_user.id
+             WHERE note_events.event_type = 'membership.revoked'
+               AND revoked_user.id = json_extract(note_events.payload_metadata, '$.membershipUserId')
+               AND COALESCE(event_cursors.cursor, 0) < note_events.cursor
+           )`
+      )
+      .run(prunedThroughCursor).changes;
     const deletedAcknowledgements = context.db.sqlite
-      .prepare("DELETE FROM event_acknowledgements WHERE cursor <= ?")
-      .run(retainedCursorFloor).changes;
+      .prepare(
+        `DELETE FROM event_acknowledgements
+         WHERE NOT EXISTS (
+           SELECT 1
+           FROM note_events
+           WHERE note_events.note_id = event_acknowledgements.note_id
+             AND note_events.event_type = 'membership.revoked'
+             AND note_events.cursor <= event_acknowledgements.cursor
+             AND json_extract(note_events.payload_metadata, '$.membershipUserId') =
+               event_acknowledgements.user_id
+         )`
+      )
+      .run().changes;
     return {
-      retainedCursorFloor,
+      prunedThroughCursor,
       deletedEvents,
       deletedAcknowledgements
     };

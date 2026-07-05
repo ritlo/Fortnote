@@ -207,6 +207,33 @@ describe("event replay routes", () => {
     expect(remaining.count).toBe(0);
   });
 
+  it("prunes actor-scoped folder events without unrelated user acknowledgements", async () => {
+    const app = createTestApp();
+    const alice = await registerAgent(app, "retention_folder_alice");
+    await registerAgent(app, "retention_folder_bob");
+
+    await alice
+      .post("/api/folders")
+      .set(csrfHeaders())
+      .send({ name: "Private folder" })
+      .expect(201);
+
+    const latest = app.locals.db.sqlite
+      .prepare("SELECT MAX(cursor) AS cursor FROM note_events")
+      .get() as { cursor: number };
+
+    await alice
+      .post("/api/events/ack")
+      .set(csrfHeaders())
+      .send({ cursor: latest.cursor })
+      .expect(204);
+
+    const remaining = app.locals.db.sqlite
+      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?")
+      .get(latest.cursor) as { count: number };
+    expect(remaining.count).toBe(0);
+  });
+
   it("rejects unauthenticated replay requests", async () => {
     const app = createTestApp();
     await request(app).get("/api/events").expect(401);
