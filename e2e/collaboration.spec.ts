@@ -180,6 +180,13 @@ async function shareNote(
       response.ok()
   );
   await page.getByRole("button", { name: "Share note" }).click();
+  const trustButton = page.getByRole("button", { name: "Trust key" });
+  await trustButton
+    .waitFor({ state: "visible", timeout: 5_000 })
+    .then(async () => {
+      await trustButton.click();
+    })
+    .catch(() => undefined);
   await shared;
   await expect(page.getByText("Note shared")).toBeVisible();
   await expect(page.locator(".membership-list li", { hasText: username })).toBeVisible();
