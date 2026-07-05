@@ -8,16 +8,16 @@ Current owner-only assumptions must change: notes, folders, and attachments are 
 
 ## Implementation Audit
 
-Current code covers the core V1 collaboration path: collaboration schema and migrations, sharing keys, note memberships, note-key shares, membership-aware note/folder/attachment authorization, realtime WebSocket replay, presence, durable event cursors and retention, sharing UI, shared-note crypto context, post-revoke key rotation, sharing-key rotation/cleanup, shared-note presentation, and a three-user collaboration E2E flow with online editor plus offline viewer.
+Current code covers the core V1 collaboration path: collaboration schema and migrations, sharing keys, note memberships, note-key shares, membership-aware note/folder/attachment authorization, realtime WebSocket replay, presence, durable event cursors and retention, sharing UI, shared-note crypto context, client-orchestrated post-revoke key rotation, sharing-key rotation/cleanup, shared-note presentation, and a three-user collaboration E2E flow with online editor plus offline viewer.
 
-Most V1 hardening and coverage work is now complete. Remaining work is product/security design for public-key trust and larger deferred architecture expansions that should not block V1.
+Most V1 hardening and coverage work is now complete. Remaining work is product/security design for public-key trust, continued revocation-rotation failure handling, and larger deferred architecture expansions that should not block an honest-but-curious-server V1.
 
 | Area | Status | Remaining Task | Priority | Notes |
 | --- | --- | --- | --- | --- |
 | Event cursor lifecycle | Done | None for V1. | - | Server persists per-user acknowledged cursors and keeps revoke tombstone acknowledgement semantics. |
 | Event retention | Done | None for V1. | - | Events prune only after all users who can replay them have acknowledged; revoked users still block their revoke tombstone until acknowledgement. |
 | Transaction failure coverage | Done | None for V1. | - | Tests force event-write failures across note create/update/key rotation, membership invite/role/revoke, folder create/update/delete, and attachment upload/delete. |
-| Revocation forward secrecy | Done | Continue validating UX copy. | Low | Owner revocation triggers note-key rotation, body re-encryption, attachment-key rewrapping, and fresh shares for remaining active members. |
+| Revocation forward secrecy | Mostly done | Keep retry and recovery UX explicit. | Medium | Owner revocation removes access immediately, then the client rotates the note key, re-encrypts the body, rewraps attachment keys, and writes fresh shares for remaining active members. If post-revoke rotation fails, the user must retry to close the cryptographic forward-secrecy gap. |
 | Sharing key rotation lifecycle | Done | Continue validating UX copy. | Low | Users can rotate sharing keys and clean up retired encrypted private keys that no active note shares reference. |
 | Public key trust hardening | Open | Design and then implement fingerprints, TOFU warnings, or sender-authenticated share envelopes. | Medium | V1 still trusts server-returned public sharing keys; see `docs/adr/public-key-trust.md`. |
 | Security/product documentation | Done | Keep docs aligned with future trust work. | Low | `SECURITY.md` documents metadata visibility, sealed-box sender-auth limits, key substitution risk, and revocation limits. |
@@ -30,7 +30,8 @@ Most V1 hardening and coverage work is now complete. Remaining work is product/s
 
 ## Current Remaining Work
 
-- Public key trust hardening is the only remaining V1 design gap. A previous fingerprint-preview UI was reverted; do not reintroduce it without a complete trust and rotation policy.
+- Public key trust hardening is the remaining V1 security-design gap. A previous fingerprint-preview UI was reverted; do not reintroduce it without a complete trust and rotation policy.
+- Revocation key rotation is implemented as client orchestration after server-side access removal. Keep the failure mode visible and retryable until a more atomic recovery model exists.
 - Multi-process realtime fanout is a deployment scaling task. Durable events preserve reconnect correctness, but live delivery between server processes needs Redis/pubsub or an equivalent broker.
 - CRDT/live editing is a future product expansion. Keep the current whole-note encrypted snapshot model until the collaboration baseline has shipped.
 
@@ -39,7 +40,7 @@ Most V1 hardening and coverage work is now complete. Remaining work is product/s
 - Add collaboration schema:
   - `user_sharing_keys`: user ID, sharing key version, public key, root-key-encrypted private key, nonce, format version, timestamps. Primary key is `(user_id, sharing_key_version)` so old encrypted private keys can remain while shares reference old versions.
   - `note_memberships`: note ID, user ID, role `owner|editor|viewer`, status `active|invited|revoked`, timestamps.
-  - `note_key_shares`: note ID, recipient user ID, encrypted note key, nonce, sender user ID, version.
+  - `note_key_shares`: note ID, recipient user ID, encrypted note key, sender user ID, sharing key version, format version, timestamps.
   - `note_events`: durable integer cursor, event ID, resource type, resource ID, optional note ID, actor user ID, event type, note version, payload metadata, timestamp.
   - Add indexes for accessible notes by user, note memberships by note, and event replay by user/cursor.
   - Existing notes must get owner `note_memberships` rows during migration. Keep the current owner `encrypted_note_key` fields readable for backward compatibility, and require `note_key_shares` for collaborators.
@@ -89,7 +90,7 @@ Most V1 hardening and coverage work is now complete. Remaining work is product/s
   - On events, refetch affected note/folder/attachment records and decrypt with the correct owner crypto context.
   - Add invite/share UI in note actions.
   - Surface collaborator roles and presence in the editor header/sidebar without putting WebSocket logic in UI components.
-  - Add a collaboration store slice for memberships, presence, event cursor, connection status, sharing keys, and decrypted shared note keys. Clear decrypted sharing/private note material on lock/logout.
+  - Add a collaboration store slice for presence, event cursor, connection status, opened sharing keys, and decrypted shared note keys. Memberships may remain local to the sharing panel while they are only displayed and mutated there; centralize them if more surfaces need the same state. Clear decrypted sharing/private note material on lock/logout.
 
 - Conflict/editing model:
   - Keep current optimistic `version` checks for first implementation.
@@ -105,7 +106,7 @@ Most V1 hardening and coverage work is now complete. Remaining work is product/s
 - `crypto_box_seal` protects note-key share confidentiality but does not authenticate the sender. V1 trusts server authorization metadata for who created a share. Sender-authenticated shares or public-key fingerprints/TOFU can be added later.
 - Public sharing key lookup by username is vulnerable to server key substitution. V1 documents this limitation; a later hardening pass can add key fingerprints or trust-on-first-use warnings.
 - Revocation blocks server access and future event/key-share delivery, but it is not cryptographic forward secrecy for ciphertext or keys already obtained by the revoked user.
-- Forward secrecy after revocation requires rotating the note key, re-encrypting the note body and attachment keys, and rewrapping the new note key for remaining active members.
+- Forward secrecy after revocation requires rotating the note key, re-encrypting the note body and attachment keys, and rewrapping the new note key for remaining active members. Current implementation performs this as a client-side sequence after access removal, so a rotation failure must remain visible and retryable.
 - Old encrypted private sharing keys may remain stored only while active note shares reference their version. Delete old private keys only after all referenced shares are rewrapped or revoked.
 - Presence is ephemeral, not durable. Send presence only to active note members and never to revoked users.
 
