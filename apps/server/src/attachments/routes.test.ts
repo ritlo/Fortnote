@@ -256,7 +256,7 @@ describe("attachments routes", () => {
       .prepare("SELECT id FROM attachments WHERE id = ?")
       .get(payload.id);
     expect(attachment).toBeUndefined();
-    expect(fs.readdirSync(app.locals.config.dataDir)).toHaveLength(0);
+    expect(fs.readdirSync(String(app.locals.config.dataDir))).toHaveLength(0);
   });
 
   it("rolls back attachment deletes and keeps stored bytes when event writes fail", async () => {
