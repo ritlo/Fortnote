@@ -149,17 +149,6 @@ export function getAcknowledgedEventCursor(
   return row?.cursor ?? 0;
 }
 
-export function getEventRetentionCursorFloor(context: AppContext): number {
-  const row = context.db.sqlite
-    .prepare(
-      `SELECT MIN(COALESCE(event_cursors.cursor, 0)) AS cursor
-       FROM users
-       LEFT JOIN event_cursors ON event_cursors.user_id = users.id`
-    )
-    .get() as { cursor: number | null } | undefined;
-  return row?.cursor ?? 0;
-}
-
 export function pruneAcknowledgedEvents(
   context: AppContext,
   beforeCursor = Number.POSITIVE_INFINITY
