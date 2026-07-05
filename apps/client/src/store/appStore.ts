@@ -28,6 +28,14 @@ export interface DecryptedNote {
   role: "owner" | "editor" | "viewer";
 }
 
+export interface RevocationRotationFailure {
+  noteId: string;
+  revokedUserId: string;
+  revokedUsername: string;
+  message: string;
+  failedAt: string;
+}
+
 type StateUpdate<T> = T | ((current: T) => T);
 type StoreSetter<T> = (value: StateUpdate<T>) => void;
 
@@ -56,6 +64,7 @@ export interface AppStore {
   collaborationEvents: CollaborationEvent[];
   presenceByNote: Record<string, PresenceUser[]>;
   openedSharingKey: OpenedSharingKey | null;
+  revocationRotationFailure: RevocationRotationFailure | null;
   error: string | null;
   status: string;
   setUser: StoreSetter<User | null>;
@@ -83,6 +92,7 @@ export interface AppStore {
   removeNoteAccess: (noteId: string) => void;
   setNotePresence: (noteId: string, users: PresenceUser[]) => void;
   setOpenedSharingKey: StoreSetter<OpenedSharingKey | null>;
+  setRevocationRotationFailure: StoreSetter<RevocationRotationFailure | null>;
   setError: StoreSetter<string | null>;
   setStatus: StoreSetter<string>;
   resetVaultState: (nextStatus: string) => void;
@@ -117,6 +127,7 @@ export const useAppStore = create<AppStore>((set) => ({
   collaborationEvents: [],
   presenceByNote: {},
   openedSharingKey: null,
+  revocationRotationFailure: null,
   error: null,
   status: "Checking session",
   setUser: (value) => {
@@ -173,7 +184,14 @@ export const useAppStore = create<AppStore>((set) => ({
     }));
   },
   setSelectedNoteId: (value) => {
-    set((state) => ({ selectedNoteId: resolveState(value, state.selectedNoteId) }));
+    set((state) => {
+      const selectedNoteId = resolveState(value, state.selectedNoteId);
+      return {
+        selectedNoteId,
+        revocationRotationFailure:
+          selectedNoteId !== state.selectedNoteId ? null : state.revocationRotationFailure
+      };
+    });
   },
   setSearch: (value) => {
     set((state) => ({ search: resolveState(value, state.search) }));
@@ -231,6 +249,10 @@ export const useAppStore = create<AppStore>((set) => ({
         attachmentsByNote: omitRecordKey(state.attachmentsByNote, noteId),
         notes,
         presenceByNote: omitRecordKey(state.presenceByNote, noteId),
+        revocationRotationFailure:
+          state.revocationRotationFailure?.noteId === noteId
+            ? null
+            : state.revocationRotationFailure,
         selectedNoteId:
           state.selectedNoteId === noteId ? nextSelectedNoteId : state.selectedNoteId,
         trashNotes
@@ -248,6 +270,11 @@ export const useAppStore = create<AppStore>((set) => ({
   setOpenedSharingKey: (value) => {
     set((state) => ({
       openedSharingKey: resolveState(value, state.openedSharingKey)
+    }));
+  },
+  setRevocationRotationFailure: (value) => {
+    set((state) => ({
+      revocationRotationFailure: resolveState(value, state.revocationRotationFailure)
     }));
   },
   setError: (value) => {
@@ -274,6 +301,7 @@ export const useAppStore = create<AppStore>((set) => ({
       collaborationEvents: [],
       presenceByNote: {},
       openedSharingKey: null,
+      revocationRotationFailure: null,
       newPassword: "",
       user: null,
       status: nextStatus

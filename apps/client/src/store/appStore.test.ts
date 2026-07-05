@@ -48,6 +48,50 @@ describe("collaboration event store", () => {
 
     expect(useAppStore.getState().selectedNoteId).toBe("next_shared_note");
   });
+
+  it("clears revocation rotation failure when note access is removed", () => {
+    useAppStore.getState().setRevocationRotationFailure({
+      failedAt: "2026-07-02T10:00:00.000Z",
+      message: "network failed",
+      noteId: "revoked_note",
+      revokedUserId: "bob",
+      revokedUsername: "bob"
+    });
+    useAppStore.getState().setNotes([note({ id: "revoked_note", role: "editor" })]);
+
+    useAppStore.getState().removeNoteAccess("revoked_note");
+
+    expect(useAppStore.getState().revocationRotationFailure).toBeNull();
+  });
+
+  it("clears revocation rotation failure when selection changes", () => {
+    useAppStore.getState().setSelectedNoteId("note_1");
+    useAppStore.getState().setRevocationRotationFailure({
+      failedAt: "2026-07-02T10:00:00.000Z",
+      message: "network failed",
+      noteId: "note_1",
+      revokedUserId: "bob",
+      revokedUsername: "bob"
+    });
+
+    useAppStore.getState().setSelectedNoteId("note_2");
+
+    expect(useAppStore.getState().revocationRotationFailure).toBeNull();
+  });
+
+  it("clears revocation rotation failure on vault reset", () => {
+    useAppStore.getState().setRevocationRotationFailure({
+      failedAt: "2026-07-02T10:00:00.000Z",
+      message: "network failed",
+      noteId: "note_1",
+      revokedUserId: "bob",
+      revokedUsername: "bob"
+    });
+
+    useAppStore.getState().resetVaultState("locked");
+
+    expect(useAppStore.getState().revocationRotationFailure).toBeNull();
+  });
 });
 
 function collaborationEvent(

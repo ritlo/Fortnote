@@ -10,14 +10,14 @@ Current owner-only assumptions must change: notes, folders, and attachments are 
 
 Current code covers the core V1 collaboration path: collaboration schema and migrations, sharing keys, local TOFU public-key trust, note memberships, note-key shares, membership-aware note/folder/attachment authorization, realtime WebSocket replay, presence, durable event cursors and retention, sharing UI, shared-note crypto context, client-orchestrated post-revoke key rotation, sharing-key rotation/cleanup, shared-note presentation, and a three-user collaboration E2E flow with online editor plus offline viewer.
 
-Most V1 hardening and coverage work is now complete. Remaining work is continued revocation-rotation failure handling and larger deferred architecture expansions that should not block an honest-but-curious-server V1.
+Most V1 hardening and coverage work is now complete. Remaining work is limited to larger deferred architecture expansions that should not block an honest-but-curious-server V1.
 
 | Area | Status | Remaining Task | Priority | Notes |
 | --- | --- | --- | --- | --- |
 | Event cursor lifecycle | Done | None for V1. | - | Server persists per-user acknowledged cursors and keeps revoke tombstone acknowledgement semantics. |
 | Event retention | Done | None for V1. | - | Events prune only after all users who can replay them have acknowledged; revoked users still block their revoke tombstone until acknowledgement. |
 | Transaction failure coverage | Done | None for V1. | - | Tests force event-write failures across note create/update/key rotation, membership invite/role/revoke, folder create/update/delete, and attachment upload/delete. |
-| Revocation forward secrecy | Mostly done | Keep retry and recovery UX explicit. | Medium | Owner revocation removes access immediately, then the client rotates the note key, re-encrypts the body, rewraps attachment keys, and writes fresh shares for remaining active members. If post-revoke rotation fails, the user must retry to close the cryptographic forward-secrecy gap. |
+| Revocation forward secrecy | Done for V1 | None for V1. | - | Owner revocation removes access immediately, then the client rotates the note key, re-encrypts the body, rewraps attachment keys, and writes fresh shares for remaining active members. If post-revoke rotation fails, the sharing panel surfaces a same-session retry action. |
 | Sharing key rotation lifecycle | Done | Continue validating UX copy. | Low | Users can rotate sharing keys and clean up retired encrypted private keys that no active note shares reference. |
 | Public key trust hardening | Done for local TOFU | Consider cross-device trust sync or sender-authenticated share envelopes later. | Low | Invite flow requires first-use fingerprint confirmation, stores encrypted local trust records, blocks same-version mismatches, and re-confirms new sharing-key versions; see `docs/adr/public-key-trust.md`. |
 | Security/product documentation | Done | Keep docs aligned with future trust work. | Low | `SECURITY.md` documents metadata visibility, sealed-box sender-auth limits, key substitution risk, and revocation limits. |
@@ -30,7 +30,6 @@ Most V1 hardening and coverage work is now complete. Remaining work is continued
 
 ## Current Remaining Work
 
-- Revocation key rotation is implemented as client orchestration after server-side access removal. Keep the failure mode visible and retryable until a more atomic recovery model exists.
 - Multi-process realtime fanout is a deployment scaling task. Durable events preserve reconnect correctness, but live delivery between server processes needs Redis/pubsub or an equivalent broker.
 - CRDT/live editing is a future product expansion. Keep the current whole-note encrypted snapshot model until the collaboration baseline has shipped.
 
@@ -106,7 +105,7 @@ Most V1 hardening and coverage work is now complete. Remaining work is continued
 - `crypto_box_seal` protects note-key share confidentiality but does not authenticate the sender. V1 trusts server authorization metadata for who created a share. Sender-authenticated shares can be added later.
 - Public sharing key lookup by username uses local TOFU. It detects same-version key substitution after first trust and forces confirmation for new versions, but first trust can still be wrong if the server is malicious at first use, and trust records do not sync across devices.
 - Revocation blocks server access and future event/key-share delivery, but it is not cryptographic forward secrecy for ciphertext or keys already obtained by the revoked user.
-- Forward secrecy after revocation requires rotating the note key, re-encrypting the note body and attachment keys, and rewrapping the new note key for remaining active members. Current implementation performs this as a client-side sequence after access removal, so a rotation failure must remain visible and retryable.
+- Forward secrecy after revocation requires rotating the note key, re-encrypting the note body and attachment keys, and rewrapping the new note key for remaining active members. Current implementation performs this as a client-side sequence after access removal, so a rotation failure remains visible and retryable during the current vault session.
 - Old encrypted private sharing keys may remain stored only while active note shares reference their version. Delete old private keys only after all referenced shares are rewrapped or revoked.
 - Presence is ephemeral, not durable. Send presence only to active note members and never to revoked users.
 

@@ -524,6 +524,27 @@ textarea {
   gap: 8px;
 }
 
+.rotation-retry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--warning, #d97706);
+  border-radius: 7px;
+  padding: 9px;
+}
+
+.rotation-retry span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.rotation-retry small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .membership-list {
   display: grid;
   gap: 8px;

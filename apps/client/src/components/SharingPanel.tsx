@@ -50,7 +50,13 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   const setAttachmentsByNote = useAppStore((state) => state.setAttachmentsByNote);
   const setError = useAppStore((state) => state.setError);
   const setNotes = useAppStore((state) => state.setNotes);
+  const setRevocationRotationFailure = useAppStore(
+    (state) => state.setRevocationRotationFailure
+  );
   const setStatus = useAppStore((state) => state.setStatus);
+  const revocationRotationFailure = useAppStore(
+    (state) => state.revocationRotationFailure
+  );
   const presence = useAppStore((state) =>
     selectedNote ? (state.presenceByNote[selectedNote.id] ?? EMPTY_PRESENCE) : EMPTY_PRESENCE
   );
@@ -205,18 +211,57 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
       setMemberships(payload.memberships);
       try {
         await rotateAfterRevoke(selectedNote, payload.memberships, rootKey);
+        setRevocationRotationFailure(null);
         setStatus("Collaborator revoked and keys rotated");
       } catch (rotationError) {
+        const message =
+          rotationError instanceof Error ? rotationError.message : "Key rotation failed";
+        setRevocationRotationFailure({
+          noteId: selectedNote.id,
+          revokedUserId: member.userId,
+          revokedUsername: member.username,
+          message,
+          failedAt: new Date().toISOString()
+        });
         setStatus("Collaborator revoked");
-        setError(
-          rotationError instanceof Error
-            ? `Key rotation failed: ${rotationError.message}`
-            : "Key rotation failed"
-        );
+        setError(`Key rotation failed: ${message}`);
       }
     } catch (revokeError) {
       setStatus("Revoke failed");
       setError(revokeError instanceof Error ? revokeError.message : "Unable to revoke");
+    }
+  }
+
+  async function retryRevocationRotation() {
+    if (
+      selectedNote?.role !== "owner" ||
+      !rootKey ||
+      revocationRotationFailure?.noteId !== selectedNote.id
+    ) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(null);
+    setStatus("Retrying key rotation");
+    try {
+      const payload = await listNoteMemberships(selectedNote.id);
+      setMemberships(payload.memberships);
+      await rotateAfterRevoke(selectedNote, payload.memberships, rootKey);
+      setRevocationRotationFailure(null);
+      setStatus("Keys rotated after revoke");
+    } catch (rotationError) {
+      const message =
+        rotationError instanceof Error ? rotationError.message : "Key rotation failed";
+      setRevocationRotationFailure({
+        ...revocationRotationFailure,
+        message,
+        failedAt: new Date().toISOString()
+      });
+      setStatus("Key rotation failed");
+      setError(`Key rotation failed: ${message}`);
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -308,6 +353,10 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   }
 
   const canInvite = selectedNote?.role === "owner" && !disabled;
+  const selectedRotationFailure =
+    selectedNote && revocationRotationFailure?.noteId === selectedNote.id
+      ? revocationRotationFailure
+      : null;
 
   return (
     <section className="sharing-panel">
@@ -379,6 +428,26 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
                   Cancel
                 </button>
               </div>
+            </div>
+          ) : null}
+          {selectedRotationFailure ? (
+            <div className="rotation-retry">
+              <span>
+                <strong>Key rotation incomplete</strong>
+                <small>
+                  {selectedRotationFailure.revokedUsername}: {selectedRotationFailure.message}
+                </small>
+              </span>
+              <button
+                className="text-button"
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => {
+                  void retryRevocationRotation();
+                }}
+              >
+                Retry rotation
+              </button>
             </div>
           ) : null}
         </>
