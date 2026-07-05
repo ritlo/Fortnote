@@ -149,6 +149,42 @@ describe("realtime server", () => {
     carolSocket.socket.close();
   });
 
+  it("pushes actor-scoped folder events only to the actor", async () => {
+    const server = await createRealtimeTestServer();
+    const alice = await register(server.url, "ws_folder_alice");
+    const bob = await register(server.url, "ws_folder_bob");
+
+    const aliceSocket = await connect(server.url, alice.cookie, 0);
+    const bobSocket = await connect(server.url, bob.cookie, 0);
+    expect(await aliceSocket.next("alice connected")).toMatchObject({ type: "connected" });
+    expect(await aliceSocket.next("alice replay")).toMatchObject({
+      type: "replay",
+      events: []
+    });
+    expect(await bobSocket.next("bob connected")).toMatchObject({ type: "connected" });
+    expect(await bobSocket.next("bob replay")).toMatchObject({
+      type: "replay",
+      events: []
+    });
+
+    const aliceFolderEvent = aliceSocket.next("alice folder event");
+    await authed(server.url, alice.cookie)
+      .post("/api/folders")
+      .set(csrfHeaders())
+      .send({ name: "Realtime folders" })
+      .expect(201);
+
+    expect(await aliceFolderEvent).toMatchObject({
+      type: "event",
+      event: {
+        noteId: null,
+        resourceType: "folder",
+        type: "folder.created"
+      }
+    });
+    await expectNoMessage(bobSocket, "bob forbidden folder event");
+  });
+
   it("broadcasts note presence only to active members", async () => {
     const server = await createRealtimeTestServer();
     const alice = await register(server.url, "presence_alice");
