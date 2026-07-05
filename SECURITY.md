@@ -33,14 +33,17 @@ attachment ciphertext, or private-key envelopes in durable events.
 
 ## Sharing Key Trust
 
-The current invite flow looks up a collaborator's public sharing key by
-username. This protects note-key share confidentiality against passive server
-observation, but it does not prove that the server returned the intended public
-key.
+The invite flow looks up a collaborator's public sharing key by username. On
+first use, the client computes a SHA-256 fingerprint of the key, shows it to the
+owner, and requires explicit trust before creating the note-key share. Trusted
+fingerprints are stored locally in encrypted vault state, keyed by collaborator
+user ID and sharing-key version.
 
-In other words, a malicious server could substitute a public key during lookup.
-A stronger model would add key fingerprints, trust-on-first-use warnings, or a
-sender-authenticated share envelope.
+If the same user and sharing-key version later returns a different fingerprint,
+the client blocks sharing. A new sharing-key version requires a new trust
+confirmation. This is TOFU hardening: it detects key changes after first trust,
+but it cannot prove that the first trusted key was correct and does not sync
+trust decisions across devices.
 
 ## Sender Authentication
 
@@ -76,3 +79,5 @@ shares for remaining active collaborators.
 - Delete old encrypted private sharing keys only after no note-key shares
   reference their sharing-key version.
 - Keep presence ephemeral and scoped to active note members.
+- Keep sharing-key trust records encrypted with the vault root key. Never store
+  trusted fingerprints as plaintext server metadata.

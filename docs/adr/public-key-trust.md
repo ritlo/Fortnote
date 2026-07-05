@@ -2,13 +2,13 @@
 
 ## Status
 
-Proposed.
+Accepted and implemented for local TOFU.
 
 ## Context
 
 Fortnote uses user-published public sharing keys to encrypt note-key shares for
-collaborators. The current V1 invite flow asks the server for a public sharing
-key by username and trusts the returned key. That protects against passive
+collaborators. The original V1 invite flow asked the server for a public sharing
+key by username and trusted the returned key. That protected against passive
 observation, but not against a malicious or compromised server substituting its
 own public key.
 
@@ -19,10 +19,10 @@ rotation needs predictable behavior.
 
 ## Decision
 
-Do not reintroduce passive fingerprint preview as the trust hardening. The next
-implementation should use explicit trust-on-first-use (TOFU) with fingerprints.
+Do not reintroduce passive fingerprint preview as the trust hardening. Use
+explicit trust-on-first-use (TOFU) with fingerprints.
 
-Recommended behavior:
+Implemented behavior:
 
 - Compute a stable fingerprint from the public sharing key on the client.
 - When inviting a collaborator whose key has no local trust record, show the
@@ -34,6 +34,9 @@ Recommended behavior:
   block sharing and show a key-change warning.
 - If the collaborator rotates to a new sharing-key version, require a new trust
   confirmation for that version before using it.
+- When post-revocation key rotation needs to rewrap note keys for remaining
+  collaborators, block wrapping to unknown or changed sharing keys rather than
+  silently trusting them.
 - Keep server authorization checks as mandatory defense-in-depth; TOFU only
   hardens public-key substitution, not membership authorization.
 
