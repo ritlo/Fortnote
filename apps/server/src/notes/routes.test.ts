@@ -138,6 +138,25 @@ describe("notes and folders routes", () => {
     });
   });
 
+  it("rolls back note creates when event writes fail", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "rollback_create_user");
+    const payload = notePayload();
+
+    failNoteEventWrites(app);
+
+    await agent.post("/api/notes").set(csrfHeaders()).send(payload).expect(500);
+
+    const note = app.locals.db.sqlite
+      .prepare("SELECT id FROM notes WHERE id = ?")
+      .get(payload.id);
+    expect(note).toBeUndefined();
+    const membership = app.locals.db.sqlite
+      .prepare("SELECT note_id AS noteId FROM note_memberships WHERE note_id = ?")
+      .get(payload.id);
+    expect(membership).toBeUndefined();
+  });
+
   it("prevents cross-user note reads and folder assignment", async () => {
     const app = createTestApp();
     const alice = await registerAgent(app, "alice_notes");
