@@ -62,6 +62,10 @@ export function listVisibleEvents(
          AND (
            note_memberships.user_id IS NOT NULL
            OR (
+             note_events.note_id IS NULL
+             AND note_events.actor_user_id = ?
+           )
+           OR (
              note_events.event_type = 'membership.revoked'
              AND json_extract(note_events.payload_metadata, '$.membershipUserId') = ?
              AND (
@@ -73,7 +77,7 @@ export function listVisibleEvents(
        ORDER BY note_events.cursor
        LIMIT ?`
     )
-    .all(userId, userId, after, userId, limit) as EventRow[];
+    .all(userId, userId, after, userId, userId, limit) as EventRow[];
 
   return rows.map((row) => ({
     cursor: row.cursor,

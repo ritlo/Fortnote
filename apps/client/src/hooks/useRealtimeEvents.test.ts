@@ -3,11 +3,13 @@ import type { CollaborationEvent } from "../api";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
 import {
   createEventAcknowledger,
+  eventsRequireFolderReload,
   eventsRequireNoteReload,
   isOwnRevocation,
   mergeEventCursor,
   processCollaborationEvents,
   removeRevokedNotes,
+  shouldReloadFolders,
   shouldReloadNotes
 } from "./useRealtimeEvents";
 
@@ -172,6 +174,9 @@ describe("realtime event processing", () => {
       )
     ).toBe(false);
     expect(shouldReloadNotes(event({ resourceType: "attachment" }))).toBe(true);
+    expect(shouldReloadNotes(event({ resourceType: "folder" }))).toBe(true);
+    expect(shouldReloadFolders(event({ resourceType: "folder" }))).toBe(true);
+    expect(shouldReloadFolders(event({ resourceType: "note" }))).toBe(false);
     expect(shouldReloadNotes(event({ resourceType: "presence" }))).toBe(false);
   });
 
@@ -189,6 +194,8 @@ describe("realtime event processing", () => {
     expect(eventsRequireNoteReload([event({ resourceType: "presence" })], "user_bob")).toBe(
       false
     );
+    expect(eventsRequireFolderReload([event({ resourceType: "folder" })])).toBe(true);
+    expect(eventsRequireFolderReload([event({ resourceType: "note" })])).toBe(false);
   });
 
   it("does not regress the bootstrapped cursor", () => {

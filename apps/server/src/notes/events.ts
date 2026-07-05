@@ -11,14 +11,17 @@ export type NoteEventType =
   | "membership.role_updated"
   | "membership.revoked"
   | "attachment.created"
-  | "attachment.deleted";
+  | "attachment.deleted"
+  | "folder.created"
+  | "folder.updated"
+  | "folder.deleted";
 
 interface WriteNoteEventInput {
-  noteId: string;
+  noteId: string | null;
   actorUserId: string;
   eventType: NoteEventType;
   noteVersion: number | null;
-  resourceType?: "note" | "membership" | "attachment";
+  resourceType?: "note" | "membership" | "attachment" | "folder";
   resourceId?: string;
   payloadMetadata?: Record<string, unknown>;
 }
@@ -31,10 +34,15 @@ export function writeNoteEvent(
     eventType,
     noteVersion,
     resourceType = "note",
-    resourceId = noteId,
+    resourceId,
     payloadMetadata
   }: WriteNoteEventInput
 ): number {
+  const resolvedResourceId = resourceId ?? noteId;
+  if (!resolvedResourceId) {
+    throw new Error("Event resourceId is required when noteId is null");
+  }
+
   const result = context.db.sqlite
     .prepare(
       `INSERT INTO note_events (
@@ -51,7 +59,7 @@ export function writeNoteEvent(
     .run(
       randomUUID(),
       resourceType,
-      resourceId,
+      resolvedResourceId,
       noteId,
       actorUserId,
       eventType,

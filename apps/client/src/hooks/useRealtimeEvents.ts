@@ -10,7 +10,7 @@ import {
   type RealtimeConnection
 } from "../realtime/client";
 import { useAppStore } from "../store/appStore";
-import { loadDecryptedNotes } from "./useAppData";
+import { loadDecryptedNotes, loadFolders } from "./useAppData";
 
 const RECONNECT_BASE_DELAY_MS = 500;
 const RECONNECT_MAX_DELAY_MS = 10_000;
@@ -304,7 +304,15 @@ async function reloadAfterEvents(
     return;
   }
 
-  if (!eventsRequireNoteReload(events, user.id, options)) {
+  const shouldReloadFolders = eventsRequireFolderReload(events);
+  const shouldReloadNoteData =
+    eventsRequireNoteReload(events, user.id, options) || shouldReloadFolders;
+
+  if (shouldReloadFolders) {
+    await loadFolders();
+  }
+
+  if (!shouldReloadNoteData) {
     return;
   }
 
@@ -329,12 +337,21 @@ export function eventsRequireNoteReload(
   return reloadEvents.some((event) => shouldReloadNotes(event));
 }
 
+export function eventsRequireFolderReload(events: CollaborationEvent[]): boolean {
+  return events.some((event) => shouldReloadFolders(event));
+}
+
 export function shouldReloadNotes(event: CollaborationEvent): boolean {
   return (
     event.resourceType === "note" ||
     event.resourceType === "membership" ||
-    event.resourceType === "attachment"
+    event.resourceType === "attachment" ||
+    event.resourceType === "folder"
   );
+}
+
+export function shouldReloadFolders(event: CollaborationEvent): boolean {
+  return event.resourceType === "folder";
 }
 
 export function mergeEventCursor(current: number, acknowledged: number): number {
