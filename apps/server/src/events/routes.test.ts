@@ -234,6 +234,82 @@ describe("event replay routes", () => {
     expect(remaining.count).toBe(0);
   });
 
+  it("retains revoke tombstones until the revoked user acknowledges them", async () => {
+    const app = createTestApp();
+    const alice = await registerAgent(app, "retention_revoke_alice");
+    const bob = await registerAgent(app, "retention_revoke_bob");
+    const carol = await registerAgent(app, "retention_revoke_carol");
+    const carolSession = await carol.get("/api/auth/me").expect(200);
+    const carolUserId = String(carolSession.body.id);
+
+    await bob
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload("retention_revoke_bob"))
+      .expect(201);
+    await carol
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload("retention_revoke_carol"))
+      .expect(201);
+
+    const created = await alice
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+    await alice
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send(invitePayload("retention_revoke_bob", "editor"))
+      .expect(201);
+    await alice
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send(invitePayload("retention_revoke_carol", "viewer"))
+      .expect(201);
+    await alice
+      .delete(`/api/notes/${noteId}/memberships/${carolUserId}`)
+      .set(csrfHeaders())
+      .expect(204);
+
+    const revoke = app.locals.db.sqlite
+      .prepare(
+        `SELECT cursor
+         FROM note_events
+         WHERE note_id = ? AND event_type = 'membership.revoked'`
+      )
+      .get(noteId) as { cursor: number };
+
+    await alice
+      .post("/api/events/ack")
+      .set(csrfHeaders())
+      .send({ cursor: revoke.cursor })
+      .expect(204);
+    await bob
+      .post("/api/events/ack")
+      .set(csrfHeaders())
+      .send({ cursor: revoke.cursor })
+      .expect(204);
+
+    const remainingBeforeCarolAck = app.locals.db.sqlite
+      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?")
+      .get(revoke.cursor) as { count: number };
+    expect(remainingBeforeCarolAck.count).toBe(1);
+
+    await carol
+      .post("/api/events/ack")
+      .set(csrfHeaders())
+      .send({ cursor: revoke.cursor })
+      .expect(204);
+
+    const remainingAfterCarolAck = app.locals.db.sqlite
+      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?")
+      .get(revoke.cursor) as { count: number };
+    expect(remainingAfterCarolAck.count).toBe(0);
+  });
+
   it("rejects unauthenticated replay requests", async () => {
     const app = createTestApp();
     await request(app).get("/api/events").expect(401);
