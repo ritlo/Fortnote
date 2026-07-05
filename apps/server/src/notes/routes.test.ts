@@ -509,6 +509,128 @@ describe("notes and folders routes", () => {
     });
   });
 
+  it("rolls back key rotations when event writes fail", async () => {
+    const app = createTestApp();
+    const alice = await registerAgent(app, "rollback_rotation_alice");
+    const bob = await registerAgent(app, "rollback_rotation_bob");
+    const bobSession = await bob.get("/api/auth/me").expect(200);
+    const bobUserId = String(bobSession.body.id);
+
+    await bob
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload(2))
+      .expect(201);
+    const created = await alice
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+    await alice
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send({
+        username: "rollback_rotation_bob",
+        role: "editor",
+        sharingKeyVersion: 2,
+        encryptedNoteKey: "old_rotation_share_for_bob_abcdefghijklmnopqrstuvwxyz",
+        formatVersion: 1
+      })
+      .expect(201);
+    await alice
+      .post(`/api/notes/${noteId}/attachments`)
+      .set(csrfHeaders())
+      .set({
+        "content-type": "application/octet-stream",
+        "x-fortnote-attachment-id": "00000000-0000-4000-8000-000000000002",
+        "x-fortnote-filename": "rollback-rotate.txt",
+        "x-fortnote-mime-type": "text/plain",
+        "x-fortnote-size": "8",
+        "x-fortnote-encrypted-attachment-key":
+          "old_rotation_attachment_key_abcdefghijklmnopqrstuvwxyz",
+        "x-fortnote-attachment-key-nonce":
+          "old_rotation_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
+        "x-fortnote-file-nonce": "file_nonce_abcdefghijklmnopqrstuvwxyz"
+      })
+      .send(Buffer.from("ciphered"))
+      .expect(201);
+
+    failNoteEventWrites(app);
+
+    await alice
+      .post(`/api/notes/${noteId}/key-rotation`)
+      .set(csrfHeaders())
+      .send({
+        encryptedNoteKey: "failed_rotation_owner_note_key_abcdefghijklmnopqrstuvwxyz",
+        noteKeyNonce: "failed_rotation_owner_nonce_abcdefghijklmnopqrstuvwxyz",
+        contentCipher: "failed_rotation_content_cipher_abcdefghijklmnopqrstuvwxyz",
+        contentNonce: "failed_rotation_content_nonce_abcdefghijklmnopqrstuvwxyz",
+        contentLength: 888,
+        version: 1,
+        shares: [
+          {
+            recipientUserId: bobUserId,
+            sharingKeyVersion: 2,
+            encryptedNoteKey: "failed_rotation_share_for_bob_abcdefghijklmnopqrstuvwxyz",
+            formatVersion: 1
+          }
+        ],
+        attachmentKeys: [
+          {
+            attachmentId: "00000000-0000-4000-8000-000000000002",
+            encryptedAttachmentKey:
+              "failed_rotation_attachment_key_abcdefghijklmnopqrstuvwxyz",
+            attachmentKeyNonce: "failed_rotation_attachment_nonce_abcdefghijklmnopqrstuvwxyz"
+          }
+        ]
+      })
+      .expect(500);
+
+    const note = app.locals.db.sqlite
+      .prepare(
+        `SELECT encrypted_note_key AS encryptedNoteKey,
+                note_key_nonce AS noteKeyNonce,
+                content_cipher AS contentCipher,
+                content_length AS contentLength,
+                version
+         FROM notes
+         WHERE id = ?`
+      )
+      .get(noteId);
+    expect(note).toEqual({
+      contentCipher: "content_cipher_abcdefghijklmnopqrstuvwxyz",
+      contentLength: 128,
+      encryptedNoteKey: "encrypted_note_key_abcdefghijklmnopqrstuvwxyz",
+      noteKeyNonce: "note_key_nonce_abcdefghijklmnopqrstuvwxyz",
+      version: 1
+    });
+    const share = app.locals.db.sqlite
+      .prepare(
+        `SELECT encrypted_note_key AS encryptedNoteKey,
+                sharing_key_version AS sharingKeyVersion
+         FROM note_key_shares
+         WHERE note_id = ? AND recipient_user_id = ?`
+      )
+      .get(noteId, bobUserId);
+    expect(share).toEqual({
+      encryptedNoteKey: "old_rotation_share_for_bob_abcdefghijklmnopqrstuvwxyz",
+      sharingKeyVersion: 2
+    });
+    const attachment = app.locals.db.sqlite
+      .prepare(
+        `SELECT encrypted_attachment_key AS encryptedAttachmentKey,
+                attachment_key_nonce AS attachmentKeyNonce
+         FROM attachments
+         WHERE id = ?`
+      )
+      .get("00000000-0000-4000-8000-000000000002");
+    expect(attachment).toEqual({
+      attachmentKeyNonce: "old_rotation_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
+      encryptedAttachmentKey: "old_rotation_attachment_key_abcdefghijklmnopqrstuvwxyz"
+    });
+  });
+
   it("rejects partial key rotations", async () => {
     const app = createTestApp();
     const alice = await registerAgent(app, "partial_rotate_alice");
