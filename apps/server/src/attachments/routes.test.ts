@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { LIMITS } from "@fortnote/shared";
 import type { AppDb } from "../db/client.js";
@@ -240,6 +241,44 @@ describe("attachments routes", () => {
     );
   });
 
+  it("rolls back attachment uploads and removes stored bytes when event writes fail", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "rollback_attachment_upload_user");
+    const db = app.locals.db as AppDb;
+    const noteId = await createNote(agent);
+    const payload = attachmentPayload();
+
+    failNoteEventWrites(app);
+
+    await uploadAttachment(agent, noteId, payload).expect(500);
+
+    const attachment = db.sqlite
+      .prepare("SELECT id FROM attachments WHERE id = ?")
+      .get(payload.id);
+    expect(attachment).toBeUndefined();
+    expect(fs.readdirSync(app.locals.config.dataDir)).toHaveLength(0);
+  });
+
+  it("rolls back attachment deletes and keeps stored bytes when event writes fail", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "rollback_attachment_delete_user");
+    const db = app.locals.db as AppDb;
+    const noteId = await createNote(agent);
+    const payload = attachmentPayload();
+
+    await uploadAttachment(agent, noteId, payload).expect(201);
+    failNoteEventWrites(app);
+
+    await agent.delete(`/api/attachments/${payload.id}`).set(csrfHeaders()).expect(500);
+
+    const attachment = db.sqlite
+      .prepare("SELECT id FROM attachments WHERE id = ?")
+      .get(payload.id);
+    expect(attachment).toEqual({ id: payload.id });
+    const download = await agent.get(`/api/attachments/${payload.id}`).expect(200);
+    expect(download.body.encryptedBytes).toBe(payload.encryptedBytes.toString("base64"));
+  });
+
   it("removes attachment files on permanent note delete", async () => {
     const app = createTestApp();
     const agent = await registerAgent(app, "delete_attachment_user");
@@ -256,3 +295,13 @@ describe("attachments routes", () => {
     await agent.get(`/api/attachments/${payload.id}`).expect(404);
   });
 });
+
+function failNoteEventWrites(app: ReturnType<typeof createTestApp>): void {
+  app.locals.db.sqlite.exec(`
+    CREATE TRIGGER fail_note_events_insert
+    BEFORE INSERT ON note_events
+    BEGIN
+      SELECT RAISE(ABORT, 'note event failure');
+    END;
+  `);
+}
