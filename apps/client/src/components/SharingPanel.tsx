@@ -39,6 +39,37 @@ interface PendingSharingTrust {
   username: string;
 }
 
+interface RecoverCommittedRevocationInput {
+  finishRotation: (memberships: NoteMembership[]) => Promise<void>;
+  listMemberships: (noteId: string) => Promise<{ memberships: NoteMembership[] }>;
+  memberUserId: string;
+  noteId: string;
+  setMemberships: (memberships: NoteMembership[]) => void;
+}
+
+export async function recoverCommittedRevocationAfterFailure({
+  finishRotation,
+  listMemberships,
+  memberUserId,
+  noteId,
+  setMemberships
+}: RecoverCommittedRevocationInput): Promise<boolean> {
+  try {
+    const payload = await listMemberships(noteId);
+    const currentMember = payload.memberships.find(
+      (membership) => membership.userId === memberUserId
+    );
+    if (currentMember?.status !== "revoked") {
+      return false;
+    }
+    setMemberships(payload.memberships);
+    await finishRotation(payload.memberships);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   const [memberships, setMemberships] = useState<NoteMembership[]>([]);
   const [username, setUsername] = useState("");
@@ -213,32 +244,20 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
       setMemberships(payload.memberships);
       await finishRevocationRotation(note, member, payload.memberships, vaultRootKey);
     } catch (revokeError) {
-      if (await recoverCommittedRevocation(note, member, vaultRootKey)) {
+      if (
+        await recoverCommittedRevocationAfterFailure({
+          finishRotation: (nextMemberships) =>
+            finishRevocationRotation(note, member, nextMemberships, vaultRootKey),
+          listMemberships: listNoteMemberships,
+          memberUserId: member.userId,
+          noteId: note.id,
+          setMemberships
+        })
+      ) {
         return;
       }
       setStatus("Revoke failed");
       setError(revokeError instanceof Error ? revokeError.message : "Unable to revoke");
-    }
-  }
-
-  async function recoverCommittedRevocation(
-    note: DecryptedNote,
-    member: NoteMembership,
-    vaultRootKey: Uint8Array
-  ): Promise<boolean> {
-    try {
-      const payload = await listNoteMemberships(note.id);
-      const currentMember = payload.memberships.find(
-        (membership) => membership.userId === member.userId
-      );
-      if (currentMember?.status !== "revoked") {
-        return false;
-      }
-      setMemberships(payload.memberships);
-      await finishRevocationRotation(note, member, payload.memberships, vaultRootKey);
-      return true;
-    } catch {
-      return false;
     }
   }
 
