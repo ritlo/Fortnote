@@ -203,32 +203,67 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     if (selectedNote?.role !== "owner" || member.role === "owner" || !rootKey) {
       return;
     }
+    const note = selectedNote;
+    const vaultRootKey = rootKey;
 
     setError(null);
     try {
-      await revokeNoteMember(selectedNote.id, member.userId);
-      const payload = await listNoteMemberships(selectedNote.id);
+      await revokeNoteMember(note.id, member.userId);
+      const payload = await listNoteMemberships(note.id);
       setMemberships(payload.memberships);
-      try {
-        await rotateAfterRevoke(selectedNote, payload.memberships, rootKey);
-        setRevocationRotationFailure(null);
-        setStatus("Collaborator revoked and keys rotated");
-      } catch (rotationError) {
-        const message =
-          rotationError instanceof Error ? rotationError.message : "Key rotation failed";
-        setRevocationRotationFailure({
-          noteId: selectedNote.id,
-          revokedUserId: member.userId,
-          revokedUsername: member.username,
-          message,
-          failedAt: new Date().toISOString()
-        });
-        setStatus("Collaborator revoked");
-        setError(`Key rotation failed: ${message}`);
-      }
+      await finishRevocationRotation(note, member, payload.memberships, vaultRootKey);
     } catch (revokeError) {
+      if (await recoverCommittedRevocation(note, member, vaultRootKey)) {
+        return;
+      }
       setStatus("Revoke failed");
       setError(revokeError instanceof Error ? revokeError.message : "Unable to revoke");
+    }
+  }
+
+  async function recoverCommittedRevocation(
+    note: DecryptedNote,
+    member: NoteMembership,
+    vaultRootKey: Uint8Array
+  ): Promise<boolean> {
+    try {
+      const payload = await listNoteMemberships(note.id);
+      const currentMember = payload.memberships.find(
+        (membership) => membership.userId === member.userId
+      );
+      if (currentMember?.status !== "revoked") {
+        return false;
+      }
+      setMemberships(payload.memberships);
+      await finishRevocationRotation(note, member, payload.memberships, vaultRootKey);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function finishRevocationRotation(
+    note: DecryptedNote,
+    member: NoteMembership,
+    nextMemberships: NoteMembership[],
+    vaultRootKey: Uint8Array
+  ) {
+    try {
+      await rotateAfterRevoke(note, nextMemberships, vaultRootKey);
+      setRevocationRotationFailure(null);
+      setStatus("Collaborator revoked and keys rotated");
+    } catch (rotationError) {
+      const message =
+        rotationError instanceof Error ? rotationError.message : "Key rotation failed";
+      setRevocationRotationFailure({
+        noteId: note.id,
+        revokedUserId: member.userId,
+        revokedUsername: member.username,
+        message,
+        failedAt: new Date().toISOString()
+      });
+      setStatus("Collaborator revoked");
+      setError(`Key rotation failed: ${message}`);
     }
   }
 
