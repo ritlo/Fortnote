@@ -8,6 +8,7 @@ import {
   type SessionRecord
 } from "../auth/session.js";
 import { listVisibleEvents } from "../events/replay.js";
+import { allowedOriginAliases } from "../http/csrf.js";
 import type { AppContext } from "../http/app.js";
 import { RealtimeHub, sendJson, type RealtimeClient } from "./hub.js";
 
@@ -30,6 +31,7 @@ export function attachRealtimeServer(
 ): WebSocketServer {
   hub.attachContext(context);
   const webSocketServer = new WebSocketServer({ noServer: true });
+  const allowedOrigins = allowedOriginAliases(context.config.allowedOrigin);
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url ?? "/", "http://localhost");
@@ -45,6 +47,10 @@ export function attachRealtimeServer(
       rejectUpgrade(socket);
       return;
     }
+    if (!originAllowed(request.headers.origin, allowedOrigins)) {
+      rejectUpgrade(socket, 403, "Forbidden");
+      return;
+    }
 
     const parsed = realtimeQuerySchema.safeParse(
       Object.fromEntries(url.searchParams.entries())
@@ -57,6 +63,10 @@ export function attachRealtimeServer(
   });
 
   return webSocketServer;
+}
+
+function originAllowed(origin: string | undefined, allowedOrigins: Set<string>): boolean {
+  return Boolean(origin && allowedOrigins.has(origin));
 }
 
 function connectClient(
@@ -132,7 +142,7 @@ function rawDataToString(message: RawData): string {
   return Buffer.from(message).toString("utf8");
 }
 
-function rejectUpgrade(socket: Duplex): void {
-  socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+function rejectUpgrade(socket: Duplex, status = 401, reason = "Unauthorized"): void {
+  socket.write(`HTTP/1.1 ${String(status)} ${reason}\r\nConnection: close\r\n\r\n`);
   socket.destroy();
 }

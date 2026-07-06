@@ -4,7 +4,7 @@ import { sendApiError } from "./errors.js";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export function csrfGuard(allowedOrigin: string) {
-  const allowedOrigins = loopbackAliases(allowedOrigin);
+  const allowedOrigins = allowedOriginAliases(allowedOrigin);
 
   return (request: Request, response: Response, next: NextFunction): void => {
     if (SAFE_METHODS.has(request.method)) {
@@ -24,7 +24,7 @@ export function csrfGuard(allowedOrigin: string) {
   };
 }
 
-function loopbackAliases(origin: string): Set<string> {
+export function allowedOriginAliases(origin: string): Set<string> {
   const origins = new Set([origin]);
   try {
     const url = new URL(origin);

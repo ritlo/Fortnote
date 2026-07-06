@@ -32,6 +32,7 @@ interface SocketClient {
 const openServers: Server[] = [];
 const openSockets: WebSocket[] = [];
 const openHubs: RealtimeHub[] = [];
+const TEST_ALLOWED_ORIGIN = "http://localhost:5173";
 
 afterEach(async () => {
   for (const socket of openSockets.splice(0)) {
@@ -63,6 +64,18 @@ describe("realtime server", () => {
     await expect(connectRejected(`${server.url}/api/realtime`)).resolves.toMatch(
       /401/
     );
+  });
+
+  it("rejects authenticated websocket connections from other origins", async () => {
+    const server = await createRealtimeTestServer();
+    const alice = await register(server.url, "ws_origin_alice");
+
+    await expect(
+      connectRejected(`${server.url}/api/realtime`, {
+        Cookie: alice.cookie,
+        Origin: "http://evil.test"
+      })
+    ).resolves.toMatch(/403/);
   });
 
   it("pushes live events and replays missed events", async () => {
@@ -374,7 +387,7 @@ async function connect(
 ): Promise<SocketClient> {
   const socket = new WebSocket(
     `${baseUrl.replace(/^http/, "ws")}/api/realtime?after=${String(after)}`,
-    { headers: { Cookie: cookie } }
+    { headers: { Cookie: cookie, Origin: TEST_ALLOWED_ORIGIN } }
   );
   const messages: Record<string, unknown>[] = [];
   const waiters: ((message: Record<string, unknown>) => void)[] = [];
@@ -398,8 +411,11 @@ async function connect(
   };
 }
 
-async function connectRejected(url: string): Promise<string> {
-  const socket = new WebSocket(url.replace(/^http/, "ws"));
+async function connectRejected(
+  url: string,
+  headers: Record<string, string> = {}
+): Promise<string> {
+  const socket = new WebSocket(url.replace(/^http/, "ws"), { headers });
   return new Promise((resolve, reject) => {
     socket.once("open", () => {
       reject(new Error("Expected connection to be rejected"));
