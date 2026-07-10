@@ -22,6 +22,7 @@ interface TestServer {
 interface TestServerOptions {
   presenceSweepIntervalMs?: number;
   presenceTtlMs?: number;
+  sessionSweepIntervalMs?: number;
 }
 
 interface SocketClient {
@@ -77,6 +78,40 @@ describe("realtime server", () => {
       })
     ).resolves.toMatch(/403/);
   });
+
+  it("closes an established websocket on logout", async () => {
+    const server = await createRealtimeTestServer();
+    const alice = await register(server.url, "ws_logout_alice");
+    const aliceSocket = await connect(server.url, alice.cookie, 0);
+    await aliceSocket.next("alice connected");
+    await aliceSocket.next("alice replay");
+
+    const closed = waitForClose(aliceSocket.socket);
+    await authed(server.url, alice.cookie)
+      .post("/api/auth/logout")
+      .set(csrfHeaders())
+      .expect(204);
+
+    await expect(closed).resolves.toBe(1008);
+  });
+
+  it.each(["idle_expires_at", "absolute_expires_at"])(
+    "closes an established websocket after %s",
+    async (expiryColumn) => {
+      const server = await createRealtimeTestServer({ sessionSweepIntervalMs: 10 });
+      const alice = await register(server.url, `ws_expiry_${expiryColumn}`);
+      const aliceSocket = await connect(server.url, alice.cookie, 0);
+      await aliceSocket.next("alice connected");
+      await aliceSocket.next("alice replay");
+
+      const closed = waitForClose(aliceSocket.socket);
+      server.db.sqlite
+        .prepare(`UPDATE sessions SET ${expiryColumn} = ?`)
+        .run(new Date(0).toISOString());
+
+      await expect(closed).resolves.toBe(1008);
+    }
+  );
 
   it("pushes live events and replays missed events", async () => {
     const server = await createRealtimeTestServer();
@@ -523,4 +558,16 @@ function parseSocketMessage(data: RawData): Record<string, unknown> {
             ? Buffer.from(new Uint8Array(data)).toString("utf8")
             : Buffer.from(data).toString("utf8");
   return JSON.parse(raw) as Record<string, unknown>;
+}
+
+function waitForClose(socket: WebSocket): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error("Timed out waiting for websocket close"));
+    }, 2000);
+    socket.once("close", (code) => {
+      clearTimeout(timeout);
+      resolve(code);
+    });
+  });
 }

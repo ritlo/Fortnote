@@ -77,6 +77,7 @@ function connectClient(
   after: number
 ): void {
   const client = hub.addClient({
+    sessionId: session.id,
     userId: session.userId,
     username: session.username,
     socket

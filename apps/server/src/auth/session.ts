@@ -105,12 +105,29 @@ export function findSession(db: AppDb, token: string | null): SessionRecord | nu
   return row;
 }
 
-export function deleteSession(db: AppDb, token: string | null): void {
+export function deleteSession(db: AppDb, token: string | null): string | null {
   if (!token) {
-    return;
+    return null;
   }
 
-  db.sqlite.prepare("DELETE FROM sessions WHERE session_hash = ?").run(hashToken(token));
+  const row = db.sqlite
+    .prepare("DELETE FROM sessions WHERE session_hash = ? RETURNING id")
+    .get(hashToken(token)) as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
+export function isSessionActive(db: AppDb, sessionId: string): boolean {
+  const now = new Date().toISOString();
+  const row = db.sqlite
+    .prepare(
+      `SELECT 1
+       FROM sessions
+       WHERE id = ?
+         AND idle_expires_at > ?
+         AND absolute_expires_at > ?`
+    )
+    .get(sessionId, now, now);
+  return Boolean(row);
 }
 
 export function requireSession(
