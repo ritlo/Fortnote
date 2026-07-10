@@ -74,10 +74,14 @@ describe("event replay routes", () => {
       "membership.added"
     ]);
     const bobCursor = Number(bobInitial.body.events.at(-1).cursor);
+    const clientInstanceId = crypto.randomUUID();
 
     await alice
       .put(`/api/notes/${noteId}`)
-      .set(csrfHeaders())
+      .set({
+        ...csrfHeaders(),
+        "x-fortnote-client-id": clientInstanceId
+      })
       .send({
         title: "Alice offline replay edit",
         contentCipher: "alice_event_update_cipher_abcdefghijklmnopqrstuvwxyz",
@@ -92,7 +96,8 @@ describe("event replay routes", () => {
     expect(bobReplay.body.events[0]).toMatchObject({
       type: "note.updated",
       noteId,
-      version: 2
+      version: 2,
+      metadata: { clientInstanceId }
     });
 
     const carolReplay = await carol.get("/api/events").query({ after: 0 }).expect(200);

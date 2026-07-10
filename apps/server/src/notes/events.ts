@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
+import type { Request } from "express";
+import { z } from "zod";
 import type { AppContext } from "../http/app.js";
+
+const clientInstanceIdSchema = z.uuid();
 
 export type NoteEventType =
   | "note.created"
@@ -16,7 +20,7 @@ export type NoteEventType =
   | "folder.updated"
   | "folder.deleted";
 
-interface WriteNoteEventInput {
+export interface WriteNoteEventInput {
   noteId: string | null;
   actorUserId: string;
   eventType: NoteEventType;
@@ -24,6 +28,23 @@ interface WriteNoteEventInput {
   resourceType?: "note" | "membership" | "attachment" | "folder";
   resourceId?: string;
   payloadMetadata?: Record<string, unknown>;
+  clientInstanceId?: string;
+}
+
+export function writeRequestEvent(
+  context: AppContext,
+  request: Request,
+  input: WriteNoteEventInput
+): number {
+  const parsedClientId = clientInstanceIdSchema.safeParse(
+    request.get("x-fortnote-client-id")
+  );
+  return writeNoteEvent(
+    context,
+    parsedClientId.success
+      ? { ...input, clientInstanceId: parsedClientId.data }
+      : input
+  );
 }
 
 export function writeNoteEvent(
@@ -35,7 +56,8 @@ export function writeNoteEvent(
     noteVersion,
     resourceType = "note",
     resourceId,
-    payloadMetadata
+    payloadMetadata,
+    clientInstanceId
   }: WriteNoteEventInput
 ): number {
   const resolvedResourceId = resourceId ?? noteId;
@@ -43,6 +65,10 @@ export function writeNoteEvent(
     throw new Error("Event resourceId is required when noteId is null");
   }
 
+  const metadata = {
+    ...payloadMetadata,
+    ...(clientInstanceId ? { clientInstanceId } : {})
+  };
   const result = context.db.sqlite
     .prepare(
       `INSERT INTO note_events (
@@ -64,7 +90,7 @@ export function writeNoteEvent(
       actorUserId,
       eventType,
       noteVersion,
-      payloadMetadata ? JSON.stringify(payloadMetadata) : null
+      Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null
     );
   return Number(result.lastInsertRowid);
 }

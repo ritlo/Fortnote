@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import {
   acknowledgeCollaborationEvents,
+  getClientInstanceId,
   getCollaborationEventCursor,
   type CollaborationEvent
 } from "../api";
@@ -293,8 +294,10 @@ async function reloadAfterEvents(events: CollaborationEvent[]): Promise<void> {
     return;
   }
 
-  const shouldReloadFolders = eventsRequireFolderReload(events);
-  const shouldReloadNoteData = eventsRequireNoteReload(events) || shouldReloadFolders;
+  const remoteEvents = eventsFromOtherClients(events, getClientInstanceId());
+  const shouldReloadFolders = eventsRequireFolderReload(remoteEvents);
+  const shouldReloadNoteData =
+    eventsRequireNoteReload(remoteEvents) || shouldReloadFolders;
 
   if (shouldReloadFolders) {
     await loadFolders();
@@ -307,7 +310,7 @@ async function reloadAfterEvents(events: CollaborationEvent[]): Promise<void> {
   const reloads = [
     loadDecryptedNotes(user, rootKey, false, { preserveSelection: true })
   ];
-  if (eventsRequireTrashReload(events)) {
+  if (eventsRequireTrashReload(remoteEvents)) {
     reloads.push(
       loadDecryptedNotes(user, rootKey, true, { preserveSelection: true })
     );
@@ -326,6 +329,15 @@ export function eventsRequireNoteReload(
   events: CollaborationEvent[]
 ): boolean {
   return events.some((event) => shouldReloadNotes(event));
+}
+
+export function eventsFromOtherClients(
+  events: CollaborationEvent[],
+  clientInstanceId: string
+): CollaborationEvent[] {
+  return events.filter(
+    (event) => event.metadata?.clientInstanceId !== clientInstanceId
+  );
 }
 
 export function eventsRequireFolderReload(events: CollaborationEvent[]): boolean {

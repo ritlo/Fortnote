@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { requireSession } from "../auth/session.js";
-import { writeNoteEvent } from "../notes/events.js";
+import { writeRequestEvent } from "../notes/events.js";
 
 const folderPayloadSchema = z.object({
   id: z.uuid().optional(),
@@ -100,7 +100,7 @@ export function createFoldersRouter(context: AppContext): Router {
            VALUES (?, ?, ?, ?)`
         )
         .run(id, session.userId, parsed.data.name, parentFolderId);
-      return writeNoteEvent(context, {
+      return writeRequestEvent(context, request, {
         noteId: null,
         actorUserId: session.userId,
         eventType: "folder.created",
@@ -153,7 +153,7 @@ export function createFoldersRouter(context: AppContext): Router {
            WHERE id = ? AND user_id = ?`
         )
         .run(parsed.data.name, parentFolderId, folder.id, session.userId);
-      return writeNoteEvent(context, {
+      return writeRequestEvent(context, request, {
         noteId: null,
         actorUserId: session.userId,
         eventType: "folder.updated",
@@ -205,7 +205,7 @@ export function createFoldersRouter(context: AppContext): Router {
       context.db.sqlite
         .prepare("DELETE FROM folders WHERE id = ? AND user_id = ?")
         .run(folder.id, session.userId);
-      return writeNoteEvent(context, {
+      return writeRequestEvent(context, request, {
         noteId: null,
         actorUserId: session.userId,
         eventType: "folder.deleted",

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { apiRequest, ApiRequestError } from "./api";
+import { apiRequest, ApiRequestError, getClientInstanceId } from "./api";
 
 describe("apiRequest", () => {
   afterEach(() => {
@@ -31,5 +31,19 @@ describe("apiRequest", () => {
         status: 409
       });
     }
+  });
+
+  it("identifies the originating browser instance", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiRequest("/test", { method: "POST", body: "{}" });
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(new Headers(init?.headers).get("x-fortnote-client-id")).toBe(
+      getClientInstanceId()
+    );
   });
 });

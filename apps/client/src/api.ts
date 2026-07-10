@@ -264,6 +264,12 @@ export class ApiRequestError extends Error {
   }
 }
 
+const clientInstanceId = crypto.randomUUID();
+
+export function getClientInstanceId(): string {
+  return clientInstanceId;
+}
+
 export function isApiRequestError(error: unknown): error is ApiRequestError {
   return error instanceof ApiRequestError;
 }
@@ -276,6 +282,7 @@ export async function apiRequest<T>(
   if (!headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
+  headers.set("x-fortnote-client-id", clientInstanceId);
 
   const response = await fetch(`/api${path}`, {
     ...init,

@@ -12,7 +12,7 @@ import {
   writeEncryptedAttachment
 } from "./storage.js";
 import { canEditNote, canReadNote, getNoteAccess } from "../notes/access.js";
-import { writeNoteEvent } from "../notes/events.js";
+import { writeRequestEvent } from "../notes/events.js";
 
 const uploadAttachmentSchema = z.object({
   id: z.uuid(),
@@ -255,7 +255,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
 	            storageId,
 	            parsed.data.fileNonce
 	          );
-	        return writeNoteEvent(context, {
+	        return writeRequestEvent(context, request, {
 	          noteId: access.noteId,
 	          actorUserId: session.userId,
 	          eventType: "attachment.created",
@@ -349,7 +349,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
 
     const deleteAttachmentRow = context.db.sqlite.transaction(() => {
       context.db.sqlite.prepare("DELETE FROM attachments WHERE id = ?").run(attachment.id);
-      return writeNoteEvent(context, {
+      return writeRequestEvent(context, request, {
         noteId: attachment.noteId,
         actorUserId: session.userId,
         eventType: "attachment.deleted",

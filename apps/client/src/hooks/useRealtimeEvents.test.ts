@@ -3,6 +3,7 @@ import type { CollaborationEvent } from "../api";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
 import {
   createCollaborationEventProcessor,
+  eventsFromOtherClients,
   eventsRequireFolderReload,
   eventsRequireNoteReload,
   eventsRequireTrashReload,
@@ -233,7 +234,19 @@ describe("realtime event processing", () => {
   });
 
   it("reloads same-account events from another tab", () => {
-    expect(eventsRequireNoteReload([event({ actorUserId: "user_bob" })])).toBe(true);
+    const ownEvent = event({
+      actorUserId: "user_bob",
+      metadata: { clientInstanceId: "this-client" }
+    });
+    const otherTabEvent = event({
+      actorUserId: "user_bob",
+      metadata: { clientInstanceId: "other-client" }
+    });
+
+    expect(eventsFromOtherClients([ownEvent, otherTabEvent], "this-client")).toEqual([
+      otherTabEvent
+    ]);
+    expect(eventsRequireNoteReload([otherTabEvent])).toBe(true);
     expect(eventsRequireNoteReload([event({ resourceType: "presence" })])).toBe(false);
     expect(eventsRequireFolderReload([event({ resourceType: "folder" })])).toBe(true);
     expect(eventsRequireFolderReload([event({ resourceType: "note" })])).toBe(false);

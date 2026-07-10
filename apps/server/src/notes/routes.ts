@@ -5,7 +5,7 @@ import { sendApiError } from "../http/errors.js";
 import { requireSession } from "../auth/session.js";
 import { deleteEncryptedAttachment } from "../attachments/storage.js";
 import { canEditNote, canOwnNote, canReadNote, getNoteAccess } from "./access.js";
-import { writeNoteEvent } from "./events.js";
+import { writeRequestEvent } from "./events.js";
 
 const createNoteSchema = z.object({
   id: z.uuid(),
@@ -191,7 +191,7 @@ export function createNotesRouter(context: AppContext): Router {
            VALUES (?, ?, 'owner', 'active')`
         )
         .run(parsed.data.id, session.userId);
-      return writeNoteEvent(context, {
+      return writeRequestEvent(context, request, {
         noteId: parsed.data.id,
         actorUserId: session.userId,
         eventType: "note.created",
@@ -368,7 +368,7 @@ export function createNotesRouter(context: AppContext): Router {
           parsed.data.encryptedNoteKey,
           parsed.data.formatVersion
         );
-      return writeNoteEvent(context, {
+      return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "membership.added",
@@ -428,7 +428,7 @@ export function createNotesRouter(context: AppContext): Router {
       if (result.changes === 0) {
         return null;
       }
-      return writeNoteEvent(context, {
+      return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "membership.role_updated",
@@ -493,7 +493,7 @@ export function createNotesRouter(context: AppContext): Router {
            WHERE note_id = ? AND recipient_user_id = ?`
         )
         .run(access.noteId, request.params.userId);
-      return writeNoteEvent(context, {
+      return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "membership.revoked",
@@ -703,7 +703,7 @@ export function createNotesRouter(context: AppContext): Router {
             access.noteId
           );
       }
-      return writeNoteEvent(context, {
+      return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "note.updated",
@@ -782,7 +782,7 @@ export function createNotesRouter(context: AppContext): Router {
           parsed.data.contentLength,
           access.noteId
         );
-      return writeNoteEvent(context, {
+      return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "note.updated",
@@ -816,7 +816,7 @@ export function createNotesRouter(context: AppContext): Router {
            WHERE id = ? AND user_id = ?`
         )
         .run(access.noteId, session.userId);
-      return writeNoteEvent(context, {
+      return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "note.deleted",
@@ -850,7 +850,7 @@ export function createNotesRouter(context: AppContext): Router {
            WHERE id = ? AND user_id = ?`
         )
         .run(access.noteId, session.userId);
-      return writeNoteEvent(context, {
+      return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "note.restored",
@@ -892,7 +892,7 @@ export function createNotesRouter(context: AppContext): Router {
       context.db.sqlite
         .prepare("DELETE FROM notes WHERE id = ? AND user_id = ?")
         .run(access.noteId, session.userId);
-      return writeNoteEvent(context, {
+      return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "note.permanently_deleted",
