@@ -366,7 +366,10 @@ export function createAuthRouter(context: AppContext): Router {
 
   router.post("/logout", (request, response) => {
     const token = readSessionToken(request.get("cookie"));
-    deleteSession(context.db, token);
+    const sessionId = deleteSession(context.db, token);
+    if (sessionId) {
+      context.realtime?.closeSession(sessionId);
+    }
     clearSessionCookie(response, context.config.cookieSecure);
     response.status(204).send();
   });

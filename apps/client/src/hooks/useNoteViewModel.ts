@@ -1,6 +1,13 @@
 import { useMemo } from "react";
 import { renderMarkdown } from "../lib/markdown";
-import { useAppStore } from "../store/appStore";
+import { useAppStore, type DecryptedNote, type NotesView } from "../store/appStore";
+
+interface NotesForViewInput {
+  notes: DecryptedNote[];
+  notesView: NotesView;
+  selectedFolderId: string | null;
+  trashNotes: DecryptedNote[];
+}
 
 export function useNoteViewModel() {
   const notes = useAppStore((state) => state.notes);
@@ -11,17 +18,14 @@ export function useNoteViewModel() {
   const attachmentsByNote = useAppStore((state) => state.attachmentsByNote);
   const search = useAppStore((state) => state.search);
 
-  const visibleSourceNotes =
-    notesView === "trash" ? trashNotes : notesView === "settings" ? [] : notes;
-
-  const folderFilteredNotes =
-    notesView === "trash" || !selectedFolderId
-      ? visibleSourceNotes
-      : visibleSourceNotes.filter((note) => note.folderId === selectedFolderId);
+  const viewNotes = useMemo(
+    () => notesForView({ notes, notesView, selectedFolderId, trashNotes }),
+    [notes, notesView, selectedFolderId, trashNotes]
+  );
 
   const selectedNote = useMemo(
-    () => visibleSourceNotes.find((note) => note.id === selectedNoteId) ?? null,
-    [selectedNoteId, visibleSourceNotes]
+    () => viewNotes.find((note) => note.id === selectedNoteId) ?? null,
+    [selectedNoteId, viewNotes]
   );
 
   const selectedAttachments = selectedNoteId
@@ -31,15 +35,15 @@ export function useNoteViewModel() {
   const filteredNotes = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) {
-      return folderFilteredNotes;
+      return viewNotes;
     }
 
-    return folderFilteredNotes.filter(
+    return viewNotes.filter(
       (note) =>
         note.title.toLowerCase().includes(query) ||
         note.body.toLowerCase().includes(query)
     );
-  }, [folderFilteredNotes, search]);
+  }, [viewNotes, search]);
 
   const previewHtml = useMemo(
     () => renderMarkdown(selectedNote?.body ?? "Select or create a note."),
@@ -52,4 +56,28 @@ export function useNoteViewModel() {
     selectedNote,
     previewHtml
   };
+}
+
+export function notesForView({
+  notes,
+  notesView,
+  selectedFolderId,
+  trashNotes
+}: NotesForViewInput): DecryptedNote[] {
+  switch (notesView) {
+    case "settings":
+      return [];
+    case "trash":
+      return trashNotes;
+    case "shared":
+      return notes.filter(isSharedNote);
+    case "notes":
+      return selectedFolderId
+        ? notes.filter((note) => note.folderId === selectedFolderId)
+        : notes;
+  }
+}
+
+function isSharedNote(note: DecryptedNote): boolean {
+  return note.role !== "owner";
 }

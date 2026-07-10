@@ -1,10 +1,11 @@
 import { Plus, Search } from "lucide-react";
-import type { DecryptedNote, NotesView } from "../store/appStore";
+import type { DecryptedNote, NotesView, RealtimeStatus } from "../store/appStore";
 
 interface NotesPaneProps {
   error: string | null;
   filteredNotes: DecryptedNote[];
   notesView: NotesView;
+  realtimeStatus: RealtimeStatus;
   recoverySecret: string | null;
   search: string;
   selectedNoteId: string | null;
@@ -18,6 +19,7 @@ export function NotesPane({
   error,
   filteredNotes,
   notesView,
+  realtimeStatus,
   recoverySecret,
   search,
   selectedNoteId,
@@ -34,7 +36,9 @@ export function NotesPane({
             ? "Trash"
             : notesView === "settings"
               ? "Settings"
-              : "Notes"}
+              : notesView === "shared"
+                ? "Shared"
+                : "Notes"}
         </h2>
         <button
           className="icon-button"
@@ -58,7 +62,10 @@ export function NotesPane({
           }}
         />
       </div>
-      <div className="status-pill">{status}</div>
+      <div className="status-row">
+        <div className="status-pill">{status}</div>
+        <div className={`sync-pill ${realtimeStatus}`}>{syncLabel(realtimeStatus)}</div>
+      </div>
       {error ? <p className="pane-error">{error}</p> : null}
       {recoverySecret ? (
         <p className="recovery-code">Recovery key: {recoverySecret}</p>
@@ -70,7 +77,9 @@ export function NotesPane({
               ? "Trash is empty."
               : notesView === "settings"
                 ? "Vault controls are open."
-                : "No notes match this view."}
+                : notesView === "shared"
+                  ? "No shared notes."
+                  : "No notes match this view."}
           </li>
         ) : (
           filteredNotes.map((note) => (
@@ -82,7 +91,12 @@ export function NotesPane({
                   setSelectedNoteId(note.id);
                 }}
               >
-                <strong>{note.title}</strong>
+                <span className="note-title-row">
+                  <strong>{note.title}</strong>
+                  {note.role !== "owner" ? (
+                    <small className="role-badge">{roleLabel(note.role)}</small>
+                  ) : null}
+                </span>
                 <span>{String(note.contentLength)} encrypted bytes</span>
               </button>
             </li>
@@ -91,4 +105,28 @@ export function NotesPane({
       </ul>
     </section>
   );
+}
+
+export function roleLabel(role: DecryptedNote["role"]): string {
+  switch (role) {
+    case "owner":
+      return "Owner";
+    case "editor":
+      return "Editor";
+    case "viewer":
+      return "Viewer";
+  }
+}
+
+function syncLabel(status: RealtimeStatus): string {
+  switch (status) {
+    case "connected":
+      return "Sync connected";
+    case "connecting":
+      return "Sync connecting";
+    case "disconnected":
+      return "Sync offline";
+    case "idle":
+      return "Sync idle";
+  }
 }

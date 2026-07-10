@@ -3,6 +3,7 @@ import {
   createNote,
   deleteFolder,
   deleteNote,
+  isApiRequestError,
   permanentlyDeleteNote,
   restoreNote,
   updateNote
@@ -63,7 +64,10 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         contentLength: draft.contentLength,
         version: created.version,
         isDeleted: false,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        ownerUserId: user.id,
+        cryptoOwnerId: user.id,
+        role: "owner"
       };
       setNotes((current) => [note, ...current]);
       setSelectedNoteId(note.id);
@@ -79,27 +83,34 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       return;
     }
 
+    await waitForPendingEditorUpdates();
+    const noteToSave =
+      useAppStore.getState().notes.find((note) => note.id === selectedNote.id) ??
+      selectedNote;
     setError(null);
     setStatus("Encrypting note");
     try {
       const encrypted = await encryptExistingNoteBody({
-        userId: user.id,
-        noteId: selectedNote.id,
-        noteKeyBase64: selectedNote.noteKeyBase64,
-        body: selectedNote.body
+        userId: noteToSave.cryptoOwnerId,
+        noteId: noteToSave.id,
+        noteKeyBase64: noteToSave.noteKeyBase64,
+        body: noteToSave.body
       });
-      const saved = await updateNote(selectedNote.id, {
-        title: selectedNote.title,
-        folderId: selectedNote.folderId,
-        version: selectedNote.version,
+      const saved = await updateNote(noteToSave.id, {
+        title: noteToSave.title,
+        folderId: noteToSave.folderId,
+        version: noteToSave.version,
         ...encrypted
       });
       setNotes((current) =>
         current.map((note) =>
-          note.id === selectedNote.id
+          note.id === noteToSave.id
             ? {
                 ...note,
+                body: noteToSave.body,
                 contentLength: encrypted.contentLength,
+                folderId: noteToSave.folderId,
+                title: noteToSave.title,
                 version: saved.version,
                 updatedAt: new Date().toISOString()
               }
@@ -108,9 +119,43 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       );
       setStatus("Note encrypted and saved");
     } catch (saveError) {
+      if (isApiRequestError(saveError) && saveError.code === "conflict" && rootKey) {
+        await preserveDraftAfterSaveConflict(noteToSave);
+        return;
+      }
+
       setStatus("Save failed");
       setError(saveError instanceof Error ? saveError.message : "Unable to save note");
     }
+  }
+
+  async function preserveDraftAfterSaveConflict(noteToSave: DecryptedNote) {
+    if (!user || !rootKey) {
+      return;
+    }
+
+    setStatus("Resolving save conflict");
+    await loadDecryptedNotes(user, rootKey, false);
+
+    const latestNote = useAppStore
+      .getState()
+      .notes.find((note) => note.id === noteToSave.id);
+    if (!latestNote) {
+      setStatus("Save conflict");
+      setError("Note changed elsewhere, but the latest copy could not be loaded.");
+      return;
+    }
+
+    setNotes((current) =>
+      current.map((note) =>
+        note.id === noteToSave.id
+          ? mergeDraftAfterConflict(latestNote, noteToSave)
+          : note
+      )
+    );
+    setSelectedNoteId(noteToSave.id);
+    setStatus("Save conflict");
+    setError("Note changed elsewhere. Your draft is still open; review it before saving again.");
   }
 
   function updateSelectedNote(
@@ -174,6 +219,12 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     setSelectedNoteId(nextNotes[0]?.id ?? null);
   }
 
+  function openSharedNotes() {
+    setNotesView("shared");
+    setSelectedFolderId(null);
+    setSelectedNoteId(notes.find((note) => note.role !== "owner")?.id ?? null);
+  }
+
   async function moveSelectedToTrash() {
     if (!selectedNote) {
       return;
@@ -232,10 +283,32 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     deleteSelectedForever,
     moveSelectedToTrash,
     openNotes,
+    openSharedNotes,
     openTrash,
     removeFolder,
     restoreSelectedNote,
     saveSelectedNote,
     updateSelectedNote
+  };
+}
+
+async function waitForPendingEditorUpdates(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => {
+      resolve();
+    });
+  });
+}
+
+export function mergeDraftAfterConflict(
+  latestNote: DecryptedNote,
+  draft: DecryptedNote
+): DecryptedNote {
+  return {
+    ...latestNote,
+    body: draft.body,
+    contentLength: new TextEncoder().encode(draft.body).length,
+    folderId: draft.folderId,
+    title: draft.title
   };
 }

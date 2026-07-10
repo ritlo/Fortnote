@@ -2,7 +2,9 @@ interface SettingsPanelProps {
   newPassword: string;
   recoverySecret: string | null;
   changePassword: () => Promise<void>;
+  cleanupSharingKeys: () => Promise<void>;
   rotateRecoveryKey: () => Promise<void>;
+  rotateSharingKey: () => Promise<void>;
   setNewPassword: (value: string) => void;
 }
 
@@ -10,7 +12,9 @@ export function SettingsPanel({
   newPassword,
   recoverySecret,
   changePassword,
+  cleanupSharingKeys,
   rotateRecoveryKey,
+  rotateSharingKey,
   setNewPassword
 }: SettingsPanelProps) {
   return (
@@ -52,6 +56,27 @@ export function SettingsPanel({
         {recoverySecret ? (
           <p className="recovery-code">Recovery key: {recoverySecret}</p>
         ) : null}
+      </section>
+      <section>
+        <h3>Sharing key</h3>
+        <button
+          className="text-button"
+          type="button"
+          onClick={() => {
+            void rotateSharingKey();
+          }}
+        >
+          Rotate sharing key
+        </button>
+        <button
+          className="text-button"
+          type="button"
+          onClick={() => {
+            void cleanupSharingKeys();
+          }}
+        >
+          Clean up old sharing keys
+        </button>
       </section>
     </div>
   );

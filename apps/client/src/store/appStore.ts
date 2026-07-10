@@ -1,8 +1,17 @@
 import { create } from "zustand";
-import type { AttachmentSummary, FolderSummary, User } from "../api";
+import type { OpenedSharingKey } from "../cryptoClient";
+import type {
+  AttachmentSummary,
+  CollaborationEvent,
+  FolderSummary,
+  PresenceState,
+  PresenceUser,
+  User
+} from "../api";
 
 export type AuthMode = "login" | "register" | "recover";
-export type NotesView = "notes" | "trash" | "settings";
+export type NotesView = "notes" | "shared" | "trash" | "settings";
+export type RealtimeStatus = "idle" | "connecting" | "connected" | "disconnected";
 
 export interface DecryptedNote {
   id: string;
@@ -14,6 +23,17 @@ export interface DecryptedNote {
   version: number;
   isDeleted: boolean;
   updatedAt: string;
+  ownerUserId: string;
+  cryptoOwnerId: string;
+  role: "owner" | "editor" | "viewer";
+}
+
+export interface RevocationRotationFailure {
+  noteId: string;
+  revokedUserId: string;
+  revokedUsername: string;
+  message: string;
+  failedAt: string;
 }
 
 type StateUpdate<T> = T | ((current: T) => T);
@@ -38,6 +58,13 @@ export interface AppStore {
   selectedNoteId: string | null;
   search: string;
   recoverySecret: string | null;
+  realtimeStatus: RealtimeStatus;
+  localPresenceState: PresenceState;
+  eventCursor: number;
+  collaborationEvents: CollaborationEvent[];
+  presenceByNote: Record<string, PresenceUser[]>;
+  openedSharingKey: OpenedSharingKey | null;
+  revocationRotationFailures: Record<string, RevocationRotationFailure>;
   error: string | null;
   status: string;
   setUser: StoreSetter<User | null>;
@@ -58,6 +85,17 @@ export interface AppStore {
   setSelectedNoteId: StoreSetter<string | null>;
   setSearch: StoreSetter<string>;
   setRecoverySecret: StoreSetter<string | null>;
+  setRealtimeStatus: StoreSetter<RealtimeStatus>;
+  setLocalPresenceState: StoreSetter<PresenceState>;
+  setEventCursor: StoreSetter<number>;
+  addCollaborationEvents: (events: CollaborationEvent[]) => void;
+  removeNoteAccess: (noteId: string) => void;
+  setNotePresence: (noteId: string, users: PresenceUser[]) => void;
+  setOpenedSharingKey: StoreSetter<OpenedSharingKey | null>;
+  setRevocationRotationFailure: (
+    noteId: string,
+    failure: RevocationRotationFailure | null
+  ) => void;
   setError: StoreSetter<string | null>;
   setStatus: StoreSetter<string>;
   resetVaultState: (nextStatus: string) => void;
@@ -86,6 +124,13 @@ export const useAppStore = create<AppStore>((set) => ({
   selectedNoteId: null,
   search: "",
   recoverySecret: null,
+  realtimeStatus: "idle",
+  localPresenceState: "idle",
+  eventCursor: 0,
+  collaborationEvents: [],
+  presenceByNote: {},
+  openedSharingKey: null,
+  revocationRotationFailures: {},
   error: null,
   status: "Checking session",
   setUser: (value) => {
@@ -142,7 +187,10 @@ export const useAppStore = create<AppStore>((set) => ({
     }));
   },
   setSelectedNoteId: (value) => {
-    set((state) => ({ selectedNoteId: resolveState(value, state.selectedNoteId) }));
+    set((state) => {
+      const selectedNoteId = resolveState(value, state.selectedNoteId);
+      return { selectedNoteId };
+    });
   },
   setSearch: (value) => {
     set((state) => ({ search: resolveState(value, state.search) }));
@@ -150,6 +198,87 @@ export const useAppStore = create<AppStore>((set) => ({
   setRecoverySecret: (value) => {
     set((state) => ({
       recoverySecret: resolveState(value, state.recoverySecret)
+    }));
+  },
+  setRealtimeStatus: (value) => {
+    set((state) => ({ realtimeStatus: resolveState(value, state.realtimeStatus) }));
+  },
+  setLocalPresenceState: (value) => {
+    set((state) => ({
+      localPresenceState: resolveState(value, state.localPresenceState)
+    }));
+  },
+  setEventCursor: (value) => {
+    set((state) => ({ eventCursor: resolveState(value, state.eventCursor) }));
+  },
+  addCollaborationEvents: (events) => {
+    set((state) => {
+      if (events.length === 0) {
+        return {};
+      }
+      const seenEventIds = new Set(
+        state.collaborationEvents.map((event) => event.eventId)
+      );
+      const newEvents = events.filter((event) => {
+        if (seenEventIds.has(event.eventId)) {
+          return false;
+        }
+        seenEventIds.add(event.eventId);
+        return true;
+      });
+      const nextCursor = Math.max(
+        state.eventCursor,
+        ...events.map((event) => event.cursor)
+      );
+      return {
+        collaborationEvents: [...state.collaborationEvents, ...newEvents].slice(-200),
+        eventCursor: nextCursor
+      };
+    });
+  },
+  removeNoteAccess: (noteId) => {
+    set((state) => {
+      const notes = state.notes.filter((note) => note.id !== noteId);
+      const trashNotes = state.trashNotes.filter((note) => note.id !== noteId);
+      const nextSelectedNoteId =
+        state.notesView === "shared"
+          ? (notes.find((note) => note.role !== "owner")?.id ?? null)
+          : (notes[0]?.id ?? null);
+      return {
+        attachmentsByNote: omitRecordKey(state.attachmentsByNote, noteId),
+        notes,
+        presenceByNote: omitRecordKey(state.presenceByNote, noteId),
+        revocationRotationFailures: omitRecordKey(
+          state.revocationRotationFailures,
+          noteId
+        ),
+        selectedNoteId:
+          state.selectedNoteId === noteId ? nextSelectedNoteId : state.selectedNoteId,
+        trashNotes
+      };
+    });
+  },
+  setNotePresence: (noteId, users) => {
+    set((state) => ({
+      presenceByNote: {
+        ...state.presenceByNote,
+        [noteId]: users
+      }
+    }));
+  },
+  setOpenedSharingKey: (value) => {
+    set((state) => ({
+      openedSharingKey: resolveState(value, state.openedSharingKey)
+    }));
+  },
+  setRevocationRotationFailure: (noteId, failure) => {
+    set((state) => ({
+      revocationRotationFailures: failure
+        ? {
+            ...state.revocationRotationFailures,
+            [noteId]: failure
+          }
+        : omitRecordKey(state.revocationRotationFailures, noteId)
     }));
   },
   setError: (value) => {
@@ -170,9 +299,22 @@ export const useAppStore = create<AppStore>((set) => ({
       selectedFolderId: null,
       notesView: "notes",
       recoverySecret: null,
+      realtimeStatus: "idle",
+      localPresenceState: "idle",
+      eventCursor: 0,
+      collaborationEvents: [],
+      presenceByNote: {},
+      openedSharingKey: null,
+      revocationRotationFailures: {},
       newPassword: "",
       user: null,
       status: nextStatus
     });
   }
 }));
+
+function omitRecordKey<T>(record: Record<string, T>, keyToRemove: string): Record<string, T> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([key]) => key !== keyToRemove)
+  );
+}

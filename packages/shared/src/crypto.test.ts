@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
   attachmentAssociatedData,
   createKdfParams,
+  cryptoReady,
+  createSharingKeyPair,
   decryptBytes,
   deriveAuthVerifier,
   deriveRecoveryAuthVerifier,
@@ -11,12 +13,18 @@ import {
   fromBase64,
   generateRecoverySecret,
   noteAssociatedData,
+  openSealedBytes,
   randomBytes,
+  sealBytes,
   toBase64,
   utf8
 } from "./crypto.js";
 
 describe("crypto helpers", () => {
+  beforeAll(async () => {
+    await cryptoReady();
+  });
+
   it("derives separate auth and vault keys from one password", async () => {
     const params = createKdfParams();
     const auth = await deriveAuthVerifier("correct horse", params);
@@ -99,5 +107,26 @@ describe("crypto helpers", () => {
 
     expect(toBase64(auth)).not.toEqual(toBase64(vault));
     expect(fromBase64(toBase64(auth))).toHaveLength(32);
+  });
+
+  it("seals bytes to a recipient sharing key", async () => {
+    const alice = await createSharingKeyPair();
+    const bob = await createSharingKeyPair();
+    const sealed = await sealBytes(utf8("shared note key"), bob.publicKey);
+
+    const opened = await openSealedBytes({
+      cipher: sealed,
+      publicKey: bob.publicKey,
+      privateKey: bob.privateKey
+    });
+    expect(toBase64(opened)).toEqual(toBase64(utf8("shared note key")));
+
+    await expect(
+      openSealedBytes({
+        cipher: sealed,
+        publicKey: alice.publicKey,
+        privateKey: alice.privateKey
+      })
+    ).rejects.toThrow();
   });
 });

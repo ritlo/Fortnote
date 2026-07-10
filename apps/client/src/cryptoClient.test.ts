@@ -2,9 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   createAccountRecoveryCrypto,
   createEncryptedNoteDraft,
+  createUserSharingKey,
   createLoginAuthVerifier,
   createRegistrationCrypto,
+  decryptNoteKeyShare,
   decryptNote,
+  encryptNoteKeyShare,
+  noteKeyToBase64,
+  openUserSharingKey,
   openVault
 } from "./cryptoClient";
 
@@ -72,5 +77,57 @@ describe("client crypto workflows", () => {
 
     expect(opened.rootKey).toEqual(registration.rootKey);
     expect(newVerifier).toBe(recovery.passwordChange.authVerifier);
+  });
+
+  it("wraps sharing keys with the root key", async () => {
+    const registration = await createRegistrationCrypto("alice", "password");
+    const sharingKey = await createUserSharingKey(registration.rootKey);
+
+    const opened = await openUserSharingKey({
+      rootKey: registration.rootKey,
+      envelope: {
+        ...sharingKey.payload,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+    });
+
+    expect(opened).toEqual(sharingKey.opened);
+  });
+
+  it("encrypts note key shares for one collaborator", async () => {
+    const alice = await createRegistrationCrypto("alice", "password");
+    const bob = await createRegistrationCrypto("bob", "password");
+    const carol = await createRegistrationCrypto("carol", "password");
+    const bobSharingKey = await createUserSharingKey(bob.rootKey);
+    const carolSharingKey = await createUserSharingKey(carol.rootKey);
+    const note = await createEncryptedNoteDraft({
+      userId: "alice_user",
+      rootKey: alice.rootKey,
+      title: "Shared",
+      body: "Shared body"
+    });
+    const noteKeyBase64 = noteKeyToBase64(note.noteKey);
+
+    const encryptedShare = await encryptNoteKeyShare({
+      noteKeyBase64,
+      recipientPublicKey: bobSharingKey.opened.publicKey
+    });
+
+    await expect(
+      decryptNoteKeyShare({
+        encryptedNoteKey: encryptedShare,
+        publicKey: carolSharingKey.opened.publicKey,
+        privateKey: carolSharingKey.opened.privateKey
+      })
+    ).rejects.toThrow();
+
+    await expect(
+      decryptNoteKeyShare({
+        encryptedNoteKey: encryptedShare,
+        publicKey: bobSharingKey.opened.publicKey,
+        privateKey: bobSharingKey.opened.privateKey
+      })
+    ).resolves.toBe(noteKeyBase64);
   });
 });

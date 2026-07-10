@@ -19,6 +19,7 @@ export function AppShell() {
   const recoverySecret = useAppStore((state) => state.recoverySecret);
   const error = useAppStore((state) => state.error);
   const status = useAppStore((state) => state.status);
+  const realtimeStatus = useAppStore((state) => state.realtimeStatus);
   const setNewPassword = useAppStore((state) => state.setNewPassword);
   const setNotesView = useAppStore((state) => state.setNotesView);
   const setSelectedFolderId = useAppStore((state) => state.setSelectedFolderId);
@@ -40,6 +41,7 @@ export function AppShell() {
         folders={folders}
         notesView={notesView}
         openNotes={noteActions.openNotes}
+        openSharedNotes={noteActions.openSharedNotes}
         openSettings={() => {
           setNotesView("settings");
           setSelectedNoteId(null);
@@ -60,10 +62,12 @@ export function AppShell() {
         selectedNoteId={selectedNoteId}
         setSearch={setSearch}
         setSelectedNoteId={setSelectedNoteId}
+        realtimeStatus={realtimeStatus}
         status={status}
       />
       <EditorPane
         changePassword={authActions.changePassword}
+        cleanupSharingKeys={authActions.cleanupSharingKeys}
         deleteSelectedForever={noteActions.deleteSelectedForever}
         downloadSelectedAttachment={attachmentActions.downloadSelectedAttachment}
         folders={folders}
@@ -77,6 +81,7 @@ export function AppShell() {
         removeSelectedAttachment={attachmentActions.removeSelectedAttachment}
         restoreSelectedNote={noteActions.restoreSelectedNote}
         rotateRecoveryKey={authActions.rotateRecoveryKey}
+        rotateSharingKey={authActions.rotateSharingKey}
         saveSelectedNote={noteActions.saveSelectedNote}
         selectedAttachments={noteView.selectedAttachments}
         selectedNote={noteView.selectedNote}

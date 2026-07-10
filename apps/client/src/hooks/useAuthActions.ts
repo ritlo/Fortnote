@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import {
+  cleanupRetiredSharingKeys,
   getAuthKdfParams,
+  getCurrentSharingKey,
   getKeyMaterial,
   getMe,
   getRecoveryParams,
@@ -8,6 +10,7 @@ import {
   logout,
   recover,
   register,
+  storeCurrentSharingKey,
   updateKeyMaterial
 } from "../api";
 import {
@@ -16,11 +19,12 @@ import {
   createPasswordChangeCrypto,
   createRegistrationCrypto,
   createRecoveryRotationCrypto,
+  createUserSharingKey,
   openVault
 } from "../cryptoClient";
 import { authKdf, recoveryKdf, vaultKdf } from "../lib/keyMaterial";
 import { useAppStore } from "../store/appStore";
-import { loadDecryptedNotes, loadFolders } from "./useAppData";
+import { ensureSharingKey, loadDecryptedNotes, loadFolders } from "./useAppData";
 
 export function useSessionBootstrap() {
   const setUsername = useAppStore((state) => state.setUsername);
@@ -54,6 +58,7 @@ export function useAuthActions() {
   const setRecoveryInput = useAppStore((state) => state.setRecoveryInput);
   const setRecoveryNewPassword = useAppStore((state) => state.setRecoveryNewPassword);
   const setRecoverySecret = useAppStore((state) => state.setRecoverySecret);
+  const setOpenedSharingKey = useAppStore((state) => state.setOpenedSharingKey);
   const setError = useAppStore((state) => state.setError);
   const setStatus = useAppStore((state) => state.setStatus);
   const resetVaultState = useAppStore((state) => state.resetVaultState);
@@ -70,9 +75,11 @@ export function useAuthActions() {
         setRootKey(registration.rootKey);
         setKeyMaterialVersion(1);
         setRecoverySecret(registration.recoverySecret);
-        setStatus("Signed in and decrypted");
+        setStatus("Loading vault");
+        await ensureSharingKey(registration.rootKey);
         await loadFolders();
         await loadDecryptedNotes(currentUser, registration.rootKey);
+        setStatus("Signed in and decrypted");
         return;
       }
 
@@ -101,9 +108,11 @@ export function useAuthActions() {
         setPassword(recoveryNewPassword);
         setRecoveryInput("");
         setRecoveryNewPassword("");
-        setStatus("Recovered and decrypted");
+        setStatus("Loading vault");
+        await ensureSharingKey(recovery.rootKey);
         await loadFolders();
         await loadDecryptedNotes(currentUser, recovery.rootKey);
+        setStatus("Recovered and decrypted");
         return;
       }
 
@@ -121,9 +130,11 @@ export function useAuthActions() {
       setUser(currentUser);
       setRootKey(openedVault.rootKey);
       setKeyMaterialVersion(keyMaterial.keyMaterialVersion);
-      setStatus("Signed in and decrypted");
+      setStatus("Loading vault");
+      await ensureSharingKey(openedVault.rootKey);
       await loadFolders();
       await loadDecryptedNotes(currentUser, openedVault.rootKey);
+      setStatus("Signed in and decrypted");
     } catch (authError) {
       setStatus("Auth failed");
       setError(authError instanceof Error ? authError.message : "Unable to sign in");
@@ -200,10 +211,51 @@ export function useAuthActions() {
     }
   }
 
+  async function rotateSharingKey() {
+    if (!rootKey) {
+      return;
+    }
+
+    setError(null);
+    setStatus("Rotating sharing key");
+    try {
+      const current = await getCurrentSharingKey();
+      const created = await createUserSharingKey(rootKey, current.sharingKeyVersion + 1);
+      await storeCurrentSharingKey(created.payload);
+      setOpenedSharingKey(created.opened);
+      setStatus("Sharing key rotated");
+    } catch (rotateError) {
+      setStatus("Sharing key rotation failed");
+      setError(
+        rotateError instanceof Error ? rotateError.message : "Unable to rotate sharing key"
+      );
+    }
+  }
+
+  async function cleanupSharingKeys() {
+    setError(null);
+    setStatus("Cleaning up sharing keys");
+    try {
+      const result = await cleanupRetiredSharingKeys();
+      setStatus(
+        result.deleted > 0
+          ? `Cleaned up ${String(result.deleted)} sharing key${result.deleted === 1 ? "" : "s"}`
+          : "No retired sharing keys to clean up"
+      );
+    } catch (cleanupError) {
+      setStatus("Sharing key cleanup failed");
+      setError(
+        cleanupError instanceof Error ? cleanupError.message : "Unable to clean up sharing keys"
+      );
+    }
+  }
+
   return {
     changePassword,
+    cleanupSharingKeys,
     lockVault,
     rotateRecoveryKey,
+    rotateSharingKey,
     submitAuth,
     submitLogout
   };

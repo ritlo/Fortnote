@@ -5,14 +5,53 @@ import type {
   RecoveryParamsResponse,
   User
 } from "../api";
-import { decryptNote, noteKeyToBase64 } from "../cryptoClient";
+import {
+  decryptNote,
+  decryptNoteBodyWithKey,
+  decryptNoteKeyShare,
+  noteKeyToBase64,
+  openUserSharingKey,
+  type OpenedSharingKey
+} from "../cryptoClient";
+import { getNoteKeyShare, getSharingKeyVersion } from "../api";
 import type { DecryptedNote } from "../store/appStore";
 
 export async function decryptNoteSummary(
   user: User,
   rootKey: Uint8Array,
-  note: NoteSummary
+  note: NoteSummary,
+  openedSharingKey: OpenedSharingKey | null = null
 ): Promise<DecryptedNote> {
+  const decrypted =
+    note.role === "owner"
+      ? await decryptOwnedNote(user, rootKey, note)
+      : await decryptSharedNote(rootKey, note, openedSharingKey);
+
+  return {
+    id: note.id,
+    folderId: note.folderId,
+    title: note.title,
+    body: decrypted.body,
+    noteKeyBase64: decrypted.noteKeyBase64,
+    contentLength: note.contentLength,
+    version: note.version,
+    isDeleted: Boolean(note.isDeleted),
+    updatedAt: note.updatedAt,
+    ownerUserId: note.ownerUserId,
+    cryptoOwnerId: note.cryptoOwnerId,
+    role: note.role
+  };
+}
+
+async function decryptOwnedNote(
+  user: User,
+  rootKey: Uint8Array,
+  note: NoteSummary
+): Promise<{ body: string; noteKeyBase64: string }> {
+  if (!note.encryptedNoteKey || !note.noteKeyNonce) {
+    throw new Error("Owned note key is missing");
+  }
+
   const decrypted = await decryptNote({
     userId: user.id,
     rootKey,
@@ -28,17 +67,44 @@ export async function decryptNoteSummary(
       formatVersion: 1
     }
   });
+  return {
+    body: decrypted.body,
+    noteKeyBase64: noteKeyToBase64(decrypted.noteKey)
+  };
+}
+
+async function decryptSharedNote(
+  rootKey: Uint8Array,
+  note: NoteSummary,
+  openedSharingKey: OpenedSharingKey | null
+): Promise<{ body: string; noteKeyBase64: string }> {
+  const keyShare = await getNoteKeyShare(note.id);
+  const sharingKey =
+    openedSharingKey?.sharingKeyVersion === keyShare.sharingKeyVersion
+      ? openedSharingKey
+      : await openUserSharingKey({
+          rootKey,
+          envelope: await getSharingKeyVersion(keyShare.sharingKeyVersion)
+        });
+  const noteKeyBase64 = await decryptNoteKeyShare({
+    encryptedNoteKey: keyShare.encryptedNoteKey,
+    publicKey: sharingKey.publicKey,
+    privateKey: sharingKey.privateKey
+  });
+  const body = await decryptNoteBodyWithKey({
+    cryptoOwnerId: note.cryptoOwnerId,
+    noteId: note.id,
+    noteKeyBase64,
+    encryptedBody: {
+      cipher: note.contentCipher,
+      nonce: note.contentNonce,
+      formatVersion: 1
+    }
+  });
 
   return {
-    id: note.id,
-    folderId: note.folderId,
-    title: note.title,
-    body: decrypted.body,
-    noteKeyBase64: noteKeyToBase64(decrypted.noteKey),
-    contentLength: note.contentLength,
-    version: note.version,
-    isDeleted: Boolean(note.isDeleted),
-    updatedAt: note.updatedAt
+    body,
+    noteKeyBase64
   };
 }
 

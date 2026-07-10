@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { requireSession } from "../auth/session.js";
+import { writeRequestEvent } from "../notes/events.js";
 
 const folderPayloadSchema = z.object({
   id: z.uuid().optional(),
@@ -48,6 +49,10 @@ function validateParent(
   return parent?.userId === userId && parent.parentFolderId === null;
 }
 
+function publishEventCursor(context: AppContext, cursor: number): void {
+  context.realtime?.publishEvents([cursor]);
+}
+
 export function createFoldersRouter(context: AppContext): Router {
   const router = Router();
 
@@ -88,12 +93,26 @@ export function createFoldersRouter(context: AppContext): Router {
     }
 
     const id = parsed.data.id ?? crypto.randomUUID();
-    context.db.sqlite
-      .prepare(
-        `INSERT INTO folders (id, user_id, name, parent_folder_id)
-         VALUES (?, ?, ?, ?)`
-      )
-      .run(id, session.userId, parsed.data.name, parentFolderId);
+    const createFolder = context.db.sqlite.transaction(() => {
+      context.db.sqlite
+        .prepare(
+          `INSERT INTO folders (id, user_id, name, parent_folder_id)
+           VALUES (?, ?, ?, ?)`
+        )
+        .run(id, session.userId, parsed.data.name, parentFolderId);
+      return writeRequestEvent(context, request, {
+        noteId: null,
+        actorUserId: session.userId,
+        eventType: "folder.created",
+        noteVersion: null,
+        resourceType: "folder",
+        resourceId: id,
+        payloadMetadata: {
+          folderId: id
+        }
+      });
+    });
+    publishEventCursor(context, createFolder());
 
     response.status(201).json({ id, name: parsed.data.name, parentFolderId });
   });
@@ -126,13 +145,27 @@ export function createFoldersRouter(context: AppContext): Router {
       return;
     }
 
-    context.db.sqlite
-      .prepare(
-        `UPDATE folders
-         SET name = ?, parent_folder_id = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ? AND user_id = ?`
-      )
-      .run(parsed.data.name, parentFolderId, folder.id, session.userId);
+    const updateFolder = context.db.sqlite.transaction(() => {
+      context.db.sqlite
+        .prepare(
+          `UPDATE folders
+           SET name = ?, parent_folder_id = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND user_id = ?`
+        )
+        .run(parsed.data.name, parentFolderId, folder.id, session.userId);
+      return writeRequestEvent(context, request, {
+        noteId: null,
+        actorUserId: session.userId,
+        eventType: "folder.updated",
+        noteVersion: null,
+        resourceType: "folder",
+        resourceId: folder.id,
+        payloadMetadata: {
+          folderId: folder.id
+        }
+      });
+    });
+    publishEventCursor(context, updateFolder());
 
     response.json({ id: folder.id, name: parsed.data.name, parentFolderId });
   });
@@ -172,8 +205,20 @@ export function createFoldersRouter(context: AppContext): Router {
       context.db.sqlite
         .prepare("DELETE FROM folders WHERE id = ? AND user_id = ?")
         .run(folder.id, session.userId);
+      return writeRequestEvent(context, request, {
+        noteId: null,
+        actorUserId: session.userId,
+        eventType: "folder.deleted",
+        noteVersion: null,
+        resourceType: "folder",
+        resourceId: folder.id,
+        payloadMetadata: {
+          folderId: folder.id,
+          parentFolderId: moveTarget
+        }
+      });
     });
-    remove();
+    publishEventCursor(context, remove());
 
     response.status(204).send();
   });

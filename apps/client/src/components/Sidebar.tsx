@@ -1,4 +1,4 @@
-import { Folder, Lock, LogOut, Plus, Settings } from "lucide-react";
+import { Folder, Lock, LogOut, Plus, Settings, Users } from "lucide-react";
 import type { FolderSummary } from "../api";
 import type { NotesView } from "../store/appStore";
 
@@ -8,6 +8,7 @@ interface SidebarProps {
   selectedFolderId: string | null;
   addFolder: (parentFolderId?: string | null) => Promise<void>;
   openNotes: (folderId?: string | null) => void;
+  openSharedNotes: () => void;
   openSettings: () => void;
   openTrash: () => Promise<void>;
   removeFolder: (folderId: string) => Promise<void>;
@@ -20,6 +21,7 @@ export function Sidebar({
   selectedFolderId,
   addFolder,
   openNotes,
+  openSharedNotes,
   openSettings,
   openTrash,
   removeFolder,
@@ -43,6 +45,13 @@ export function Sidebar({
         }}
       >
         <Folder size={17} /> All notes
+      </button>
+      <button
+        className={notesView === "shared" ? "nav-item active" : "nav-item"}
+        type="button"
+        onClick={openSharedNotes}
+      >
+        <Users size={17} /> Shared
       </button>
       <button
         className="nav-item"

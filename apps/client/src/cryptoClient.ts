@@ -1,6 +1,8 @@
 import {
   attachmentAssociatedData,
   createKdfParams,
+  createSharingKeyPair,
+  cryptoReady,
   decryptBytes,
   deriveAuthVerifier,
   deriveRecoveryAuthVerifier,
@@ -9,16 +11,23 @@ import {
   encryptBytes,
   fromBase64,
   generateRecoverySecret,
+  openSealedBytes,
   randomBytes,
   randomUuid,
+  sealBytes,
   toBase64,
   utf8,
   type EncryptedPayload,
   type KdfParams
 } from "@fortnote/shared";
-import type { RegisterPayload } from "./api";
+import type {
+  SharingKeyEnvelope,
+  StoreSharingKeyPayload,
+  RegisterPayload
+} from "./api";
 
 const ROOT_KEY_AAD = utf8("fortnote:root-key:v1");
+const SHARING_PRIVATE_KEY_AAD = utf8("fortnote:sharing-private-key:v1");
 
 function noteKeyAad(userId: string, noteId: string): Uint8Array {
   return utf8(`fortnote:note-key:v1:${userId}:${noteId}`);
@@ -90,10 +99,37 @@ export interface AccountRecoveryCrypto {
   passwordChange: PasswordChangeCrypto;
 }
 
+export interface OpenedSharingKey {
+  publicKey: string;
+  privateKey: string;
+  sharingKeyVersion: number;
+}
+
+export interface CreatedSharingKey {
+  payload: StoreSharingKeyPayload;
+  opened: OpenedSharingKey;
+}
+
+export interface RotatedNoteKeyMaterial {
+  contentCipher: string;
+  contentLength: number;
+  contentNonce: string;
+  encryptedNoteKey: string;
+  noteKeyBase64: string;
+  noteKeyNonce: string;
+}
+
+export interface RewrappedAttachmentKey {
+  attachmentId: string;
+  encryptedAttachmentKey: string;
+  attachmentKeyNonce: string;
+}
+
 export async function createRegistrationCrypto(
   username: string,
   password: string
 ): Promise<RegistrationCrypto> {
+  await cryptoReady();
   const authKdf = createKdfParams();
   const vaultKdf = createKdfParams();
   const recoveryKdf = createKdfParams();
@@ -172,6 +208,7 @@ export async function createPasswordChangeCrypto(
   rootKey: Uint8Array,
   newPassword: string
 ): Promise<PasswordChangeCrypto> {
+  await cryptoReady();
   const authKdf = createKdfParams();
   const vaultKdf = createKdfParams();
   const authVerifier = await deriveAuthVerifier(newPassword, authKdf);
@@ -190,6 +227,7 @@ export async function createPasswordChangeCrypto(
 export async function createRecoveryRotationCrypto(
   rootKey: Uint8Array
 ): Promise<RecoveryRotationCrypto> {
+  await cryptoReady();
   const recoverySecret = generateRecoverySecret();
   const recoveryKdf = createKdfParams();
   const recoveryAuthVerifier = await deriveRecoveryAuthVerifier(
@@ -247,12 +285,81 @@ export async function createAccountRecoveryCrypto(input: {
   };
 }
 
+export async function createUserSharingKey(
+  rootKey: Uint8Array,
+  sharingKeyVersion = 1
+): Promise<CreatedSharingKey> {
+  const keyPair = await createSharingKeyPair();
+  const encryptedPrivateKey = await encryptBytes(
+    fromBase64(keyPair.privateKey),
+    rootKey,
+    SHARING_PRIVATE_KEY_AAD
+  );
+
+  return {
+    payload: {
+      sharingKeyVersion,
+      publicKey: keyPair.publicKey,
+      encryptedPrivateKey: encryptedPrivateKey.cipher,
+      privateKeyNonce: encryptedPrivateKey.nonce,
+      formatVersion: 1
+    },
+    opened: {
+      publicKey: keyPair.publicKey,
+      privateKey: keyPair.privateKey,
+      sharingKeyVersion
+    }
+  };
+}
+
+export async function openUserSharingKey(input: {
+  rootKey: Uint8Array;
+  envelope: SharingKeyEnvelope;
+}): Promise<OpenedSharingKey> {
+  const privateKey = await decryptBytes(
+    {
+      cipher: input.envelope.encryptedPrivateKey,
+      nonce: input.envelope.privateKeyNonce,
+      formatVersion: input.envelope.formatVersion
+    },
+    input.rootKey,
+    SHARING_PRIVATE_KEY_AAD
+  );
+
+  return {
+    publicKey: input.envelope.publicKey,
+    privateKey: toBase64(privateKey),
+    sharingKeyVersion: input.envelope.sharingKeyVersion
+  };
+}
+
+export async function encryptNoteKeyShare(input: {
+  noteKeyBase64: string;
+  recipientPublicKey: string;
+}): Promise<string> {
+  return sealBytes(fromBase64(input.noteKeyBase64), input.recipientPublicKey);
+}
+
+export async function decryptNoteKeyShare(input: {
+  encryptedNoteKey: string;
+  publicKey: string;
+  privateKey: string;
+}): Promise<string> {
+  const noteKey = await openSealedBytes({
+    cipher: input.encryptedNoteKey,
+    publicKey: input.publicKey,
+    privateKey: input.privateKey
+  });
+  return toBase64(noteKey);
+}
+
 export async function createEncryptedNoteDraft(input: {
   userId: string;
   rootKey: Uint8Array;
   title: string;
   body: string;
 }): Promise<EncryptedNoteDraft> {
+  await cryptoReady();
   const id = randomUuid();
   const noteKey = randomBytes(32);
   const encryptedNoteKey = await encryptBytes(
@@ -302,6 +409,20 @@ export async function decryptNote(input: {
   };
 }
 
+export async function decryptNoteBodyWithKey(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  noteKeyBase64: string;
+  encryptedBody: EncryptedPayload;
+}): Promise<string> {
+  const bodyBytes = await decryptBytes(
+    input.encryptedBody,
+    fromBase64(input.noteKeyBase64),
+    noteBodyAad(input.cryptoOwnerId, input.noteId)
+  );
+  return new TextDecoder().decode(bodyBytes);
+}
+
 export async function encryptExistingNoteBody(input: {
   userId: string;
   noteId: string;
@@ -325,12 +446,73 @@ export function noteKeyToBase64(noteKey: Uint8Array): string {
   return toBase64(noteKey);
 }
 
+export async function rotateNoteKeyMaterial(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  rootKey: Uint8Array;
+  body: string;
+}): Promise<RotatedNoteKeyMaterial> {
+  const noteKey = randomBytes(32);
+  const encryptedNoteKey = await encryptBytes(
+    noteKey,
+    input.rootKey,
+    noteKeyAad(input.cryptoOwnerId, input.noteId)
+  );
+  const encryptedBody = await encryptBytes(
+    utf8(input.body),
+    noteKey,
+    noteBodyAad(input.cryptoOwnerId, input.noteId)
+  );
+
+  return {
+    contentCipher: encryptedBody.cipher,
+    contentLength: encryptedBody.cipher.length,
+    contentNonce: encryptedBody.nonce,
+    encryptedNoteKey: encryptedNoteKey.cipher,
+    noteKeyBase64: toBase64(noteKey),
+    noteKeyNonce: encryptedNoteKey.nonce
+  };
+}
+
+export async function rewrapAttachmentKey(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  oldNoteKeyBase64: string;
+  newNoteKeyBase64: string;
+  attachmentId: string;
+  encryptedAttachmentKey: string;
+  attachmentKeyNonce: string;
+}): Promise<RewrappedAttachmentKey> {
+  const aad = attachmentKeyAad(input.cryptoOwnerId, input.noteId, input.attachmentId);
+  const attachmentKey = await decryptBytes(
+    {
+      cipher: input.encryptedAttachmentKey,
+      nonce: input.attachmentKeyNonce,
+      formatVersion: 1
+    },
+    fromBase64(input.oldNoteKeyBase64),
+    aad
+  );
+  const encryptedAttachmentKey = await encryptBytes(
+    attachmentKey,
+    fromBase64(input.newNoteKeyBase64),
+    aad
+  );
+
+  return {
+    attachmentId: input.attachmentId,
+    encryptedAttachmentKey: encryptedAttachmentKey.cipher,
+    attachmentKeyNonce: encryptedAttachmentKey.nonce
+  };
+}
+
 export async function createEncryptedAttachmentDraft(input: {
   userId: string;
   noteId: string;
   noteKeyBase64: string;
   file: File;
 }): Promise<EncryptedAttachmentDraft> {
+  await cryptoReady();
   const id = randomUuid();
   const attachmentKey = randomBytes(32);
   const noteKey = fromBase64(input.noteKeyBase64);

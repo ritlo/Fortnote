@@ -64,8 +64,8 @@ export interface NoteSummary {
   id: string;
   folderId: string | null;
   title: string;
-  encryptedNoteKey: string;
-  noteKeyNonce: string;
+  encryptedNoteKey: string | null;
+  noteKeyNonce: string | null;
   contentCipher: string;
   contentNonce: string;
   contentLength: number;
@@ -73,6 +73,9 @@ export interface NoteSummary {
   isDeleted: boolean | 0 | 1;
   deletedAt?: string | null;
   updatedAt: string;
+  ownerUserId: string;
+  cryptoOwnerId: string;
+  role: "owner" | "editor" | "viewer";
 }
 
 export interface FolderSummary {
@@ -101,6 +104,26 @@ export interface UpdateNotePayload {
   contentNonce: string;
   contentLength: number;
   version: number;
+}
+
+export interface RotateNoteKeyPayload {
+  encryptedNoteKey: string;
+  noteKeyNonce: string;
+  contentCipher: string;
+  contentNonce: string;
+  contentLength: number;
+  version: number;
+  shares: {
+    recipientUserId: string;
+    sharingKeyVersion: number;
+    encryptedNoteKey: string;
+    formatVersion: number;
+  }[];
+  attachmentKeys: {
+    attachmentId: string;
+    encryptedAttachmentKey: string;
+    attachmentKeyNonce: string;
+  }[];
 }
 
 export interface AttachmentSummary {
@@ -143,6 +166,82 @@ export interface UpdateKeyMaterialPayload {
   keyMaterialVersion: number;
 }
 
+export interface SharingKeyEnvelope {
+  sharingKeyVersion: number;
+  publicKey: string;
+  encryptedPrivateKey: string;
+  privateKeyNonce: string;
+  formatVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PublicSharingKey {
+  userId: string;
+  username: string;
+  sharingKeyVersion: number;
+  publicKey: string;
+  formatVersion: number;
+  createdAt: string;
+}
+
+export interface NoteMembership {
+  userId: string;
+  username: string;
+  role: "owner" | "editor" | "viewer";
+  status: "active" | "invited" | "revoked";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InviteNoteMemberPayload {
+  username: string;
+  role: "editor" | "viewer";
+  sharingKeyVersion: number;
+  encryptedNoteKey: string;
+  formatVersion: number;
+}
+
+export interface NoteKeyShare {
+  noteId: string;
+  recipientUserId: string;
+  senderUserId: string;
+  sharingKeyVersion: number;
+  encryptedNoteKey: string;
+  formatVersion: number;
+  createdAt: string;
+}
+
+export interface CollaborationEvent {
+  cursor: number;
+  eventId: string;
+  type: string;
+  resourceType: string;
+  resourceId: string;
+  noteId: string | null;
+  actorUserId: string;
+  version: number | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export type PresenceState = "idle" | "editing";
+
+export interface PresenceUser {
+  userId: string;
+  username: string;
+  state: PresenceState;
+  updatedAt: string;
+}
+
+export interface StoreSharingKeyPayload {
+  sharingKeyVersion: number;
+  publicKey: string;
+  encryptedPrivateKey: string;
+  privateKeyNonce: string;
+  formatVersion: number;
+}
+
 export interface RecoverPayload {
   username: string;
   recoveryAuthVerifier: string;
@@ -154,6 +253,27 @@ export interface RecoverPayload {
   keyMaterialVersion: number;
 }
 
+export class ApiRequestError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+    message: string
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
+const clientInstanceId = crypto.randomUUID();
+
+export function getClientInstanceId(): string {
+  return clientInstanceId;
+}
+
+export function isApiRequestError(error: unknown): error is ApiRequestError {
+  return error instanceof ApiRequestError;
+}
+
 export async function apiRequest<T>(
   path: string,
   init: RequestInit = {}
@@ -162,6 +282,7 @@ export async function apiRequest<T>(
   if (!headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
+  headers.set("x-fortnote-client-id", clientInstanceId);
 
   const response = await fetch(`/api${path}`, {
     ...init,
@@ -171,9 +292,13 @@ export async function apiRequest<T>(
 
   if (!response.ok) {
     const error = (await response.json().catch(() => undefined)) as
-      | { message?: string }
+      | { code?: string; message?: string }
       | undefined;
-    throw new Error(error?.message ?? `Request failed: ${String(response.status)}`);
+    throw new ApiRequestError(
+      response.status,
+      error?.code ?? "request_failed",
+      error?.message ?? `Request failed: ${String(response.status)}`
+    );
   }
 
   if (response.status === 204) {
@@ -237,6 +362,35 @@ export function updateKeyMaterial(
   });
 }
 
+export function getCurrentSharingKey(): Promise<SharingKeyEnvelope> {
+  return apiRequest<SharingKeyEnvelope>("/sharing-keys/current");
+}
+
+export function getSharingKeyVersion(version: number): Promise<SharingKeyEnvelope> {
+  return apiRequest<SharingKeyEnvelope>(`/sharing-keys/versions/${String(version)}`);
+}
+
+export function storeCurrentSharingKey(
+  payload: StoreSharingKeyPayload
+): Promise<{ sharingKeyVersion: number }> {
+  return apiRequest<{ sharingKeyVersion: number }>("/sharing-keys/current", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function cleanupRetiredSharingKeys(): Promise<{ deleted: number }> {
+  return apiRequest<{ deleted: number }>("/sharing-keys/cleanup", {
+    method: "POST"
+  });
+}
+
+export function lookupSharingKey(username: string): Promise<PublicSharingKey> {
+  return apiRequest<PublicSharingKey>(
+    `/sharing-keys/lookup?username=${encodeURIComponent(username)}`
+  );
+}
+
 export function listNotes(deleted = false): Promise<{ notes: NoteSummary[] }> {
   return apiRequest<{ notes: NoteSummary[] }>(`/notes?deleted=${String(deleted)}`);
 }
@@ -255,6 +409,76 @@ export function updateNote(
   return apiRequest<{ id: string; version: number }>(`/notes/${noteId}`, {
     method: "PUT",
     body: JSON.stringify(payload)
+  });
+}
+
+export function rotateNoteKey(
+  noteId: string,
+  payload: RotateNoteKeyPayload
+): Promise<{ id: string; version: number }> {
+  return apiRequest<{ id: string; version: number }>(`/notes/${noteId}/key-rotation`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function listNoteMemberships(
+  noteId: string
+): Promise<{ memberships: NoteMembership[] }> {
+  return apiRequest<{ memberships: NoteMembership[] }>(`/notes/${noteId}/memberships`);
+}
+
+export function inviteNoteMember(
+  noteId: string,
+  payload: InviteNoteMemberPayload
+): Promise<NoteMembership> {
+  return apiRequest<NoteMembership>(`/notes/${noteId}/memberships`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateNoteMemberRole(
+  noteId: string,
+  userId: string,
+  role: "editor" | "viewer"
+): Promise<Pick<NoteMembership, "userId" | "role" | "status"> & { noteId: string }> {
+  return apiRequest<Pick<NoteMembership, "userId" | "role" | "status"> & { noteId: string }>(
+    `/notes/${noteId}/memberships/${userId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ role })
+    }
+  );
+}
+
+export function revokeNoteMember(noteId: string, userId: string): Promise<undefined> {
+  return apiRequest<undefined>(`/notes/${noteId}/memberships/${userId}`, {
+    method: "DELETE"
+  });
+}
+
+export function getNoteKeyShare(noteId: string): Promise<NoteKeyShare> {
+  return apiRequest<NoteKeyShare>(`/notes/${noteId}/key-share`);
+}
+
+export function listCollaborationEvents(
+  after: number,
+  limit = 100
+): Promise<{ events: CollaborationEvent[] }> {
+  return apiRequest<{ events: CollaborationEvent[] }>(
+    `/events?after=${String(after)}&limit=${String(limit)}`
+  );
+}
+
+export function getCollaborationEventCursor(): Promise<{ cursor: number }> {
+  return apiRequest<{ cursor: number }>("/events/cursor");
+}
+
+export function acknowledgeCollaborationEvents(cursor: number): Promise<undefined> {
+  return apiRequest<undefined>("/events/ack", {
+    method: "POST",
+    body: JSON.stringify({ cursor })
   });
 }
 

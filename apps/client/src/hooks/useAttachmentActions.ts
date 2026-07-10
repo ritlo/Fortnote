@@ -52,7 +52,7 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
   }
 
   async function uploadSelectedAttachment(file: File | undefined) {
-    if (!file || !user || !selectedNote) {
+    if (!file || !user || !selectedNote || selectedNote.role === "viewer") {
       return;
     }
 
@@ -60,7 +60,7 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
     setStatus("Encrypting attachment");
     try {
       const encrypted = await createEncryptedAttachmentDraft({
-        userId: user.id,
+        userId: selectedNote.cryptoOwnerId,
         noteId: selectedNote.id,
         noteKeyBase64: selectedNote.noteKeyBase64,
         file
@@ -86,7 +86,7 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
     try {
       const encrypted = await downloadAttachment(attachment.id);
       const plaintext = await decryptAttachmentBytes({
-        userId: user.id,
+        userId: selectedNote.cryptoOwnerId,
         noteId: selectedNote.id,
         noteKeyBase64: selectedNote.noteKeyBase64,
         attachmentId: attachment.id,
@@ -114,7 +114,7 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
   }
 
   async function removeSelectedAttachment(attachmentId: string) {
-    if (!selectedNote) {
+    if (!selectedNote || selectedNote.role === "viewer") {
       return;
     }
 

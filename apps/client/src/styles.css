@@ -94,6 +94,16 @@ p {
   color: var(--muted);
 }
 
+.pane-header .presence-summary {
+  margin-top: 4px;
+  max-width: 42ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #315f57;
+  font-weight: 700;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -272,9 +282,16 @@ textarea {
   padding: 12px;
 }
 
-.status-pill {
-  display: inline-flex;
+.status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin: 0 12px 8px;
+}
+
+.status-pill,
+.sync-pill {
+  display: inline-flex;
   padding: 5px 9px;
   border: 1px solid #b8dfc5;
   border-radius: 999px;
@@ -282,6 +299,30 @@ textarea {
   color: #117a3f;
   font-size: 12px;
   font-weight: 700;
+}
+
+.sync-pill {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.sync-pill.connected {
+  border-color: #b8dfc5;
+  background: #eaf6ee;
+  color: #117a3f;
+}
+
+.sync-pill.connecting {
+  border-color: #d6c282;
+  background: #fff8db;
+  color: #7a5d0b;
+}
+
+.sync-pill.disconnected {
+  border-color: #e5b0ab;
+  background: #fff1ef;
+  color: #9a261d;
 }
 
 .pane-error {
@@ -313,6 +354,32 @@ textarea {
 .note-card span,
 .empty-state {
   color: var(--muted);
+}
+
+.note-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.note-title-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-badge {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid #c9d8d2;
+  border-radius: 999px;
+  color: #315f57;
+  background: #edf7f4;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .note-card.active {
@@ -406,6 +473,114 @@ textarea {
 
 .attachment-list small {
   color: var(--muted);
+}
+
+.sharing-panel {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-title h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.share-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px auto;
+  gap: 8px;
+}
+
+.trust-confirmation {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px;
+}
+
+.trust-confirmation span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.trust-confirmation code {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.trust-confirmation div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rotation-retry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--warning, #d97706);
+  border-radius: 7px;
+  padding: 9px;
+}
+
+.rotation-retry span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.rotation-retry small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.membership-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.membership-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px;
+}
+
+.membership-list span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.membership-list small {
+  color: var(--muted);
+}
+
+.membership-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.membership-actions select {
+  min-width: 100px;
 }
 
 .text-button {

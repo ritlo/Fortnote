@@ -120,10 +120,24 @@ async function register(
 
 async function createNote(page: Page, title: string, body: string): Promise<void> {
   await page.getByLabel("New note").click();
-  await page.getByLabel("Title").fill(title);
-  await page.getByLabel("Markdown editor").fill(body);
-  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("button", { name: /Untitled note/ })).toBeVisible();
   await expect(page.getByText("Note encrypted and saved")).toBeVisible();
+  const titleInput = page.getByLabel("Title");
+  await expect(titleInput).toHaveValue("Untitled note");
+  await titleInput.fill(title);
+  await expect(titleInput).toHaveValue(title);
+  await expect(page.getByRole("button", { name: new RegExp(title) })).toBeVisible();
+  await page.getByLabel("Markdown editor").fill(body);
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().includes("/api/notes/") &&
+      response.ok()
+  );
+  await page.getByRole("button", { name: "Save" }).click();
+  await saved;
+  await expect(page.getByText("Note encrypted and saved")).toBeVisible();
+  await expect(page.getByRole("button", { name: new RegExp(title) })).toBeVisible();
 }
 
 function uniqueAccount(prefix: string) {

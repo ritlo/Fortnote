@@ -16,6 +16,7 @@ interface EditorPaneProps {
   selectedNote: DecryptedNote | null;
   user: User;
   changePassword: () => Promise<void>;
+  cleanupSharingKeys: () => Promise<void>;
   deleteSelectedForever: () => Promise<void>;
   downloadSelectedAttachment: (attachment: AttachmentSummary) => Promise<void>;
   lockVault: () => void;
@@ -23,6 +24,7 @@ interface EditorPaneProps {
   removeSelectedAttachment: (attachmentId: string) => Promise<void>;
   restoreSelectedNote: () => Promise<void>;
   rotateRecoveryKey: () => Promise<void>;
+  rotateSharingKey: () => Promise<void>;
   saveSelectedNote: () => Promise<void>;
   setNewPassword: (value: string) => void;
   updateSelectedNote: (
@@ -42,6 +44,7 @@ export function EditorPane({
   selectedNote,
   user,
   changePassword,
+  cleanupSharingKeys,
   deleteSelectedForever,
   downloadSelectedAttachment,
   lockVault,
@@ -49,11 +52,17 @@ export function EditorPane({
   removeSelectedAttachment,
   restoreSelectedNote,
   rotateRecoveryKey,
+  rotateSharingKey,
   saveSelectedNote,
   setNewPassword,
   updateSelectedNote,
   uploadSelectedAttachment
 }: EditorPaneProps) {
+  const canDeleteAttachments =
+    selectedNote?.role !== undefined &&
+    selectedNote.role !== "viewer" &&
+    notesView !== "trash";
+
   return (
     <section className="editor-pane">
       <EditorHeader
@@ -70,9 +79,11 @@ export function EditorPane({
       {notesView === "settings" ? (
         <SettingsPanel
           changePassword={changePassword}
+          cleanupSharingKeys={cleanupSharingKeys}
           newPassword={newPassword}
           recoverySecret={recoverySecret}
           rotateRecoveryKey={rotateRecoveryKey}
+          rotateSharingKey={rotateSharingKey}
           setNewPassword={setNewPassword}
         />
       ) : (
@@ -85,6 +96,7 @@ export function EditorPane({
             uploadSelectedAttachment={uploadSelectedAttachment}
           />
           <PreviewPane
+            canDeleteAttachments={canDeleteAttachments}
             downloadSelectedAttachment={downloadSelectedAttachment}
             previewHtml={previewHtml}
             removeSelectedAttachment={removeSelectedAttachment}
