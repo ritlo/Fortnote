@@ -45,6 +45,10 @@ confirmation. This is TOFU hardening: it detects key changes after first trust,
 but it cannot prove that the first trusted key was correct and does not sync
 trust decisions across devices.
 
+A trust confirmation is authorization to share one specific note-key context,
+not a general approval for whichever note is selected later. Changing the
+selected note must invalidate the pending confirmation.
+
 ## Sender Authentication
 
 Note-key shares use sealed boxes. Sealed boxes hide the note key from anyone
@@ -67,6 +71,10 @@ revoked member. After revocation, owners should rotate the note key,
 re-encrypt the note body, rewrap attachment keys, and create new note-key
 shares for remaining active collaborators.
 
+If that client-side rotation fails, the application must retain a per-note
+repair action across note navigation until rotation succeeds. Immediate server
+access removal does not make the unfinished key rotation complete.
+
 ## Developer Rules
 
 - Use `cryptoOwnerId`, not the viewer's user ID, as the note and attachment
@@ -74,8 +82,15 @@ shares for remaining active collaborators.
 - Write data mutations and durable events in the same database transaction.
 - Replay events only to active note members, except for a revoked user's own
   unacknowledged revocation tombstone.
-- Acknowledge event cursors only after the client has processed or recorded
-  enough state to replay safely.
+- Capture immutable recipients for permanent-delete tombstones before removing
+  membership rows, and include those recipients in replay and retention.
+- Acknowledge event cursors only after required refetch/decryption succeeds or
+  the client durably records work that it will retry. In-memory receipt alone is
+  not sufficient.
+- Treat WebSocket authentication as continuous: close established connections
+  when their backing session is deleted or expires.
+- Treat events from another tab or device for the same user as remote unless a
+  per-client identifier proves the mutation originated locally.
 - Delete old encrypted private sharing keys only after no note-key shares
   reference their sharing-key version.
 - Keep presence ephemeral and scoped to active note members.

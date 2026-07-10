@@ -28,6 +28,8 @@ Implemented behavior:
 - When inviting a collaborator whose key has no local trust record, show the
   username and fingerprint and require explicit confirmation before creating the
   note-key share.
+- Bind the pending confirmation to the note and note-key context that initiated
+  it. Changing the selected note invalidates the pending confirmation.
 - Store the trusted fingerprint locally in encrypted vault state, keyed by
   collaborator user ID and sharing-key version.
 - If a later lookup for the same user/version returns a different fingerprint,
@@ -56,4 +58,5 @@ Implemented behavior:
 - The sharing panel can surface trust state, but WebSocket/realtime code should
   remain outside UI components.
 - Tests should cover stable fingerprint formatting, first-use confirmation
-  gating share creation, mismatch blocking, and new-version re-confirmation.
+  gating share creation, mismatch blocking, new-version re-confirmation, and
+  switching notes before confirmation.

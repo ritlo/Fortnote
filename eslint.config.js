@@ -9,7 +9,6 @@ export default tseslint.config(
       "**/node_modules/**",
       "coverage/**",
       "eslint.config.js",
-      "mockups/**",
       ".codegraph/**",
       "playwright-report/**",
       "test-results/**"
