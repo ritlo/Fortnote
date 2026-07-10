@@ -304,7 +304,15 @@ async function reloadAfterEvents(events: CollaborationEvent[]): Promise<void> {
     return;
   }
 
-  await loadDecryptedNotes(user, rootKey, false, { preserveSelection: true });
+  const reloads = [
+    loadDecryptedNotes(user, rootKey, false, { preserveSelection: true })
+  ];
+  if (eventsRequireTrashReload(events)) {
+    reloads.push(
+      loadDecryptedNotes(user, rootKey, true, { preserveSelection: true })
+    );
+  }
+  await Promise.all(reloads);
 }
 
 export function isOwnRevocation(event: CollaborationEvent, userId: string): boolean {
@@ -322,6 +330,12 @@ export function eventsRequireNoteReload(
 
 export function eventsRequireFolderReload(events: CollaborationEvent[]): boolean {
   return events.some((event) => shouldReloadFolders(event));
+}
+
+export function eventsRequireTrashReload(events: CollaborationEvent[]): boolean {
+  return events.some((event) =>
+    ["note.deleted", "note.restored", "note.permanently_deleted"].includes(event.type)
+  );
 }
 
 export function shouldReloadNotes(event: CollaborationEvent): boolean {

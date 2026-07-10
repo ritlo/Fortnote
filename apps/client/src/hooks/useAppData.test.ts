@@ -99,6 +99,18 @@ describe("app data collaboration bootstrap", () => {
 
     expect(useAppStore.getState().selectedNoteId).toBe("older");
   });
+
+  it("does not clear a trash selection while reloading active notes", async () => {
+    const user = currentUser();
+    const rootKey = crypto.getRandomValues(new Uint8Array(32));
+    mockedListNotesWith(noteSummary({ id: "active-note" }));
+    useAppStore.getState().setNotesView("trash");
+    useAppStore.getState().setSelectedNoteId("deleted-note");
+
+    await loadDecryptedNotes(user, rootKey, false, { preserveSelection: true });
+
+    expect(useAppStore.getState().selectedNoteId).toBe("deleted-note");
+  });
 });
 
 function currentUser(): User {

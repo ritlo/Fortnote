@@ -5,6 +5,7 @@ import {
   createCollaborationEventProcessor,
   eventsRequireFolderReload,
   eventsRequireNoteReload,
+  eventsRequireTrashReload,
   isOwnRevocation,
   mergeEventCursor,
   removeRevokedNotes,
@@ -236,6 +237,12 @@ describe("realtime event processing", () => {
     expect(eventsRequireNoteReload([event({ resourceType: "presence" })])).toBe(false);
     expect(eventsRequireFolderReload([event({ resourceType: "folder" })])).toBe(true);
     expect(eventsRequireFolderReload([event({ resourceType: "note" })])).toBe(false);
+    expect(eventsRequireTrashReload([event({ type: "note.deleted" })])).toBe(true);
+    expect(eventsRequireTrashReload([event({ type: "note.restored" })])).toBe(true);
+    expect(
+      eventsRequireTrashReload([event({ type: "note.permanently_deleted" })])
+    ).toBe(true);
+    expect(eventsRequireTrashReload([event({ type: "note.updated" })])).toBe(false);
   });
 
   it("does not regress the bootstrapped cursor", () => {

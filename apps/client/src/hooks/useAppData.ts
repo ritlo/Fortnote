@@ -43,11 +43,19 @@ export async function loadDecryptedNotes(
   } else {
     setNotes(nextNotes);
   }
-  const selectedNoteId = useAppStore.getState().selectedNoteId;
+  const { notesView, selectedNoteId } = useAppStore.getState();
+  const managesSelection = deleted
+    ? notesView === "trash"
+    : notesView === "notes" || notesView === "shared";
+  if (!managesSelection) {
+    return;
+  }
   const nextSelectedNoteId =
     options.preserveSelection && nextNotes.some((note) => note.id === selectedNoteId)
       ? selectedNoteId
-      : (nextNotes[0]?.id ?? null);
+      : notesView === "shared"
+        ? (nextNotes.find((note) => note.role !== "owner")?.id ?? null)
+        : (nextNotes[0]?.id ?? null);
   setSelectedNoteId(nextSelectedNoteId);
   setAttachmentsByNote({});
 }
