@@ -90,6 +90,117 @@ test("syncs a shared note for an online editor and offline viewer", async ({
   }
 });
 
+test("syncs edits between two tabs signed in to the same account", async ({
+  baseURL,
+  browser
+}) => {
+  const contexts: BrowserContext[] = [];
+  const account = uniqueAccount("same-account");
+  const noteTitle = `Two tab note ${account.suffix}`;
+  const firstBody = `First tab update ${account.suffix}`;
+  const secondBody = `Second tab update ${account.suffix}`;
+
+  try {
+    const context = await browser.newContext({ baseURL });
+    contexts.push(context);
+    const firstPage = await context.newPage();
+    await register(firstPage, account.username, account.password);
+    await createNote(firstPage, noteTitle, `Initial body ${account.suffix}`);
+
+    const secondPage = await context.newPage();
+    await signIn(secondPage, account.username, account.password);
+    await openNote(secondPage, noteTitle);
+
+    await editSelectedNote(firstPage, firstBody);
+    await expect(secondPage.locator(".preview-body", { hasText: firstBody })).toBeVisible({
+      timeout: 10_000
+    });
+
+    await editSelectedNote(secondPage, secondBody);
+    await expect(firstPage.locator(".preview-body", { hasText: secondBody })).toBeVisible({
+      timeout: 10_000
+    });
+  } finally {
+    await Promise.all(contexts.splice(0).map((context) => context.close()));
+  }
+});
+
+test("removes a permanently deleted shared note after an offline client reconnects", async ({
+  baseURL,
+  browser
+}) => {
+  const contexts: BrowserContext[] = [];
+  const alice = uniqueAccount("delete-alice");
+  const bob = uniqueAccount("delete-bob");
+  const noteTitle = `Delete replay note ${alice.suffix}`;
+
+  try {
+    const bobPage = await newUserPage(browser, baseURL, contexts);
+    await register(bobPage, bob.username, bob.password);
+    await waitForSharingKey(bobPage);
+
+    const alicePage = await newUserPage(browser, baseURL, contexts);
+    await register(alicePage, alice.username, alice.password);
+    await createNote(alicePage, noteTitle, `Delete replay body ${alice.suffix}`);
+    await shareNote(alicePage, bob.username, "editor");
+    await openNote(bobPage, noteTitle);
+
+    await bobPage.context().setOffline(true);
+    await alicePage.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(alicePage.getByText("Note moved to trash")).toBeVisible();
+    await alicePage.getByRole("button", { name: "Trash", exact: true }).click();
+    await openNote(alicePage, noteTitle);
+    await alicePage.getByRole("button", { name: "Delete forever" }).click();
+    await expect(alicePage.getByText("Note permanently deleted")).toBeVisible();
+
+    await bobPage.context().setOffline(false);
+    await expect(bobPage.getByRole("button", { name: noteTitlePattern(noteTitle) })).toHaveCount(0, {
+      timeout: 15_000
+    });
+    await expect(bobPage.locator(".preview-body", { hasText: "Delete replay body" })).toHaveCount(0);
+  } finally {
+    await Promise.all(contexts.splice(0).map((context) => context.close()));
+  }
+});
+
+test("cancels sharing-key confirmation when another note is selected", async ({
+  baseURL,
+  browser
+}) => {
+  const contexts: BrowserContext[] = [];
+  const alice = uniqueAccount("switch-alice");
+  const bob = uniqueAccount("switch-bob");
+  const targetTitle = `Trust target ${alice.suffix}`;
+  const otherTitle = `Other note ${alice.suffix}`;
+  let membershipPosted = false;
+
+  try {
+    const bobPage = await newUserPage(browser, baseURL, contexts);
+    await register(bobPage, bob.username, bob.password);
+    await waitForSharingKey(bobPage);
+    await closePageContext(bobPage, contexts);
+
+    const alicePage = await newUserPage(browser, baseURL, contexts);
+    await register(alicePage, alice.username, alice.password);
+    await createNote(alicePage, targetTitle, `Target body ${alice.suffix}`);
+    await createNote(alicePage, otherTitle, `Other body ${alice.suffix}`);
+    await openNote(alicePage, targetTitle);
+    alicePage.on("response", (response) => {
+      if (response.request().method() === "POST" && response.url().includes("/memberships")) {
+        membershipPosted = true;
+      }
+    });
+
+    await pageAttemptShare(alicePage, bob.username, "editor");
+    await expect(alicePage.getByRole("button", { name: "Trust key" })).toBeVisible();
+    await openNote(alicePage, otherTitle);
+    await expect(alicePage.getByRole("button", { name: "Trust key" })).toHaveCount(0);
+    expect(membershipPosted).toBe(false);
+  } finally {
+    await Promise.all(contexts.splice(0).map((context) => context.close()));
+  }
+});
+
 test("blocks sharing when a trusted sharing key changes", async ({ baseURL, browser }) => {
   const contexts: BrowserContext[] = [];
   const alice = uniqueAccount("trust-alice");
@@ -158,6 +269,7 @@ test("retries failed revocation key rotation", async ({ baseURL, browser }) => {
   const alice = uniqueAccount("retry-alice");
   const bob = uniqueAccount("retry-bob");
   const noteTitle = `Retry rotation note ${alice.suffix}`;
+  const otherTitle = `Retry navigation note ${alice.suffix}`;
   let failNextRotation = true;
 
   try {
@@ -167,6 +279,7 @@ test("retries failed revocation key rotation", async ({ baseURL, browser }) => {
 
     const alicePage = await newUserPage(browser, baseURL, contexts);
     await register(alicePage, alice.username, alice.password);
+    await createNote(alicePage, otherTitle, `Navigation body ${alice.suffix}`);
     await createNote(alicePage, noteTitle, `Retry body ${alice.suffix}`);
     await shareNote(alicePage, bob.username, "editor");
     await alicePage.route("**/api/notes/*/key-rotation", async (route) => {
@@ -188,6 +301,11 @@ test("retries failed revocation key rotation", async ({ baseURL, browser }) => {
     await revokeMember(alicePage, bob.username);
     await expect(alicePage.getByText("Key rotation incomplete")).toBeVisible();
     const retryButton = alicePage.getByRole("button", { name: "Retry rotation", exact: true });
+    await expect(retryButton).toBeVisible();
+
+    await openNote(alicePage, otherTitle);
+    await expect(retryButton).toHaveCount(0);
+    await openNote(alicePage, noteTitle);
     await expect(retryButton).toBeVisible();
 
     const retried = alicePage.waitForResponse(
