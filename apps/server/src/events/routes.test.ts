@@ -310,6 +310,66 @@ describe("event replay routes", () => {
     expect(remainingAfterCarolAck.count).toBe(0);
   });
 
+  it("replays and retains permanent-delete tombstones for former members", async () => {
+    const app = createTestApp();
+    const alice = await registerAgent(app, "delete_replay_alice");
+    const bob = await registerAgent(app, "delete_replay_bob");
+
+    await bob
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload("delete_replay_bob"))
+      .expect(201);
+
+    const created = await alice
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+    await alice
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send(invitePayload("delete_replay_bob", "editor"))
+      .expect(201);
+
+    await alice
+      .delete(`/api/notes/${noteId}/permanent`)
+      .set(csrfHeaders())
+      .expect(204);
+
+    const bobReplay = await bob.get("/api/events").query({ after: 0 }).expect(200);
+    expect(bobReplay.body.events).toHaveLength(1);
+    expect(bobReplay.body.events[0]).toMatchObject({
+      noteId,
+      type: "note.permanently_deleted"
+    });
+    const deleteCursor = Number(bobReplay.body.events[0].cursor);
+
+    await alice
+      .post("/api/events/ack")
+      .set(csrfHeaders())
+      .send({ cursor: deleteCursor })
+      .expect(204);
+    const retainedBeforeBobAck = app.locals.db.sqlite
+      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?")
+      .get(deleteCursor) as { count: number };
+    expect(retainedBeforeBobAck.count).toBe(1);
+
+    await bob
+      .post("/api/events/ack")
+      .set(csrfHeaders())
+      .send({ cursor: deleteCursor })
+      .expect(204);
+    const bobAfterAck = await bob.get("/api/events").query({ after: 0 }).expect(200);
+    expect(bobAfterAck.body.events).toEqual([]);
+
+    const retainedAfterBobAck = app.locals.db.sqlite
+      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?")
+      .get(deleteCursor) as { count: number };
+    expect(retainedAfterBobAck.count).toBe(0);
+  });
+
   it("rejects unauthenticated replay requests", async () => {
     const app = createTestApp();
     await request(app).get("/api/events").expect(401);

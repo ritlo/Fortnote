@@ -73,11 +73,23 @@ export function listVisibleEvents(
                OR event_acknowledgements.cursor < note_events.cursor
              )
            )
+           OR (
+             note_events.event_type = 'note.permanently_deleted'
+             AND EXISTS (
+               SELECT 1
+               FROM json_each(note_events.payload_metadata, '$.visibleUserIds')
+               WHERE json_each.value = ?
+             )
+             AND (
+               event_acknowledgements.cursor IS NULL
+               OR event_acknowledgements.cursor < note_events.cursor
+             )
+           )
          )
        ORDER BY note_events.cursor
        LIMIT ?`
     )
-    .all(userId, userId, after, userId, userId, limit) as EventRow[];
+    .all(userId, userId, after, userId, userId, userId, limit) as EventRow[];
 
   return rows.map((row) => ({
     cursor: row.cursor,
@@ -129,14 +141,26 @@ export function acknowledgeVisibleEvents(
        FROM note_events
        WHERE note_events.cursor <= ?
          AND note_events.note_id IS NOT NULL
-         AND note_events.event_type = 'membership.revoked'
-         AND json_extract(note_events.payload_metadata, '$.membershipUserId') = ?
+         AND (
+           (
+             note_events.event_type = 'membership.revoked'
+             AND json_extract(note_events.payload_metadata, '$.membershipUserId') = ?
+           )
+           OR (
+             note_events.event_type = 'note.permanently_deleted'
+             AND EXISTS (
+               SELECT 1
+               FROM json_each(note_events.payload_metadata, '$.visibleUserIds')
+               WHERE json_each.value = ?
+             )
+           )
+         )
        GROUP BY note_events.note_id
        ON CONFLICT(user_id, note_id) DO UPDATE SET
          cursor = MAX(event_acknowledgements.cursor, excluded.cursor),
          updated_at = CURRENT_TIMESTAMP`
     )
-    .run(userId, cursor, userId);
+    .run(userId, cursor, userId, userId);
 }
 
 export function getAcknowledgedEventCursor(
@@ -190,11 +214,24 @@ export function pruneAcknowledgedEvents(
            )
            AND NOT EXISTS (
              SELECT 1
-             FROM users AS revoked_user
+             FROM users AS tombstone_user
              LEFT JOIN event_cursors
-               ON event_cursors.user_id = revoked_user.id
-             WHERE note_events.event_type = 'membership.revoked'
-               AND revoked_user.id = json_extract(note_events.payload_metadata, '$.membershipUserId')
+               ON event_cursors.user_id = tombstone_user.id
+             WHERE (
+               (
+                 note_events.event_type = 'membership.revoked'
+                 AND tombstone_user.id =
+                   json_extract(note_events.payload_metadata, '$.membershipUserId')
+               )
+               OR (
+                 note_events.event_type = 'note.permanently_deleted'
+                 AND EXISTS (
+                   SELECT 1
+                   FROM json_each(note_events.payload_metadata, '$.visibleUserIds')
+                   WHERE json_each.value = tombstone_user.id
+                 )
+               )
+             )
                AND COALESCE(event_cursors.cursor, 0) < note_events.cursor
            )`
       )
@@ -206,10 +243,22 @@ export function pruneAcknowledgedEvents(
            SELECT 1
            FROM note_events
            WHERE note_events.note_id = event_acknowledgements.note_id
-             AND note_events.event_type = 'membership.revoked'
              AND note_events.cursor <= event_acknowledgements.cursor
-             AND json_extract(note_events.payload_metadata, '$.membershipUserId') =
-               event_acknowledgements.user_id
+             AND (
+               (
+                 note_events.event_type = 'membership.revoked'
+                 AND json_extract(note_events.payload_metadata, '$.membershipUserId') =
+                   event_acknowledgements.user_id
+               )
+               OR (
+                 note_events.event_type = 'note.permanently_deleted'
+                 AND EXISTS (
+                   SELECT 1
+                   FROM json_each(note_events.payload_metadata, '$.visibleUserIds')
+                   WHERE json_each.value = event_acknowledgements.user_id
+                 )
+               )
+             )
          )`
       )
       .run().changes;

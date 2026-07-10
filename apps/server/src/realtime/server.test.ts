@@ -198,6 +198,53 @@ describe("realtime server", () => {
     await expectNoMessage(bobSocket, "bob forbidden folder event");
   });
 
+  it("pushes permanent-delete tombstones after membership removal", async () => {
+    const server = await createRealtimeTestServer();
+    const alice = await register(server.url, "ws_delete_alice");
+    const bob = await register(server.url, "ws_delete_bob");
+
+    await authed(server.url, bob.cookie)
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload("ws_delete_bob"))
+      .expect(201);
+    const created = await authed(server.url, alice.cookie)
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+    await authed(server.url, alice.cookie)
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send(invitePayload("ws_delete_bob", "editor"))
+      .expect(201);
+
+    const currentCursor = (
+      server.db.sqlite
+        .prepare("SELECT MAX(cursor) AS cursor FROM note_events")
+        .get() as { cursor: number }
+    ).cursor;
+    const bobSocket = await connect(server.url, bob.cookie, currentCursor);
+    await bobSocket.next("bob connected");
+    await bobSocket.next("bob replay");
+
+    const deleteEvent = bobSocket.next("bob permanent delete");
+    await authed(server.url, alice.cookie)
+      .delete(`/api/notes/${noteId}/permanent`)
+      .set(csrfHeaders())
+      .expect(204);
+
+    expect(await deleteEvent).toMatchObject({
+      type: "event",
+      event: {
+        noteId,
+        type: "note.permanently_deleted"
+      }
+    });
+    bobSocket.socket.close();
+  });
+
   it("broadcasts note presence only to active members", async () => {
     const server = await createRealtimeTestServer();
     const alice = await register(server.url, "presence_alice");
