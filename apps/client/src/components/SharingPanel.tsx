@@ -35,6 +35,8 @@ const EMPTY_PRESENCE: PresenceUser[] = [];
 interface PendingSharingTrust {
   publicKey: PublicSharingKey;
   fingerprint: string;
+  noteId: string;
+  noteKeyBase64: string;
   role: "editor" | "viewer";
   username: string;
 }
@@ -85,8 +87,8 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     (state) => state.setRevocationRotationFailure
   );
   const setStatus = useAppStore((state) => state.setStatus);
-  const revocationRotationFailure = useAppStore(
-    (state) => state.revocationRotationFailure
+  const selectedRotationFailure = useAppStore((state) =>
+    selectedNote ? state.revocationRotationFailures[selectedNote.id] : undefined
   );
   const presence = useAppStore((state) =>
     selectedNote ? (state.presenceByNote[selectedNote.id] ?? EMPTY_PRESENCE) : EMPTY_PRESENCE
@@ -116,10 +118,15 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     };
   }, [selectedNote]);
 
+  useEffect(() => {
+    setPendingTrust(null);
+  }, [selectedNote?.id]);
+
   async function submitInvite() {
     if (selectedNote?.role !== "owner" || !username.trim()) {
       return;
     }
+    const note = selectedNote;
 
     setIsSubmitting(true);
     setError(null);
@@ -144,13 +151,15 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
         setPendingTrust({
           publicKey,
           fingerprint: trust.fingerprint,
+          noteId: note.id,
+          noteKeyBase64: note.noteKeyBase64,
           role,
           username: username.trim()
         });
         setStatus("Confirm collaborator key");
         return;
       }
-      await shareWithPublicKey(publicKey, role, username.trim());
+      await shareWithPublicKey(note, publicKey, role, username.trim());
     } catch (inviteError) {
       setStatus("Share failed");
       setError(inviteError instanceof Error ? inviteError.message : "Unable to share note");
@@ -163,6 +172,13 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     if (!pendingTrust || !user || !rootKey) {
       return;
     }
+    if (!pendingTrustMatchesNote(pendingTrust, selectedNote)) {
+      setPendingTrust(null);
+      setStatus("Share cancelled");
+      setError("Selected note or note key changed. Start sharing again.");
+      return;
+    }
+    const note = selectedNote;
 
     setIsSubmitting(true);
     setError(null);
@@ -174,6 +190,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
         fingerprint: pendingTrust.fingerprint
       });
       await shareWithPublicKey(
+        note,
         pendingTrust.publicKey,
         pendingTrust.role,
         pendingTrust.username
@@ -188,26 +205,27 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   }
 
   async function shareWithPublicKey(
+    note: DecryptedNote,
     publicKey: PublicSharingKey,
     memberRole: "editor" | "viewer",
     collaboratorUsername: string
   ) {
-    if (selectedNote?.role !== "owner") {
+    if (note.role !== "owner") {
       return;
     }
 
     const encryptedNoteKey = await encryptNoteKeyShare({
-      noteKeyBase64: selectedNote.noteKeyBase64,
+      noteKeyBase64: note.noteKeyBase64,
       recipientPublicKey: publicKey.publicKey
     });
-    await inviteNoteMember(selectedNote.id, {
+    await inviteNoteMember(note.id, {
       username: collaboratorUsername,
       role: memberRole,
       sharingKeyVersion: publicKey.sharingKeyVersion,
       encryptedNoteKey,
       formatVersion: 1
     });
-    const payload = await listNoteMemberships(selectedNote.id);
+    const payload = await listNoteMemberships(note.id);
     setMemberships(payload.memberships);
     setUsername("");
     setStatus("Note shared");
@@ -269,12 +287,12 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   ) {
     try {
       await rotateAfterRevoke(note, nextMemberships, vaultRootKey);
-      setRevocationRotationFailure(null);
+      setRevocationRotationFailure(note.id, null);
       setStatus("Collaborator revoked and keys rotated");
     } catch (rotationError) {
       const message =
         rotationError instanceof Error ? rotationError.message : "Key rotation failed";
-      setRevocationRotationFailure({
+      setRevocationRotationFailure(note.id, {
         noteId: note.id,
         revokedUserId: member.userId,
         revokedUsername: member.username,
@@ -290,7 +308,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     if (
       selectedNote?.role !== "owner" ||
       !rootKey ||
-      revocationRotationFailure?.noteId !== selectedNote.id
+      !selectedRotationFailure
     ) {
       return;
     }
@@ -302,13 +320,13 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
       const payload = await listNoteMemberships(selectedNote.id);
       setMemberships(payload.memberships);
       await rotateAfterRevoke(selectedNote, payload.memberships, rootKey);
-      setRevocationRotationFailure(null);
+      setRevocationRotationFailure(selectedNote.id, null);
       setStatus("Keys rotated after revoke");
     } catch (rotationError) {
       const message =
         rotationError instanceof Error ? rotationError.message : "Key rotation failed";
-      setRevocationRotationFailure({
-        ...revocationRotationFailure,
+      setRevocationRotationFailure(selectedNote.id, {
+        ...selectedRotationFailure,
         message,
         failedAt: new Date().toISOString()
       });
@@ -407,11 +425,6 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   }
 
   const canInvite = selectedNote?.role === "owner" && !disabled;
-  const selectedRotationFailure =
-    selectedNote && revocationRotationFailure?.noteId === selectedNote.id
-      ? revocationRotationFailure
-      : null;
-
   return (
     <section className="sharing-panel">
       <div className="section-title">
@@ -555,6 +568,16 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
         ))}
       </ul>
     </section>
+  );
+}
+
+export function pendingTrustMatchesNote(
+  pendingTrust: Pick<PendingSharingTrust, "noteId" | "noteKeyBase64">,
+  note: DecryptedNote | null
+): note is DecryptedNote {
+  return (
+    note?.id === pendingTrust.noteId &&
+    note.noteKeyBase64 === pendingTrust.noteKeyBase64
   );
 }
 

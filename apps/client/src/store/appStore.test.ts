@@ -50,7 +50,7 @@ describe("collaboration event store", () => {
   });
 
   it("clears revocation rotation failure when note access is removed", () => {
-    useAppStore.getState().setRevocationRotationFailure({
+    useAppStore.getState().setRevocationRotationFailure("revoked_note", {
       failedAt: "2026-07-02T10:00:00.000Z",
       message: "network failed",
       noteId: "revoked_note",
@@ -61,12 +61,12 @@ describe("collaboration event store", () => {
 
     useAppStore.getState().removeNoteAccess("revoked_note");
 
-    expect(useAppStore.getState().revocationRotationFailure).toBeNull();
+    expect(useAppStore.getState().revocationRotationFailures).toEqual({});
   });
 
-  it("clears revocation rotation failure when selection changes", () => {
+  it("preserves revocation rotation failure when selection changes", () => {
     useAppStore.getState().setSelectedNoteId("note_1");
-    useAppStore.getState().setRevocationRotationFailure({
+    useAppStore.getState().setRevocationRotationFailure("note_1", {
       failedAt: "2026-07-02T10:00:00.000Z",
       message: "network failed",
       noteId: "note_1",
@@ -76,11 +76,14 @@ describe("collaboration event store", () => {
 
     useAppStore.getState().setSelectedNoteId("note_2");
 
-    expect(useAppStore.getState().revocationRotationFailure).toBeNull();
+    expect(useAppStore.getState().revocationRotationFailures.note_1).toMatchObject({
+      message: "network failed",
+      noteId: "note_1"
+    });
   });
 
   it("clears revocation rotation failure on vault reset", () => {
-    useAppStore.getState().setRevocationRotationFailure({
+    useAppStore.getState().setRevocationRotationFailure("note_1", {
       failedAt: "2026-07-02T10:00:00.000Z",
       message: "network failed",
       noteId: "note_1",
@@ -90,7 +93,7 @@ describe("collaboration event store", () => {
 
     useAppStore.getState().resetVaultState("locked");
 
-    expect(useAppStore.getState().revocationRotationFailure).toBeNull();
+    expect(useAppStore.getState().revocationRotationFailures).toEqual({});
   });
 });
 
