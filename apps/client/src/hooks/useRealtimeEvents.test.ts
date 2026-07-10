@@ -2,12 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CollaborationEvent } from "../api";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
 import {
-  createEventAcknowledger,
+  createCollaborationEventProcessor,
   eventsRequireFolderReload,
   eventsRequireNoteReload,
   isOwnRevocation,
   mergeEventCursor,
-  processCollaborationEvents,
   removeRevokedNotes,
   shouldReloadFolders,
   shouldReloadNotes
@@ -18,42 +17,58 @@ describe("realtime event processing", () => {
     useAppStore.getState().resetVaultState("reset");
   });
 
-  it("records events and acknowledges the highest cursor", () => {
-    const addCollaborationEvents = vi.fn();
+  it("acknowledges only after applying and reloading events", async () => {
+    const applyEvents = vi.fn();
     const acknowledgeEvents = vi.fn().mockResolvedValue(undefined);
-    const removeRevoked = vi.fn();
+    const reload = deferred<undefined>();
+    const reloadEvents = vi.fn().mockReturnValue(reload.promise);
     const events = [
       event({ cursor: 4, eventId: "event_4" }),
       event({ cursor: 9, eventId: "event_9" })
     ];
-
-    processCollaborationEvents(events, addCollaborationEvents, {
+    const processEvents = createCollaborationEventProcessor({
       acknowledgeEvents,
-      removeRevoked
+      applyEvents,
+      reloadEvents,
+      scheduleRetry: vi.fn()
     });
 
-    expect(addCollaborationEvents).toHaveBeenCalledWith(events);
-    expect(removeRevoked).toHaveBeenCalledWith(events);
+    processEvents(events);
+    await flushPromises();
+
+    expect(applyEvents).toHaveBeenCalledWith(events);
+    expect(reloadEvents).toHaveBeenCalledWith(events);
+    expect(acknowledgeEvents).not.toHaveBeenCalled();
+
+    reload.resolve(undefined);
+    await flushPromises();
+
     expect(acknowledgeEvents).toHaveBeenCalledWith(9);
   });
 
-  it("retries failed event acknowledgements", async () => {
+  it("retries failed reloads before acknowledgement", async () => {
     const retryCallbacks: (() => void)[] = [];
-    const acknowledgeEvents = vi
+    const applyEvents = vi.fn();
+    const acknowledgeEvents = vi.fn().mockResolvedValue(undefined);
+    const reloadEvents = vi
       .fn()
       .mockRejectedValueOnce(new Error("network offline"))
       .mockResolvedValueOnce(undefined);
-    const acknowledgeCursor = createEventAcknowledger({
+    const processEvents = createCollaborationEventProcessor({
       acknowledgeEvents,
+      applyEvents,
+      reloadEvents,
       scheduleRetry: (retry) => {
         retryCallbacks.push(retry);
       }
     });
 
-    await acknowledgeCursor(7);
+    processEvents([event({ cursor: 7 })]);
     await flushPromises();
 
-    expect(acknowledgeEvents).toHaveBeenCalledWith(7);
+    expect(applyEvents).toHaveBeenCalledTimes(1);
+    expect(reloadEvents).toHaveBeenCalledTimes(1);
+    expect(acknowledgeEvents).not.toHaveBeenCalled();
     expect(retryCallbacks).toHaveLength(1);
 
     const retry = retryCallbacks[0];
@@ -63,31 +78,33 @@ describe("realtime event processing", () => {
     retry();
     await flushPromises();
 
-    expect(acknowledgeEvents).toHaveBeenCalledTimes(2);
-    expect(acknowledgeEvents).toHaveBeenLastCalledWith(7);
+    expect(applyEvents).toHaveBeenCalledTimes(1);
+    expect(reloadEvents).toHaveBeenCalledTimes(2);
+    expect(acknowledgeEvents).toHaveBeenCalledWith(7);
   });
 
-  it("acknowledges the latest cursor after a failed acknowledgement", async () => {
+  it("retries acknowledgement without repeating a successful reload", async () => {
     const retryCallbacks: (() => void)[] = [];
     const acknowledgeEvents = vi
       .fn()
       .mockRejectedValueOnce(new Error("network offline"))
       .mockResolvedValue(undefined);
-    const acknowledgeCursor = createEventAcknowledger({
+    const reloadEvents = vi.fn().mockResolvedValue(undefined);
+    const processEvents = createCollaborationEventProcessor({
       acknowledgeEvents,
+      applyEvents: vi.fn(),
+      reloadEvents,
       scheduleRetry: (retry) => {
         retryCallbacks.push(retry);
       }
     });
 
-    await acknowledgeCursor(4);
-    await flushPromises();
-    await acknowledgeCursor(9);
+    processEvents([event({ cursor: 9 })]);
     await flushPromises();
 
     expect(retryCallbacks).toHaveLength(1);
-    expect(acknowledgeEvents).toHaveBeenCalledTimes(2);
-    expect(acknowledgeEvents).toHaveBeenLastCalledWith(9);
+    expect(reloadEvents).toHaveBeenCalledTimes(1);
+    expect(acknowledgeEvents).toHaveBeenCalledTimes(1);
 
     const retry = retryCallbacks[0];
     if (!retry) {
@@ -97,20 +114,54 @@ describe("realtime event processing", () => {
     await flushPromises();
 
     expect(acknowledgeEvents).toHaveBeenCalledTimes(2);
+    expect(reloadEvents).toHaveBeenCalledTimes(1);
   });
 
-  it("ignores empty event batches", () => {
-    const addCollaborationEvents = vi.fn();
+  it("serializes event reloads so older snapshots cannot finish last", async () => {
+    const firstReload = deferred<undefined>();
+    const reloadEvents = vi
+      .fn()
+      .mockReturnValueOnce(firstReload.promise)
+      .mockResolvedValueOnce(undefined);
     const acknowledgeEvents = vi.fn().mockResolvedValue(undefined);
-    const removeRevoked = vi.fn();
-
-    processCollaborationEvents([], addCollaborationEvents, {
+    const processEvents = createCollaborationEventProcessor({
       acknowledgeEvents,
-      removeRevoked
+      applyEvents: vi.fn(),
+      reloadEvents,
+      scheduleRetry: vi.fn()
     });
 
-    expect(addCollaborationEvents).not.toHaveBeenCalled();
-    expect(removeRevoked).not.toHaveBeenCalled();
+    processEvents([event({ cursor: 4, eventId: "event_4" })]);
+    processEvents([event({ cursor: 9, eventId: "event_9" })]);
+    await flushPromises();
+
+    expect(reloadEvents).toHaveBeenCalledTimes(1);
+    expect(acknowledgeEvents).not.toHaveBeenCalled();
+
+    firstReload.resolve(undefined);
+    await flushPromises();
+
+    expect(reloadEvents).toHaveBeenCalledTimes(2);
+    expect(acknowledgeEvents).toHaveBeenNthCalledWith(1, 4);
+    expect(acknowledgeEvents).toHaveBeenNthCalledWith(2, 9);
+  });
+
+  it("ignores empty event batches", async () => {
+    const applyEvents = vi.fn();
+    const acknowledgeEvents = vi.fn().mockResolvedValue(undefined);
+    const reloadEvents = vi.fn().mockResolvedValue(undefined);
+    const processEvents = createCollaborationEventProcessor({
+      acknowledgeEvents,
+      applyEvents,
+      reloadEvents,
+      scheduleRetry: vi.fn()
+    });
+
+    processEvents([]);
+    await flushPromises();
+
+    expect(applyEvents).not.toHaveBeenCalled();
+    expect(reloadEvents).not.toHaveBeenCalled();
     expect(acknowledgeEvents).not.toHaveBeenCalled();
   });
 
@@ -180,20 +231,9 @@ describe("realtime event processing", () => {
     expect(shouldReloadNotes(event({ resourceType: "presence" }))).toBe(false);
   });
 
-  it("skips own events when deciding whether to reload notes", () => {
-    expect(
-      eventsRequireNoteReload([event({ actorUserId: "user_bob" })], "user_bob", {
-        skipOwnEvents: true
-      })
-    ).toBe(false);
-    expect(
-      eventsRequireNoteReload([event({ actorUserId: "user_alice" })], "user_bob", {
-        skipOwnEvents: true
-      })
-    ).toBe(true);
-    expect(eventsRequireNoteReload([event({ resourceType: "presence" })], "user_bob")).toBe(
-      false
-    );
+  it("reloads same-account events from another tab", () => {
+    expect(eventsRequireNoteReload([event({ actorUserId: "user_bob" })])).toBe(true);
+    expect(eventsRequireNoteReload([event({ resourceType: "presence" })])).toBe(false);
     expect(eventsRequireFolderReload([event({ resourceType: "folder" })])).toBe(true);
     expect(eventsRequireFolderReload([event({ resourceType: "note" })])).toBe(false);
   });
@@ -240,4 +280,14 @@ function note(id: string): DecryptedNote {
 async function flushPromises(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
 }

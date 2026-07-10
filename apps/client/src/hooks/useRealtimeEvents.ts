@@ -14,7 +14,7 @@ import { loadDecryptedNotes, loadFolders } from "./useAppData";
 
 const RECONNECT_BASE_DELAY_MS = 500;
 const RECONNECT_MAX_DELAY_MS = 10_000;
-const ACKNOWLEDGE_RETRY_DELAY_MS = 2_000;
+const EVENT_RETRY_DELAY_MS = 2_000;
 const PRESENCE_HEARTBEAT_MS = 15_000;
 
 export function useRealtimeEvents() {
@@ -23,14 +23,13 @@ export function useRealtimeEvents() {
   const localPresenceState = useAppStore((state) => state.localPresenceState);
   const selectedNoteId = useAppStore((state) => state.selectedNoteId);
   const addCollaborationEvents = useAppStore((state) => state.addCollaborationEvents);
-  const removeNoteAccess = useAppStore((state) => state.removeNoteAccess);
   const setEventCursor = useAppStore((state) => state.setEventCursor);
   const setNotePresence = useAppStore((state) => state.setNotePresence);
   const setRealtimeStatus = useAppStore((state) => state.setRealtimeStatus);
   const connectionRef = useRef<RealtimeConnection | null>(null);
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
-  const acknowledgeRetryTimersRef = useRef<number[]>([]);
+  const eventRetryTimersRef = useRef<number[]>([]);
   const localPresenceStateRef = useRef(localPresenceState);
   const previousSelectedNoteIdRef = useRef<string | null>(selectedNoteId);
   const selectedNoteIdRef = useRef<string | null>(selectedNoteId);
@@ -51,24 +50,29 @@ export function useRealtimeEvents() {
       reconnectTimerRef.current = null;
     }
 
-    function clearAcknowledgeRetryTimers() {
-      acknowledgeRetryTimersRef.current.forEach((timerId) => {
+    function clearEventRetryTimers() {
+      eventRetryTimersRef.current.forEach((timerId) => {
         window.clearTimeout(timerId);
       });
-      acknowledgeRetryTimersRef.current = [];
+      eventRetryTimersRef.current = [];
     }
 
-    const acknowledgeEventCursor = createEventAcknowledger({
+    const processEvents = createCollaborationEventProcessor({
       acknowledgeEvents: acknowledgeCollaborationEvents,
+      applyEvents: (events) => {
+        addCollaborationEvents(events);
+        removeRevokedNotes(events);
+      },
       isActive: () => isActive,
+      reloadEvents: reloadAfterEvents,
       scheduleRetry: (retry) => {
         const timerId = window.setTimeout(() => {
-          acknowledgeRetryTimersRef.current = acknowledgeRetryTimersRef.current.filter(
+          eventRetryTimersRef.current = eventRetryTimersRef.current.filter(
             (storedTimerId) => storedTimerId !== timerId
           );
           retry();
-        }, ACKNOWLEDGE_RETRY_DELAY_MS);
-        acknowledgeRetryTimersRef.current.push(timerId);
+        }, EVENT_RETRY_DELAY_MS);
+        eventRetryTimersRef.current.push(timerId);
       }
     });
 
@@ -137,18 +141,11 @@ export function useRealtimeEvents() {
         },
         onMessage: (message) => {
           if (message.type === "replay") {
-            processCollaborationEvents(message.events, addCollaborationEvents, {
-              acknowledgeEvents: acknowledgeEventCursor
-            });
-            void reloadAfterEvents(message.events, { skipOwnEvents: true });
+            processEvents(message.events);
             return;
           }
           if (message.type === "event") {
-            const events = [message.event];
-            processCollaborationEvents(events, addCollaborationEvents, {
-              acknowledgeEvents: acknowledgeEventCursor
-            });
-            void reloadAfterEvents(events, { skipOwnEvents: true });
+            processEvents([message.event]);
             return;
           }
           if (message.type === "presence") {
@@ -171,7 +168,7 @@ export function useRealtimeEvents() {
     return () => {
       isActive = false;
       clearReconnectTimer();
-      clearAcknowledgeRetryTimers();
+      clearEventRetryTimers();
       window.clearInterval(heartbeatId);
       reconnectAttemptRef.current = 0;
       const connection = connectionRef.current;
@@ -180,7 +177,6 @@ export function useRealtimeEvents() {
     };
   }, [
     addCollaborationEvents,
-    removeNoteAccess,
     rootKey,
     setEventCursor,
     setNotePresence,
@@ -206,78 +202,74 @@ export function useRealtimeEvents() {
   }, [localPresenceState]);
 }
 
-interface ProcessCollaborationEventsOptions {
-  acknowledgeEvents?: (cursor: number) => Promise<undefined>;
-  removeRevoked?: (events: CollaborationEvent[]) => void;
-}
-
-interface EventAcknowledgerOptions {
+interface CollaborationEventProcessorOptions {
   acknowledgeEvents: (cursor: number) => Promise<undefined>;
+  applyEvents: (events: CollaborationEvent[]) => void;
   isActive?: () => boolean;
+  reloadEvents: (events: CollaborationEvent[]) => Promise<void>;
   scheduleRetry: (retry: () => void) => void;
 }
 
-export function processCollaborationEvents(
-  events: CollaborationEvent[],
-  addCollaborationEvents: (events: CollaborationEvent[]) => void,
-  {
-    acknowledgeEvents = acknowledgeCollaborationEvents,
-    removeRevoked = removeRevokedNotes
-  }: ProcessCollaborationEventsOptions = {}
-): void {
-  if (events.length === 0) {
-    return;
-  }
-
-  addCollaborationEvents(events);
-  removeRevoked(events);
-  const cursor = Math.max(...events.map((event) => event.cursor));
-  void acknowledgeEvents(cursor).catch(() => {
-    // The hook supplies a retried acknowledger; direct callers can ignore failures.
-  });
+interface PendingEventBatch {
+  applied: boolean;
+  events: CollaborationEvent[];
+  reloaded: boolean;
 }
 
-export function createEventAcknowledger({
+export function createCollaborationEventProcessor({
   acknowledgeEvents,
+  applyEvents,
   isActive = () => true,
+  reloadEvents,
   scheduleRetry
-}: EventAcknowledgerOptions): (cursor: number) => Promise<undefined> {
-  let pendingCursor: number | null = null;
-  let isAcknowledging = false;
+}: CollaborationEventProcessorOptions): (events: CollaborationEvent[]) => void {
+  const pendingBatches: PendingEventBatch[] = [];
+  let isProcessing = false;
   let retryScheduled = false;
 
-  async function flushPendingCursor(): Promise<void> {
-    if (!isActive() || isAcknowledging || pendingCursor === null) {
+  async function flushPendingBatches(): Promise<void> {
+    const batch = pendingBatches[0];
+    if (!isActive() || isProcessing || !batch) {
       return;
     }
 
-    const cursor = pendingCursor;
-    isAcknowledging = true;
+    isProcessing = true;
     try {
-      await acknowledgeEvents(cursor);
-      if (pendingCursor <= cursor) {
-        pendingCursor = null;
+      if (!batch.applied) {
+        applyEvents(batch.events);
+        batch.applied = true;
       }
+      if (!batch.reloaded) {
+        await reloadEvents(batch.events);
+        batch.reloaded = true;
+      }
+      if (!isActive()) {
+        return;
+      }
+      await acknowledgeEvents(Math.max(...batch.events.map((event) => event.cursor)));
+      pendingBatches.shift();
     } catch {
       if (!retryScheduled && isActive()) {
         retryScheduled = true;
         scheduleRetry(() => {
           retryScheduled = false;
-          void flushPendingCursor();
+          void flushPendingBatches();
         });
       }
     } finally {
-      isAcknowledging = false;
-      if (pendingCursor !== null && pendingCursor > cursor) {
-        void flushPendingCursor();
+      isProcessing = false;
+      if (pendingBatches.length > 0 && !retryScheduled) {
+        void flushPendingBatches();
       }
     }
   }
 
-  return (cursor: number) => {
-    pendingCursor = Math.max(pendingCursor ?? 0, cursor);
-    void flushPendingCursor();
-    return Promise.resolve(undefined);
+  return (events: CollaborationEvent[]) => {
+    if (events.length === 0) {
+      return;
+    }
+    pendingBatches.push({ applied: false, events, reloaded: false });
+    void flushPendingBatches();
   };
 }
 
@@ -295,18 +287,14 @@ export function removeRevokedNotes(events: CollaborationEvent[]): void {
   }
 }
 
-async function reloadAfterEvents(
-  events: CollaborationEvent[],
-  options: { skipOwnEvents?: boolean } = {}
-): Promise<void> {
+async function reloadAfterEvents(events: CollaborationEvent[]): Promise<void> {
   const { rootKey, user } = useAppStore.getState();
   if (!rootKey || !user) {
     return;
   }
 
   const shouldReloadFolders = eventsRequireFolderReload(events);
-  const shouldReloadNoteData =
-    eventsRequireNoteReload(events, user.id, options) || shouldReloadFolders;
+  const shouldReloadNoteData = eventsRequireNoteReload(events) || shouldReloadFolders;
 
   if (shouldReloadFolders) {
     await loadFolders();
@@ -327,14 +315,9 @@ export function isOwnRevocation(event: CollaborationEvent, userId: string): bool
 }
 
 export function eventsRequireNoteReload(
-  events: CollaborationEvent[],
-  userId: string,
-  options: { skipOwnEvents?: boolean } = {}
+  events: CollaborationEvent[]
 ): boolean {
-  const reloadEvents = options.skipOwnEvents
-    ? events.filter((event) => event.actorUserId !== userId)
-    : events;
-  return reloadEvents.some((event) => shouldReloadNotes(event));
+  return events.some((event) => shouldReloadNotes(event));
 }
 
 export function eventsRequireFolderReload(events: CollaborationEvent[]): boolean {
