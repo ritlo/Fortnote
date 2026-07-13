@@ -191,20 +191,6 @@ export function createFoldersRouter(context: AppContext): Router {
 
     const moveTarget = folder.parentFolderId;
     const cursor = context.db.orm.transaction((tx) => {
-      tx.update(schema.notes)
-        .set({ folderId: moveTarget, updatedAt: sql`CURRENT_TIMESTAMP` })
-        .where(and(
-          eq(schema.notes.userId, session.userId),
-          eq(schema.notes.folderId, folder.id)
-        ))
-        .run();
-      tx.update(schema.folders)
-        .set({ parentFolderId: moveTarget, updatedAt: sql`CURRENT_TIMESTAMP` })
-        .where(and(
-          eq(schema.folders.userId, session.userId),
-          eq(schema.folders.parentFolderId, folder.id)
-        ))
-        .run();
       tx.delete(schema.folders)
         .where(and(
           eq(schema.folders.id, folder.id),

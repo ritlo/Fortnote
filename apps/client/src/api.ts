@@ -1,3 +1,5 @@
+import { KdfParams } from "@fortnote/shared";
+
 export interface RegisterPayload {
   username: string;
   authVerifier: string;
@@ -9,13 +11,6 @@ export interface RegisterPayload {
   recoveryKdf: KdfParams;
   recoveryEncryptedRootKey: string;
   recoveryRootKeyNonce: string;
-}
-
-export interface KdfParams {
-  salt: string;
-  opsLimit: number;
-  memLimit: number;
-  version: number;
 }
 
 export interface User {

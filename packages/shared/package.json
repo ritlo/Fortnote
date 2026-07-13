@@ -12,7 +12,6 @@
     "test": "vitest run src"
   },
   "dependencies": {
-    "@noble/hashes": "^2.2.0",
     "libsodium-wrappers-sumo": "^0.8.4"
   },
   "devDependencies": {
