@@ -2,28 +2,51 @@
 
 ## Status
 
-Accepted for collaboration V1. Full CRDT implementation is deferred.
+In progress — CRDT data plane implementation started on `feat/crdt-realtime-collab`.
+
+## Progress
+
+Implemented in the first end-to-end slice:
+
+- Yjs character-level co-editing for note titles and bodies.
+- Versioned `crdt-v1` realtime capability negotiation.
+- XChaCha20-Poly1305 encrypted update envelopes with associated data binding
+  `cryptoOwnerId`, note ID, key epoch, update ID, and format version.
+- A separate `note_updates` store with membership-checked replay and broadcast;
+  `note_events` remains unchanged as the control/invalidation log.
+- Key-epoch validation and epoch advancement during existing note-key rotation.
+- A convergence test for two simulated Yjs clients and an end-to-end encrypted
+  update storage/broadcast test.
+
+Still open:
+
+- Periodic update compaction into encrypted CRDT snapshots.
+- Durable offline update queues and state-vector reconciliation.
+- A persisted migration checkpoint for existing whole-note snapshots. In the
+  first slice, a snapshot field enters Yjs on its first live edit.
+- A CRDT checkpoint under each newly rotated key epoch after revocation.
+- Protocol hardening, storage limits, and security review.
 
 ## Context
 
-The collaboration branch adds the control plane required by both snapshot sync
-and future live co-editing: authenticated realtime transport, note membership,
+The collaboration V1 branch added the control plane used by live co-editing:
+authenticated realtime transport, note membership,
 roles, key sharing, revocation, presence, and durable control-event replay.
 
-V1 content synchronization still saves an encrypted whole-note snapshot and
-uses optimistic note versions. This provides realtime propagation after save,
-but it does not merge simultaneous character-level edits.
+V1 content synchronization saved encrypted whole-note snapshots with optimistic
+versions. This branch keeps that snapshot path during migration and adds Yjs
+updates for simultaneous character-level edits.
 
-Implementing a CRDT also requires an encrypted update format, update storage,
+Completing the CRDT data plane requires an encrypted update format, update storage,
 snapshotting, compaction, offline reconciliation, key-epoch handling, and a
-migration path for existing notes. That work should not be mixed with the
-remaining V1 lifecycle fixes unless live co-editing is a release requirement.
+migration path for existing notes. The progress list records which parts now
+exist and which remain release work.
 
 ## Decision
 
-Keep full CRDT support out of the collaboration V1 merge gate. Preserve a clear
-boundary so CRDT support later replaces the content synchronization data plane
-without replacing collaboration authorization or key management.
+The V1 decision kept full CRDT support out of its merge gate. This branch now
+adds the CRDT content data plane at the preserved boundary without replacing
+collaboration authorization or key management.
 
 The following remain shared infrastructure:
 
@@ -34,7 +57,7 @@ The following remain shared infrastructure:
 - Attachment access and key wrapping.
 - Presence and durable collaboration-control events.
 
-The future CRDT data plane will:
+The CRDT data plane follows these rules:
 
 - Store encrypted document updates separately from `note_events`.
 - Use a versioned update format and update-specific AEAD associated data that
@@ -52,12 +75,10 @@ an unbounded CRDT update log or contain plaintext document operations.
 
 ## Consequences
 
-- Collaboration V1 can merge after its audited lifecycle defects are fixed,
-  without implementing a CRDT.
-- Product copy must call the current behavior realtime snapshot synchronization,
-  not simultaneous live editing.
-- Adding CRDT support later changes the content save/load pipeline and adds
-  storage/protocol components, but does not redesign membership, authorization,
-  sharing keys, revocation, attachments, or presence.
-- Revocation tests for future CRDT support must verify key-epoch checkpointing
+- Live sessions now merge title and body edits through encrypted Yjs updates;
+  whole-note saves remain the existing durable snapshot path during migration.
+- CRDT support changes the content synchronization data plane and adds
+  `note_updates` plus versioned realtime messages, but does not redesign
+  membership, authorization, sharing keys, revocation, attachments, or presence.
+- Revocation tests must verify key-epoch checkpointing
   and ensure revoked users cannot fetch updates from the new epoch.
