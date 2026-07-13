@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Request } from "express";
 import { z } from "zod";
+import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 
 const clientInstanceIdSchema = z.uuid();
@@ -34,22 +35,13 @@ export interface WriteNoteEventInput {
 export function writeRequestEvent(
   context: AppContext,
   request: Request,
-  input: WriteNoteEventInput
+  input: WriteNoteEventInput,
+  db: Pick<AppContext["db"]["orm"], "insert"> = context.db.orm
 ): number {
   const parsedClientId = clientInstanceIdSchema.safeParse(
     request.get("x-fortnote-client-id")
   );
-  return writeNoteEvent(
-    context,
-    parsedClientId.success
-      ? { ...input, clientInstanceId: parsedClientId.data }
-      : input
-  );
-}
-
-export function writeNoteEvent(
-  context: AppContext,
-  {
+  const {
     noteId,
     actorUserId,
     eventType,
@@ -58,8 +50,9 @@ export function writeNoteEvent(
     resourceId,
     payloadMetadata,
     clientInstanceId
-  }: WriteNoteEventInput
-): number {
+  } = parsedClientId.success
+    ? { ...input, clientInstanceId: parsedClientId.data }
+    : input;
   const resolvedResourceId = resourceId ?? noteId;
   if (!resolvedResourceId) {
     throw new Error("Event resourceId is required when noteId is null");
@@ -69,28 +62,18 @@ export function writeNoteEvent(
     ...payloadMetadata,
     ...(clientInstanceId ? { clientInstanceId } : {})
   };
-  const result = context.db.sqlite
-    .prepare(
-      `INSERT INTO note_events (
-        event_id,
-        resource_type,
-        resource_id,
-        note_id,
-        actor_user_id,
-        event_type,
-        note_version,
-        payload_metadata
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      randomUUID(),
+  return db
+    .insert(schema.noteEvents)
+    .values({
+      eventId: randomUUID(),
       resourceType,
-      resolvedResourceId,
+      resourceId: resolvedResourceId,
       noteId,
       actorUserId,
       eventType,
       noteVersion,
-      Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null
-    );
-  return Number(result.lastInsertRowid);
+      payloadMetadata: Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null
+    })
+    .returning({ cursor: schema.noteEvents.cursor })
+    .get().cursor;
 }

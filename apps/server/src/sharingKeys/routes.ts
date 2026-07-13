@@ -1,6 +1,8 @@
+import { and, desc, eq, sql } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
 import { requireSession } from "../auth/session.js";
+import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 
@@ -21,21 +23,21 @@ export function createSharingKeysRouter(context: AppContext): Router {
       return;
     }
 
-    const row = context.db.sqlite
-      .prepare(
-        `SELECT sharing_key_version AS sharingKeyVersion,
-                public_key AS publicKey,
-                encrypted_private_key AS encryptedPrivateKey,
-                private_key_nonce AS privateKeyNonce,
-                format_version AS formatVersion,
-                created_at AS createdAt,
-                updated_at AS updatedAt
-         FROM user_sharing_keys
-         WHERE user_id = ?
-         ORDER BY sharing_key_version DESC
-         LIMIT 1`
-      )
-      .get(session.userId);
+    const row = context.db.orm
+      .select({
+        sharingKeyVersion: schema.userSharingKeys.sharingKeyVersion,
+        publicKey: schema.userSharingKeys.publicKey,
+        encryptedPrivateKey: schema.userSharingKeys.encryptedPrivateKey,
+        privateKeyNonce: schema.userSharingKeys.privateKeyNonce,
+        formatVersion: schema.userSharingKeys.formatVersion,
+        createdAt: schema.userSharingKeys.createdAt,
+        updatedAt: schema.userSharingKeys.updatedAt
+      })
+      .from(schema.userSharingKeys)
+      .where(eq(schema.userSharingKeys.userId, session.userId))
+      .orderBy(desc(schema.userSharingKeys.sharingKeyVersion))
+      .limit(1)
+      .get();
 
     if (!row) {
       sendApiError(response, "not_found", "Sharing key not found");
@@ -57,20 +59,22 @@ export function createSharingKeysRouter(context: AppContext): Router {
       return;
     }
 
-    const row = context.db.sqlite
-      .prepare(
-        `SELECT sharing_key_version AS sharingKeyVersion,
-                public_key AS publicKey,
-                encrypted_private_key AS encryptedPrivateKey,
-                private_key_nonce AS privateKeyNonce,
-                format_version AS formatVersion,
-                created_at AS createdAt,
-                updated_at AS updatedAt
-         FROM user_sharing_keys
-         WHERE user_id = ?
-           AND sharing_key_version = ?`
-      )
-      .get(session.userId, version.data);
+    const row = context.db.orm
+      .select({
+        sharingKeyVersion: schema.userSharingKeys.sharingKeyVersion,
+        publicKey: schema.userSharingKeys.publicKey,
+        encryptedPrivateKey: schema.userSharingKeys.encryptedPrivateKey,
+        privateKeyNonce: schema.userSharingKeys.privateKeyNonce,
+        formatVersion: schema.userSharingKeys.formatVersion,
+        createdAt: schema.userSharingKeys.createdAt,
+        updatedAt: schema.userSharingKeys.updatedAt
+      })
+      .from(schema.userSharingKeys)
+      .where(and(
+        eq(schema.userSharingKeys.userId, session.userId),
+        eq(schema.userSharingKeys.sharingKeyVersion, version.data)
+      ))
+      .get();
 
     if (!row) {
       sendApiError(response, "not_found", "Sharing key not found");
@@ -93,25 +97,14 @@ export function createSharingKeysRouter(context: AppContext): Router {
     }
 
     try {
-      context.db.sqlite
-        .prepare(
-          `INSERT INTO user_sharing_keys (
-            user_id,
-            sharing_key_version,
-            public_key,
-            encrypted_private_key,
-            private_key_nonce,
-            format_version
-          ) VALUES (?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          session.userId,
-          parsed.data.sharingKeyVersion,
-          parsed.data.publicKey,
-          parsed.data.encryptedPrivateKey,
-          parsed.data.privateKeyNonce,
-          parsed.data.formatVersion
-        );
+      context.db.orm.insert(schema.userSharingKeys).values({
+        userId: session.userId,
+        sharingKeyVersion: parsed.data.sharingKeyVersion,
+        publicKey: parsed.data.publicKey,
+        encryptedPrivateKey: parsed.data.encryptedPrivateKey,
+        privateKeyNonce: parsed.data.privateKeyNonce,
+        formatVersion: parsed.data.formatVersion
+      }).run();
     } catch {
       sendApiError(response, "conflict", "Sharing key version already exists");
       return;
@@ -128,24 +121,22 @@ export function createSharingKeysRouter(context: AppContext): Router {
       return;
     }
 
-    const result = context.db.sqlite
-      .prepare(
-        `DELETE FROM user_sharing_keys
-         WHERE user_id = ?
-           AND sharing_key_version < (
-             SELECT MAX(current_keys.sharing_key_version)
-             FROM user_sharing_keys AS current_keys
-             WHERE current_keys.user_id = user_sharing_keys.user_id
-           )
-           AND NOT EXISTS (
-             SELECT 1
-             FROM note_key_shares
-             WHERE note_key_shares.recipient_user_id = user_sharing_keys.user_id
-               AND note_key_shares.sharing_key_version =
-                 user_sharing_keys.sharing_key_version
-           )`
-      )
-      .run(session.userId);
+    const result = context.db.orm.run(sql`
+      DELETE FROM ${schema.userSharingKeys}
+      WHERE ${schema.userSharingKeys.userId} = ${session.userId}
+        AND ${schema.userSharingKeys.sharingKeyVersion} < (
+          SELECT MAX(current_keys.sharing_key_version)
+          FROM ${schema.userSharingKeys} AS current_keys
+          WHERE current_keys.user_id = ${schema.userSharingKeys.userId}
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${schema.noteKeyShares}
+          WHERE ${schema.noteKeyShares.recipientUserId} = ${schema.userSharingKeys.userId}
+            AND ${schema.noteKeyShares.sharingKeyVersion} =
+              ${schema.userSharingKeys.sharingKeyVersion}
+        )
+    `);
 
     response.json({ deleted: result.changes });
   });
@@ -162,21 +153,24 @@ export function createSharingKeysRouter(context: AppContext): Router {
       return;
     }
 
-    const row = context.db.sqlite
-      .prepare(
-        `SELECT users.id AS userId,
-                users.username,
-                user_sharing_keys.sharing_key_version AS sharingKeyVersion,
-                user_sharing_keys.public_key AS publicKey,
-                user_sharing_keys.format_version AS formatVersion,
-                user_sharing_keys.created_at AS createdAt
-         FROM users
-         JOIN user_sharing_keys ON user_sharing_keys.user_id = users.id
-         WHERE users.username = ?
-         ORDER BY user_sharing_keys.sharing_key_version DESC
-         LIMIT 1`
+    const row = context.db.orm
+      .select({
+        userId: schema.users.id,
+        username: schema.users.username,
+        sharingKeyVersion: schema.userSharingKeys.sharingKeyVersion,
+        publicKey: schema.userSharingKeys.publicKey,
+        formatVersion: schema.userSharingKeys.formatVersion,
+        createdAt: schema.userSharingKeys.createdAt
+      })
+      .from(schema.users)
+      .innerJoin(
+        schema.userSharingKeys,
+        eq(schema.userSharingKeys.userId, schema.users.id)
       )
-      .get(username.data);
+      .where(eq(schema.users.username, username.data))
+      .orderBy(desc(schema.userSharingKeys.sharingKeyVersion))
+      .limit(1)
+      .get();
 
     if (!row) {
       sendApiError(response, "not_found", "Sharing key not found");

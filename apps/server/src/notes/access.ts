@@ -1,4 +1,6 @@
+import { and, eq } from "drizzle-orm";
 import type { AppContext } from "../http/app.js";
+import * as schema from "../db/schema.js";
 
 export type NoteRole = "owner" | "editor" | "viewer";
 export type NoteMembershipStatus = "active" | "invited" | "revoked";
@@ -11,7 +13,7 @@ export interface NoteAccess {
   status: NoteMembershipStatus;
   folderId: string | null;
   version: number;
-  isDeleted: 0 | 1;
+  isDeleted: boolean;
 }
 
 export function getNoteAccess(
@@ -19,22 +21,27 @@ export function getNoteAccess(
   noteId: string,
   userId: string
 ): NoteAccess | undefined {
-  return context.db.sqlite
-    .prepare(
-      `SELECT notes.id AS noteId,
-              notes.user_id AS ownerUserId,
-              notes.crypto_owner_id AS cryptoOwnerId,
-              note_memberships.role,
-              note_memberships.status,
-              notes.folder_id AS folderId,
-              notes.version,
-              notes.is_deleted AS isDeleted
-       FROM notes
-       JOIN note_memberships ON note_memberships.note_id = notes.id
-       WHERE notes.id = ?
-         AND note_memberships.user_id = ?`
+  return context.db.orm
+    .select({
+      noteId: schema.notes.id,
+      ownerUserId: schema.notes.userId,
+      cryptoOwnerId: schema.notes.cryptoOwnerId,
+      role: schema.noteMemberships.role,
+      status: schema.noteMemberships.status,
+      folderId: schema.notes.folderId,
+      version: schema.notes.version,
+      isDeleted: schema.notes.isDeleted
+    })
+    .from(schema.notes)
+    .innerJoin(
+      schema.noteMemberships,
+      eq(schema.noteMemberships.noteId, schema.notes.id)
     )
-    .get(noteId, userId) as NoteAccess | undefined;
+    .where(and(
+      eq(schema.notes.id, noteId),
+      eq(schema.noteMemberships.userId, userId)
+    ))
+    .get() as NoteAccess | undefined;
 }
 
 export function canReadNote(access: NoteAccess | undefined): access is NoteAccess {

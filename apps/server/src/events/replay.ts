@@ -1,3 +1,5 @@
+import { eq, sql } from "drizzle-orm";
+import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 
 export interface CollaborationEvent {
@@ -38,9 +40,8 @@ export function listVisibleEvents(
   after: number,
   limit: number
 ): CollaborationEvent[] {
-  const rows = context.db.sqlite
-    .prepare(
-      `SELECT note_events.cursor,
+  const rows = context.db.orm.all<EventRow>(sql`
+       SELECT note_events.cursor,
               note_events.event_id AS eventId,
               note_events.resource_type AS resourceType,
               note_events.resource_id AS resourceId,
@@ -50,24 +51,24 @@ export function listVisibleEvents(
               note_events.note_version AS noteVersion,
               note_events.payload_metadata AS payloadMetadata,
               note_events.created_at AS createdAt
-       FROM note_events
-       LEFT JOIN note_memberships
+       FROM ${schema.noteEvents} AS note_events
+       LEFT JOIN ${schema.noteMemberships} AS note_memberships
          ON note_memberships.note_id = note_events.note_id
-        AND note_memberships.user_id = ?
+        AND note_memberships.user_id = ${userId}
         AND note_memberships.status = 'active'
-       LEFT JOIN event_acknowledgements
+       LEFT JOIN ${schema.eventAcknowledgements} AS event_acknowledgements
          ON event_acknowledgements.note_id = note_events.note_id
-        AND event_acknowledgements.user_id = ?
-       WHERE note_events.cursor > ?
+        AND event_acknowledgements.user_id = ${userId}
+       WHERE note_events.cursor > ${after}
          AND (
            note_memberships.user_id IS NOT NULL
            OR (
              note_events.note_id IS NULL
-             AND note_events.actor_user_id = ?
+             AND note_events.actor_user_id = ${userId}
            )
            OR (
              note_events.event_type = 'membership.revoked'
-             AND json_extract(note_events.payload_metadata, '$.membershipUserId') = ?
+             AND json_extract(note_events.payload_metadata, '$.membershipUserId') = ${userId}
              AND (
                event_acknowledgements.cursor IS NULL
                OR event_acknowledgements.cursor < note_events.cursor
@@ -78,7 +79,7 @@ export function listVisibleEvents(
              AND EXISTS (
                SELECT 1
                FROM json_each(note_events.payload_metadata, '$.visibleUserIds')
-               WHERE json_each.value = ?
+               WHERE json_each.value = ${userId}
              )
              AND (
                event_acknowledgements.cursor IS NULL
@@ -87,9 +88,8 @@ export function listVisibleEvents(
            )
          )
        ORDER BY note_events.cursor
-       LIMIT ?`
-    )
-    .all(userId, userId, after, userId, userId, userId, limit) as EventRow[];
+       LIMIT ${limit}
+  `);
 
   return rows.map((row) => ({
     cursor: row.cursor,
@@ -121,55 +121,57 @@ export function acknowledgeVisibleEvents(
   userId: string,
   cursor: number
 ): void {
-  context.db.sqlite
-    .prepare(
-      `INSERT INTO event_cursors (user_id, cursor, updated_at)
-       VALUES (?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(user_id) DO UPDATE SET
-         cursor = MAX(event_cursors.cursor, excluded.cursor),
-         updated_at = CURRENT_TIMESTAMP`
-    )
-    .run(userId, cursor);
+  context.db.orm
+    .insert(schema.eventCursors)
+    .values({ userId, cursor })
+    .onConflictDoUpdate({
+      target: schema.eventCursors.userId,
+      set: {
+        cursor: sql`MAX(${schema.eventCursors.cursor}, excluded.cursor)`,
+        updatedAt: sql`CURRENT_TIMESTAMP`
+      }
+    })
+    .run();
 
-  context.db.sqlite
-    .prepare(
-      `INSERT INTO event_acknowledgements (user_id, note_id, cursor, updated_at)
-       SELECT ?,
+  context.db.orm.run(sql`
+       INSERT INTO ${schema.eventAcknowledgements} (user_id, note_id, cursor, updated_at)
+       SELECT ${userId},
               note_events.note_id,
               MAX(note_events.cursor),
               CURRENT_TIMESTAMP
-       FROM note_events
-       WHERE note_events.cursor <= ?
+       FROM ${schema.noteEvents} AS note_events
+       WHERE note_events.cursor <= ${cursor}
          AND note_events.note_id IS NOT NULL
          AND (
            (
              note_events.event_type = 'membership.revoked'
-             AND json_extract(note_events.payload_metadata, '$.membershipUserId') = ?
+             AND json_extract(note_events.payload_metadata, '$.membershipUserId') = ${userId}
            )
            OR (
              note_events.event_type = 'note.permanently_deleted'
              AND EXISTS (
                SELECT 1
                FROM json_each(note_events.payload_metadata, '$.visibleUserIds')
-               WHERE json_each.value = ?
+               WHERE json_each.value = ${userId}
              )
            )
          )
        GROUP BY note_events.note_id
        ON CONFLICT(user_id, note_id) DO UPDATE SET
          cursor = MAX(event_acknowledgements.cursor, excluded.cursor),
-         updated_at = CURRENT_TIMESTAMP`
-    )
-    .run(userId, cursor, userId, userId);
+         updated_at = CURRENT_TIMESTAMP
+  `);
 }
 
 export function getAcknowledgedEventCursor(
   context: AppContext,
   userId: string
 ): number {
-  const row = context.db.sqlite
-    .prepare("SELECT cursor FROM event_cursors WHERE user_id = ?")
-    .get(userId) as { cursor: number } | undefined;
+  const row = context.db.orm
+    .select({ cursor: schema.eventCursors.cursor })
+    .from(schema.eventCursors)
+    .where(eq(schema.eventCursors.userId, userId))
+    .get();
   return row?.cursor ?? 0;
 }
 
@@ -188,11 +190,10 @@ export function pruneAcknowledgedEvents(
     };
   }
 
-  return context.db.sqlite.transaction(() => {
-    const deletedEvents = context.db.sqlite
-      .prepare(
-        `DELETE FROM note_events
-         WHERE cursor <= ?
+  return context.db.orm.transaction((tx) => {
+    const deletedEvents = tx.run(sql`
+         DELETE FROM ${schema.noteEvents}
+         WHERE cursor <= ${prunedThroughCursor}
            AND NOT EXISTS (
              SELECT 1
              FROM note_memberships
@@ -233,12 +234,10 @@ export function pruneAcknowledgedEvents(
                )
              )
                AND COALESCE(event_cursors.cursor, 0) < note_events.cursor
-           )`
-      )
-      .run(prunedThroughCursor).changes;
-    const deletedAcknowledgements = context.db.sqlite
-      .prepare(
-        `DELETE FROM event_acknowledgements
+           )
+    `).changes;
+    const deletedAcknowledgements = tx.run(sql`
+         DELETE FROM ${schema.eventAcknowledgements}
          WHERE NOT EXISTS (
            SELECT 1
            FROM note_events
@@ -259,13 +258,12 @@ export function pruneAcknowledgedEvents(
                  )
                )
              )
-         )`
-      )
-      .run().changes;
+         )
+    `).changes;
     return {
       prunedThroughCursor,
       deletedEvents,
       deletedAcknowledgements
     };
-  })();
+  });
 }

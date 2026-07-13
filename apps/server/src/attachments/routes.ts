@@ -1,8 +1,10 @@
 import { Buffer } from "node:buffer";
+import { desc, eq, sql } from "drizzle-orm";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { LIMITS } from "@fortnote/shared";
 import { requireSession } from "../auth/session.js";
+import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import {
@@ -32,50 +34,30 @@ type UploadReadResult =
       message: string;
     };
 
-interface AttachmentRow {
-  id: string;
-  noteId: string;
-  userId: string;
-  filename: string;
-  mimeType: string;
-  size: number;
-  encryptedAttachmentKey: string;
-  attachmentKeyNonce: string;
-  fileCipherPath: string;
-  fileNonce: string;
-  createdAt: string;
-}
-
 class StorageQuotaExceededError extends Error {}
 
 function getAttachment(
   context: AppContext,
   attachmentId: string
-): AttachmentRow | undefined {
-  return context.db.sqlite
-    .prepare(
-      `SELECT id,
-              note_id AS noteId,
-              user_id AS userId,
-              filename,
-              mime_type AS mimeType,
-              size,
-              encrypted_attachment_key AS encryptedAttachmentKey,
-              attachment_key_nonce AS attachmentKeyNonce,
-              file_cipher_path AS fileCipherPath,
-              file_nonce AS fileNonce,
-              created_at AS createdAt
-       FROM attachments
-       WHERE id = ?`
-    )
-    .get(attachmentId) as AttachmentRow | undefined;
+) {
+  return context.db.orm
+    .select()
+    .from(schema.attachments)
+    .where(eq(schema.attachments.id, attachmentId))
+    .get();
 }
 
-function userStorageBytes(context: AppContext, userId: string): number {
-  const row = context.db.sqlite
-    .prepare("SELECT COALESCE(SUM(size), 0) AS total FROM attachments WHERE user_id = ?")
-    .get(userId) as { total: number };
-  return row.total;
+function userStorageBytes(
+  context: AppContext,
+  userId: string,
+  db: Pick<AppContext["db"]["orm"], "select"> = context.db.orm
+): number {
+  const row = db
+    .select({ total: sql<number>`COALESCE(SUM(${schema.attachments.size}), 0)`.mapWith(Number) })
+    .from(schema.attachments)
+    .where(eq(schema.attachments.userId, userId))
+    .get();
+  return row?.total ?? 0;
 }
 
 function publishEventCursor(context: AppContext, cursor: number): void {
@@ -229,40 +211,25 @@ export function createAttachmentsRouter(context: AppContext): Router {
     const storageId = crypto.randomUUID();
     try {
       await writeEncryptedAttachment(context.config, storageId, encryptedBytes.bytes);
-      const insertAttachment = context.db.sqlite.transaction(() => {
+      const cursor = context.db.orm.transaction((tx) => {
         if (
-          userStorageBytes(context, access.ownerUserId) + parsed.data.size >
+          userStorageBytes(context, access.ownerUserId, tx) + parsed.data.size >
           LIMITS.maxUserStorageBytes
         ) {
           throw new StorageQuotaExceededError();
         }
-        context.db.sqlite
-          .prepare(
-            `INSERT INTO attachments (
-              id,
-              note_id,
-              user_id,
-              filename,
-              mime_type,
-              size,
-              encrypted_attachment_key,
-              attachment_key_nonce,
-              file_cipher_path,
-              file_nonce
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-          .run(
-            parsed.data.id,
-            access.noteId,
-            access.ownerUserId,
-            parsed.data.filename.trim(),
-            parsed.data.mimeType,
-            parsed.data.size,
-            parsed.data.encryptedAttachmentKey,
-            parsed.data.attachmentKeyNonce,
-            storageId,
-            parsed.data.fileNonce
-          );
+        tx.insert(schema.attachments).values({
+          id: parsed.data.id,
+          noteId: access.noteId,
+          userId: access.ownerUserId,
+          filename: parsed.data.filename.trim(),
+          mimeType: parsed.data.mimeType,
+          size: parsed.data.size,
+          encryptedAttachmentKey: parsed.data.encryptedAttachmentKey,
+          attachmentKeyNonce: parsed.data.attachmentKeyNonce,
+          fileCipherPath: storageId,
+          fileNonce: parsed.data.fileNonce
+        }).run();
         return writeRequestEvent(context, request, {
           noteId: access.noteId,
           actorUserId: session.userId,
@@ -273,9 +240,9 @@ export function createAttachmentsRouter(context: AppContext): Router {
           payloadMetadata: {
             attachmentId: parsed.data.id
           }
-        });
+        }, tx);
       });
-      publishEventCursor(context, insertAttachment.immediate());
+      publishEventCursor(context, cursor);
     } catch (error) {
       await deleteEncryptedAttachment(context.config, storageId);
       if (error instanceof StorageQuotaExceededError) {
@@ -300,21 +267,21 @@ export function createAttachmentsRouter(context: AppContext): Router {
       return;
     }
 
-    const rows = context.db.sqlite
-      .prepare(
-        `SELECT id,
-                filename,
-                mime_type AS mimeType,
-                size,
-                encrypted_attachment_key AS encryptedAttachmentKey,
-                attachment_key_nonce AS attachmentKeyNonce,
-                file_nonce AS fileNonce,
-                created_at AS createdAt
-         FROM attachments
-	         WHERE note_id = ?
-	         ORDER BY created_at DESC`
-	      )
-	      .all(access.noteId);
+    const rows = context.db.orm
+      .select({
+        id: schema.attachments.id,
+        filename: schema.attachments.filename,
+        mimeType: schema.attachments.mimeType,
+        size: schema.attachments.size,
+        encryptedAttachmentKey: schema.attachments.encryptedAttachmentKey,
+        attachmentKeyNonce: schema.attachments.attachmentKeyNonce,
+        fileNonce: schema.attachments.fileNonce,
+        createdAt: schema.attachments.createdAt
+      })
+      .from(schema.attachments)
+      .where(eq(schema.attachments.noteId, access.noteId))
+      .orderBy(desc(schema.attachments.createdAt))
+      .all();
 
     response.json({ attachments: rows });
   });
@@ -361,8 +328,10 @@ export function createAttachmentsRouter(context: AppContext): Router {
       return;
     }
 
-    const deleteAttachmentRow = context.db.sqlite.transaction(() => {
-      context.db.sqlite.prepare("DELETE FROM attachments WHERE id = ?").run(attachment.id);
+    const cursor = context.db.orm.transaction((tx) => {
+      tx.delete(schema.attachments)
+        .where(eq(schema.attachments.id, attachment.id))
+        .run();
       return writeRequestEvent(context, request, {
         noteId: attachment.noteId,
         actorUserId: session.userId,
@@ -373,9 +342,9 @@ export function createAttachmentsRouter(context: AppContext): Router {
         payloadMetadata: {
           attachmentId: attachment.id
         }
-      });
+      }, tx);
     });
-    publishEventCursor(context, deleteAttachmentRow());
+    publishEventCursor(context, cursor);
     try {
       await deleteEncryptedAttachment(context.config, attachment.fileCipherPath);
     } catch (error) {

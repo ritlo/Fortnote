@@ -12,16 +12,18 @@ export function createDb(config: ServerConfig) {
   const sqlite = new Database(config.databasePath);
   sqlite.pragma("foreign_keys = ON");
   runMigrations(sqlite);
+  const orm = drizzle(sqlite, { schema });
   removeOrphanedEncryptedAttachments(
     config,
     new Set(
-      sqlite.prepare("SELECT file_cipher_path FROM attachments").pluck().all() as string[]
+      orm
+        .select({ fileCipherPath: schema.attachments.fileCipherPath })
+        .from(schema.attachments)
+        .all()
+        .map(({ fileCipherPath }) => fileCipherPath)
     )
   );
-  return {
-    sqlite,
-    orm: drizzle(sqlite, { schema })
-  };
+  return { sqlite, orm };
 }
 
 export type AppDb = ReturnType<typeof createDb>;

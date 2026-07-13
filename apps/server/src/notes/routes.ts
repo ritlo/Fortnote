@@ -1,5 +1,7 @@
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
+import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { requireSession } from "../auth/session.js";
@@ -73,9 +75,11 @@ function folderBelongsToUser(
     return true;
   }
 
-  const row = context.db.sqlite
-    .prepare("SELECT id FROM folders WHERE id = ? AND user_id = ?")
-    .get(folderId, userId);
+  const row = context.db.orm
+    .select({ id: schema.folders.id })
+    .from(schema.folders)
+    .where(and(eq(schema.folders.id, folderId), eq(schema.folders.userId, userId)))
+    .get();
   return Boolean(row);
 }
 
@@ -91,6 +95,26 @@ function sameMembers(left: string[], right: string[]): boolean {
   return left.every((value) => rightSet.has(value));
 }
 
+const noteSelection = {
+  id: schema.notes.id,
+  folderId: schema.notes.folderId,
+  title: schema.notes.title,
+  encryptedNoteKey: sql<string | null>`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.encryptedNoteKey} ELSE NULL END`,
+  noteKeyNonce: sql<string | null>`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyNonce} ELSE NULL END`,
+  contentCipher: schema.notes.contentCipher,
+  contentNonce: schema.notes.contentNonce,
+  contentLength: schema.notes.contentLength,
+  contentUpdatedAt: schema.notes.contentUpdatedAt,
+  version: schema.notes.version,
+  isDeleted: schema.notes.isDeleted,
+  deletedAt: schema.notes.deletedAt,
+  createdAt: schema.notes.createdAt,
+  updatedAt: schema.notes.updatedAt,
+  ownerUserId: schema.notes.userId,
+  cryptoOwnerId: schema.notes.cryptoOwnerId,
+  role: schema.noteMemberships.role
+};
+
 export function createNotesRouter(context: AppContext): Router {
   const router = Router();
 
@@ -101,39 +125,20 @@ export function createNotesRouter(context: AppContext): Router {
     }
 
     const includeDeleted = request.query.deleted === "true";
-    const rows = context.db.sqlite
-      .prepare(
-	        `SELECT notes.id,
-	                notes.folder_id AS folderId,
-	                notes.title,
-	                CASE
-	                  WHEN note_memberships.role = 'owner' THEN notes.encrypted_note_key
-	                  ELSE NULL
-	                END AS encryptedNoteKey,
-	                CASE
-	                  WHEN note_memberships.role = 'owner' THEN notes.note_key_nonce
-	                  ELSE NULL
-	                END AS noteKeyNonce,
-	                notes.content_cipher AS contentCipher,
-	                notes.content_nonce AS contentNonce,
-	                notes.content_length AS contentLength,
-	                notes.content_updated_at AS contentUpdatedAt,
-	                notes.version,
-	                notes.is_deleted AS isDeleted,
-	                notes.deleted_at AS deletedAt,
-	                notes.created_at AS createdAt,
-	                notes.updated_at AS updatedAt,
-	                notes.user_id AS ownerUserId,
-	                notes.crypto_owner_id AS cryptoOwnerId,
-	                note_memberships.role
-         FROM notes
-         JOIN note_memberships ON note_memberships.note_id = notes.id
-         WHERE note_memberships.user_id = ?
-           AND note_memberships.status = 'active'
-           AND notes.is_deleted = ?
-         ORDER BY notes.updated_at DESC`
+    const rows = context.db.orm
+      .select(noteSelection)
+      .from(schema.notes)
+      .innerJoin(
+        schema.noteMemberships,
+        eq(schema.noteMemberships.noteId, schema.notes.id)
       )
-      .all(session.userId, includeDeleted ? 1 : 0);
+      .where(and(
+        eq(schema.noteMemberships.userId, session.userId),
+        eq(schema.noteMemberships.status, "active"),
+        eq(schema.notes.isDeleted, includeDeleted)
+      ))
+      .orderBy(desc(schema.notes.updatedAt))
+      .all();
 
     response.json({ notes: rows });
   });
@@ -156,49 +161,34 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const createOwnedNote = context.db.sqlite.transaction(() => {
-      context.db.sqlite
-        .prepare(
-          `INSERT INTO notes (
-            id,
-            user_id,
-            crypto_owner_id,
-            folder_id,
-            title,
-            encrypted_note_key,
-            note_key_nonce,
-            content_cipher,
-            content_nonce,
-            content_length,
-            content_updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
-        )
-        .run(
-          parsed.data.id,
-          session.userId,
-          session.userId,
-          folderId,
-          parsed.data.title,
-          parsed.data.encryptedNoteKey,
-          parsed.data.noteKeyNonce,
-          parsed.data.contentCipher,
-          parsed.data.contentNonce,
-          parsed.data.contentLength
-        );
-      context.db.sqlite
-        .prepare(
-          `INSERT INTO note_memberships (note_id, user_id, role, status)
-           VALUES (?, ?, 'owner', 'active')`
-        )
-        .run(parsed.data.id, session.userId);
+    const cursor = context.db.orm.transaction((tx) => {
+      tx.insert(schema.notes).values({
+        id: parsed.data.id,
+        userId: session.userId,
+        cryptoOwnerId: session.userId,
+        folderId,
+        title: parsed.data.title,
+        encryptedNoteKey: parsed.data.encryptedNoteKey,
+        noteKeyNonce: parsed.data.noteKeyNonce,
+        contentCipher: parsed.data.contentCipher,
+        contentNonce: parsed.data.contentNonce,
+        contentLength: parsed.data.contentLength,
+        contentUpdatedAt: sql`CURRENT_TIMESTAMP`
+      }).run();
+      tx.insert(schema.noteMemberships).values({
+        noteId: parsed.data.id,
+        userId: session.userId,
+        role: "owner",
+        status: "active"
+      }).run();
       return writeRequestEvent(context, request, {
         noteId: parsed.data.id,
         actorUserId: session.userId,
         eventType: "note.created",
         noteVersion: 1
-      });
+      }, tx);
     });
-    publishEventCursors(context, [createOwnedNote()]);
+    publishEventCursors(context, [cursor]);
 
     response.status(201).json({ id: parsed.data.id, version: 1 });
   });
@@ -209,38 +199,19 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const row = context.db.sqlite
-      .prepare(
-	        `SELECT notes.id,
-	                notes.folder_id AS folderId,
-	                notes.title,
-	                CASE
-	                  WHEN note_memberships.role = 'owner' THEN notes.encrypted_note_key
-	                  ELSE NULL
-	                END AS encryptedNoteKey,
-	                CASE
-	                  WHEN note_memberships.role = 'owner' THEN notes.note_key_nonce
-	                  ELSE NULL
-	                END AS noteKeyNonce,
-	                notes.content_cipher AS contentCipher,
-	                notes.content_nonce AS contentNonce,
-	                notes.content_length AS contentLength,
-	                notes.content_updated_at AS contentUpdatedAt,
-	                notes.version,
-	                notes.is_deleted AS isDeleted,
-	                notes.deleted_at AS deletedAt,
-	                notes.created_at AS createdAt,
-	                notes.updated_at AS updatedAt,
-	                notes.user_id AS ownerUserId,
-	                notes.crypto_owner_id AS cryptoOwnerId,
-	                note_memberships.role
-         FROM notes
-         JOIN note_memberships ON note_memberships.note_id = notes.id
-         WHERE notes.id = ?
-           AND note_memberships.user_id = ?
-           AND note_memberships.status = 'active'`
+    const row = context.db.orm
+      .select(noteSelection)
+      .from(schema.notes)
+      .innerJoin(
+        schema.noteMemberships,
+        eq(schema.noteMemberships.noteId, schema.notes.id)
       )
-      .get(request.params.id, session.userId);
+      .where(and(
+        eq(schema.notes.id, request.params.id),
+        eq(schema.noteMemberships.userId, session.userId),
+        eq(schema.noteMemberships.status, "active")
+      ))
+      .get();
 
     if (!row) {
       sendApiError(response, "not_found", "Note not found");
@@ -262,20 +233,20 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const rows = context.db.sqlite
-      .prepare(
-        `SELECT note_memberships.user_id AS userId,
-                users.username,
-                note_memberships.role,
-                note_memberships.status,
-                note_memberships.created_at AS createdAt,
-                note_memberships.updated_at AS updatedAt
-         FROM note_memberships
-         JOIN users ON users.id = note_memberships.user_id
-         WHERE note_memberships.note_id = ?
-         ORDER BY note_memberships.role = 'owner' DESC, users.username`
-      )
-      .all(access.noteId);
+    const rows = context.db.orm
+      .select({
+        userId: schema.noteMemberships.userId,
+        username: schema.users.username,
+        role: schema.noteMemberships.role,
+        status: schema.noteMemberships.status,
+        createdAt: schema.noteMemberships.createdAt,
+        updatedAt: schema.noteMemberships.updatedAt
+      })
+      .from(schema.noteMemberships)
+      .innerJoin(schema.users, eq(schema.users.id, schema.noteMemberships.userId))
+      .where(eq(schema.noteMemberships.noteId, access.noteId))
+      .orderBy(sql`${schema.noteMemberships.role} = 'owner' DESC`, schema.users.username)
+      .all();
 
     response.json({ memberships: rows });
   });
@@ -298,18 +269,18 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const recipient = context.db.sqlite
-      .prepare(
-        `SELECT users.id AS userId,
-                users.username
-         FROM users
-         JOIN user_sharing_keys ON user_sharing_keys.user_id = users.id
-         WHERE users.username = ?
-           AND user_sharing_keys.sharing_key_version = ?`
+    const recipient = context.db.orm
+      .select({ userId: schema.users.id, username: schema.users.username })
+      .from(schema.users)
+      .innerJoin(
+        schema.userSharingKeys,
+        eq(schema.userSharingKeys.userId, schema.users.id)
       )
-      .get(parsed.data.username, parsed.data.sharingKeyVersion) as
-      | { userId: string; username: string }
-      | undefined;
+      .where(and(
+        eq(schema.users.username, parsed.data.username),
+        eq(schema.userSharingKeys.sharingKeyVersion, parsed.data.sharingKeyVersion)
+      ))
+      .get();
 
     if (!recipient) {
       sendApiError(response, "not_found", "Sharing key not found");
@@ -320,54 +291,56 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const existing = context.db.sqlite
-      .prepare(
-        `SELECT role
-         FROM note_memberships
-         WHERE note_id = ? AND user_id = ?`
-      )
-      .get(access.noteId, recipient.userId) as { role: string } | undefined;
+    const existing = context.db.orm
+      .select({ role: schema.noteMemberships.role })
+      .from(schema.noteMemberships)
+      .where(and(
+        eq(schema.noteMemberships.noteId, access.noteId),
+        eq(schema.noteMemberships.userId, recipient.userId)
+      ))
+      .get();
     if (existing?.role === "owner") {
       sendApiError(response, "bad_request", "Cannot replace note owner");
       return;
     }
 
-    const inviteMember = context.db.sqlite.transaction(() => {
-      context.db.sqlite
-        .prepare(
-          `INSERT INTO note_memberships (note_id, user_id, role, status)
-           VALUES (?, ?, ?, 'active')
-           ON CONFLICT(note_id, user_id) DO UPDATE SET
-             role = excluded.role,
-             status = 'active',
-             updated_at = CURRENT_TIMESTAMP`
-        )
-        .run(access.noteId, recipient.userId, parsed.data.role);
-      context.db.sqlite
-        .prepare(
-          `INSERT INTO note_key_shares (
-            note_id,
-            recipient_user_id,
-            sender_user_id,
-            sharing_key_version,
-            encrypted_note_key,
-            format_version
-          ) VALUES (?, ?, ?, ?, ?, ?)
-          ON CONFLICT(note_id, recipient_user_id) DO UPDATE SET
-            sender_user_id = excluded.sender_user_id,
-            sharing_key_version = excluded.sharing_key_version,
-            encrypted_note_key = excluded.encrypted_note_key,
-            format_version = excluded.format_version,
-            created_at = CURRENT_TIMESTAMP`
-        )
-        .run(
-          access.noteId,
-          recipient.userId,
-          session.userId,
-          parsed.data.sharingKeyVersion,
-          parsed.data.encryptedNoteKey,
-          parsed.data.formatVersion
-        );
+    const cursor = context.db.orm.transaction((tx) => {
+      tx.insert(schema.noteMemberships)
+        .values({
+          noteId: access.noteId,
+          userId: recipient.userId,
+          role: parsed.data.role,
+          status: "active"
+        })
+        .onConflictDoUpdate({
+          target: [schema.noteMemberships.noteId, schema.noteMemberships.userId],
+          set: {
+            role: parsed.data.role,
+            status: "active",
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          }
+        })
+        .run();
+      tx.insert(schema.noteKeyShares)
+        .values({
+          noteId: access.noteId,
+          recipientUserId: recipient.userId,
+          senderUserId: session.userId,
+          sharingKeyVersion: parsed.data.sharingKeyVersion,
+          encryptedNoteKey: parsed.data.encryptedNoteKey,
+          formatVersion: parsed.data.formatVersion
+        })
+        .onConflictDoUpdate({
+          target: [schema.noteKeyShares.noteId, schema.noteKeyShares.recipientUserId],
+          set: {
+            senderUserId: session.userId,
+            sharingKeyVersion: parsed.data.sharingKeyVersion,
+            encryptedNoteKey: parsed.data.encryptedNoteKey,
+            formatVersion: parsed.data.formatVersion,
+            createdAt: sql`CURRENT_TIMESTAMP`
+          }
+        })
+        .run();
       return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
@@ -379,9 +352,9 @@ export function createNotesRouter(context: AppContext): Router {
           membershipUserId: recipient.userId,
           role: parsed.data.role
         }
-      });
+      }, tx);
     });
-    publishEventCursors(context, [inviteMember()]);
+    publishEventCursors(context, [cursor]);
 
     response.status(201).json({
       noteId: access.noteId,
@@ -414,17 +387,16 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const updateMember = context.db.sqlite.transaction(() => {
-      const result = context.db.sqlite
-        .prepare(
-          `UPDATE note_memberships
-           SET role = ?, updated_at = CURRENT_TIMESTAMP
-           WHERE note_id = ?
-             AND user_id = ?
-             AND role != 'owner'
-             AND status = 'active'`
-        )
-        .run(parsed.data.role, access.noteId, request.params.userId);
+    const updateCursor = context.db.orm.transaction((tx) => {
+      const result = tx.update(schema.noteMemberships)
+        .set({ role: parsed.data.role, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(and(
+          eq(schema.noteMemberships.noteId, access.noteId),
+          eq(schema.noteMemberships.userId, request.params.userId),
+          ne(schema.noteMemberships.role, "owner"),
+          eq(schema.noteMemberships.status, "active")
+        ))
+        .run();
       if (result.changes === 0) {
         return null;
       }
@@ -439,10 +411,8 @@ export function createNotesRouter(context: AppContext): Router {
           membershipUserId: request.params.userId,
           role: parsed.data.role
         }
-      });
+      }, tx);
     });
-
-    const updateCursor = updateMember();
     if (updateCursor === null) {
       sendApiError(response, "not_found", "Membership not found");
       return;
@@ -473,26 +443,25 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const revokeMember = context.db.sqlite.transaction(() => {
-      const result = context.db.sqlite
-        .prepare(
-          `UPDATE note_memberships
-           SET status = 'revoked', updated_at = CURRENT_TIMESTAMP
-           WHERE note_id = ?
-             AND user_id = ?
-             AND role != 'owner'
-             AND status != 'revoked'`
-        )
-        .run(access.noteId, request.params.userId);
+    const revokeCursor = context.db.orm.transaction((tx) => {
+      const result = tx.update(schema.noteMemberships)
+        .set({ status: "revoked", updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(and(
+          eq(schema.noteMemberships.noteId, access.noteId),
+          eq(schema.noteMemberships.userId, request.params.userId),
+          ne(schema.noteMemberships.role, "owner"),
+          ne(schema.noteMemberships.status, "revoked")
+        ))
+        .run();
       if (result.changes === 0) {
         return null;
       }
-      context.db.sqlite
-        .prepare(
-          `DELETE FROM note_key_shares
-           WHERE note_id = ? AND recipient_user_id = ?`
-        )
-        .run(access.noteId, request.params.userId);
+      tx.delete(schema.noteKeyShares)
+        .where(and(
+          eq(schema.noteKeyShares.noteId, access.noteId),
+          eq(schema.noteKeyShares.recipientUserId, request.params.userId)
+        ))
+        .run();
       return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
@@ -503,10 +472,8 @@ export function createNotesRouter(context: AppContext): Router {
         payloadMetadata: {
           membershipUserId: request.params.userId
         }
-      });
+      }, tx);
     });
-
-    const revokeCursor = revokeMember();
     if (revokeCursor === null) {
       sendApiError(response, "not_found", "Membership not found");
       return;
@@ -532,19 +499,14 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const row = context.db.sqlite
-      .prepare(
-        `SELECT note_id AS noteId,
-                recipient_user_id AS recipientUserId,
-                sender_user_id AS senderUserId,
-                sharing_key_version AS sharingKeyVersion,
-                encrypted_note_key AS encryptedNoteKey,
-                format_version AS formatVersion,
-                created_at AS createdAt
-         FROM note_key_shares
-         WHERE note_id = ? AND recipient_user_id = ?`
-      )
-      .get(access.noteId, session.userId);
+    const row = context.db.orm
+      .select()
+      .from(schema.noteKeyShares)
+      .where(and(
+        eq(schema.noteKeyShares.noteId, access.noteId),
+        eq(schema.noteKeyShares.recipientUserId, session.userId)
+      ))
+      .get();
 
     if (!row) {
       sendApiError(response, "not_found", "Note key share not found");
@@ -580,15 +542,15 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const activeMembers = context.db.sqlite
-      .prepare(
-        `SELECT user_id AS userId
-         FROM note_memberships
-         WHERE note_id = ?
-           AND status = 'active'
-           AND role != 'owner'`
-      )
-      .all(access.noteId) as { userId: string }[];
+    const activeMembers = context.db.orm
+      .select({ userId: schema.noteMemberships.userId })
+      .from(schema.noteMemberships)
+      .where(and(
+        eq(schema.noteMemberships.noteId, access.noteId),
+        eq(schema.noteMemberships.status, "active"),
+        ne(schema.noteMemberships.role, "owner")
+      ))
+      .all();
     const activeMemberIds = activeMembers.map((member) => member.userId);
     const shareRecipientIds = parsed.data.shares.map((share) => share.recipientUserId);
     if (!sameMembers(activeMemberIds, shareRecipientIds)) {
@@ -597,21 +559,18 @@ export function createNotesRouter(context: AppContext): Router {
     }
 
     const validShareRows = parsed.data.shares.length
-      ? (context.db.sqlite
-          .prepare(
-            `SELECT user_id AS userId,
-                    sharing_key_version AS sharingKeyVersion
-             FROM user_sharing_keys
-             WHERE (user_id, sharing_key_version) IN (
-               ${parsed.data.shares.map(() => "(?, ?)").join(", ")}
-             )`
+      ? context.db.orm.all<{ userId: string; sharingKeyVersion: number }>(sql`
+          SELECT user_id AS userId, sharing_key_version AS sharingKeyVersion
+          FROM ${schema.userSharingKeys}
+          WHERE (user_id, sharing_key_version) IN (
+            ${sql.join(
+              parsed.data.shares.map((share) =>
+                sql`(${share.recipientUserId}, ${share.sharingKeyVersion})`
+              ),
+              sql`, `
+            )}
           )
-          .all(
-            ...parsed.data.shares.flatMap((share) => [
-              share.recipientUserId,
-              share.sharingKeyVersion
-            ])
-          ) as { userId: string; sharingKeyVersion: number }[])
+        `)
       : [];
     const validShareKeys = new Set(
       validShareRows.map((row) => `${row.userId}:${String(row.sharingKeyVersion)}`)
@@ -626,9 +585,11 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const attachmentRows = context.db.sqlite
-      .prepare("SELECT id FROM attachments WHERE note_id = ?")
-      .all(access.noteId) as { id: string }[];
+    const attachmentRows = context.db.orm
+      .select({ id: schema.attachments.id })
+      .from(schema.attachments)
+      .where(eq(schema.attachments.noteId, access.noteId))
+      .all();
     const attachmentIds = attachmentRows.map((attachment) => attachment.id);
     const rotatedAttachmentIds = parsed.data.attachmentKeys.map(
       (attachment) => attachment.attachmentId
@@ -639,73 +600,59 @@ export function createNotesRouter(context: AppContext): Router {
     }
 
     const nextVersion = access.version + 1;
-    const rotateNoteKey = context.db.sqlite.transaction(() => {
-      const updateResult = context.db.sqlite
-        .prepare(
-          `UPDATE notes
-           SET encrypted_note_key = ?,
-               note_key_nonce = ?,
-               content_cipher = ?,
-               content_nonce = ?,
-               content_length = ?,
-               content_updated_at = CURRENT_TIMESTAMP,
-               version = version + 1,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = ? AND version = ?`
-        )
-        .run(
-          parsed.data.encryptedNoteKey,
-          parsed.data.noteKeyNonce,
-          parsed.data.contentCipher,
-          parsed.data.contentNonce,
-          parsed.data.contentLength,
-          access.noteId,
-          parsed.data.version
-        );
+    const eventCursor = context.db.orm.transaction((tx) => {
+      const updateResult = tx.update(schema.notes)
+        .set({
+          encryptedNoteKey: parsed.data.encryptedNoteKey,
+          noteKeyNonce: parsed.data.noteKeyNonce,
+          contentCipher: parsed.data.contentCipher,
+          contentNonce: parsed.data.contentNonce,
+          contentLength: parsed.data.contentLength,
+          contentUpdatedAt: sql`CURRENT_TIMESTAMP`,
+          version: sql`${schema.notes.version} + 1`,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(and(
+          eq(schema.notes.id, access.noteId),
+          eq(schema.notes.version, parsed.data.version)
+        ))
+        .run();
       if (updateResult.changes !== 1) {
         return null;
       }
       for (const share of parsed.data.shares) {
-        context.db.sqlite
-          .prepare(
-            `INSERT INTO note_key_shares (
-              note_id,
-              recipient_user_id,
-              sender_user_id,
-              sharing_key_version,
-              encrypted_note_key,
-              format_version
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(note_id, recipient_user_id) DO UPDATE SET
-              sender_user_id = excluded.sender_user_id,
-              sharing_key_version = excluded.sharing_key_version,
-              encrypted_note_key = excluded.encrypted_note_key,
-              format_version = excluded.format_version,
-              created_at = CURRENT_TIMESTAMP`
-          )
-          .run(
-            access.noteId,
-            share.recipientUserId,
-            session.userId,
-            share.sharingKeyVersion,
-            share.encryptedNoteKey,
-            share.formatVersion
-          );
+        tx.insert(schema.noteKeyShares)
+          .values({
+            noteId: access.noteId,
+            recipientUserId: share.recipientUserId,
+            senderUserId: session.userId,
+            sharingKeyVersion: share.sharingKeyVersion,
+            encryptedNoteKey: share.encryptedNoteKey,
+            formatVersion: share.formatVersion
+          })
+          .onConflictDoUpdate({
+            target: [schema.noteKeyShares.noteId, schema.noteKeyShares.recipientUserId],
+            set: {
+              senderUserId: session.userId,
+              sharingKeyVersion: share.sharingKeyVersion,
+              encryptedNoteKey: share.encryptedNoteKey,
+              formatVersion: share.formatVersion,
+              createdAt: sql`CURRENT_TIMESTAMP`
+            }
+          })
+          .run();
       }
       for (const attachmentKey of parsed.data.attachmentKeys) {
-        context.db.sqlite
-          .prepare(
-            `UPDATE attachments
-             SET encrypted_attachment_key = ?,
-                 attachment_key_nonce = ?
-             WHERE id = ? AND note_id = ?`
-          )
-          .run(
-            attachmentKey.encryptedAttachmentKey,
-            attachmentKey.attachmentKeyNonce,
-            attachmentKey.attachmentId,
-            access.noteId
-          );
+        tx.update(schema.attachments)
+          .set({
+            encryptedAttachmentKey: attachmentKey.encryptedAttachmentKey,
+            attachmentKeyNonce: attachmentKey.attachmentKeyNonce
+          })
+          .where(and(
+            eq(schema.attachments.id, attachmentKey.attachmentId),
+            eq(schema.attachments.noteId, access.noteId)
+          ))
+          .run();
       }
       return writeRequestEvent(context, request, {
         noteId: access.noteId,
@@ -715,9 +662,8 @@ export function createNotesRouter(context: AppContext): Router {
         payloadMetadata: {
           keyRotated: true
         }
-      });
+      }, tx);
     });
-    const eventCursor = rotateNoteKey();
     if (eventCursor === null) {
       sendApiError(response, "conflict", "Note version conflict");
       return;
@@ -769,29 +715,23 @@ export function createNotesRouter(context: AppContext): Router {
 
     const title = parsed.data.title ?? undefined;
     const nextVersion = access.version + 1;
-    const updateNote = context.db.sqlite.transaction(() => {
-      const updateResult = context.db.sqlite
-        .prepare(
-          `UPDATE notes
-           SET folder_id = ?,
-               title = COALESCE(?, title),
-               content_cipher = ?,
-               content_nonce = ?,
-               content_length = ?,
-               content_updated_at = CURRENT_TIMESTAMP,
-               version = version + 1,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = ? AND version = ?`
-        )
-        .run(
+    const eventCursor = context.db.orm.transaction((tx) => {
+      const updateResult = tx.update(schema.notes)
+        .set({
           folderId,
           title,
-          parsed.data.contentCipher,
-          parsed.data.contentNonce,
-          parsed.data.contentLength,
-          access.noteId,
-          parsed.data.version
-        );
+          contentCipher: parsed.data.contentCipher,
+          contentNonce: parsed.data.contentNonce,
+          contentLength: parsed.data.contentLength,
+          contentUpdatedAt: sql`CURRENT_TIMESTAMP`,
+          version: sql`${schema.notes.version} + 1`,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(and(
+          eq(schema.notes.id, access.noteId),
+          eq(schema.notes.version, parsed.data.version)
+        ))
+        .run();
       if (updateResult.changes !== 1) {
         return null;
       }
@@ -800,9 +740,8 @@ export function createNotesRouter(context: AppContext): Router {
         actorUserId: session.userId,
         eventType: "note.updated",
         noteVersion: nextVersion
-      });
+      }, tx);
     });
-    const eventCursor = updateNote();
     if (eventCursor === null) {
       sendApiError(response, "conflict", "Note version conflict");
       return;
@@ -824,24 +763,26 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const deleteNote = context.db.sqlite.transaction(() => {
-      context.db.sqlite
-        .prepare(
-          `UPDATE notes
-           SET is_deleted = 1,
-               deleted_at = CURRENT_TIMESTAMP,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = ? AND user_id = ?`
-        )
-        .run(access.noteId, session.userId);
+    const cursor = context.db.orm.transaction((tx) => {
+      tx.update(schema.notes)
+        .set({
+          isDeleted: true,
+          deletedAt: sql`CURRENT_TIMESTAMP`,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(and(
+          eq(schema.notes.id, access.noteId),
+          eq(schema.notes.userId, session.userId)
+        ))
+        .run();
       return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "note.deleted",
         noteVersion: access.version
-      });
+      }, tx);
     });
-    publishEventCursors(context, [deleteNote()]);
+    publishEventCursors(context, [cursor]);
 
     response.status(204).send();
   });
@@ -858,24 +799,22 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const restoreNote = context.db.sqlite.transaction(() => {
-      context.db.sqlite
-        .prepare(
-          `UPDATE notes
-           SET is_deleted = 0,
-               deleted_at = NULL,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = ? AND user_id = ?`
-        )
-        .run(access.noteId, session.userId);
+    const cursor = context.db.orm.transaction((tx) => {
+      tx.update(schema.notes)
+        .set({ isDeleted: false, deletedAt: null, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(and(
+          eq(schema.notes.id, access.noteId),
+          eq(schema.notes.userId, session.userId)
+        ))
+        .run();
       return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "note.restored",
         noteVersion: access.version
-      });
+      }, tx);
     });
-    publishEventCursors(context, [restoreNote()]);
+    publishEventCursors(context, [cursor]);
 
     response.json({ id: access.noteId });
   });
@@ -892,24 +831,31 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const rows = context.db.sqlite
-      .prepare(
-        "SELECT file_cipher_path AS fileCipherPath FROM attachments WHERE note_id = ? AND user_id = ?"
-      )
-      .all(access.noteId, session.userId) as { fileCipherPath: string }[];
+    const rows = context.db.orm
+      .select({ fileCipherPath: schema.attachments.fileCipherPath })
+      .from(schema.attachments)
+      .where(and(
+        eq(schema.attachments.noteId, access.noteId),
+        eq(schema.attachments.userId, session.userId)
+      ))
+      .all();
 
-    const memberRows = context.db.sqlite
-      .prepare(
-        `SELECT user_id AS userId
-         FROM note_memberships
-         WHERE note_id = ? AND status = 'active'`
-      )
-      .all(access.noteId) as { userId: string }[];
+    const memberRows = context.db.orm
+      .select({ userId: schema.noteMemberships.userId })
+      .from(schema.noteMemberships)
+      .where(and(
+        eq(schema.noteMemberships.noteId, access.noteId),
+        eq(schema.noteMemberships.status, "active")
+      ))
+      .all();
 
-    const remove = context.db.sqlite.transaction(() => {
-      context.db.sqlite
-        .prepare("DELETE FROM notes WHERE id = ? AND user_id = ?")
-        .run(access.noteId, session.userId);
+    const cursor = context.db.orm.transaction((tx) => {
+      tx.delete(schema.notes)
+        .where(and(
+          eq(schema.notes.id, access.noteId),
+          eq(schema.notes.userId, session.userId)
+        ))
+        .run();
       return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
@@ -918,9 +864,9 @@ export function createNotesRouter(context: AppContext): Router {
         payloadMetadata: {
           visibleUserIds: memberRows.map((row) => row.userId)
         }
-      });
+      }, tx);
     });
-    publishEventCursors(context, [remove()]);
+    publishEventCursors(context, [cursor]);
     await Promise.all(
       rows.map((row) =>
         deleteEncryptedAttachment(context.config, row.fileCipherPath).catch((error: unknown) => {

@@ -1,8 +1,10 @@
 import argon2 from "argon2";
 import { createHmac, randomBytes as nodeRandomBytes } from "node:crypto";
+import { and, eq, sql } from "drizzle-orm";
 import { Router, type Request, type RequestHandler } from "express";
 import { z } from "zod";
 import { DEFAULT_KDF } from "@fortnote/shared";
+import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import {
@@ -174,21 +176,24 @@ export function createAuthRouter(context: AppContext): Router {
       return;
     }
 
-    const row = context.db.sqlite
-      .prepare(
-        `SELECT users.auth_kdf_salt AS authKdfSalt,
-                users.auth_kdf_ops_limit AS authKdfOpsLimit,
-                users.auth_kdf_mem_limit AS authKdfMemLimit,
-                users.auth_kdf_version AS authKdfVersion,
-                user_key_material.kdf_salt AS vaultKdfSalt,
-                user_key_material.kdf_ops_limit AS vaultKdfOpsLimit,
-                user_key_material.kdf_mem_limit AS vaultKdfMemLimit,
-                user_key_material.kdf_version AS vaultKdfVersion
-         FROM users
-         JOIN user_key_material ON user_key_material.user_id = users.id
-         WHERE users.username = ?`
+    const row = context.db.orm
+      .select({
+        authKdfSalt: schema.users.authKdfSalt,
+        authKdfOpsLimit: schema.users.authKdfOpsLimit,
+        authKdfMemLimit: schema.users.authKdfMemLimit,
+        authKdfVersion: schema.users.authKdfVersion,
+        vaultKdfSalt: schema.userKeyMaterial.kdfSalt,
+        vaultKdfOpsLimit: schema.userKeyMaterial.kdfOpsLimit,
+        vaultKdfMemLimit: schema.userKeyMaterial.kdfMemLimit,
+        vaultKdfVersion: schema.userKeyMaterial.kdfVersion
+      })
+      .from(schema.users)
+      .innerJoin(
+        schema.userKeyMaterial,
+        eq(schema.userKeyMaterial.userId, schema.users.id)
       )
-      .get(username.data);
+      .where(eq(schema.users.username, username.data))
+      .get();
 
     response.json(row ?? unknownUserKdfResponse(username.data));
   });
@@ -200,20 +205,23 @@ export function createAuthRouter(context: AppContext): Router {
       return;
     }
 
-    const row = context.db.sqlite
-      .prepare(
-        `SELECT user_key_material.recovery_encrypted_root_key AS recoveryEncryptedRootKey,
-                user_key_material.recovery_root_key_nonce AS recoveryRootKeyNonce,
-                user_key_material.recovery_kdf_salt AS recoveryKdfSalt,
-                user_key_material.recovery_kdf_ops_limit AS recoveryKdfOpsLimit,
-                user_key_material.recovery_kdf_mem_limit AS recoveryKdfMemLimit,
-                user_key_material.recovery_kdf_version AS recoveryKdfVersion,
-                user_key_material.key_material_version AS keyMaterialVersion
-         FROM users
-         JOIN user_key_material ON user_key_material.user_id = users.id
-         WHERE users.username = ?`
+    const row = context.db.orm
+      .select({
+        recoveryEncryptedRootKey: schema.userKeyMaterial.recoveryEncryptedRootKey,
+        recoveryRootKeyNonce: schema.userKeyMaterial.recoveryRootKeyNonce,
+        recoveryKdfSalt: schema.userKeyMaterial.recoveryKdfSalt,
+        recoveryKdfOpsLimit: schema.userKeyMaterial.recoveryKdfOpsLimit,
+        recoveryKdfMemLimit: schema.userKeyMaterial.recoveryKdfMemLimit,
+        recoveryKdfVersion: schema.userKeyMaterial.recoveryKdfVersion,
+        keyMaterialVersion: schema.userKeyMaterial.keyMaterialVersion
+      })
+      .from(schema.users)
+      .innerJoin(
+        schema.userKeyMaterial,
+        eq(schema.userKeyMaterial.userId, schema.users.id)
       )
-      .get(username.data);
+      .where(eq(schema.users.username, username.data))
+      .get();
 
     response.json(row ?? unknownUserRecoveryResponse(username.data));
   });
@@ -232,66 +240,34 @@ export function createAuthRouter(context: AppContext): Router {
     );
 
     try {
-      const insert = context.db.sqlite.transaction(() => {
-        context.db.sqlite
-          .prepare(
-            `INSERT INTO users (
-              id,
-              username,
-              auth_verifier_hash,
-              auth_kdf_salt,
-              auth_kdf_ops_limit,
-              auth_kdf_mem_limit,
-              auth_kdf_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)`
-          )
-          .run(
-            userId,
-            parsed.data.username,
-            authVerifierHash,
-            parsed.data.authKdf.salt,
-            parsed.data.authKdf.opsLimit,
-            parsed.data.authKdf.memLimit,
-            parsed.data.authKdf.version
-          );
+      context.db.orm.transaction((tx) => {
+        tx.insert(schema.users).values({
+          id: userId,
+          username: parsed.data.username,
+          authVerifierHash,
+          authKdfSalt: parsed.data.authKdf.salt,
+          authKdfOpsLimit: parsed.data.authKdf.opsLimit,
+          authKdfMemLimit: parsed.data.authKdf.memLimit,
+          authKdfVersion: parsed.data.authKdf.version
+        }).run();
 
-        context.db.sqlite
-          .prepare(
-            `INSERT INTO user_key_material (
-              user_id,
-              encrypted_root_key,
-              root_key_nonce,
-              kdf_salt,
-              kdf_ops_limit,
-              kdf_mem_limit,
-              kdf_version,
-              recovery_encrypted_root_key,
-              recovery_root_key_nonce,
-              recovery_auth_verifier_hash,
-              recovery_kdf_salt,
-              recovery_kdf_ops_limit,
-              recovery_kdf_mem_limit,
-              recovery_kdf_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-          .run(
-            userId,
-            parsed.data.encryptedRootKey,
-            parsed.data.rootKeyNonce,
-            parsed.data.vaultKdf.salt,
-            parsed.data.vaultKdf.opsLimit,
-            parsed.data.vaultKdf.memLimit,
-            parsed.data.vaultKdf.version,
-            parsed.data.recoveryEncryptedRootKey,
-            parsed.data.recoveryRootKeyNonce,
-            recoveryAuthVerifierHash,
-            parsed.data.recoveryKdf.salt,
-            parsed.data.recoveryKdf.opsLimit,
-            parsed.data.recoveryKdf.memLimit,
-            parsed.data.recoveryKdf.version
-          );
+        tx.insert(schema.userKeyMaterial).values({
+          userId,
+          encryptedRootKey: parsed.data.encryptedRootKey,
+          rootKeyNonce: parsed.data.rootKeyNonce,
+          kdfSalt: parsed.data.vaultKdf.salt,
+          kdfOpsLimit: parsed.data.vaultKdf.opsLimit,
+          kdfMemLimit: parsed.data.vaultKdf.memLimit,
+          kdfVersion: parsed.data.vaultKdf.version,
+          recoveryEncryptedRootKey: parsed.data.recoveryEncryptedRootKey,
+          recoveryRootKeyNonce: parsed.data.recoveryRootKeyNonce,
+          recoveryAuthVerifierHash,
+          recoveryKdfSalt: parsed.data.recoveryKdf.salt,
+          recoveryKdfOpsLimit: parsed.data.recoveryKdf.opsLimit,
+          recoveryKdfMemLimit: parsed.data.recoveryKdf.memLimit,
+          recoveryKdfVersion: parsed.data.recoveryKdf.version
+        }).run();
       });
-      insert();
     } catch {
       sendApiError(response, "conflict", "Username is already registered");
       return;
@@ -309,11 +285,11 @@ export function createAuthRouter(context: AppContext): Router {
       return;
     }
 
-    const row = context.db.sqlite
-      .prepare("SELECT id, auth_verifier_hash AS authVerifierHash FROM users WHERE username = ?")
-      .get(parsed.data.username) as
-      | { id: string; authVerifierHash: string }
-      | undefined;
+    const row = context.db.orm
+      .select({ id: schema.users.id, authVerifierHash: schema.users.authVerifierHash })
+      .from(schema.users)
+      .where(eq(schema.users.username, parsed.data.username))
+      .get();
 
     const dummyVerifierHash = await DUMMY_AUTH_VERIFIER_HASH;
     const verifierMatches = await argon2.verify(
@@ -337,22 +313,19 @@ export function createAuthRouter(context: AppContext): Router {
       return;
     }
 
-    const row = context.db.sqlite
-      .prepare(
-        `SELECT users.id,
-                user_key_material.recovery_auth_verifier_hash AS recoveryAuthVerifierHash,
-                user_key_material.key_material_version AS keyMaterialVersion
-         FROM users
-         JOIN user_key_material ON user_key_material.user_id = users.id
-         WHERE users.username = ?`
+    const row = context.db.orm
+      .select({
+        id: schema.users.id,
+        recoveryAuthVerifierHash: schema.userKeyMaterial.recoveryAuthVerifierHash,
+        keyMaterialVersion: schema.userKeyMaterial.keyMaterialVersion
+      })
+      .from(schema.users)
+      .innerJoin(
+        schema.userKeyMaterial,
+        eq(schema.userKeyMaterial.userId, schema.users.id)
       )
-      .get(parsed.data.username) as
-      | {
-          id: string;
-          recoveryAuthVerifierHash: string;
-          keyMaterialVersion: number;
-        }
-      | undefined;
+      .where(eq(schema.users.username, parsed.data.username))
+      .get();
 
     const dummyVerifierHash = await DUMMY_AUTH_VERIFIER_HASH;
     const verifierMatches = await argon2.verify(
@@ -367,61 +340,45 @@ export function createAuthRouter(context: AppContext): Router {
     const newAuthVerifierHash = await argon2.hash(parsed.data.newAuthVerifier);
     let recovered: { token: string; revokedSessionIds: string[] };
     try {
-      const recoverAccount = context.db.sqlite.transaction(() => {
-        context.db.sqlite
-          .prepare(
-            `UPDATE users
-             SET auth_verifier_hash = ?,
-                 auth_kdf_salt = ?,
-                 auth_kdf_ops_limit = ?,
-                 auth_kdf_mem_limit = ?,
-                 auth_kdf_version = ?,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?`
-          )
-          .run(
-            newAuthVerifierHash,
-            parsed.data.authKdf.salt,
-            parsed.data.authKdf.opsLimit,
-            parsed.data.authKdf.memLimit,
-            parsed.data.authKdf.version,
-            row.id
-          );
+      recovered = context.db.orm.transaction((tx) => {
+        tx.update(schema.users)
+          .set({
+            authVerifierHash: newAuthVerifierHash,
+            authKdfSalt: parsed.data.authKdf.salt,
+            authKdfOpsLimit: parsed.data.authKdf.opsLimit,
+            authKdfMemLimit: parsed.data.authKdf.memLimit,
+            authKdfVersion: parsed.data.authKdf.version,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(eq(schema.users.id, row.id))
+          .run();
 
-        const keyMaterialUpdate = context.db.sqlite
-          .prepare(
-            `UPDATE user_key_material
-             SET encrypted_root_key = ?,
-                 root_key_nonce = ?,
-                 kdf_salt = ?,
-                 kdf_ops_limit = ?,
-                 kdf_mem_limit = ?,
-                 kdf_version = ?,
-                 key_material_version = key_material_version + 1,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE user_id = ? AND key_material_version = ?`
-          )
-          .run(
-            parsed.data.encryptedRootKey,
-            parsed.data.rootKeyNonce,
-            parsed.data.vaultKdf.salt,
-            parsed.data.vaultKdf.opsLimit,
-            parsed.data.vaultKdf.memLimit,
-            parsed.data.vaultKdf.version,
-            row.id,
-            parsed.data.keyMaterialVersion
-          );
+        const keyMaterialUpdate = tx.update(schema.userKeyMaterial)
+          .set({
+            encryptedRootKey: parsed.data.encryptedRootKey,
+            rootKeyNonce: parsed.data.rootKeyNonce,
+            kdfSalt: parsed.data.vaultKdf.salt,
+            kdfOpsLimit: parsed.data.vaultKdf.opsLimit,
+            kdfMemLimit: parsed.data.vaultKdf.memLimit,
+            kdfVersion: parsed.data.vaultKdf.version,
+            keyMaterialVersion: sql`${schema.userKeyMaterial.keyMaterialVersion} + 1`,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(and(
+            eq(schema.userKeyMaterial.userId, row.id),
+            eq(schema.userKeyMaterial.keyMaterialVersion, parsed.data.keyMaterialVersion)
+          ))
+          .run();
         if (keyMaterialUpdate.changes !== 1) {
           throw new KeyMaterialVersionConflict();
         }
 
-        const revokedSessionIds = deleteUserSessions(context.db, row.id);
+        const revokedSessionIds = deleteUserSessions(context.db, row.id, tx);
         return {
-          token: createSession(context.db, row.id),
+          token: createSession(context.db, row.id, tx),
           revokedSessionIds
         };
       });
-      recovered = recoverAccount();
     } catch (error) {
       if (error instanceof KeyMaterialVersionConflict) {
         sendApiError(response, "conflict", "Key material version conflict");

@@ -1,5 +1,7 @@
+import { and, eq, sql } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
+import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { requireSession } from "../auth/session.js";
@@ -11,24 +13,17 @@ const folderPayloadSchema = z.object({
   parentFolderId: z.uuid().nullable().optional()
 });
 
-interface FolderRow {
-  id: string;
-  userId: string;
-  name: string;
-  parentFolderId: string | null;
-}
-
-function getFolder(context: AppContext, folderId: string): FolderRow | undefined {
-  return context.db.sqlite
-    .prepare(
-      `SELECT id,
-              user_id AS userId,
-              name,
-              parent_folder_id AS parentFolderId
-       FROM folders
-       WHERE id = ?`
-    )
-    .get(folderId) as FolderRow | undefined;
+function getFolder(context: AppContext, folderId: string) {
+  return context.db.orm
+    .select({
+      id: schema.folders.id,
+      userId: schema.folders.userId,
+      name: schema.folders.name,
+      parentFolderId: schema.folders.parentFolderId
+    })
+    .from(schema.folders)
+    .where(eq(schema.folders.id, folderId))
+    .get();
 }
 
 function validateParent(
@@ -62,14 +57,18 @@ export function createFoldersRouter(context: AppContext): Router {
       return;
     }
 
-    const rows = context.db.sqlite
-      .prepare(
-        `SELECT id, name, parent_folder_id AS parentFolderId, created_at AS createdAt, updated_at AS updatedAt
-         FROM folders
-         WHERE user_id = ?
-         ORDER BY parent_folder_id IS NOT NULL, name`
-      )
-      .all(session.userId);
+    const rows = context.db.orm
+      .select({
+        id: schema.folders.id,
+        name: schema.folders.name,
+        parentFolderId: schema.folders.parentFolderId,
+        createdAt: schema.folders.createdAt,
+        updatedAt: schema.folders.updatedAt
+      })
+      .from(schema.folders)
+      .where(eq(schema.folders.userId, session.userId))
+      .orderBy(sql`${schema.folders.parentFolderId} IS NOT NULL`, schema.folders.name)
+      .all();
 
     response.json({ folders: rows });
   });
@@ -93,13 +92,13 @@ export function createFoldersRouter(context: AppContext): Router {
     }
 
     const id = parsed.data.id ?? crypto.randomUUID();
-    const createFolder = context.db.sqlite.transaction(() => {
-      context.db.sqlite
-        .prepare(
-          `INSERT INTO folders (id, user_id, name, parent_folder_id)
-           VALUES (?, ?, ?, ?)`
-        )
-        .run(id, session.userId, parsed.data.name, parentFolderId);
+    const cursor = context.db.orm.transaction((tx) => {
+      tx.insert(schema.folders).values({
+        id,
+        userId: session.userId,
+        name: parsed.data.name,
+        parentFolderId
+      }).run();
       return writeRequestEvent(context, request, {
         noteId: null,
         actorUserId: session.userId,
@@ -110,9 +109,9 @@ export function createFoldersRouter(context: AppContext): Router {
         payloadMetadata: {
           folderId: id
         }
-      });
+      }, tx);
     });
-    publishEventCursor(context, createFolder());
+    publishEventCursor(context, cursor);
 
     response.status(201).json({ id, name: parsed.data.name, parentFolderId });
   });
@@ -145,14 +144,18 @@ export function createFoldersRouter(context: AppContext): Router {
       return;
     }
 
-    const updateFolder = context.db.sqlite.transaction(() => {
-      context.db.sqlite
-        .prepare(
-          `UPDATE folders
-           SET name = ?, parent_folder_id = ?, updated_at = CURRENT_TIMESTAMP
-           WHERE id = ? AND user_id = ?`
-        )
-        .run(parsed.data.name, parentFolderId, folder.id, session.userId);
+    const cursor = context.db.orm.transaction((tx) => {
+      tx.update(schema.folders)
+        .set({
+          name: parsed.data.name,
+          parentFolderId,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(and(
+          eq(schema.folders.id, folder.id),
+          eq(schema.folders.userId, session.userId)
+        ))
+        .run();
       return writeRequestEvent(context, request, {
         noteId: null,
         actorUserId: session.userId,
@@ -163,9 +166,9 @@ export function createFoldersRouter(context: AppContext): Router {
         payloadMetadata: {
           folderId: folder.id
         }
-      });
+      }, tx);
     });
-    publishEventCursor(context, updateFolder());
+    publishEventCursor(context, cursor);
 
     response.json({ id: folder.id, name: parsed.data.name, parentFolderId });
   });
@@ -187,24 +190,27 @@ export function createFoldersRouter(context: AppContext): Router {
     }
 
     const moveTarget = folder.parentFolderId;
-    const remove = context.db.sqlite.transaction(() => {
-      context.db.sqlite
-        .prepare(
-          `UPDATE notes
-           SET folder_id = ?, updated_at = CURRENT_TIMESTAMP
-           WHERE user_id = ? AND folder_id = ?`
-        )
-        .run(moveTarget, session.userId, folder.id);
-      context.db.sqlite
-        .prepare(
-          `UPDATE folders
-           SET parent_folder_id = ?, updated_at = CURRENT_TIMESTAMP
-           WHERE user_id = ? AND parent_folder_id = ?`
-        )
-        .run(moveTarget, session.userId, folder.id);
-      context.db.sqlite
-        .prepare("DELETE FROM folders WHERE id = ? AND user_id = ?")
-        .run(folder.id, session.userId);
+    const cursor = context.db.orm.transaction((tx) => {
+      tx.update(schema.notes)
+        .set({ folderId: moveTarget, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(and(
+          eq(schema.notes.userId, session.userId),
+          eq(schema.notes.folderId, folder.id)
+        ))
+        .run();
+      tx.update(schema.folders)
+        .set({ parentFolderId: moveTarget, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(and(
+          eq(schema.folders.userId, session.userId),
+          eq(schema.folders.parentFolderId, folder.id)
+        ))
+        .run();
+      tx.delete(schema.folders)
+        .where(and(
+          eq(schema.folders.id, folder.id),
+          eq(schema.folders.userId, session.userId)
+        ))
+        .run();
       return writeRequestEvent(context, request, {
         noteId: null,
         actorUserId: session.userId,
@@ -216,9 +222,9 @@ export function createFoldersRouter(context: AppContext): Router {
           folderId: folder.id,
           parentFolderId: moveTarget
         }
-      });
+      }, tx);
     });
-    publishEventCursor(context, remove());
+    publishEventCursor(context, cursor);
 
     response.status(204).send();
   });
