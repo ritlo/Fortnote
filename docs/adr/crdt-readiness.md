@@ -30,11 +30,12 @@ Implemented in the first end-to-end slice:
   update and the client drops acknowledged entries, so the outbox flushes
   idempotently on (re)connect and on each send with no server-side duplicates
   (the `note_updates` insert is idempotent on `updateId`).
-- Epoch-rotation handling for open documents. When a note's key epoch advances
-  while open, the binding clears pending update IDs, the client discards
-  old-epoch queued updates from the outbox, and broadcasts an encrypted
-  `crdt-checkpoint` under the new epoch; the server inserts the checkpoint and
-  compacts only the covered same-note, same-epoch updates.
+- Epoch-rotation handling for open and closed documents. When a note's key epoch
+  advances, the client clears pending update IDs, discards old-epoch queued
+  updates from the outbox, and broadcasts an encrypted `crdt-checkpoint` under
+  the new epoch. If no CRDT binding exists, it seeds the checkpoint from the
+  decrypted whole-note snapshot. The server inserts the checkpoint and compacts
+  only the covered same-note, same-epoch updates.
 - Reconnect/retry, duplicate, and rotation tests covering the outbox, server
   acknowledgement, and hub rotation.
 - Additive snapshot migration. After replaying stored updates the server sends a
@@ -68,9 +69,9 @@ Still open:
 - State-vector exchange is intentionally deferred. Full encrypted update replay
   already reconciles reconnecting peers correctly, so add it only if replay
   performance becomes measurable. The durable outbox covers offline durability.
-- A CRDT checkpoint for documents closed at rotation time. Rotation
-  checkpointing currently only fires for documents left open at epoch advance.
-- Protocol hardening, storage limits, and security review.
+- Protocol hardening and security review of the CRDT data plane. Storage-limit
+  enforcement (per-epoch envelope ceiling and `crdt-reject`) is implemented; a
+  full security review remains.
 
 ## Context
 

@@ -73,14 +73,11 @@ export function openCrdtNote(
     });
   } else {
     const epochAdvanced = note.keyEpoch > binding.note.keyEpoch;
-    binding.note = note;
     binding.onChange = onChange;
     if (epochAdvanced) {
-      binding.pendingUpdateIds.clear();
-      transport?.discard(note.id, note.keyEpoch);
-      // ponytail: this checkpoints current Yjs state; the still-open migration
-      // work must first seed untouched snapshot fields into that state.
-      void broadcastCheckpoint(binding);
+      void checkpointCrdtNote(note);
+    } else {
+      binding.note = note;
     }
   }
   transport?.subscribe(note.id);
@@ -137,6 +134,21 @@ export function clearCrdtNotes(): void {
     binding.doc.destroy();
   }
   bindings.clear();
+}
+
+export function checkpointCrdtNote(note: DecryptedNote): Promise<void> {
+  let binding = bindings.get(note.id);
+  if (!binding) {
+    openCrdtNote(note, () => undefined);
+    binding = bindings.get(note.id)!;
+    Y.applyUpdate(binding.doc, snapshotUpdate(note), SNAPSHOT_SEED);
+    binding.ready = true;
+    binding.snapshotSeeded = true;
+  }
+  binding.note = note;
+  binding.pendingUpdateIds.clear();
+  transport?.discard(note.id, note.keyEpoch);
+  return broadcastCheckpoint(binding);
 }
 
 export function receiveCrdtUpdate(update: EncryptedCrdtMessage): Promise<void> {

@@ -4,6 +4,7 @@ import type { EncryptedCrdtMessage } from "@fortnote/shared";
 import { encryptCrdtMessage } from "../cryptoClient";
 import type { DecryptedNote } from "../store/appStore";
 import {
+  checkpointCrdtNote,
   clearCrdtNotes,
   editCrdtNote,
   finishCrdtSync,
@@ -63,6 +64,25 @@ describe("CRDT collaboration", () => {
       })
     );
     expect(discard).toHaveBeenCalledWith(note().id, 2);
+  });
+
+  it("checkpoints snapshot state after a closed document rotates", async () => {
+    const send = vi.fn();
+    const discard = vi.fn();
+    setCrdtTransport({ discard, send, subscribe: vi.fn() });
+    const rotated = note({ keyEpoch: 2, noteKeyBase64: "rotated-key" });
+
+    await checkpointCrdtNote(rotated);
+
+    const encryptionInput = vi.mocked(encryptCrdtMessage).mock.calls[0]![0];
+    const restored = new Y.Doc();
+    Y.applyUpdate(restored, encryptionInput.update);
+    expect(restored.getText("title").toJSON()).toBe(rotated.title);
+    expect(restored.getText("body").toJSON()).toBe(rotated.body);
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ keyEpoch: 2, type: "crdt-checkpoint" })
+    );
+    expect(discard).toHaveBeenCalledWith(rotated.id, 2);
   });
 
   it("persists the whole-note snapshot as the first CRDT checkpoint", async () => {

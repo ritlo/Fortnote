@@ -24,6 +24,7 @@ import {
   getSharingKeyTrustDecision,
   trustSharingKey
 } from "../lib/sharingKeyTrust";
+import { checkpointCrdtNote } from "../realtime/crdt";
 
 interface SharingPanelProps {
   selectedNote: DecryptedNote | null;
@@ -404,17 +405,25 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
       attachmentKeys
     });
     const rotatedAttachments = applyAttachmentKeyRotation(attachments, attachmentKeys);
+    const rotatedNote = {
+      ...note,
+      contentLength: rotatedKey.contentLength,
+      noteKeyBase64: rotatedKey.noteKeyBase64,
+      keyEpoch: rotated.keyEpoch,
+      updatedAt: new Date().toISOString(),
+      version: rotated.version
+    };
 
     setNotes((current) =>
       current.map((currentNote) =>
         currentNote.id === note.id
           ? {
               ...currentNote,
-              contentLength: rotatedKey.contentLength,
-              noteKeyBase64: rotatedKey.noteKeyBase64,
-              keyEpoch: rotated.keyEpoch,
-              updatedAt: new Date().toISOString(),
-              version: rotated.version
+              contentLength: rotatedNote.contentLength,
+              noteKeyBase64: rotatedNote.noteKeyBase64,
+              keyEpoch: rotatedNote.keyEpoch,
+              updatedAt: rotatedNote.updatedAt,
+              version: rotatedNote.version
             }
           : currentNote
       )
@@ -423,6 +432,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
       ...current,
       [note.id]: rotatedAttachments
     }));
+    void checkpointCrdtNote(rotatedNote);
   }
 
   const canInvite = selectedNote?.role === "owner" && !disabled;
