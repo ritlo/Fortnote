@@ -197,6 +197,69 @@ describe("realtime server", () => {
     carolSocket.socket.close();
   });
 
+  it("stores and broadcasts encrypted CRDT updates outside note_events", async () => {
+    const server = await createRealtimeTestServer();
+    const alice = await register(server.url, "crdt_alice");
+    const bob = await register(server.url, "crdt_bob");
+    await authed(server.url, bob.cookie)
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(sharingKeyPayload("crdt_bob"))
+      .expect(201);
+    const created = await authed(server.url, alice.cookie)
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+    await authed(server.url, alice.cookie)
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send(invitePayload("crdt_bob", "editor"))
+      .expect(201);
+    const cryptoOwnerId = (
+      server.db.sqlite
+        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
+        .get(noteId) as { cryptoOwnerId: string }
+    ).cryptoOwnerId;
+    const aliceSocket = await connect(server.url, alice.cookie, 0);
+    const bobSocket = await connect(server.url, bob.cookie, 0);
+    const legacyBobSocket = await connect(server.url, bob.cookie, 0, false);
+    await aliceSocket.next("alice connected");
+    await aliceSocket.next("alice replay");
+    await bobSocket.next("bob connected");
+    await bobSocket.next("bob replay");
+    await legacyBobSocket.next("legacy bob connected");
+    await legacyBobSocket.next("legacy bob replay");
+    aliceSocket.socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
+    bobSocket.socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
+    bobSocket.socket.send("ping");
+    await bobSocket.next("bob subscription barrier");
+
+    const update = {
+      type: "crdt-update",
+      formatVersion: 1,
+      updateId: crypto.randomUUID(),
+      noteId,
+      cryptoOwnerId,
+      keyEpoch: 1,
+      cipher: "encrypted_crdt_update_abcdefghijklmnopqrstuvwxyz",
+      nonce: "crdt_update_nonce_abcdefghijklmnopqrstuvwxyz"
+    };
+    aliceSocket.socket.send(JSON.stringify(update));
+
+    expect(await bobSocket.next("bob CRDT update")).toEqual(update);
+    await expectNoMessage(legacyBobSocket, "legacy client CRDT update");
+    expect(
+      server.db.sqlite
+        .prepare("SELECT cipher FROM note_updates WHERE update_id = ?")
+        .get(update.updateId)
+    ).toEqual({ cipher: update.cipher });
+    expect(
+      server.db.sqlite.prepare("SELECT COUNT(*) AS count FROM note_events").get()
+    ).toEqual({ count: 2 });
+  });
+
   it("pushes actor-scoped folder events only to the actor", async () => {
     const server = await createRealtimeTestServer();
     const alice = await register(server.url, "ws_folder_alice");
@@ -465,10 +528,12 @@ function invitePayload(username: string, role: "editor" | "viewer") {
 async function connect(
   baseUrl: string,
   cookie: string,
-  after: number
+  after: number,
+  crdt = true
 ): Promise<SocketClient> {
+  const capabilities = crdt ? "&capabilities=crdt-v1" : "";
   const socket = new WebSocket(
-    `${baseUrl.replace(/^http/, "ws")}/api/realtime?after=${String(after)}`,
+    `${baseUrl.replace(/^http/, "ws")}/api/realtime?after=${String(after)}${capabilities}`,
     { headers: { Cookie: cookie, Origin: TEST_ALLOWED_ORIGIN } }
   );
   const messages: Record<string, unknown>[] = [];

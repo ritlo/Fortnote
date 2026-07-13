@@ -66,6 +66,7 @@ export function runMigrations(sqlite: Database.Database): void {
       content_length INTEGER NOT NULL,
       content_updated_at TEXT NOT NULL,
       version INTEGER NOT NULL DEFAULT 1,
+      key_epoch INTEGER NOT NULL DEFAULT 1,
       is_deleted INTEGER NOT NULL DEFAULT 0,
       deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -132,6 +133,17 @@ export function runMigrations(sqlite: Database.Database): void {
 	      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	    );
 
+	    CREATE TABLE IF NOT EXISTS note_updates (
+	      update_id TEXT PRIMARY KEY,
+	      note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+	      crypto_owner_id TEXT NOT NULL,
+	      key_epoch INTEGER NOT NULL,
+	      format_version INTEGER NOT NULL,
+	      cipher TEXT NOT NULL,
+	      nonce TEXT NOT NULL,
+	      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+	    );
+
 	    CREATE TABLE IF NOT EXISTS event_acknowledgements (
 	      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	      note_id TEXT NOT NULL,
@@ -156,6 +168,8 @@ export function runMigrations(sqlite: Database.Database): void {
 	      ON note_events (note_id, cursor);
 	    CREATE INDEX IF NOT EXISTS idx_note_events_resource_cursor
 	      ON note_events (resource_type, resource_id, cursor);
+	    CREATE INDEX IF NOT EXISTS idx_note_updates_note_epoch_created
+	      ON note_updates (note_id, key_epoch, created_at);
 	    CREATE INDEX IF NOT EXISTS idx_event_acknowledgements_user_cursor
 	      ON event_acknowledgements (user_id, cursor);
 	    CREATE INDEX IF NOT EXISTS idx_event_cursors_cursor
@@ -163,6 +177,7 @@ export function runMigrations(sqlite: Database.Database): void {
 	  `);
 
   addColumnIfMissing(sqlite, "notes", "crypto_owner_id", "TEXT");
+  addColumnIfMissing(sqlite, "notes", "key_epoch", "INTEGER NOT NULL DEFAULT 1");
   sqlite.exec("UPDATE notes SET crypto_owner_id = user_id WHERE crypto_owner_id IS NULL");
   removeNoteEventsNoteCascade(sqlite);
   backfillOwnerMemberships(sqlite);

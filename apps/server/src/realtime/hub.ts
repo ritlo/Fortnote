@@ -1,8 +1,14 @@
 import { WebSocket } from "ws";
+import { and, eq } from "drizzle-orm";
+import {
+  CRDT_REALTIME_CAPABILITY,
+  type EncryptedCrdtUpdate
+} from "@fortnote/shared";
 import type { AppContext } from "../http/app.js";
+import * as schema from "../db/schema.js";
 import { deleteExpiredSessions, isSessionActive } from "../auth/session.js";
 import { listVisibleEvents } from "../events/replay.js";
-import { canReadNote, getNoteAccess } from "../notes/access.js";
+import { canEditNote, canReadNote, getNoteAccess } from "../notes/access.js";
 import type { RealtimePublisher } from "./types.js";
 
 export interface RealtimeClient {
@@ -11,6 +17,8 @@ export interface RealtimeClient {
   userId: string;
   username: string;
   socket: WebSocket;
+  capabilities: Set<string>;
+  subscribedNoteIds: Set<string>;
 }
 
 export type PresenceState = "idle" | "editing";
@@ -83,13 +91,16 @@ export class RealtimeHub implements RealtimePublisher {
     userId: string;
     username: string;
     socket: WebSocket;
+    capabilities: Set<string>;
   }): RealtimeClient {
     const client = {
       id: crypto.randomUUID(),
       sessionId: input.sessionId,
       userId: input.userId,
       username: input.username,
-      socket: input.socket
+      socket: input.socket,
+      capabilities: input.capabilities,
+      subscribedNoteIds: new Set<string>()
     };
     this.clients.add(client);
     input.socket.on("close", () => {
@@ -153,6 +164,79 @@ export class RealtimeHub implements RealtimePublisher {
     });
     this.presenceByNote.set(noteId, notePresence);
     this.broadcastPresence(noteId);
+  }
+
+  subscribeCrdt(client: RealtimeClient, noteId: string): void {
+    if (!this.context || !client.capabilities.has(CRDT_REALTIME_CAPABILITY)) {
+      return;
+    }
+    const access = getNoteAccess(this.context, noteId, client.userId);
+    if (!this.ensureClientSession(client) || !canReadNote(access)) {
+      return;
+    }
+    client.subscribedNoteIds.add(noteId);
+    const updates = this.context.db.orm
+      .select({
+        updateId: schema.noteUpdates.updateId,
+        noteId: schema.noteUpdates.noteId,
+        cryptoOwnerId: schema.noteUpdates.cryptoOwnerId,
+        keyEpoch: schema.noteUpdates.keyEpoch,
+        formatVersion: schema.noteUpdates.formatVersion,
+        cipher: schema.noteUpdates.cipher,
+        nonce: schema.noteUpdates.nonce
+      })
+      .from(schema.noteUpdates)
+      .where(and(
+        eq(schema.noteUpdates.noteId, noteId),
+        eq(schema.noteUpdates.keyEpoch, access.keyEpoch)
+      ))
+      .all();
+    for (const update of updates) {
+      sendJson(client.socket, { ...update, type: "crdt-update" });
+    }
+  }
+
+  publishCrdtUpdate(client: RealtimeClient, update: EncryptedCrdtUpdate): void {
+    if (!this.context || !client.capabilities.has(CRDT_REALTIME_CAPABILITY)) {
+      return;
+    }
+    const access = getNoteAccess(this.context, update.noteId, client.userId);
+    if (
+      !this.ensureClientSession(client) ||
+      !canEditNote(access) ||
+      access.cryptoOwnerId !== update.cryptoOwnerId ||
+      access.keyEpoch !== update.keyEpoch
+    ) {
+      return;
+    }
+    const inserted = this.context.db.orm
+      .insert(schema.noteUpdates)
+      .values({
+        updateId: update.updateId,
+        noteId: update.noteId,
+        cryptoOwnerId: update.cryptoOwnerId,
+        keyEpoch: update.keyEpoch,
+        formatVersion: update.formatVersion,
+        cipher: update.cipher,
+        nonce: update.nonce
+      })
+      .onConflictDoNothing()
+      .run();
+    if (inserted.changes === 0) {
+      return;
+    }
+    for (const recipient of this.clients) {
+      if (
+        recipient === client ||
+        !this.ensureClientSession(recipient) ||
+        !recipient.capabilities.has(CRDT_REALTIME_CAPABILITY) ||
+        !recipient.subscribedNoteIds.has(update.noteId) ||
+        !canReadNote(getNoteAccess(this.context, update.noteId, recipient.userId))
+      ) {
+        continue;
+      }
+      sendJson(recipient.socket, update);
+    }
   }
 
   private clearPresence(client: RealtimeClient): void {

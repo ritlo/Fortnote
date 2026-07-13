@@ -1,0 +1,27 @@
+import { utf8 } from "./crypto.js";
+
+export const CRDT_REALTIME_CAPABILITY = "crdt-v1";
+export const CRDT_UPDATE_FORMAT_VERSION = 1;
+
+export interface EncryptedCrdtUpdate {
+  type: "crdt-update";
+  formatVersion: typeof CRDT_UPDATE_FORMAT_VERSION;
+  updateId: string;
+  noteId: string;
+  cryptoOwnerId: string;
+  keyEpoch: number;
+  cipher: string;
+  nonce: string;
+}
+
+export function crdtUpdateAssociatedData(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  keyEpoch: number;
+  updateId: string;
+  formatVersion: number;
+}): Uint8Array {
+  return utf8(
+    `fortnote:crdt-update:v${String(input.formatVersion)}:${input.cryptoOwnerId}:${input.noteId}:${String(input.keyEpoch)}:${input.updateId}`
+  );
+}

@@ -2,6 +2,7 @@ import type { Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { z } from "zod";
+import { CRDT_REALTIME_CAPABILITY } from "@fortnote/shared";
 import {
   findSession,
   readSessionToken,
@@ -13,7 +14,8 @@ import type { AppContext } from "../http/app.js";
 import { RealtimeHub, sendJson, type RealtimeClient } from "./hub.js";
 
 const realtimeQuerySchema = z.object({
-  after: z.coerce.number().int().nonnegative().default(0)
+  after: z.coerce.number().int().nonnegative().default(0),
+  capabilities: z.string().default("")
 });
 
 const clientMessageSchema = z.discriminatedUnion("type", [
@@ -21,10 +23,24 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("presence"),
     noteId: z.uuid(),
     state: z.enum(["idle", "editing", "left"])
+  }),
+  z.object({
+    type: z.literal("crdt-subscribe"),
+    noteId: z.uuid()
+  }),
+  z.object({
+    type: z.literal("crdt-update"),
+    formatVersion: z.literal(1),
+    updateId: z.uuid(),
+    noteId: z.uuid(),
+    cryptoOwnerId: z.uuid(),
+    keyEpoch: z.number().int().positive(),
+    cipher: z.string().min(1).max(400_000),
+    nonce: z.string().min(16).max(128)
   })
 ]);
 
-const MAX_REALTIME_MESSAGE_BYTES = 16 * 1024;
+const MAX_REALTIME_MESSAGE_BYTES = 512 * 1024;
 
 export function attachRealtimeServer(
   context: AppContext,
@@ -62,9 +78,16 @@ export function attachRealtimeServer(
       Object.fromEntries(url.searchParams.entries())
     );
     const after = parsed.success ? parsed.data.after : 0;
+    const capabilities = new Set(
+      parsed.success
+        ? parsed.data.capabilities
+            .split(",")
+            .filter((capability) => capability === CRDT_REALTIME_CAPABILITY)
+        : []
+    );
 
     webSocketServer.handleUpgrade(request, socket, head, (socket) => {
-      connectClient(context, hub, socket, session, after);
+      connectClient(context, hub, socket, session, after, capabilities);
     });
   });
 
@@ -80,13 +103,15 @@ function connectClient(
   hub: RealtimeHub,
   socket: WebSocket,
   session: SessionRecord,
-  after: number
+  after: number,
+  capabilities: Set<string>
 ): void {
   const client = hub.addClient({
     sessionId: session.id,
     userId: session.userId,
     username: session.username,
-    socket
+    socket,
+    capabilities
   });
   socket.on("message", (message) => {
     handleClientMessage(hub, client, socket, message);
@@ -95,7 +120,9 @@ function connectClient(
   sendJson(socket, {
     type: "connected",
     userId: session.userId,
-    username: session.username
+    username: session.username,
+    protocolVersion: 2,
+    capabilities: [CRDT_REALTIME_CAPABILITY]
   });
   sendJson(socket, {
     type: "replay",
@@ -119,7 +146,13 @@ function handleClientMessage(
   if (!parsed) {
     return;
   }
-  hub.updatePresence(client, parsed.noteId, parsed.state);
+  if (parsed.type === "presence") {
+    hub.updatePresence(client, parsed.noteId, parsed.state);
+  } else if (parsed.type === "crdt-subscribe") {
+    hub.subscribeCrdt(client, parsed.noteId);
+  } else {
+    hub.publishCrdtUpdate(client, parsed);
+  }
 }
 
 function parseClientMessage(raw: string): z.infer<typeof clientMessageSchema> | null {

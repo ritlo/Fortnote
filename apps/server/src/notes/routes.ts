@@ -106,6 +106,7 @@ const noteSelection = {
   contentLength: schema.notes.contentLength,
   contentUpdatedAt: schema.notes.contentUpdatedAt,
   version: schema.notes.version,
+  keyEpoch: schema.notes.keyEpoch,
   isDeleted: schema.notes.isDeleted,
   deletedAt: schema.notes.deletedAt,
   createdAt: schema.notes.createdAt,
@@ -610,6 +611,7 @@ export function createNotesRouter(context: AppContext): Router {
           contentLength: parsed.data.contentLength,
           contentUpdatedAt: sql`CURRENT_TIMESTAMP`,
           version: sql`${schema.notes.version} + 1`,
+          keyEpoch: sql`${schema.notes.keyEpoch} + 1`,
           updatedAt: sql`CURRENT_TIMESTAMP`
         })
         .where(and(
@@ -670,7 +672,11 @@ export function createNotesRouter(context: AppContext): Router {
     }
     publishEventCursors(context, [eventCursor]);
 
-    response.json({ id: access.noteId, version: nextVersion });
+    response.json({
+      id: access.noteId,
+      version: nextVersion,
+      keyEpoch: access.keyEpoch + 1
+    });
   });
 
   router.put("/:id", (request, response) => {

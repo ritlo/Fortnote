@@ -76,10 +76,22 @@ export const notes = sqliteTable("notes", {
   contentLength: integer("content_length").notNull(),
   contentUpdatedAt: text("content_updated_at").notNull(),
   version: integer("version").notNull().default(1),
+  keyEpoch: integer("key_epoch").notNull().default(1),
   isDeleted: integer("is_deleted", { mode: "boolean" }).notNull().default(false),
   deletedAt: text("deleted_at"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`)
+});
+
+export const noteUpdates = sqliteTable("note_updates", {
+  updateId: text("update_id").primaryKey(),
+  noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+  cryptoOwnerId: text("crypto_owner_id").notNull(),
+  keyEpoch: integer("key_epoch").notNull(),
+  formatVersion: integer("format_version").notNull(),
+  cipher: text("cipher").notNull(),
+  nonce: text("nonce").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`)
 });
 
 export const attachments = sqliteTable("attachments", {

@@ -4,3 +4,4 @@ export const LIMITS = {
 } as const;
 
 export * from "./crypto.js";
+export * from "./crdt.js";

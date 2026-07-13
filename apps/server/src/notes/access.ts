@@ -13,6 +13,7 @@ export interface NoteAccess {
   status: NoteMembershipStatus;
   folderId: string | null;
   version: number;
+  keyEpoch: number;
   isDeleted: boolean;
 }
 
@@ -30,6 +31,7 @@ export function getNoteAccess(
       status: schema.noteMemberships.status,
       folderId: schema.notes.folderId,
       version: schema.notes.version,
+      keyEpoch: schema.notes.keyEpoch,
       isDeleted: schema.notes.isDeleted
     })
     .from(schema.notes)
