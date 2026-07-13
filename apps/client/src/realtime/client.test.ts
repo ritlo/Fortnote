@@ -129,7 +129,7 @@ describe("realtime client", () => {
     ).toBeNull();
   });
 
-  it("retries encrypted CRDT updates until the server acknowledges them", () => {
+  it("retries encrypted CRDT updates until the server acknowledges them", async () => {
     const update = {
       type: "crdt-update" as const,
       formatVersion: 1 as const,
@@ -141,8 +141,8 @@ describe("realtime client", () => {
       nonce: "nonce"
     };
     const onMessage = vi.fn();
-    const first = connectRealtime({ after: 0, onMessage });
-    first.sendCrdtUpdate(update);
+    const first = connectRealtime({ after: 0, userId: "user_1", onMessage });
+    const firstDelivery = first.sendCrdtUpdate(update);
     expect(sockets[0]!.sent).toEqual([]);
 
     sockets[0]!.open();
@@ -159,10 +159,10 @@ describe("realtime client", () => {
     };
     sockets[0]!.receive(rejection);
     expect(onMessage).toHaveBeenLastCalledWith(rejection);
-    expect(JSON.parse(localStorage.getItem("fortnote:crdt-outbox:v1") ?? "[]"))
+    expect(JSON.parse(localStorage.getItem(outboxKey("user_1")) ?? "[]"))
       .toEqual([update]);
 
-    const second = connectRealtime({ after: 0, onMessage: vi.fn() });
+    const second = connectRealtime({ after: 0, userId: "user_1", onMessage: vi.fn() });
     sockets[1]!.open();
     sockets[1]!.receive(connectedMessage());
     expect(
@@ -170,22 +170,92 @@ describe("realtime client", () => {
     ).toContainEqual(update);
 
     sockets[1]!.receive({ type: "crdt-ack", updateId: update.updateId });
-    expect(JSON.parse(localStorage.getItem("fortnote:crdt-outbox:v1") ?? "[]"))
+    await expect(firstDelivery).resolves.toBeUndefined();
+    expect(JSON.parse(localStorage.getItem(outboxKey("user_1")) ?? "[]"))
       .toEqual([]);
 
-    second.sendCrdtUpdate(update);
+    const discarded = second.sendCrdtUpdate(update);
     second.discardCrdtUpdates(update.noteId, 2);
-    expect(JSON.parse(localStorage.getItem("fortnote:crdt-outbox:v1") ?? "[]"))
+    await expect(discarded).rejects.toThrow("Superseded");
+    expect(JSON.parse(localStorage.getItem(outboxKey("user_1")) ?? "[]"))
+      .toEqual([]);
+  });
+
+  it("does not flush one user's outbox through another user's session", () => {
+    const update = crdtUpdate();
+    const alice = connectRealtime({ after: 0, userId: "alice", onMessage: vi.fn() });
+    void alice.sendCrdtUpdate(update);
+
+    connectRealtime({ after: 0, userId: "bob", onMessage: vi.fn() });
+    sockets[1]!.open();
+    sockets[1]!.receive(connectedMessage("bob"));
+
+    expect(sockets[1]!.sent).toEqual([]);
+  });
+
+  it("surfaces localStorage quota failures", () => {
+    localStorage.setItem = vi.fn(() => {
+      throw new DOMException("Quota exceeded", "QuotaExceededError");
+    });
+    const onCrdtError = vi.fn();
+    const connection = connectRealtime({
+      after: 0,
+      userId: "quota_user",
+      onMessage: vi.fn(),
+      onCrdtError
+    });
+
+    void connection.sendCrdtUpdate(crdtUpdate());
+
+    expect(onCrdtError).toHaveBeenCalledWith(expect.stringContaining("durably"));
+  });
+
+  it("drops terminally forbidden updates", async () => {
+    const update = crdtUpdate();
+    const connection = connectRealtime({
+      after: 0,
+      userId: "viewer",
+      onMessage: vi.fn()
+    });
+    const delivery = connection.sendCrdtUpdate(update);
+    sockets[0]!.open();
+    sockets[0]!.receive(connectedMessage("viewer"));
+    sockets[0]!.receive({
+      type: "crdt-reject",
+      noteId: update.noteId,
+      updateId: update.updateId,
+      reason: "forbidden"
+    });
+
+    await expect(delivery).rejects.toThrow("revoked");
+    expect(JSON.parse(localStorage.getItem(outboxKey("viewer")) ?? "[]"))
       .toEqual([]);
   });
 });
 
-function connectedMessage() {
+function connectedMessage(userId = "user_1") {
   return {
     type: "connected",
-    userId: "user_1",
+    userId,
     username: "alice",
     protocolVersion: 2,
     capabilities: ["crdt-v1"]
+  };
+}
+
+function outboxKey(userId: string): string {
+  return `fortnote:crdt-outbox:v1:${userId}`;
+}
+
+function crdtUpdate() {
+  return {
+    type: "crdt-update" as const,
+    formatVersion: 1 as const,
+    updateId: crypto.randomUUID(),
+    noteId: crypto.randomUUID(),
+    cryptoOwnerId: crypto.randomUUID(),
+    keyEpoch: 1,
+    cipher: "cipher",
+    nonce: "nonce"
   };
 }

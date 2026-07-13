@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import type { EncryptedCrdtMessage } from "@fortnote/shared";
-import { encryptCrdtMessage } from "../cryptoClient";
+import { decryptCrdtMessage, encryptCrdtMessage } from "../cryptoClient";
 import type { DecryptedNote } from "../store/appStore";
 import {
   checkpointCrdtNote,
@@ -9,6 +9,8 @@ import {
   editCrdtNote,
   finishCrdtSync,
   openCrdtNote,
+  preserveCrdtContent,
+  receiveCrdtUpdate,
   replaceYText,
   setCrdtTransport
 } from "./crdt";
@@ -42,16 +44,20 @@ describe("CRDT collaboration", () => {
     expect(alice.getText("body").toJSON()).toContain(" B");
   });
 
-  it("checkpoints open document state after a key epoch advances", async () => {
-    const send = vi.fn();
+  it("checkpoints an editor's open document after a key epoch advances", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
     const discard = vi.fn();
     setCrdtTransport({ discard, send, subscribe: vi.fn() });
-    openCrdtNote(note(), vi.fn());
-    await finishCrdtSync(note().id, 1, false);
+    const editorNote = note({ role: "editor" });
+    openCrdtNote(editorNote, vi.fn());
+    await finishCrdtSync(editorNote.id, 1, false);
     expect(send).toHaveBeenCalledOnce();
     send.mockClear();
 
-    openCrdtNote(note({ keyEpoch: 2, noteKeyBase64: "rotated-key" }), vi.fn());
+    openCrdtNote(
+      note({ keyEpoch: 2, noteKeyBase64: "rotated-key", role: "editor" }),
+      vi.fn()
+    );
 
     await vi.waitFor(() => {
       expect(send).toHaveBeenCalledOnce();
@@ -67,7 +73,7 @@ describe("CRDT collaboration", () => {
   });
 
   it("checkpoints snapshot state after a closed document rotates", async () => {
-    const send = vi.fn();
+    const send = vi.fn().mockResolvedValue(undefined);
     const discard = vi.fn();
     setCrdtTransport({ discard, send, subscribe: vi.fn() });
     const rotated = note({ keyEpoch: 2, noteKeyBase64: "rotated-key" });
@@ -86,7 +92,7 @@ describe("CRDT collaboration", () => {
   });
 
   it("ignores stale sync completion from an older key epoch", async () => {
-    const send = vi.fn();
+    const send = vi.fn().mockResolvedValue(undefined);
     const rotated = note({ keyEpoch: 2, noteKeyBase64: "rotated-key" });
     setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
     openCrdtNote(rotated, vi.fn());
@@ -99,7 +105,7 @@ describe("CRDT collaboration", () => {
   });
 
   it("persists the whole-note snapshot as the first CRDT checkpoint", async () => {
-    const send = vi.fn();
+    const send = vi.fn().mockResolvedValue(undefined);
     setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
 
     openCrdtNote(note(), vi.fn());
@@ -115,13 +121,17 @@ describe("CRDT collaboration", () => {
       expect.objectContaining({
         compactedUpdateIds: [],
         type: "crdt-checkpoint",
-        updateId: "00000000-0000-4000-8000-000000000001"
+        updateId: expect.any(String)
       })
     );
   });
 
   it("replays edits made while snapshot migration is syncing", async () => {
-    setCrdtTransport({ discard: vi.fn(), send: vi.fn(), subscribe: vi.fn() });
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      subscribe: vi.fn()
+    });
     const onChange = vi.fn();
     const current = note();
     openCrdtNote(current, onChange);
@@ -141,7 +151,8 @@ describe("CRDT collaboration", () => {
   });
 
   it("compacts a solo editor's locally sent updates", async () => {
-    const send = vi.fn<(message: EncryptedCrdtMessage) => void>();
+    const send = vi.fn<(message: EncryptedCrdtMessage) => Promise<void>>()
+      .mockResolvedValue(undefined);
     const current = note();
     setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
     openCrdtNote(current, vi.fn());
@@ -160,6 +171,71 @@ describe("CRDT collaboration", () => {
     )?.[0];
     expect(checkpoint?.type === "crdt-checkpoint" ? checkpoint.compactedUpdateIds : [])
       .toHaveLength(64);
+  });
+
+  it("keeps an open CRDT document authoritative over snapshot reloads", async () => {
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      subscribe: vi.fn()
+    });
+    const current = note();
+    openCrdtNote(current, vi.fn());
+    await finishCrdtSync(current.id, 1, false);
+    editCrdtNote(current.id, { body: "Live CRDT body" });
+
+    expect(preserveCrdtContent(note({ body: "Stale snapshot" })).body)
+      .toBe("Live CRDT body");
+  });
+
+  it("seeds the snapshot and checkpoints over undecryptable envelopes", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const current = note();
+    setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
+    openCrdtNote(current, vi.fn());
+    vi.mocked(decryptCrdtMessage).mockRejectedValueOnce(new Error("bad cipher"));
+
+    const corrupt = encryptedUpdate(current);
+    await expect(receiveCrdtUpdate(corrupt)).rejects.toThrow("bad cipher");
+    await finishCrdtSync(current.id, 1, true);
+
+    const checkpointInput = vi.mocked(encryptCrdtMessage).mock.calls.at(-1)![0];
+    const restored = new Y.Doc();
+    Y.applyUpdate(restored, checkpointInput.update);
+    expect(restored.getText("body").toJSON()).toBe(current.body);
+    expect(send).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        compactedUpdateIds: [corrupt.updateId],
+        type: "crdt-checkpoint"
+      })
+    );
+  });
+
+  it("does not checkpoint remote traffic as a viewer", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const current = note({ role: "viewer" });
+    setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
+    openCrdtNote(current, vi.fn());
+    await finishCrdtSync(current.id, 1, false);
+    vi.mocked(decryptCrdtMessage).mockResolvedValue(Y.encodeStateAsUpdate(new Y.Doc()));
+    await Promise.all(
+      Array.from({ length: 64 }, () => receiveCrdtUpdate(encryptedUpdate(current)))
+    );
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("waits for transport before completing a rotation checkpoint", async () => {
+    const current = note({ keyEpoch: 2, noteKeyBase64: "rotated-key" });
+    const pending = checkpointCrdtNote(current);
+    const send = vi.fn().mockResolvedValue(undefined);
+
+    setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
+    await pending;
+
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ keyEpoch: 2, type: "crdt-checkpoint" })
+    );
   });
 });
 
@@ -186,5 +262,18 @@ function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
     updatedAt: "2026-07-13T00:00:00.000Z",
     version: 1,
     ...overrides
+  };
+}
+
+function encryptedUpdate(current: DecryptedNote): EncryptedCrdtMessage {
+  return {
+    type: "crdt-update",
+    formatVersion: 1,
+    updateId: crypto.randomUUID(),
+    noteId: current.id,
+    cryptoOwnerId: current.cryptoOwnerId,
+    keyEpoch: current.keyEpoch,
+    cipher: "cipher",
+    nonce: "nonce"
   };
 }

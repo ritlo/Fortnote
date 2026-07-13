@@ -120,6 +120,22 @@ test("syncs edits between two tabs signed in to the same account", async ({
     await expect(firstPage.locator(".preview-body", { hasText: secondBody })).toBeVisible({
       timeout: 10_000
     });
+
+    const firstEditor = firstPage.getByLabel("Markdown editor");
+    const secondEditor = secondPage.getByLabel("Markdown editor");
+    await Promise.all([
+      firstEditor.press("Control+Home"),
+      secondEditor.press("Control+End")
+    ]);
+    await Promise.all([firstEditor.pressSequentially("A "), secondEditor.pressSequentially(" B")]);
+    await expect.poll(async () => {
+      const [firstValue, secondValue] = await Promise.all([
+        firstEditor.inputValue(),
+        secondEditor.inputValue()
+      ]);
+      return firstValue === secondValue;
+    }).toBe(true);
+    await expect(firstEditor).toHaveValue(/A .* B/);
   } finally {
     await Promise.all(contexts.splice(0).map((context) => context.close()));
   }

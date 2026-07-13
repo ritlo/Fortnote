@@ -125,6 +125,8 @@ export function useRealtimeEvents() {
       setRealtimeStatus("connecting");
       const connection = connectRealtime({
         after: useAppStore.getState().eventCursor,
+        userId: user.id,
+        onCrdtError: setError,
         onOpen: () => {
           if (!isActive) {
             return;
@@ -166,7 +168,9 @@ export function useRealtimeEvents() {
             message.type === "crdt-update" ||
             message.type === "crdt-checkpoint"
           ) {
-            void receiveCrdtUpdate(message).catch(() => undefined);
+            void receiveCrdtUpdate(message).catch(() => {
+              setError("A realtime update could not be decrypted; recovery is pending.");
+            });
             return;
           }
           if (message.type === "crdt-sync") {
@@ -174,11 +178,17 @@ export function useRealtimeEvents() {
               message.noteId,
               message.keyEpoch,
               message.hasUpdates
-            );
+            ).catch(() => {
+              setError("Realtime synchronization could not complete.");
+            });
             return;
           }
           if (message.type === "crdt-reject") {
-            setError("Realtime storage limit reached; waiting for compaction.");
+            setError(
+              message.reason === "storage-limit"
+                ? "Realtime storage limit reached; waiting for compaction."
+                : "Realtime write access was revoked."
+            );
           }
         }
       });

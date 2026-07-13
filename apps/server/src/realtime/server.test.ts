@@ -312,6 +312,28 @@ describe("realtime server", () => {
     });
     expect(await bobSocket.next("bob epoch checkpoint")).toEqual(epochCheckpoint);
 
+    const storedBytes = (
+      server.db.sqlite
+        .prepare("SELECT COALESCE(SUM(LENGTH(cipher)), 0) AS bytes FROM note_updates WHERE note_id = ?")
+        .get(noteId) as { bytes: number }
+    ).bytes;
+    const byteFillerId = crypto.randomUUID();
+    server.db.sqlite.prepare(`
+      INSERT INTO note_updates (
+        update_id, note_id, crypto_owner_id, key_epoch, format_version,
+        cipher, nonce, kind
+      ) VALUES (?, ?, ?, 1, 1, ?, 'nonce', 'update')
+    `).run(byteFillerId, noteId, cryptoOwnerId, "x".repeat(4 * 1024 * 1024 - storedBytes));
+    const byteBlockedUpdate = { ...update, updateId: crypto.randomUUID() };
+    aliceSocket.socket.send(JSON.stringify(byteBlockedUpdate));
+    expect(await aliceSocket.next("byte-limit CRDT rejection")).toEqual({
+      type: "crdt-reject",
+      noteId,
+      updateId: byteBlockedUpdate.updateId,
+      reason: "storage-limit"
+    });
+    server.db.sqlite.prepare("DELETE FROM note_updates WHERE update_id = ?").run(byteFillerId);
+
     const fillerIds = Array.from({ length: 126 }, () => crypto.randomUUID());
     const insertFiller = server.db.sqlite.prepare(`
       INSERT INTO note_updates (
@@ -389,6 +411,14 @@ describe("realtime server", () => {
 
     bobSocket.socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
     await expectNoMessage(bobSocket, "revoked collaborator CRDT replay");
+    const forbiddenUpdate = { ...update, updateId: crypto.randomUUID() };
+    bobSocket.socket.send(JSON.stringify(forbiddenUpdate));
+    expect(await bobSocket.next("revoked collaborator CRDT rejection")).toEqual({
+      type: "crdt-reject",
+      noteId,
+      updateId: forbiddenUpdate.updateId,
+      reason: "forbidden"
+    });
   });
 
   it("pushes actor-scoped folder events only to the actor", async () => {

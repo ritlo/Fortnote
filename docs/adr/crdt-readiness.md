@@ -2,8 +2,8 @@
 
 ## Status
 
-Implemented — the first-cut CRDT data plane is complete on
-`feat/crdt-realtime-collab`.
+Implemented — owner-review fixes are in the working tree on
+`feat/crdt-realtime-collab`; manual verification and final review remain.
 
 ## Progress
 
@@ -23,14 +23,18 @@ Implemented in the first end-to-end slice:
   extends the update format with `compactedUpdateIds`, bound by dedicated
   `crdt-checkpoint` AEAD associated data, and `note_updates` gains `kind` and
   `compacted_update_ids` columns.
-- A convergence test for two simulated Yjs clients and an end-to-end encrypted
-  update storage/broadcast test.
-- A durable encrypted localStorage outbox. Queued `crdt-update` and
+- A Yjs-level convergence test, a server-level encrypted update
+  storage/broadcast test, and a browser test that drives concurrent edits through
+  the encrypted WebSocket/storage path and verifies both editors converge.
+- An encrypted localStorage outbox. Queued `crdt-update` and
   `crdt-checkpoint` messages persist across reconnects under
-  `fortnote:crdt-outbox:v1`; the server replies with a `crdt-ack` per delivered
+  a user-scoped `fortnote:crdt-outbox:v1:<userId>` key; the server replies with a
+  `crdt-ack` per delivered
   update and the client drops acknowledged entries, so the outbox flushes
   idempotently on (re)connect and on each send with no server-side duplicates
-  (the `note_updates` insert is idempotent on `updateId`).
+  (the `note_updates` insert is idempotent on `updateId`). Browser quota failures
+  fall back to memory with an explicit user-facing durability error, so the user
+  knows to keep the tab open until delivery.
 - Epoch-rotation handling for open and closed documents. When a note's key epoch
   advances, the client clears pending update IDs, discards old-epoch queued
   updates from the outbox, and broadcasts an encrypted `crdt-checkpoint` under
@@ -70,23 +74,12 @@ Implemented in the first end-to-end slice:
    and keeps the encrypted update in the outbox for retry once compaction frees
    space.
 
-Deferred beyond the first cut:
+### Final verification
 
-- State-vector exchange is intentionally deferred. Full encrypted update replay
-  already reconciles reconnecting peers correctly, so add it only if replay
-  performance becomes measurable. The durable outbox covers offline durability.
-- A production security audit and any hardening it identifies. The first cut
-  includes capability gating, AEAD-bound identities and epochs, membership
-  checks on replay and broadcast, storage limits, and epoch-bound sync markers.
-
-### Remaining estimate
-
-At the start of final hardening, matching this first-cut ADR was estimated at
-two focused commits: revocation access coverage, followed by final protocol and
-security hardening plus status documentation. Both are complete with this
-change; no implementation commits remain to match the first-cut boundary.
-State-vector optimization and a production security audit are outside that
-estimate.
+Owner-review fixes and focused regression coverage are present; the user's
+manual verification run and final review remain. State-vector optimization,
+IndexedDB outbox storage, and an external production security audit are deferred
+until replay performance, browser quota pressure, or release policy requires them.
 
 ## Context
 
@@ -138,6 +131,8 @@ an unbounded CRDT update log or contain plaintext document operations.
 
 - Live sessions now merge title and body edits through encrypted Yjs updates;
   whole-note saves remain the existing durable snapshot path during migration.
+  Snapshot reloads refresh metadata but do not replace an already-open Y.Doc;
+  legacy snapshot content is picked up on the next fresh CRDT open.
 - CRDT support changes the content synchronization data plane and adds
   `note_updates` plus versioned realtime messages, but does not redesign
   membership, authorization, sharing keys, revocation, attachments, or presence.

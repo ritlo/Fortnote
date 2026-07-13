@@ -1,5 +1,5 @@
 import { WebSocket } from "ws";
-import { and, count, eq, inArray, lt } from "drizzle-orm";
+import { and, eq, inArray, lt } from "drizzle-orm";
 import {
   CRDT_REALTIME_CAPABILITY,
   type EncryptedCrdtMessage
@@ -44,6 +44,7 @@ const DEFAULT_SESSION_SWEEP_INTERVAL_MS = 15_000;
 const SESSION_CLOSED_CODE = 1008;
 // ponytail: fixed ceiling; make this configurable only if real note sizes demand it.
 const MAX_CRDT_ENVELOPES_PER_EPOCH = 128;
+const MAX_CRDT_BYTES_PER_EPOCH = 4 * 1024 * 1024;
 
 export class RealtimeHub implements RealtimePublisher {
   private readonly clients = new Set<RealtimeClient>();
@@ -241,27 +242,31 @@ export class RealtimeHub implements RealtimePublisher {
       if (existing) {
         return "duplicate" as const;
       }
-      const storedCount = tx
-        .select({ value: count() })
+      const storedUpdates = tx
+        .select({ updateId: schema.noteUpdates.updateId, cipher: schema.noteUpdates.cipher })
         .from(schema.noteUpdates)
         .where(and(
           eq(schema.noteUpdates.noteId, update.noteId),
           eq(schema.noteUpdates.keyEpoch, update.keyEpoch)
         ))
-        .get()?.value ?? 0;
-      const compactedCount =
-        update.type === "crdt-checkpoint" && update.compactedUpdateIds.length > 0
-          ? tx
-              .select({ updateId: schema.noteUpdates.updateId })
-              .from(schema.noteUpdates)
-              .where(and(
-                eq(schema.noteUpdates.noteId, update.noteId),
-                eq(schema.noteUpdates.keyEpoch, update.keyEpoch),
-                inArray(schema.noteUpdates.updateId, update.compactedUpdateIds)
-              ))
-              .all().length
-          : 0;
-      if (storedCount + 1 - compactedCount > MAX_CRDT_ENVELOPES_PER_EPOCH) {
+        .all();
+      const compactedIds = new Set(
+        update.type === "crdt-checkpoint" ? update.compactedUpdateIds : []
+      );
+      const compactedUpdates = storedUpdates.filter(({ updateId }) => compactedIds.has(updateId));
+      const storedBytes = storedUpdates.reduce(
+        (total, stored) => total + Buffer.byteLength(stored.cipher, "utf8"),
+        0
+      );
+      const compactedBytes = compactedUpdates.reduce(
+        (total, stored) => total + Buffer.byteLength(stored.cipher, "utf8"),
+        0
+      );
+      if (
+        storedUpdates.length + 1 - compactedUpdates.length > MAX_CRDT_ENVELOPES_PER_EPOCH ||
+        storedBytes + Buffer.byteLength(update.cipher, "utf8") - compactedBytes >
+          MAX_CRDT_BYTES_PER_EPOCH
+      ) {
         return "rejected" as const;
       }
       const result = tx

@@ -425,7 +425,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
       ...current,
       [note.id]: rotatedAttachments
     }));
-    void checkpointCrdtNote(rotatedNote);
+    await checkpointCrdtNote(rotatedNote);
   }
 
   const canInvite = selectedNote?.role === "owner" && !disabled;

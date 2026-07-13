@@ -19,12 +19,18 @@ export type RealtimeMessage =
   | CrdtReject
   | { type: "pong" };
 
-const CRDT_OUTBOX_KEY = "fortnote:crdt-outbox:v1";
-const volatileCrdtOutbox = new Map<string, EncryptedCrdtMessage>();
+const CRDT_OUTBOX_KEY_PREFIX = "fortnote:crdt-outbox:v1:";
+const volatileCrdtOutboxes = new Map<string, Map<string, EncryptedCrdtMessage>>();
+const pendingCrdtAcks = new Map<
+  string,
+  { reject: (error: Error) => void; resolve: () => void }
+>();
 
 interface RealtimeClientOptions {
   after: number;
+  userId: string;
   onMessage: (message: RealtimeMessage) => void;
+  onCrdtError?: (message: string) => void;
   onOpen?: () => void;
   onClose?: () => void;
   onError?: () => void;
@@ -35,12 +41,14 @@ export interface RealtimeConnection {
   discardCrdtUpdates: (noteId: string, beforeKeyEpoch: number) => void;
   sendPresence: (noteId: string, state: ClientPresenceState) => void;
   subscribeCrdt: (noteId: string) => void;
-  sendCrdtUpdate: (update: EncryptedCrdtMessage) => void;
+  sendCrdtUpdate: (update: EncryptedCrdtMessage) => Promise<void>;
 }
 
 export function connectRealtime({
   after,
+  userId,
   onMessage,
+  onCrdtError,
   onOpen,
   onClose,
   onError
@@ -55,15 +63,23 @@ export function connectRealtime({
     const message = parseRealtimeMessage(event.data);
     if (message) {
       if (message.type === "connected") {
+        if (message.userId !== userId) {
+          rejectUserAcks(userId, "Realtime session changed.");
+          socket.close();
+          onCrdtError?.("Realtime session changed; reconnect to continue editing.");
+          return;
+        }
         crdtEnabled = message.capabilities.includes(CRDT_REALTIME_CAPABILITY);
         if (crdtEnabled) {
           for (const noteId of pendingSubscriptions) {
             socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
           }
-          flushCrdtOutbox(socket);
+          flushCrdtOutbox(socket, userId);
         }
       } else if (message.type === "crdt-ack") {
-        acknowledgeCrdtUpdate(message.updateId);
+        acknowledgeCrdtUpdate(userId, message.updateId);
+      } else if (message.type === "crdt-reject" && message.reason === "forbidden") {
+        rejectCrdtUpdate(userId, message.updateId, "Realtime write access was revoked.");
       }
       onMessage(message);
     }
@@ -76,7 +92,9 @@ export function connectRealtime({
   });
 
   return {
-    discardCrdtUpdates,
+    discardCrdtUpdates: (noteId, beforeKeyEpoch) => {
+      discardCrdtUpdates(userId, noteId, beforeKeyEpoch);
+    },
     sendPresence: (noteId, state) => {
       if (socket.readyState !== WebSocket.OPEN) {
         return;
@@ -90,10 +108,21 @@ export function connectRealtime({
       }
     },
     sendCrdtUpdate: (update) => {
-      queueCrdtUpdate(update);
-      flushCrdtOutbox(socket, crdtEnabled);
+      const delivered = new Promise<void>((resolve, reject) => {
+        pendingCrdtAcks.set(ackKey(userId, update.updateId), { reject, resolve });
+      });
+      try {
+        queueCrdtUpdate(userId, update);
+      } catch {
+        onCrdtError?.(
+          "Offline edits could not be saved durably; keep this tab open until realtime reconnects."
+        );
+      }
+      flushCrdtOutbox(socket, userId, crdtEnabled);
+      return delivered;
     },
     close: () => {
+      rejectUserAcks(userId, "Realtime connection closed.");
       socket.close();
     }
   };
@@ -185,7 +214,7 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
       return (
         typeof value.noteId === "string" &&
         typeof value.updateId === "string" &&
-        value.reason === "storage-limit"
+        (value.reason === "forbidden" || value.reason === "storage-limit")
       );
     case "pong":
       return true;
@@ -194,65 +223,101 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
   }
 }
 
-function queueCrdtUpdate(update: EncryptedCrdtMessage): void {
-  readCrdtOutbox();
-  volatileCrdtOutbox.set(update.updateId, update);
-  persistCrdtOutbox();
+function queueCrdtUpdate(userId: string, update: EncryptedCrdtMessage): void {
+  readCrdtOutbox(userId).set(update.updateId, update);
+  persistCrdtOutbox(userId, true);
 }
 
-function acknowledgeCrdtUpdate(updateId: string): void {
-  readCrdtOutbox();
-  volatileCrdtOutbox.delete(updateId);
-  persistCrdtOutbox();
+function acknowledgeCrdtUpdate(userId: string, updateId: string): void {
+  readCrdtOutbox(userId).delete(updateId);
+  persistCrdtOutbox(userId);
+  const key = ackKey(userId, updateId);
+  pendingCrdtAcks.get(key)?.resolve();
+  pendingCrdtAcks.delete(key);
 }
 
-function discardCrdtUpdates(noteId: string, beforeKeyEpoch: number): void {
-  readCrdtOutbox();
-  for (const [updateId, update] of volatileCrdtOutbox) {
+function discardCrdtUpdates(userId: string, noteId: string, beforeKeyEpoch: number): void {
+  const outbox = readCrdtOutbox(userId);
+  for (const [updateId, update] of outbox) {
     if (update.noteId === noteId && update.keyEpoch < beforeKeyEpoch) {
-      volatileCrdtOutbox.delete(updateId);
+      outbox.delete(updateId);
+      rejectPendingAck(userId, updateId, "Superseded by note-key rotation.");
     }
   }
-  persistCrdtOutbox();
+  persistCrdtOutbox(userId);
 }
 
-function flushCrdtOutbox(socket: WebSocket, enabled = true): void {
+function flushCrdtOutbox(socket: WebSocket, userId: string, enabled = true): void {
   if (socket.readyState !== WebSocket.OPEN || !enabled) {
     return;
   }
-  for (const update of readCrdtOutbox().values()) {
+  for (const update of readCrdtOutbox(userId).values()) {
     socket.send(JSON.stringify(update));
   }
 }
 
-function readCrdtOutbox(): Map<string, EncryptedCrdtMessage> {
+function readCrdtOutbox(userId: string): Map<string, EncryptedCrdtMessage> {
+  const outbox = volatileCrdtOutboxes.get(userId) ?? new Map<string, EncryptedCrdtMessage>();
+  volatileCrdtOutboxes.set(userId, outbox);
   try {
-    const stored = JSON.parse(localStorage.getItem(CRDT_OUTBOX_KEY) ?? "[]") as unknown;
+    const stored = JSON.parse(localStorage.getItem(outboxKey(userId)) ?? "[]") as unknown;
     if (Array.isArray(stored)) {
       for (const value of stored) {
         if (
           isRealtimeMessage(value) &&
           (value.type === "crdt-update" || value.type === "crdt-checkpoint")
         ) {
-          volatileCrdtOutbox.set(value.updateId, value);
+          outbox.set(value.updateId, value);
         }
       }
     }
   } catch {
-    // ponytail: memory fallback; use IndexedDB if outboxes approach localStorage limits.
+    // Corrupt storage is ignored; new writes replace it.
   }
-  return volatileCrdtOutbox;
+  return outbox;
 }
 
-function persistCrdtOutbox(): void {
+function persistCrdtOutbox(userId: string, required = false): void {
   try {
     localStorage.setItem(
-      CRDT_OUTBOX_KEY,
-      JSON.stringify([...volatileCrdtOutbox.values()])
+      outboxKey(userId),
+      JSON.stringify([...(volatileCrdtOutboxes.get(userId)?.values() ?? [])])
     );
   } catch {
-    // The in-memory copy still covers reconnects in this tab.
+    if (required) {
+      throw new Error("CRDT outbox storage is full");
+    }
   }
+}
+
+function rejectCrdtUpdate(userId: string, updateId: string, message: string): void {
+  readCrdtOutbox(userId).delete(updateId);
+  persistCrdtOutbox(userId);
+  rejectPendingAck(userId, updateId, message);
+}
+
+function rejectPendingAck(userId: string, updateId: string, message: string): void {
+  const key = ackKey(userId, updateId);
+  pendingCrdtAcks.get(key)?.reject(new Error(message));
+  pendingCrdtAcks.delete(key);
+}
+
+function rejectUserAcks(userId: string, message: string): void {
+  const prefix = `${userId}:`;
+  for (const [key, pending] of pendingCrdtAcks) {
+    if (key.startsWith(prefix)) {
+      pending.reject(new Error(message));
+      pendingCrdtAcks.delete(key);
+    }
+  }
+}
+
+function ackKey(userId: string, updateId: string): string {
+  return `${userId}:${updateId}`;
+}
+
+function outboxKey(userId: string): string {
+  return `${CRDT_OUTBOX_KEY_PREFIX}${userId}`;
 }
 
 function isCollaborationEvent(value: unknown): value is CollaborationEvent {

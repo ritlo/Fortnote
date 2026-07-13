@@ -11,6 +11,7 @@ import {
   type OpenedSharingKey
 } from "../cryptoClient";
 import { decryptNoteSummary } from "../lib/keyMaterial";
+import { preserveCrdtContent } from "../realtime/crdt";
 import { useAppStore } from "../store/appStore";
 
 interface LoadDecryptedNotesOptions {
@@ -32,8 +33,8 @@ export async function loadDecryptedNotes(
         decryptNoteSummary(currentUser, currentRootKey, note, openedSharingKey)
       )
   );
-  const nextNotes = decrypted.sort((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt)
+  const nextNotes = (deleted ? decrypted : decrypted.map(preserveCrdtContent)).sort(
+    (left, right) => right.updatedAt.localeCompare(left.updatedAt)
   );
 
   const { setAttachmentsByNote, setNotes, setSelectedNoteId, setTrashNotes } =

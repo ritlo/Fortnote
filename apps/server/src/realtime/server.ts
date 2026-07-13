@@ -173,6 +173,13 @@ function handleClientMessage(
         updateId: parsed.updateId,
         reason: "storage-limit"
       });
+    } else {
+      sendJson(socket, {
+        type: "crdt-reject",
+        noteId: parsed.noteId,
+        updateId: parsed.updateId,
+        reason: "forbidden"
+      });
     }
   }
 }
