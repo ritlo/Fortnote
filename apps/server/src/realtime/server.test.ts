@@ -197,7 +197,7 @@ describe("realtime server", () => {
     carolSocket.socket.close();
   });
 
-  it("stores and broadcasts encrypted CRDT updates outside note_events", async () => {
+  it("stores encrypted CRDT updates and enforces realtime access", async () => {
     const server = await createRealtimeTestServer();
     const alice = await register(server.url, "crdt_alice");
     const bob = await register(server.url, "crdt_bob");
@@ -212,11 +212,12 @@ describe("realtime server", () => {
       .send(notePayload())
       .expect(201);
     const noteId = String(created.body.id);
-    await authed(server.url, alice.cookie)
+    const invited = await authed(server.url, alice.cookie)
       .post(`/api/notes/${noteId}/memberships`)
       .set(csrfHeaders())
       .send(invitePayload("crdt_bob", "editor"))
       .expect(201);
+    const bobUserId = String(invited.body.userId);
     const cryptoOwnerId = (
       server.db.sqlite
         .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
@@ -350,6 +351,36 @@ describe("realtime server", () => {
         .prepare("SELECT COUNT(*) AS count FROM note_updates WHERE note_id = ?")
         .get(noteId)
     ).toEqual({ count: 128 });
+
+    await authed(server.url, alice.cookie)
+      .delete(`/api/notes/${noteId}/memberships/${bobUserId}`)
+      .set(csrfHeaders())
+      .expect(204);
+    await aliceSocket.next("alice revoke event");
+    await bobSocket.next("bob revoke event");
+    server.db.sqlite
+      .prepare("UPDATE notes SET key_epoch = 2 WHERE id = ?")
+      .run(noteId);
+
+    const postRevokeUpdate = {
+      type: "crdt-update",
+      formatVersion: 1,
+      updateId: crypto.randomUUID(),
+      noteId,
+      cryptoOwnerId,
+      keyEpoch: 2,
+      cipher: "encrypted_post_revoke_update_abcdefghijklmnopqrstuvwxyz",
+      nonce: "post_revoke_nonce_abcdefghijklmnopqrstuvwxyz"
+    };
+    aliceSocket.socket.send(JSON.stringify(postRevokeUpdate));
+    expect(await aliceSocket.next("post-revoke CRDT ack")).toEqual({
+      type: "crdt-ack",
+      updateId: postRevokeUpdate.updateId
+    });
+    await expectNoMessage(bobSocket, "revoked collaborator CRDT broadcast");
+
+    bobSocket.socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
+    await expectNoMessage(bobSocket, "revoked collaborator CRDT replay");
   });
 
   it("pushes actor-scoped folder events only to the actor", async () => {

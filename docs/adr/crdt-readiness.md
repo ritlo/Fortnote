@@ -38,6 +38,8 @@ Implemented in the first end-to-end slice:
   only the covered same-note, same-epoch updates.
 - Reconnect/retry, duplicate, and rotation tests covering the outbox, server
   acknowledgement, and hub rotation.
+- Revocation regression coverage verifies that a removed collaborator receives
+  neither new-epoch CRDT broadcasts nor stored updates through re-subscription.
 - Additive snapshot migration. After replaying stored updates the server sends a
   `crdt-sync` marker carrying a `hasUpdates` flag. For an empty CRDT epoch the
   client deterministically seeds the full title/body snapshot from the note
@@ -72,6 +74,14 @@ Still open:
 - Protocol hardening and security review of the CRDT data plane. Storage-limit
   enforcement (per-epoch envelope ceiling and `crdt-reject`) is implemented; a
   full security review remains.
+
+### Remaining estimate
+
+At the start of final hardening, matching this first-cut ADR was estimated at
+two focused commits: revocation access coverage, followed by final protocol and
+security hardening plus status documentation. This change completes the first;
+one focused commit remains. State-vector optimization and a production security
+audit are outside that estimate.
 
 ## Context
 
