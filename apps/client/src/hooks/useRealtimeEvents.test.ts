@@ -293,7 +293,8 @@ function note(id: string): DecryptedNote {
     role: "owner",
     title: id,
     updatedAt: "2026-07-03T00:00:00.000Z",
-    version: 1
+    version: 1,
+    keyEpoch: 1
   };
 }
 

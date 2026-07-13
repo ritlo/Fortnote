@@ -35,6 +35,7 @@ export async function decryptNoteSummary(
     noteKeyBase64: decrypted.noteKeyBase64,
     contentLength: note.contentLength,
     version: note.version,
+    keyEpoch: note.keyEpoch,
     isDeleted: Boolean(note.isDeleted),
     updatedAt: note.updatedAt,
     ownerUserId: note.ownerUserId,

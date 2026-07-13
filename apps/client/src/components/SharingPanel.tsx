@@ -412,6 +412,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
               ...currentNote,
               contentLength: rotatedKey.contentLength,
               noteKeyBase64: rotatedKey.noteKeyBase64,
+              keyEpoch: rotated.keyEpoch,
               updatedAt: new Date().toISOString(),
               version: rotated.version
             }

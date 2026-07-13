@@ -1,5 +1,7 @@
 import {
   attachmentAssociatedData,
+  crdtUpdateAssociatedData,
+  CRDT_UPDATE_FORMAT_VERSION,
   createKdfParams,
   createSharingKeyPair,
   cryptoReady,
@@ -440,6 +442,45 @@ export async function encryptExistingNoteBody(input: {
     contentNonce: encrypted.nonce,
     contentLength: encrypted.cipher.length
   };
+}
+
+export async function encryptCrdtUpdate(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  noteKeyBase64: string;
+  keyEpoch: number;
+  updateId: string;
+  update: Uint8Array;
+}) {
+  return encryptBytes(
+    input.update,
+    fromBase64(input.noteKeyBase64),
+    crdtUpdateAssociatedData({
+      ...input,
+      formatVersion: CRDT_UPDATE_FORMAT_VERSION
+    })
+  );
+}
+
+export async function decryptCrdtUpdate(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  noteKeyBase64: string;
+  keyEpoch: number;
+  updateId: string;
+  cipher: string;
+  nonce: string;
+  formatVersion: number;
+}): Promise<Uint8Array> {
+  return decryptBytes(
+    {
+      cipher: input.cipher,
+      nonce: input.nonce,
+      formatVersion: input.formatVersion
+    },
+    fromBase64(input.noteKeyBase64),
+    crdtUpdateAssociatedData(input)
+  );
 }
 
 export function noteKeyToBase64(noteKey: Uint8Array): string {

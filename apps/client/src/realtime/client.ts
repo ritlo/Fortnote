@@ -1,12 +1,17 @@
 import type { CollaborationEvent, PresenceState, PresenceUser } from "../api";
+import {
+  CRDT_REALTIME_CAPABILITY,
+  type EncryptedCrdtUpdate
+} from "@fortnote/shared";
 
 export type ClientPresenceState = PresenceState | "left";
 
 export type RealtimeMessage =
-  | { type: "connected"; userId: string; username: string }
+  | { type: "connected"; userId: string; username: string; protocolVersion: number; capabilities: string[] }
   | { type: "replay"; events: CollaborationEvent[] }
   | { type: "event"; event: CollaborationEvent }
   | { type: "presence"; noteId: string; users: PresenceUser[] }
+  | EncryptedCrdtUpdate
   | { type: "pong" };
 
 interface RealtimeClientOptions {
@@ -20,6 +25,8 @@ interface RealtimeClientOptions {
 export interface RealtimeConnection {
   close: () => void;
   sendPresence: (noteId: string, state: ClientPresenceState) => void;
+  subscribeCrdt: (noteId: string) => void;
+  sendCrdtUpdate: (update: EncryptedCrdtUpdate) => void;
 }
 
 export function connectRealtime({
@@ -30,12 +37,22 @@ export function connectRealtime({
   onError
 }: RealtimeClientOptions): RealtimeConnection {
   const socket = new WebSocket(realtimeUrl(after));
+  const pendingSubscriptions = new Set<string>();
+  let crdtEnabled = false;
   socket.addEventListener("open", () => {
     onOpen?.();
   });
   socket.addEventListener("message", (event) => {
     const message = parseRealtimeMessage(event.data);
     if (message) {
+      if (message.type === "connected") {
+        crdtEnabled = message.capabilities.includes(CRDT_REALTIME_CAPABILITY);
+        if (crdtEnabled) {
+          for (const noteId of pendingSubscriptions) {
+            socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
+          }
+        }
+      }
       onMessage(message);
     }
   });
@@ -53,6 +70,17 @@ export function connectRealtime({
       }
       socket.send(JSON.stringify({ type: "presence", noteId, state }));
     },
+    subscribeCrdt: (noteId) => {
+      pendingSubscriptions.add(noteId);
+      if (socket.readyState === WebSocket.OPEN && crdtEnabled) {
+        socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
+      }
+    },
+    sendCrdtUpdate: (update) => {
+      if (socket.readyState === WebSocket.OPEN && crdtEnabled) {
+        socket.send(JSON.stringify(update));
+      }
+    },
     close: () => {
       socket.close();
     }
@@ -61,7 +89,11 @@ export function connectRealtime({
 
 function realtimeUrl(after: number): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/api/realtime?after=${String(after)}`;
+  const query = new URLSearchParams({
+    after: String(after),
+    capabilities: CRDT_REALTIME_CAPABILITY
+  });
+  return `${protocol}//${window.location.host}/api/realtime?${query.toString()}`;
 }
 
 export function parseRealtimeMessage(data: unknown): RealtimeMessage | null {
@@ -88,7 +120,13 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
 
   switch (value.type) {
     case "connected":
-      return typeof value.userId === "string" && typeof value.username === "string";
+      return (
+        typeof value.userId === "string" &&
+        typeof value.username === "string" &&
+        typeof value.protocolVersion === "number" &&
+        Array.isArray(value.capabilities) &&
+        value.capabilities.every((capability) => typeof capability === "string")
+      );
     case "replay":
       return Array.isArray(value.events) && value.events.every(isCollaborationEvent);
     case "event":
@@ -98,6 +136,16 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
         typeof value.noteId === "string" &&
         Array.isArray(value.users) &&
         value.users.every(isPresenceUser)
+      );
+    case "crdt-update":
+      return (
+        value.formatVersion === 1 &&
+        typeof value.updateId === "string" &&
+        typeof value.noteId === "string" &&
+        typeof value.cryptoOwnerId === "string" &&
+        typeof value.keyEpoch === "number" &&
+        typeof value.cipher === "string" &&
+        typeof value.nonce === "string"
       );
     case "pong":
       return true;

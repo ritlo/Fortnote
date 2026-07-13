@@ -1,5 +1,7 @@
 import { FileText } from "lucide-react";
+import { useEffect } from "react";
 import type { FolderSummary } from "../api";
+import { editCrdtNote, openCrdtNote } from "../realtime/crdt";
 import type { DecryptedNote, NotesView } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
 import { SharingPanel } from "./SharingPanel";
@@ -27,6 +29,13 @@ export function NoteEditor({
     notesView !== "trash";
   const canMove = selectedNote?.role === "owner" && notesView !== "trash";
   const setLocalPresenceState = useAppStore((state) => state.setLocalPresenceState);
+
+  useEffect(() => {
+    if (!selectedNote || notesView === "trash") {
+      return;
+    }
+    return openCrdtNote(selectedNote, updateSelectedNote);
+  }, [notesView, selectedNote?.id, selectedNote?.keyEpoch, selectedNote?.noteKeyBase64]);
 
   function markEditing() {
     if (canEdit) {
@@ -67,7 +76,9 @@ export function NoteEditor({
           onBlur={markIdle}
           onChange={(event) => {
             markEditing();
-            updateSelectedNote({ title: event.target.value });
+            if (!selectedNote || !editCrdtNote(selectedNote.id, { title: event.target.value })) {
+              updateSelectedNote({ title: event.target.value });
+            }
           }}
           onFocus={markEditing}
         />
@@ -80,7 +91,9 @@ export function NoteEditor({
           onBlur={markIdle}
           onChange={(event) => {
             markEditing();
-            updateSelectedNote({ body: event.target.value });
+            if (!selectedNote || !editCrdtNote(selectedNote.id, { body: event.target.value })) {
+              updateSelectedNote({ body: event.target.value });
+            }
           }}
           onFocus={markEditing}
         />

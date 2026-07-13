@@ -21,6 +21,7 @@ export interface DecryptedNote {
   noteKeyBase64: string;
   contentLength: number;
   version: number;
+  keyEpoch: number;
   isDeleted: boolean;
   updatedAt: string;
   ownerUserId: string;

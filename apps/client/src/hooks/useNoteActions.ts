@@ -63,6 +63,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         noteKeyBase64: noteKeyToBase64(draft.noteKey),
         contentLength: draft.contentLength,
         version: created.version,
+        keyEpoch: 1,
         isDeleted: false,
         updatedAt: new Date().toISOString(),
         ownerUserId: user.id,

@@ -65,6 +65,7 @@ export interface NoteSummary {
   contentNonce: string;
   contentLength: number;
   version: number;
+  keyEpoch: number;
   isDeleted: boolean | 0 | 1;
   deletedAt?: string | null;
   updatedAt: string;
@@ -410,8 +411,8 @@ export function updateNote(
 export function rotateNoteKey(
   noteId: string,
   payload: RotateNoteKeyPayload
-): Promise<{ id: string; version: number }> {
-  return apiRequest<{ id: string; version: number }>(`/notes/${noteId}/key-rotation`, {
+): Promise<{ id: string; version: number; keyEpoch: number }> {
+  return apiRequest<{ id: string; version: number; keyEpoch: number }>(`/notes/${noteId}/key-rotation`, {
     method: "POST",
     body: JSON.stringify(payload)
   });

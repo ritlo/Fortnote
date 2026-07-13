@@ -10,6 +10,12 @@ import {
   type ClientPresenceState,
   type RealtimeConnection
 } from "../realtime/client";
+import {
+  clearCrdtNotes,
+  receiveCrdtUpdate,
+  removeCrdtNote,
+  setCrdtTransport
+} from "../realtime/crdt";
 import { useAppStore } from "../store/appStore";
 import { loadDecryptedNotes, loadFolders } from "./useAppData";
 
@@ -37,6 +43,7 @@ export function useRealtimeEvents() {
 
   useEffect(() => {
     if (!user || !rootKey) {
+      clearCrdtNotes();
       setRealtimeStatus("idle");
       return;
     }
@@ -131,6 +138,7 @@ export function useRealtimeEvents() {
         onClose: () => {
           if (connectionRef.current === connection) {
             connectionRef.current = null;
+            setCrdtTransport(null);
           }
           scheduleReconnect();
         },
@@ -151,10 +159,18 @@ export function useRealtimeEvents() {
           }
           if (message.type === "presence") {
             setNotePresence(message.noteId, message.users);
+            return;
+          }
+          if (message.type === "crdt-update") {
+            void receiveCrdtUpdate(message).catch(() => undefined);
           }
         }
       });
       connectionRef.current = connection;
+      setCrdtTransport({
+        subscribe: connection.subscribeCrdt,
+        send: connection.sendCrdtUpdate
+      });
     }
 
     void bootstrapConnection();
@@ -174,6 +190,7 @@ export function useRealtimeEvents() {
       reconnectAttemptRef.current = 0;
       const connection = connectionRef.current;
       connectionRef.current = null;
+      setCrdtTransport(null);
       connection?.close();
     };
   }, [
@@ -285,6 +302,7 @@ export function removeRevokedNotes(events: CollaborationEvent[]): void {
       continue;
     }
     removeNoteAccess(event.noteId);
+    removeCrdtNote(event.noteId);
   }
 }
 

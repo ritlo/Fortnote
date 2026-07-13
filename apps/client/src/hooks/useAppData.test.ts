@@ -132,7 +132,8 @@ function mockedListNotesWith(...notes: NoteSummary[]) {
       role: note.role,
       title: note.title,
       updatedAt: note.updatedAt,
-      version: note.version
+      version: note.version,
+      keyEpoch: note.keyEpoch
     })
   );
 }
@@ -153,6 +154,7 @@ function noteSummary(overrides: Partial<NoteSummary>): NoteSummary {
     title: "Note",
     updatedAt: "2026-07-02T00:00:00.000Z",
     version: 1,
+    keyEpoch: 1,
     ...overrides
   };
 }

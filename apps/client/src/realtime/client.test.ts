@@ -24,13 +24,17 @@ describe("realtime client", () => {
         JSON.stringify({
           type: "connected",
           userId: "user_1",
-          username: "alice"
+          username: "alice",
+          protocolVersion: 2,
+          capabilities: ["crdt-v1"]
         })
       )
     ).toEqual({
       type: "connected",
       userId: "user_1",
-      username: "alice"
+      username: "alice",
+      protocolVersion: 2,
+      capabilities: ["crdt-v1"]
     });
   });
 
@@ -52,5 +56,23 @@ describe("realtime client", () => {
       type: "replay",
       events: [event]
     });
+  });
+
+  it("parses versioned encrypted CRDT updates", () => {
+    const update = {
+      type: "crdt-update",
+      formatVersion: 1,
+      updateId: "update_1",
+      noteId: "note_1",
+      cryptoOwnerId: "user_1",
+      keyEpoch: 1,
+      cipher: "cipher",
+      nonce: "nonce"
+    };
+
+    expect(parseRealtimeMessage(JSON.stringify(update))).toEqual(update);
+    expect(
+      parseRealtimeMessage(JSON.stringify({ ...update, formatVersion: 2 }))
+    ).toBeNull();
   });
 });
