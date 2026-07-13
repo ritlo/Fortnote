@@ -364,22 +364,28 @@ describe("realtime server", () => {
       .prepare("UPDATE notes SET key_epoch = 2 WHERE id = ?")
       .run(noteId);
 
-    const postRevokeUpdate = {
-      type: "crdt-update",
+    const postRevokeCheckpoint = {
+      type: "crdt-checkpoint",
       formatVersion: 1,
       updateId: crypto.randomUUID(),
       noteId,
       cryptoOwnerId,
       keyEpoch: 2,
-      cipher: "encrypted_post_revoke_update_abcdefghijklmnopqrstuvwxyz",
-      nonce: "post_revoke_nonce_abcdefghijklmnopqrstuvwxyz"
+      cipher: "encrypted_post_revoke_checkpoint_abcdefghijklmnopqrstuvwxyz",
+      nonce: "post_revoke_nonce_abcdefghijklmnopqrstuvwxyz",
+      compactedUpdateIds: []
     };
-    aliceSocket.socket.send(JSON.stringify(postRevokeUpdate));
+    aliceSocket.socket.send(JSON.stringify(postRevokeCheckpoint));
     expect(await aliceSocket.next("post-revoke CRDT ack")).toEqual({
       type: "crdt-ack",
-      updateId: postRevokeUpdate.updateId
+      updateId: postRevokeCheckpoint.updateId
     });
     await expectNoMessage(bobSocket, "revoked collaborator CRDT broadcast");
+    expect(
+      server.db.sqlite
+        .prepare("SELECT key_epoch AS keyEpoch FROM note_updates WHERE note_id = ?")
+        .all(noteId)
+    ).toEqual([{ keyEpoch: 2 }]);
 
     bobSocket.socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
     await expectNoMessage(bobSocket, "revoked collaborator CRDT replay");

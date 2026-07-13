@@ -36,7 +36,9 @@ Implemented in the first end-to-end slice:
   updates from the outbox, and broadcasts an encrypted `crdt-checkpoint` under
   the new epoch. If no CRDT binding exists, it seeds the checkpoint from the
   decrypted whole-note snapshot. The server inserts the checkpoint and compacts
-  only the covered same-note, same-epoch updates.
+  only the covered same-note, same-epoch updates. Once a checkpoint is stored
+  under a newer epoch, the same transaction deletes obsolete envelopes from
+  earlier epochs so repeated revocations do not grow storage indefinitely.
 - Reconnect/retry, duplicate, and rotation tests covering the outbox, server
   acknowledgement, and hub rotation.
 - Revocation regression coverage verifies that a removed collaborator receives

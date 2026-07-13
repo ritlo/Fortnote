@@ -1,5 +1,5 @@
 import { WebSocket } from "ws";
-import { and, count, eq, inArray } from "drizzle-orm";
+import { and, count, eq, inArray, lt } from "drizzle-orm";
 import {
   CRDT_REALTIME_CAPABILITY,
   type EncryptedCrdtMessage
@@ -285,15 +285,20 @@ export class RealtimeHub implements RealtimePublisher {
       if (result.changes === 0) {
         return "duplicate" as const;
       }
-      if (
-        update.type === "crdt-checkpoint" &&
-        update.compactedUpdateIds.length > 0
-      ) {
+      if (update.type === "crdt-checkpoint") {
+        if (update.compactedUpdateIds.length > 0) {
+          tx.delete(schema.noteUpdates)
+            .where(and(
+              eq(schema.noteUpdates.noteId, update.noteId),
+              eq(schema.noteUpdates.keyEpoch, update.keyEpoch),
+              inArray(schema.noteUpdates.updateId, update.compactedUpdateIds)
+            ))
+            .run();
+        }
         tx.delete(schema.noteUpdates)
           .where(and(
             eq(schema.noteUpdates.noteId, update.noteId),
-            eq(schema.noteUpdates.keyEpoch, update.keyEpoch),
-            inArray(schema.noteUpdates.updateId, update.compactedUpdateIds)
+            lt(schema.noteUpdates.keyEpoch, update.keyEpoch)
           ))
           .run();
       }
