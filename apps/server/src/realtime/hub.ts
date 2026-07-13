@@ -206,6 +206,11 @@ export class RealtimeHub implements RealtimePublisher {
           : { ...envelope, type: "crdt-update" }
       );
     }
+    sendJson(client.socket, {
+      type: "crdt-sync",
+      noteId,
+      hasUpdates: updates.length > 0
+    });
   }
 
   publishCrdtUpdate(client: RealtimeClient, update: EncryptedCrdtMessage): boolean {

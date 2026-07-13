@@ -37,14 +37,26 @@ Implemented in the first end-to-end slice:
   compacts only the covered same-note, same-epoch updates.
 - Reconnect/retry, duplicate, and rotation tests covering the outbox, server
   acknowledgement, and hub rotation.
+- Additive snapshot migration. After replaying stored updates the server sends a
+  `crdt-sync` marker carrying a `hasUpdates` flag. For an empty CRDT epoch the
+  client deterministically seeds the full title/body snapshot from the note
+  (`snapshotUpdate` builds a Y.Doc with a client ID derived from the note ID, so
+  the seed is reproducible) and, for non-viewers, persists it as an encrypted
+  `crdt-checkpoint`. Existing CRDT epochs (`hasUpdates`) are no longer reseeded
+  from snapshots. Edits made during initial sync are queued as a pending patch
+  and replayed once sync completes, so no keystrokes are dropped.
+- Shared update tracking for compaction. A single `trackUpdate` records both
+  local (`broadcastUpdate`) and remote (`receiveCrdtUpdate`) update IDs in
+  `pendingUpdateIds` and triggers a `crdt-checkpoint` once the pending count
+  crosses the threshold, so solo editors (local-only traffic) now also compact
+  their updates rather than only peers receiving remote updates.
 
 Still open:
 
 - State-vector reconciliation for peers that reconnect after missed updates. The
   outbox is durable, but offline merge against peer state vectors is not yet
   implemented.
-- A persisted migration checkpoint for existing whole-note snapshots. In the
-  first slice, a snapshot field enters Yjs on its first live edit; rotation
+- A CRDT checkpoint for documents closed at rotation time. Rotation
   checkpointing currently only fires for documents left open at epoch advance.
 - Protocol hardening, storage limits, and security review.
 

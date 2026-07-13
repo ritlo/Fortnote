@@ -13,6 +13,7 @@ import type { DecryptedNote } from "../store/appStore";
 
 // Yjs provides battle-tested character-level merging; the server only sees ciphertext.
 const REMOTE_UPDATE = Symbol("remote-update");
+const SNAPSHOT_SEED = Symbol("snapshot-seed");
 // ponytail: fixed threshold; tune from update-size metrics if storage churn matters.
 const CHECKPOINT_UPDATE_COUNT = 64;
 const bindings = new Map<string, Binding>();
@@ -30,6 +31,10 @@ interface Binding {
   onChange: (patch: Partial<Pick<DecryptedNote, "title" | "body">>) => void;
   pendingUpdateIds: Set<string>;
   checkpointing: boolean;
+  pendingPatch: Partial<Pick<DecryptedNote, "title" | "body">>;
+  ready: boolean;
+  receiving: Promise<void>;
+  snapshotSeeded: boolean;
 }
 
 export function openCrdtNote(
@@ -38,25 +43,31 @@ export function openCrdtNote(
 ): () => void {
   const binding = bindings.get(note.id);
   if (!binding) {
-    // ponytail: snapshot text seeds a field on its first edit; replace with a
-    // persisted Yjs migration checkpoint when offline migration lands.
     const doc = new Y.Doc();
     const created = {
       doc,
       note,
       onChange,
       pendingUpdateIds: new Set<string>(),
-      checkpointing: false
+      checkpointing: false,
+      pendingPatch: {},
+      ready: false,
+      receiving: Promise.resolve(),
+      snapshotSeeded: false
     };
     bindings.set(note.id, created);
-    doc.getText("title").observe(() => {
-      created.onChange({ title: doc.getText("title").toJSON() });
+    doc.getText("title").observe((event) => {
+      if (event.transaction.origin !== SNAPSHOT_SEED) {
+        created.onChange({ title: doc.getText("title").toJSON() });
+      }
     });
-    doc.getText("body").observe(() => {
-      created.onChange({ body: doc.getText("body").toJSON() });
+    doc.getText("body").observe((event) => {
+      if (event.transaction.origin !== SNAPSHOT_SEED) {
+        created.onChange({ body: doc.getText("body").toJSON() });
+      }
     });
     doc.on("update", (update, origin) => {
-      if (origin !== REMOTE_UPDATE) {
+      if (origin !== REMOTE_UPDATE && origin !== SNAPSHOT_SEED) {
         void broadcastUpdate(created, update);
       }
     });
@@ -89,6 +100,11 @@ export function editCrdtNote(
   const binding = bindings.get(noteId);
   if (!binding) {
     return false;
+  }
+  if (!binding.ready) {
+    binding.pendingPatch = { ...binding.pendingPatch, ...patch };
+    binding.onChange(patch);
+    return true;
   }
   binding.doc.transact(() => {
     if (patch.title !== undefined) {
@@ -123,28 +139,50 @@ export function clearCrdtNotes(): void {
   bindings.clear();
 }
 
-export async function receiveCrdtUpdate(update: EncryptedCrdtMessage): Promise<void> {
+export function receiveCrdtUpdate(update: EncryptedCrdtMessage): Promise<void> {
   const binding = bindings.get(update.noteId);
   if (
     binding?.note.cryptoOwnerId !== update.cryptoOwnerId ||
     binding.note.keyEpoch !== update.keyEpoch
   ) {
+    return Promise.resolve();
+  }
+  const received = binding.receiving.then(async () => {
+    const plaintext = await decryptCrdtMessage({
+      ...update,
+      noteKeyBase64: binding.note.noteKeyBase64
+    });
+    Y.applyUpdate(binding.doc, plaintext, REMOTE_UPDATE);
+    if (update.type === "crdt-checkpoint") {
+      update.compactedUpdateIds.forEach((id) => binding.pendingUpdateIds.delete(id));
+    }
+    trackUpdate(binding, update.updateId);
+  });
+  binding.receiving = received.catch(() => undefined);
+  return received;
+}
+
+export async function finishCrdtSync(
+  noteId: string,
+  hasUpdates: boolean
+): Promise<void> {
+  const binding = bindings.get(noteId);
+  if (!binding || binding.ready) {
     return;
   }
-  const plaintext = await decryptCrdtMessage({
-    ...update,
-    noteKeyBase64: binding.note.noteKeyBase64
-  });
-  Y.applyUpdate(binding.doc, plaintext, REMOTE_UPDATE);
-  if (update.type === "crdt-checkpoint") {
-    update.compactedUpdateIds.forEach((id) => binding.pendingUpdateIds.delete(id));
+  await binding.receiving;
+  if (!hasUpdates && !binding.snapshotSeeded) {
+    Y.applyUpdate(binding.doc, snapshotUpdate(binding.note), SNAPSHOT_SEED);
+    binding.snapshotSeeded = true;
+    if (binding.note.role !== "viewer") {
+      await broadcastCheckpoint(binding, binding.note.id);
+    }
   }
-  binding.pendingUpdateIds.add(update.updateId);
-  if (
-    binding.pendingUpdateIds.size >= CHECKPOINT_UPDATE_COUNT &&
-    !binding.checkpointing
-  ) {
-    void broadcastCheckpoint(binding);
+  binding.ready = true;
+  const pendingPatch = binding.pendingPatch;
+  binding.pendingPatch = {};
+  if (pendingPatch.title !== undefined || pendingPatch.body !== undefined) {
+    editCrdtNote(noteId, pendingPatch);
   }
 }
 
@@ -195,14 +233,17 @@ async function broadcastUpdate(binding: Binding, update: Uint8Array): Promise<vo
     cipher: encrypted.cipher,
     nonce: encrypted.nonce
   });
+  trackUpdate(binding, updateId);
 }
 
-async function broadcastCheckpoint(binding: Binding): Promise<void> {
+async function broadcastCheckpoint(
+  binding: Binding,
+  updateId: string = crypto.randomUUID()
+): Promise<void> {
   if (!transport) {
     return;
   }
   binding.checkpointing = true;
-  const updateId = crypto.randomUUID();
   const compactedUpdateIds = [...binding.pendingUpdateIds].slice(0, 100);
   const envelope = {
     type: "crdt-checkpoint" as const,
@@ -228,5 +269,23 @@ async function broadcastCheckpoint(binding: Binding): Promise<void> {
     binding.pendingUpdateIds.add(updateId);
   } finally {
     binding.checkpointing = false;
+  }
+}
+
+function snapshotUpdate(note: DecryptedNote): Uint8Array {
+  const seed = new Y.Doc();
+  seed.clientID = Number.parseInt(note.id.slice(0, 8), 16);
+  seed.getText("title").insert(0, note.title);
+  seed.getText("body").insert(0, note.body);
+  return Y.encodeStateAsUpdate(seed);
+}
+
+function trackUpdate(binding: Binding, updateId: string): void {
+  binding.pendingUpdateIds.add(updateId);
+  if (
+    binding.pendingUpdateIds.size >= CHECKPOINT_UPDATE_COUNT &&
+    !binding.checkpointing
+  ) {
+    void broadcastCheckpoint(binding);
   }
 }

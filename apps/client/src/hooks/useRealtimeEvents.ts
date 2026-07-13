@@ -12,6 +12,7 @@ import {
 } from "../realtime/client";
 import {
   clearCrdtNotes,
+  finishCrdtSync,
   receiveCrdtUpdate,
   removeCrdtNote,
   setCrdtTransport
@@ -165,6 +166,10 @@ export function useRealtimeEvents() {
             message.type === "crdt-checkpoint"
           ) {
             void receiveCrdtUpdate(message).catch(() => undefined);
+            return;
+          }
+          if (message.type === "crdt-sync") {
+            void finishCrdtSync(message.noteId, message.hasUpdates);
           }
         }
       });

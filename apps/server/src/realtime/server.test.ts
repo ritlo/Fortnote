@@ -233,8 +233,16 @@ describe("realtime server", () => {
     await legacyBobSocket.next("legacy bob replay");
     aliceSocket.socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
     bobSocket.socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
-    bobSocket.socket.send("ping");
-    await bobSocket.next("bob subscription barrier");
+    expect(await aliceSocket.next("alice CRDT sync")).toEqual({
+      type: "crdt-sync",
+      noteId,
+      hasUpdates: false
+    });
+    expect(await bobSocket.next("bob CRDT sync")).toEqual({
+      type: "crdt-sync",
+      noteId,
+      hasUpdates: false
+    });
 
     const update = {
       type: "crdt-update",
