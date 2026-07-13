@@ -2,6 +2,7 @@ import type { CollaborationEvent, PresenceState, PresenceUser } from "../api";
 import {
   CRDT_REALTIME_CAPABILITY,
   type CrdtAck,
+  type CrdtReject,
   type EncryptedCrdtMessage
 } from "@fortnote/shared";
 
@@ -15,6 +16,7 @@ export type RealtimeMessage =
   | { type: "crdt-sync"; noteId: string; hasUpdates: boolean }
   | EncryptedCrdtMessage
   | CrdtAck
+  | CrdtReject
   | { type: "pong" };
 
 const CRDT_OUTBOX_KEY = "fortnote:crdt-outbox:v1";
@@ -173,6 +175,12 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
       );
     case "crdt-ack":
       return typeof value.updateId === "string";
+    case "crdt-reject":
+      return (
+        typeof value.noteId === "string" &&
+        typeof value.updateId === "string" &&
+        value.reason === "storage-limit"
+      );
     case "pong":
       return true;
     default:

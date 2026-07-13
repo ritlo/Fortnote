@@ -29,6 +29,13 @@ export interface CrdtAck {
   updateId: string;
 }
 
+export interface CrdtReject {
+  type: "crdt-reject";
+  noteId: string;
+  updateId: string;
+  reason: "storage-limit";
+}
+
 export function crdtUpdateAssociatedData(input: {
   cryptoOwnerId: string;
   noteId: string;

@@ -162,8 +162,18 @@ function handleClientMessage(
     hub.updatePresence(client, parsed.noteId, parsed.state);
   } else if (parsed.type === "crdt-subscribe") {
     hub.subscribeCrdt(client, parsed.noteId);
-  } else if (hub.publishCrdtUpdate(client, parsed)) {
-    sendJson(socket, { type: "crdt-ack", updateId: parsed.updateId });
+  } else {
+    const outcome = hub.publishCrdtUpdate(client, parsed);
+    if (outcome === "accepted") {
+      sendJson(socket, { type: "crdt-ack", updateId: parsed.updateId });
+    } else if (outcome === "storage-limit") {
+      sendJson(socket, {
+        type: "crdt-reject",
+        noteId: parsed.noteId,
+        updateId: parsed.updateId,
+        reason: "storage-limit"
+      });
+    }
   }
 }
 

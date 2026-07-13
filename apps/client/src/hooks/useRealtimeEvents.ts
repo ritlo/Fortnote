@@ -33,6 +33,7 @@ export function useRealtimeEvents() {
   const addCollaborationEvents = useAppStore((state) => state.addCollaborationEvents);
   const setEventCursor = useAppStore((state) => state.setEventCursor);
   const setNotePresence = useAppStore((state) => state.setNotePresence);
+  const setError = useAppStore((state) => state.setError);
   const setRealtimeStatus = useAppStore((state) => state.setRealtimeStatus);
   const connectionRef = useRef<RealtimeConnection | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -170,6 +171,10 @@ export function useRealtimeEvents() {
           }
           if (message.type === "crdt-sync") {
             void finishCrdtSync(message.noteId, message.hasUpdates);
+            return;
+          }
+          if (message.type === "crdt-reject") {
+            setError("Realtime storage limit reached; waiting for compaction.");
           }
         }
       });
@@ -204,6 +209,7 @@ export function useRealtimeEvents() {
   }, [
     addCollaborationEvents,
     rootKey,
+    setError,
     setEventCursor,
     setNotePresence,
     setRealtimeStatus,

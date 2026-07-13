@@ -325,7 +325,12 @@ describe("realtime server", () => {
       cipher: "storage_limit_update_abcdefghijklmnopqrstuvwxyz"
     };
     aliceSocket.socket.send(JSON.stringify(blockedUpdate));
-    await expectNoMessage(aliceSocket, "over-limit CRDT ack");
+    expect(await aliceSocket.next("over-limit CRDT rejection")).toEqual({
+      type: "crdt-reject",
+      noteId,
+      updateId: blockedUpdate.updateId,
+      reason: "storage-limit"
+    });
     await expectNoMessage(bobSocket, "over-limit CRDT broadcast");
 
     const boundedCheckpoint = {

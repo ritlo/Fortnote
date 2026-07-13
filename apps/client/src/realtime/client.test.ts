@@ -131,7 +131,8 @@ describe("realtime client", () => {
       cipher: "cipher",
       nonce: "nonce"
     };
-    const first = connectRealtime({ after: 0, onMessage: vi.fn() });
+    const onMessage = vi.fn();
+    const first = connectRealtime({ after: 0, onMessage });
     first.sendCrdtUpdate(update);
     expect(sockets[0]!.sent).toEqual([]);
 
@@ -140,6 +141,17 @@ describe("realtime client", () => {
     expect(
       sockets[0]!.sent.map((message) => JSON.parse(message) as unknown)
     ).toContainEqual(update);
+
+    const rejection = {
+      type: "crdt-reject",
+      noteId: update.noteId,
+      updateId: update.updateId,
+      reason: "storage-limit"
+    };
+    sockets[0]!.receive(rejection);
+    expect(onMessage).toHaveBeenLastCalledWith(rejection);
+    expect(JSON.parse(localStorage.getItem("fortnote:crdt-outbox:v1") ?? "[]"))
+      .toEqual([update]);
 
     const second = connectRealtime({ after: 0, onMessage: vi.fn() });
     sockets[1]!.open();

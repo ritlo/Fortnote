@@ -55,8 +55,13 @@ Implemented in the first end-to-end slice:
   duplicate by `updateId` is detected and still acknowledged, so client retries
   never wedge. The stored count is checkpoint-aware — a `crdt-checkpoint`
   subtracts its compacted IDs — so reducing checkpoints are admitted even at the
-  ceiling while net growth stays bounded; an update that would exceed the
-  ceiling is rejected without acknowledgement.
+   ceiling while net growth stays bounded. `publishCrdtUpdate` now returns a
+   discriminated outcome (`accepted` | `forbidden` | `storage-limit`) instead of
+   a boolean; an update that would exceed the ceiling yields an explicit
+   `crdt-reject` message (with `reason: "storage-limit"`) rather than a silent
+   non-acknowledgement. The client surfaces the rejection as a user-facing error
+   and keeps the encrypted update in the outbox for retry once compaction frees
+   space.
 
 Still open:
 
