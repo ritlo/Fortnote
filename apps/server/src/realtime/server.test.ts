@@ -308,6 +308,43 @@ describe("realtime server", () => {
       updateId: epochCheckpoint.updateId
     });
     expect(await bobSocket.next("bob epoch checkpoint")).toEqual(epochCheckpoint);
+
+    const fillerIds = Array.from({ length: 126 }, () => crypto.randomUUID());
+    const insertFiller = server.db.sqlite.prepare(`
+      INSERT INTO note_updates (
+        update_id, note_id, crypto_owner_id, key_epoch, format_version,
+        cipher, nonce, kind
+      ) VALUES (?, ?, ?, 1, 1, 'cipher', 'nonce', 'update')
+    `);
+    for (const fillerId of fillerIds) {
+      insertFiller.run(fillerId, noteId, cryptoOwnerId);
+    }
+    const blockedUpdate = {
+      ...update,
+      updateId: crypto.randomUUID(),
+      cipher: "storage_limit_update_abcdefghijklmnopqrstuvwxyz"
+    };
+    aliceSocket.socket.send(JSON.stringify(blockedUpdate));
+    await expectNoMessage(aliceSocket, "over-limit CRDT ack");
+    await expectNoMessage(bobSocket, "over-limit CRDT broadcast");
+
+    const boundedCheckpoint = {
+      ...checkpoint,
+      updateId: crypto.randomUUID(),
+      compactedUpdateIds: [fillerIds[0]!]
+    };
+    aliceSocket.socket.send(JSON.stringify(boundedCheckpoint));
+    expect(await aliceSocket.next("bounded checkpoint ack")).toEqual({
+      type: "crdt-ack",
+      updateId: boundedCheckpoint.updateId
+    });
+    expect(await bobSocket.next("bounded checkpoint broadcast"))
+      .toEqual(boundedCheckpoint);
+    expect(
+      server.db.sqlite
+        .prepare("SELECT COUNT(*) AS count FROM note_updates WHERE note_id = ?")
+        .get(noteId)
+    ).toEqual({ count: 128 });
   });
 
   it("pushes actor-scoped folder events only to the actor", async () => {

@@ -125,7 +125,8 @@ describe("CRDT collaboration", () => {
     const checkpoint = send.mock.calls.find(
       ([message]) => message.type === "crdt-checkpoint"
     )?.[0];
-    expect(checkpoint?.compactedUpdateIds).toHaveLength(64);
+    expect(checkpoint?.type === "crdt-checkpoint" ? checkpoint.compactedUpdateIds : [])
+      .toHaveLength(64);
   });
 });
 

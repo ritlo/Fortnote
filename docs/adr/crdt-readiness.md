@@ -49,13 +49,20 @@ Implemented in the first end-to-end slice:
   local (`broadcastUpdate`) and remote (`receiveCrdtUpdate`) update IDs in
   `pendingUpdateIds` and triggers a `crdt-checkpoint` once the pending count
   crosses the threshold, so solo editors (local-only traffic) now also compact
-  their updates rather than only peers receiving remote updates.
+   their updates rather than only peers receiving remote updates.
+- A server-side per-note/key-epoch envelope ceiling
+  (`MAX_CRDT_ENVELOPES_PER_EPOCH = 128`). Inbound updates are idempotent: a
+  duplicate by `updateId` is detected and still acknowledged, so client retries
+  never wedge. The stored count is checkpoint-aware — a `crdt-checkpoint`
+  subtracts its compacted IDs — so reducing checkpoints are admitted even at the
+  ceiling while net growth stays bounded; an update that would exceed the
+  ceiling is rejected without acknowledgement.
 
 Still open:
 
-- State-vector reconciliation for peers that reconnect after missed updates. The
-  outbox is durable, but offline merge against peer state vectors is not yet
-  implemented.
+- State-vector exchange is intentionally deferred. Full encrypted update replay
+  already reconciles reconnecting peers correctly, so add it only if replay
+  performance becomes measurable. The durable outbox covers offline durability.
 - A CRDT checkpoint for documents closed at rotation time. Rotation
   checkpointing currently only fires for documents left open at epoch advance.
 - Protocol hardening, storage limits, and security review.
