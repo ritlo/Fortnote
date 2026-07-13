@@ -46,6 +46,8 @@ interface AttachmentRow {
   createdAt: string;
 }
 
+class StorageQuotaExceededError extends Error {}
+
 function getAttachment(
   context: AppContext,
   attachmentId: string
@@ -224,53 +226,63 @@ export function createAttachmentsRouter(context: AppContext): Router {
       return;
     }
 
-	    const storageId = crypto.randomUUID();
-	    try {
-	      writeEncryptedAttachment(context.config, storageId, encryptedBytes.bytes);
-	      const insertAttachment = context.db.sqlite.transaction(() => {
-	        context.db.sqlite
-	          .prepare(
-	            `INSERT INTO attachments (
-	              id,
-	              note_id,
-	              user_id,
-	              filename,
-	              mime_type,
-	              size,
-	              encrypted_attachment_key,
-	              attachment_key_nonce,
-	              file_cipher_path,
-	              file_nonce
-	            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	          )
-	          .run(
-	            parsed.data.id,
-	            access.noteId,
-	            access.ownerUserId,
-	            parsed.data.filename.trim(),
-	            parsed.data.mimeType,
-	            parsed.data.size,
-	            parsed.data.encryptedAttachmentKey,
-	            parsed.data.attachmentKeyNonce,
-	            storageId,
-	            parsed.data.fileNonce
-	          );
-	        return writeRequestEvent(context, request, {
-	          noteId: access.noteId,
-	          actorUserId: session.userId,
-	          eventType: "attachment.created",
-	          noteVersion: access.version,
-	          resourceType: "attachment",
-	          resourceId: parsed.data.id,
-	          payloadMetadata: {
-	            attachmentId: parsed.data.id
-	          }
-	        });
-	      });
-	      publishEventCursor(context, insertAttachment());
-	    } catch (error) {
-	      deleteEncryptedAttachment(context.config, storageId);
-	      throw error;
+    const storageId = crypto.randomUUID();
+    try {
+      await writeEncryptedAttachment(context.config, storageId, encryptedBytes.bytes);
+      const insertAttachment = context.db.sqlite.transaction(() => {
+        if (
+          userStorageBytes(context, access.ownerUserId) + parsed.data.size >
+          LIMITS.maxUserStorageBytes
+        ) {
+          throw new StorageQuotaExceededError();
+        }
+        context.db.sqlite
+          .prepare(
+            `INSERT INTO attachments (
+              id,
+              note_id,
+              user_id,
+              filename,
+              mime_type,
+              size,
+              encrypted_attachment_key,
+              attachment_key_nonce,
+              file_cipher_path,
+              file_nonce
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            parsed.data.id,
+            access.noteId,
+            access.ownerUserId,
+            parsed.data.filename.trim(),
+            parsed.data.mimeType,
+            parsed.data.size,
+            parsed.data.encryptedAttachmentKey,
+            parsed.data.attachmentKeyNonce,
+            storageId,
+            parsed.data.fileNonce
+          );
+        return writeRequestEvent(context, request, {
+          noteId: access.noteId,
+          actorUserId: session.userId,
+          eventType: "attachment.created",
+          noteVersion: access.version,
+          resourceType: "attachment",
+          resourceId: parsed.data.id,
+          payloadMetadata: {
+            attachmentId: parsed.data.id
+          }
+        });
+      });
+      publishEventCursor(context, insertAttachment.immediate());
+    } catch (error) {
+      await deleteEncryptedAttachment(context.config, storageId);
+      if (error instanceof StorageQuotaExceededError) {
+        sendApiError(response, "quota_exceeded", "Storage quota exceeded");
+        return;
+      }
+      throw error;
     }
 
     response.status(201).json({ id: parsed.data.id });
@@ -307,7 +319,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
     response.json({ attachments: rows });
   });
 
-  router.get("/attachments/:id", (request, response) => {
+  router.get("/attachments/:id", async (request, response) => {
     const session = requireSession(context.db, request, response);
     if (!session) {
       return;
@@ -326,11 +338,13 @@ export function createAttachmentsRouter(context: AppContext): Router {
 
     response.json({
       ...attachment,
-      encryptedBytes: readEncryptedAttachment(context.config, attachment.fileCipherPath).toString("base64")
+      encryptedBytes: (
+        await readEncryptedAttachment(context.config, attachment.fileCipherPath)
+      ).toString("base64")
     });
   });
 
-  router.delete("/attachments/:id", (request, response) => {
+  router.delete("/attachments/:id", async (request, response) => {
     const session = requireSession(context.db, request, response);
     if (!session) {
       return;
@@ -362,7 +376,11 @@ export function createAttachmentsRouter(context: AppContext): Router {
       });
     });
     publishEventCursor(context, deleteAttachmentRow());
-    deleteEncryptedAttachment(context.config, attachment.fileCipherPath);
+    try {
+      await deleteEncryptedAttachment(context.config, attachment.fileCipherPath);
+    } catch (error) {
+      console.error("Unable to delete attachment ciphertext", error);
+    }
 
     response.status(204).send();
   });

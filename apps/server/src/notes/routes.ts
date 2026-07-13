@@ -640,7 +640,7 @@ export function createNotesRouter(context: AppContext): Router {
 
     const nextVersion = access.version + 1;
     const rotateNoteKey = context.db.sqlite.transaction(() => {
-      context.db.sqlite
+      const updateResult = context.db.sqlite
         .prepare(
           `UPDATE notes
            SET encrypted_note_key = ?,
@@ -651,7 +651,7 @@ export function createNotesRouter(context: AppContext): Router {
                content_updated_at = CURRENT_TIMESTAMP,
                version = version + 1,
                updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?`
+           WHERE id = ? AND version = ?`
         )
         .run(
           parsed.data.encryptedNoteKey,
@@ -659,8 +659,12 @@ export function createNotesRouter(context: AppContext): Router {
           parsed.data.contentCipher,
           parsed.data.contentNonce,
           parsed.data.contentLength,
-          access.noteId
+          access.noteId,
+          parsed.data.version
         );
+      if (updateResult.changes !== 1) {
+        return null;
+      }
       for (const share of parsed.data.shares) {
         context.db.sqlite
           .prepare(
@@ -713,7 +717,12 @@ export function createNotesRouter(context: AppContext): Router {
         }
       });
     });
-    publishEventCursors(context, [rotateNoteKey()]);
+    const eventCursor = rotateNoteKey();
+    if (eventCursor === null) {
+      sendApiError(response, "conflict", "Note version conflict");
+      return;
+    }
+    publishEventCursors(context, [eventCursor]);
 
     response.json({ id: access.noteId, version: nextVersion });
   });
@@ -761,7 +770,7 @@ export function createNotesRouter(context: AppContext): Router {
     const title = parsed.data.title ?? undefined;
     const nextVersion = access.version + 1;
     const updateNote = context.db.sqlite.transaction(() => {
-      context.db.sqlite
+      const updateResult = context.db.sqlite
         .prepare(
           `UPDATE notes
            SET folder_id = ?,
@@ -772,7 +781,7 @@ export function createNotesRouter(context: AppContext): Router {
                content_updated_at = CURRENT_TIMESTAMP,
                version = version + 1,
                updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?`
+           WHERE id = ? AND version = ?`
         )
         .run(
           folderId,
@@ -780,8 +789,12 @@ export function createNotesRouter(context: AppContext): Router {
           parsed.data.contentCipher,
           parsed.data.contentNonce,
           parsed.data.contentLength,
-          access.noteId
+          access.noteId,
+          parsed.data.version
         );
+      if (updateResult.changes !== 1) {
+        return null;
+      }
       return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
@@ -789,7 +802,12 @@ export function createNotesRouter(context: AppContext): Router {
         noteVersion: nextVersion
       });
     });
-    publishEventCursors(context, [updateNote()]);
+    const eventCursor = updateNote();
+    if (eventCursor === null) {
+      sendApiError(response, "conflict", "Note version conflict");
+      return;
+    }
+    publishEventCursors(context, [eventCursor]);
 
     response.json({ id: access.noteId, version: nextVersion });
   });
@@ -862,7 +880,7 @@ export function createNotesRouter(context: AppContext): Router {
     response.json({ id: access.noteId });
   });
 
-  router.delete("/:id/permanent", (request, response) => {
+  router.delete("/:id/permanent", async (request, response) => {
     const session = requireSession(context.db, request, response);
     if (!session) {
       return;
@@ -903,9 +921,13 @@ export function createNotesRouter(context: AppContext): Router {
       });
     });
     publishEventCursors(context, [remove()]);
-    for (const row of rows) {
-      deleteEncryptedAttachment(context.config, row.fileCipherPath);
-    }
+    await Promise.all(
+      rows.map((row) =>
+        deleteEncryptedAttachment(context.config, row.fileCipherPath).catch((error: unknown) => {
+          console.error("Unable to delete attachment ciphertext", error);
+        })
+      )
+    );
 
     response.status(204).send();
   });

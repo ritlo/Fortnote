@@ -100,15 +100,17 @@ function createRateLimiter(options: {
   windowMs: number;
 }): RequestHandler {
   const attempts = new Map<string, { count: number; resetAt: number }>();
+  let nextCleanupAt = Date.now() + options.windowMs;
 
   return (request, response, next) => {
     const now = Date.now();
-    if (attempts.size >= 10_000) {
+    if (now >= nextCleanupAt || attempts.size >= 10_000) {
       for (const [storedKey, attempt] of attempts) {
         if (attempt.resetAt <= now) {
           attempts.delete(storedKey);
         }
       }
+      nextCleanupAt = now + options.windowMs;
     }
     const key = options.key(request);
     const current = attempts.get(key);

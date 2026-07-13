@@ -1,5 +1,11 @@
 import { sql } from "drizzle-orm";
-import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  type AnySQLiteColumn,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text
+} from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
@@ -47,7 +53,10 @@ export const folders = sqliteTable("folders", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
-  parentFolderId: text("parent_folder_id"),
+  parentFolderId: text("parent_folder_id").references(
+    (): AnySQLiteColumn => folders.id,
+    { onDelete: "set null" }
+  ),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`)
 });
@@ -58,7 +67,7 @@ export const notes = sqliteTable("notes", {
   cryptoOwnerId: text("crypto_owner_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  folderId: text("folder_id"),
+  folderId: text("folder_id").references(() => folders.id, { onDelete: "set null" }),
   title: text("title").notNull(),
   encryptedNoteKey: text("encrypted_note_key").notNull(),
   noteKeyNonce: text("note_key_nonce").notNull(),

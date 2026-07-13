@@ -123,6 +123,16 @@ export function deleteUserSessions(db: AppDb, userId: string): string[] {
   return rows.map((row) => row.id);
 }
 
+export function deleteExpiredSessions(db: AppDb): number {
+  const now = new Date().toISOString();
+  return db.sqlite
+    .prepare(
+      `DELETE FROM sessions
+       WHERE idle_expires_at <= ? OR absolute_expires_at <= ?`
+    )
+    .run(now, now).changes;
+}
+
 export function isSessionActive(db: AppDb, sessionId: string): boolean {
   const now = new Date().toISOString();
   const row = db.sqlite

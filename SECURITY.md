@@ -118,3 +118,21 @@ access removal does not make the unfinished key rotation complete.
   paths must never be left open.
 - Keep the WebSocket payload limit close to the largest supported client message.
   Presence and heartbeat messages do not require attachment-sized frames.
+- Validate a session once per session and authorization once per user when
+  broadcasting the same event or presence update to multiple sockets.
+- Delete expired session rows during the realtime session sweep. Bound event
+  pruning by the cursor supplied with each acknowledgement.
+
+## Storage And Concurrency
+
+- Enforce note optimistic locking in the mutation's `UPDATE` predicate. A prior
+  version read is useful for an early conflict response but is not a lock.
+- Recheck attachment quota inside an immediate SQLite transaction before
+  inserting attachment metadata. The pre-upload quota check is only an early
+  rejection optimization.
+- Enforce folder ownership and existence in the database. New databases use
+  folder foreign keys, while migration triggers protect databases created by
+  earlier versions.
+- Use asynchronous filesystem operations on request paths. On startup, remove
+  unreferenced UUID-named attachment ciphertext files left by an interrupted or
+  partially failed database/filesystem operation.

@@ -1,6 +1,6 @@
 import { WebSocket } from "ws";
 import type { AppContext } from "../http/app.js";
-import { isSessionActive } from "../auth/session.js";
+import { deleteExpiredSessions, isSessionActive } from "../auth/session.js";
 import { listVisibleEvents } from "../events/replay.js";
 import { canReadNote, getNoteAccess } from "../notes/access.js";
 import type { RealtimePublisher } from "./types.js";
@@ -113,15 +113,14 @@ export class RealtimeHub implements RealtimePublisher {
     }
 
     for (const cursor of cursors) {
-      for (const client of this.clients) {
-        if (!this.ensureClientSession(client)) {
-          continue;
-        }
-        const [event] = listVisibleEvents(this.context, client.userId, cursor - 1, 1);
+      for (const [userId, clients] of this.activeClientsByUser()) {
+        const [event] = listVisibleEvents(this.context, userId, cursor - 1, 1);
         if (event?.cursor !== cursor) {
           continue;
         }
-        sendJson(client.socket, { type: "event", event });
+        for (const client of clients) {
+          sendJson(client.socket, { type: "event", event });
+        }
       }
     }
   }
@@ -201,9 +200,10 @@ export class RealtimeHub implements RealtimePublisher {
   }
 
   private sweepInvalidSessions(): void {
-    for (const client of this.clients) {
-      this.ensureClientSession(client);
+    if (this.context) {
+      deleteExpiredSessions(this.context.db);
     }
+    this.activeClientsByUser();
   }
 
   private broadcastPresence(noteId: string): void {
@@ -224,16 +224,36 @@ export class RealtimeHub implements RealtimePublisher {
       left.username.localeCompare(right.username)
     );
 
-    for (const client of this.clients) {
-      if (!this.ensureClientSession(client)) {
-        continue;
-      }
-      const access = getNoteAccess(this.context, noteId, client.userId);
+    for (const [userId, clients] of this.activeClientsByUser()) {
+      const access = getNoteAccess(this.context, noteId, userId);
       if (!canReadNote(access)) {
         continue;
       }
-      sendJson(client.socket, { type: "presence", noteId, users });
+      for (const client of clients) {
+        sendJson(client.socket, { type: "presence", noteId, users });
+      }
     }
+  }
+
+  private activeClientsByUser(): Map<string, RealtimeClient[]> {
+    const clientsByUser = new Map<string, RealtimeClient[]>();
+    const activeSessions = new Map<string, boolean>();
+    for (const client of this.clients) {
+      const knownSessionState = activeSessions.get(client.sessionId);
+      if (knownSessionState === false) {
+        this.disconnectClient(client, "Session expired");
+        continue;
+      }
+      const active = knownSessionState ?? this.ensureClientSession(client);
+      activeSessions.set(client.sessionId, active);
+      if (!active) {
+        continue;
+      }
+      const clients = clientsByUser.get(client.userId) ?? [];
+      clients.push(client);
+      clientsByUser.set(client.userId, clients);
+    }
+    return clientsByUser;
   }
 
   private ensureClientSession(client: RealtimeClient): boolean {

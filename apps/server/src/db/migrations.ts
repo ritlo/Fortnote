@@ -48,7 +48,7 @@ export function runMigrations(sqlite: Database.Database): void {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
-      parent_folder_id TEXT,
+      parent_folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -57,7 +57,7 @@ export function runMigrations(sqlite: Database.Database): void {
 	      id TEXT PRIMARY KEY,
 	      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	      crypto_owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-	      folder_id TEXT,
+	      folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,
       title TEXT NOT NULL,
       encrypted_note_key TEXT NOT NULL,
       note_key_nonce TEXT NOT NULL,
@@ -166,6 +166,66 @@ export function runMigrations(sqlite: Database.Database): void {
   sqlite.exec("UPDATE notes SET crypto_owner_id = user_id WHERE crypto_owner_id IS NULL");
   removeNoteEventsNoteCascade(sqlite);
   backfillOwnerMemberships(sqlite);
+  createFolderIntegrityTriggers(sqlite);
+}
+
+function createFolderIntegrityTriggers(sqlite: Database.Database): void {
+  sqlite.exec(`
+    CREATE TRIGGER IF NOT EXISTS folders_parent_owner_insert
+    BEFORE INSERT ON folders
+    WHEN NEW.parent_folder_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM folders AS parent
+        WHERE parent.id = NEW.parent_folder_id AND parent.user_id = NEW.user_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid folder parent');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS folders_parent_owner_update
+    BEFORE UPDATE OF parent_folder_id, user_id ON folders
+    WHEN NEW.parent_folder_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM folders AS parent
+        WHERE parent.id = NEW.parent_folder_id AND parent.user_id = NEW.user_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid folder parent');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS notes_folder_owner_insert
+    BEFORE INSERT ON notes
+    WHEN NEW.folder_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM folders
+        WHERE folders.id = NEW.folder_id AND folders.user_id = NEW.user_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid note folder');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS notes_folder_owner_update
+    BEFORE UPDATE OF folder_id, user_id ON notes
+    WHEN NEW.folder_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM folders
+        WHERE folders.id = NEW.folder_id AND folders.user_id = NEW.user_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid note folder');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS folders_reparent_after_delete
+    AFTER DELETE ON folders
+    BEGIN
+      UPDATE notes
+      SET folder_id = OLD.parent_folder_id, updated_at = CURRENT_TIMESTAMP
+      WHERE folder_id = OLD.id AND user_id = OLD.user_id;
+      UPDATE folders
+      SET parent_folder_id = OLD.parent_folder_id, updated_at = CURRENT_TIMESTAMP
+      WHERE parent_folder_id = OLD.id AND user_id = OLD.user_id;
+    END;
+  `);
 }
 
 function addColumnIfMissing(

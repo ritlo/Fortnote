@@ -60,7 +60,7 @@ export function createEventsRouter(context: AppContext): Router {
     }
 
     acknowledgeVisibleEvents(context, session.userId, parsed.data.cursor);
-    pruneAcknowledgedEvents(context);
+    pruneAcknowledgedEvents(context, parsed.data.cursor);
     response.status(204).send();
   });
 
