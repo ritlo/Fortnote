@@ -170,7 +170,11 @@ export function useRealtimeEvents() {
             return;
           }
           if (message.type === "crdt-sync") {
-            void finishCrdtSync(message.noteId, message.hasUpdates);
+            void finishCrdtSync(
+              message.noteId,
+              message.keyEpoch,
+              message.hasUpdates
+            );
             return;
           }
           if (message.type === "crdt-reject") {

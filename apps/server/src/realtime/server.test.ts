@@ -237,11 +237,13 @@ describe("realtime server", () => {
     expect(await aliceSocket.next("alice CRDT sync")).toEqual({
       type: "crdt-sync",
       noteId,
+      keyEpoch: 1,
       hasUpdates: false
     });
     expect(await bobSocket.next("bob CRDT sync")).toEqual({
       type: "crdt-sync",
       noteId,
+      keyEpoch: 1,
       hasUpdates: false
     });
 

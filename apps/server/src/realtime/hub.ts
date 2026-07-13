@@ -211,6 +211,7 @@ export class RealtimeHub implements RealtimePublisher {
     sendJson(client.socket, {
       type: "crdt-sync",
       noteId,
+      keyEpoch: access.keyEpoch,
       hasUpdates: updates.length > 0
     });
   }

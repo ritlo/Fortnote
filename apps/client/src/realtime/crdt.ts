@@ -176,13 +176,17 @@ export function receiveCrdtUpdate(update: EncryptedCrdtMessage): Promise<void> {
 
 export async function finishCrdtSync(
   noteId: string,
+  keyEpoch: number,
   hasUpdates: boolean
 ): Promise<void> {
   const binding = bindings.get(noteId);
-  if (!binding || binding.ready) {
+  if (!binding) {
     return;
   }
   await binding.receiving;
+  if (binding.note.keyEpoch !== keyEpoch || binding.ready) {
+    return;
+  }
   if (!hasUpdates && !binding.snapshotSeeded) {
     Y.applyUpdate(binding.doc, snapshotUpdate(binding.note), SNAPSHOT_SEED);
     binding.snapshotSeeded = true;

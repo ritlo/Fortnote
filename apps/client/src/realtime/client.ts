@@ -13,7 +13,7 @@ export type RealtimeMessage =
   | { type: "replay"; events: CollaborationEvent[] }
   | { type: "event"; event: CollaborationEvent }
   | { type: "presence"; noteId: string; users: PresenceUser[] }
-  | { type: "crdt-sync"; noteId: string; hasUpdates: boolean }
+  | { type: "crdt-sync"; noteId: string; keyEpoch: number; hasUpdates: boolean }
   | EncryptedCrdtMessage
   | CrdtAck
   | CrdtReject
@@ -160,7 +160,13 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
         typeof value.nonce === "string"
       );
     case "crdt-sync":
-      return typeof value.noteId === "string" && typeof value.hasUpdates === "boolean";
+      return (
+        typeof value.noteId === "string" &&
+        typeof value.keyEpoch === "number" &&
+        Number.isInteger(value.keyEpoch) &&
+        value.keyEpoch > 0 &&
+        typeof value.hasUpdates === "boolean"
+      );
     case "crdt-checkpoint":
       return (
         value.formatVersion === 1 &&

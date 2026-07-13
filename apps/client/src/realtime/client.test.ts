@@ -80,6 +80,15 @@ describe("realtime client", () => {
       protocolVersion: 2,
       capabilities: ["crdt-v1"]
     });
+    const sync = {
+      type: "crdt-sync",
+      noteId: "note_1",
+      keyEpoch: 2,
+      hasUpdates: true
+    };
+    expect(parseRealtimeMessage(JSON.stringify(sync))).toEqual(sync);
+    expect(parseRealtimeMessage(JSON.stringify({ ...sync, keyEpoch: undefined })))
+      .toBeNull();
   });
 
   it("parses replay events with expected shape", () => {

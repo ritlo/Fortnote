@@ -47,7 +47,7 @@ describe("CRDT collaboration", () => {
     const discard = vi.fn();
     setCrdtTransport({ discard, send, subscribe: vi.fn() });
     openCrdtNote(note(), vi.fn());
-    await finishCrdtSync(note().id, false);
+    await finishCrdtSync(note().id, 1, false);
     expect(send).toHaveBeenCalledOnce();
     send.mockClear();
 
@@ -85,12 +85,25 @@ describe("CRDT collaboration", () => {
     expect(discard).toHaveBeenCalledWith(rotated.id, 2);
   });
 
+  it("ignores stale sync completion from an older key epoch", async () => {
+    const send = vi.fn();
+    const rotated = note({ keyEpoch: 2, noteKeyBase64: "rotated-key" });
+    setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
+    openCrdtNote(rotated, vi.fn());
+
+    await finishCrdtSync(rotated.id, 1, false);
+    expect(send).not.toHaveBeenCalled();
+
+    await finishCrdtSync(rotated.id, 2, false);
+    expect(send).toHaveBeenCalledOnce();
+  });
+
   it("persists the whole-note snapshot as the first CRDT checkpoint", async () => {
     const send = vi.fn();
     setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
 
     openCrdtNote(note(), vi.fn());
-    await finishCrdtSync(note().id, false);
+    await finishCrdtSync(note().id, 1, false);
 
     expect(send).toHaveBeenCalledOnce();
     const encryptionInput = vi.mocked(encryptCrdtMessage).mock.calls[0]![0];
@@ -114,7 +127,7 @@ describe("CRDT collaboration", () => {
     openCrdtNote(current, onChange);
 
     editCrdtNote(current.id, { body: "Draft" });
-    await finishCrdtSync(current.id, false);
+    await finishCrdtSync(current.id, 1, false);
 
     await vi.waitFor(() => {
       expect(encryptCrdtMessage).toHaveBeenCalledTimes(2);
@@ -132,7 +145,7 @@ describe("CRDT collaboration", () => {
     const current = note();
     setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
     openCrdtNote(current, vi.fn());
-    await finishCrdtSync(current.id, false);
+    await finishCrdtSync(current.id, 1, false);
     send.mockClear();
 
     for (let index = 0; index < 63; index += 1) {

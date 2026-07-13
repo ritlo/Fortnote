@@ -2,7 +2,8 @@
 
 ## Status
 
-In progress — CRDT data plane implementation started on `feat/crdt-realtime-collab`.
+Implemented — the first-cut CRDT data plane is complete on
+`feat/crdt-realtime-collab`.
 
 ## Progress
 
@@ -41,8 +42,9 @@ Implemented in the first end-to-end slice:
 - Revocation regression coverage verifies that a removed collaborator receives
   neither new-epoch CRDT broadcasts nor stored updates through re-subscription.
 - Additive snapshot migration. After replaying stored updates the server sends a
-  `crdt-sync` marker carrying a `hasUpdates` flag. For an empty CRDT epoch the
-  client deterministically seeds the full title/body snapshot from the note
+  `crdt-sync` marker carrying the current key epoch and a `hasUpdates` flag. The
+  client ignores stale markers from older epochs. For an empty CRDT epoch it
+  deterministically seeds the full title/body snapshot from the note
   (`snapshotUpdate` builds a Y.Doc with a client ID derived from the note ID, so
   the seed is reproducible) and, for non-viewers, persists it as an encrypted
   `crdt-checkpoint`. Existing CRDT epochs (`hasUpdates`) are no longer reseeded
@@ -66,22 +68,23 @@ Implemented in the first end-to-end slice:
    and keeps the encrypted update in the outbox for retry once compaction frees
    space.
 
-Still open:
+Deferred beyond the first cut:
 
 - State-vector exchange is intentionally deferred. Full encrypted update replay
   already reconciles reconnecting peers correctly, so add it only if replay
   performance becomes measurable. The durable outbox covers offline durability.
-- Protocol hardening and security review of the CRDT data plane. Storage-limit
-  enforcement (per-epoch envelope ceiling and `crdt-reject`) is implemented; a
-  full security review remains.
+- A production security audit and any hardening it identifies. The first cut
+  includes capability gating, AEAD-bound identities and epochs, membership
+  checks on replay and broadcast, storage limits, and epoch-bound sync markers.
 
 ### Remaining estimate
 
 At the start of final hardening, matching this first-cut ADR was estimated at
 two focused commits: revocation access coverage, followed by final protocol and
-security hardening plus status documentation. This change completes the first;
-one focused commit remains. State-vector optimization and a production security
-audit are outside that estimate.
+security hardening plus status documentation. Both are complete with this
+change; no implementation commits remain to match the first-cut boundary.
+State-vector optimization and a production security audit are outside that
+estimate.
 
 ## Context
 

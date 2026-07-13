@@ -405,26 +405,19 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
       attachmentKeys
     });
     const rotatedAttachments = applyAttachmentKeyRotation(attachments, attachmentKeys);
-    const rotatedNote = {
-      ...note,
+    const rotationPatch = {
       contentLength: rotatedKey.contentLength,
       noteKeyBase64: rotatedKey.noteKeyBase64,
       keyEpoch: rotated.keyEpoch,
       updatedAt: new Date().toISOString(),
       version: rotated.version
     };
+    const rotatedNote = { ...note, ...rotationPatch };
 
     setNotes((current) =>
       current.map((currentNote) =>
         currentNote.id === note.id
-          ? {
-              ...currentNote,
-              contentLength: rotatedNote.contentLength,
-              noteKeyBase64: rotatedNote.noteKeyBase64,
-              keyEpoch: rotatedNote.keyEpoch,
-              updatedAt: rotatedNote.updatedAt,
-              version: rotatedNote.version
-            }
+          ? { ...currentNote, ...rotationPatch }
           : currentNote
       )
     );
