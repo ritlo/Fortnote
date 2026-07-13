@@ -255,6 +255,21 @@ describe("realtime server", () => {
         .prepare("SELECT cipher FROM note_updates WHERE update_id = ?")
         .get(update.updateId)
     ).toEqual({ cipher: update.cipher });
+    const checkpoint = {
+      ...update,
+      type: "crdt-checkpoint",
+      updateId: crypto.randomUUID(),
+      cipher: "encrypted_crdt_checkpoint_abcdefghijklmnopqrstuvwxyz",
+      compactedUpdateIds: [update.updateId]
+    };
+    aliceSocket.socket.send(JSON.stringify(checkpoint));
+
+    expect(await bobSocket.next("bob CRDT checkpoint")).toEqual(checkpoint);
+    expect(
+      server.db.sqlite
+        .prepare("SELECT update_id AS updateId, kind FROM note_updates WHERE note_id = ?")
+        .all(noteId)
+    ).toEqual([{ updateId: checkpoint.updateId, kind: "checkpoint" }]);
     expect(
       server.db.sqlite.prepare("SELECT COUNT(*) AS count FROM note_events").get()
     ).toEqual({ count: 2 });

@@ -1,7 +1,7 @@
 import {
   attachmentAssociatedData,
+  crdtCheckpointAssociatedData,
   crdtUpdateAssociatedData,
-  CRDT_UPDATE_FORMAT_VERSION,
   createKdfParams,
   createSharingKeyPair,
   cryptoReady,
@@ -444,33 +444,32 @@ export async function encryptExistingNoteBody(input: {
   };
 }
 
-export async function encryptCrdtUpdate(input: {
+type CrdtAadInput = {
   cryptoOwnerId: string;
   noteId: string;
-  noteKeyBase64: string;
   keyEpoch: number;
   updateId: string;
+  formatVersion: number;
+} & (
+  | { type: "crdt-update" }
+  | { type: "crdt-checkpoint"; compactedUpdateIds: string[] }
+);
+
+export async function encryptCrdtMessage(input: CrdtAadInput & {
+  noteKeyBase64: string;
   update: Uint8Array;
 }) {
   return encryptBytes(
     input.update,
     fromBase64(input.noteKeyBase64),
-    crdtUpdateAssociatedData({
-      ...input,
-      formatVersion: CRDT_UPDATE_FORMAT_VERSION
-    })
+    crdtMessageAad(input)
   );
 }
 
-export async function decryptCrdtUpdate(input: {
-  cryptoOwnerId: string;
-  noteId: string;
+export async function decryptCrdtMessage(input: CrdtAadInput & {
   noteKeyBase64: string;
-  keyEpoch: number;
-  updateId: string;
   cipher: string;
   nonce: string;
-  formatVersion: number;
 }): Promise<Uint8Array> {
   return decryptBytes(
     {
@@ -479,8 +478,14 @@ export async function decryptCrdtUpdate(input: {
       formatVersion: input.formatVersion
     },
     fromBase64(input.noteKeyBase64),
-    crdtUpdateAssociatedData(input)
+    crdtMessageAad(input)
   );
+}
+
+function crdtMessageAad(input: CrdtAadInput): Uint8Array {
+  return input.type === "crdt-checkpoint"
+    ? crdtCheckpointAssociatedData(input)
+    : crdtUpdateAssociatedData(input);
 }
 
 export function noteKeyToBase64(noteKey: Uint8Array): string {

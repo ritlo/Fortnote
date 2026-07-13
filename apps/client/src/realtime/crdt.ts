@@ -1,25 +1,34 @@
 import {
   CRDT_UPDATE_FORMAT_VERSION,
-  type EncryptedCrdtUpdate
+  type EncryptedCrdtCheckpoint,
+  type EncryptedCrdtUpdate,
+  type EncryptedCrdtMessage
 } from "@fortnote/shared";
 import * as Y from "yjs";
-import { decryptCrdtUpdate, encryptCrdtUpdate } from "../cryptoClient";
+import {
+  decryptCrdtMessage,
+  encryptCrdtMessage
+} from "../cryptoClient";
 import type { DecryptedNote } from "../store/appStore";
 
 // Yjs provides battle-tested character-level merging; the server only sees ciphertext.
 const REMOTE_UPDATE = Symbol("remote-update");
+// ponytail: fixed threshold; tune from update-size metrics if storage churn matters.
+const CHECKPOINT_UPDATE_COUNT = 64;
 const bindings = new Map<string, Binding>();
 let transport: CrdtTransport | null = null;
 
 interface CrdtTransport {
   subscribe: (noteId: string) => void;
-  send: (update: EncryptedCrdtUpdate) => void;
+  send: (update: EncryptedCrdtMessage) => void;
 }
 
 interface Binding {
   doc: Y.Doc;
   note: DecryptedNote;
   onChange: (patch: Partial<Pick<DecryptedNote, "title" | "body">>) => void;
+  pendingUpdateIds: Set<string>;
+  checkpointing: boolean;
 }
 
 export function openCrdtNote(
@@ -34,7 +43,13 @@ export function openCrdtNote(
     // ponytail: snapshot text seeds a field on its first edit; replace with a
     // persisted Yjs migration checkpoint when offline migration lands.
     const doc = new Y.Doc();
-    const created = { doc, note, onChange };
+    const created = {
+      doc,
+      note,
+      onChange,
+      pendingUpdateIds: new Set<string>(),
+      checkpointing: false
+    };
     bindings.set(note.id, created);
     doc.getText("title").observe(() => {
       created.onChange({ title: doc.getText("title").toJSON() });
@@ -101,7 +116,7 @@ export function clearCrdtNotes(): void {
   bindings.clear();
 }
 
-export async function receiveCrdtUpdate(update: EncryptedCrdtUpdate): Promise<void> {
+export async function receiveCrdtUpdate(update: EncryptedCrdtMessage): Promise<void> {
   const binding = bindings.get(update.noteId);
   if (
     binding?.note.cryptoOwnerId !== update.cryptoOwnerId ||
@@ -109,11 +124,21 @@ export async function receiveCrdtUpdate(update: EncryptedCrdtUpdate): Promise<vo
   ) {
     return;
   }
-  const plaintext = await decryptCrdtUpdate({
+  const plaintext = await decryptCrdtMessage({
     ...update,
     noteKeyBase64: binding.note.noteKeyBase64
   });
   Y.applyUpdate(binding.doc, plaintext, REMOTE_UPDATE);
+  if (update.type === "crdt-checkpoint") {
+    update.compactedUpdateIds.forEach((id) => binding.pendingUpdateIds.delete(id));
+  }
+  binding.pendingUpdateIds.add(update.updateId);
+  if (
+    binding.pendingUpdateIds.size >= CHECKPOINT_UPDATE_COUNT &&
+    !binding.checkpointing
+  ) {
+    void broadcastCheckpoint(binding);
+  }
 }
 
 export function replaceYText(text: Y.Text, next: string): void {
@@ -145,22 +170,56 @@ async function broadcastUpdate(binding: Binding, update: Uint8Array): Promise<vo
     return;
   }
   const updateId = crypto.randomUUID();
-  const encrypted = await encryptCrdtUpdate({
-    cryptoOwnerId: binding.note.cryptoOwnerId,
-    noteId: binding.note.id,
-    noteKeyBase64: binding.note.noteKeyBase64,
-    keyEpoch: binding.note.keyEpoch,
+  const envelope = {
+    type: "crdt-update" as const,
+    formatVersion: CRDT_UPDATE_FORMAT_VERSION,
     updateId,
+    noteId: binding.note.id,
+    cryptoOwnerId: binding.note.cryptoOwnerId,
+    keyEpoch: binding.note.keyEpoch
+  } satisfies Omit<EncryptedCrdtUpdate, "cipher" | "nonce">;
+  const encrypted = await encryptCrdtMessage({
+    ...envelope,
+    noteKeyBase64: binding.note.noteKeyBase64,
     update
   });
   transport.send({
-    type: "crdt-update",
+    ...envelope,
+    cipher: encrypted.cipher,
+    nonce: encrypted.nonce
+  });
+}
+
+async function broadcastCheckpoint(binding: Binding): Promise<void> {
+  if (!transport) {
+    return;
+  }
+  binding.checkpointing = true;
+  const updateId = crypto.randomUUID();
+  const compactedUpdateIds = [...binding.pendingUpdateIds].slice(0, 100);
+  const envelope = {
+    type: "crdt-checkpoint" as const,
     formatVersion: CRDT_UPDATE_FORMAT_VERSION,
     updateId,
     noteId: binding.note.id,
     cryptoOwnerId: binding.note.cryptoOwnerId,
     keyEpoch: binding.note.keyEpoch,
-    cipher: encrypted.cipher,
-    nonce: encrypted.nonce
-  });
+    compactedUpdateIds
+  } satisfies Omit<EncryptedCrdtCheckpoint, "cipher" | "nonce">;
+  try {
+    const encrypted = await encryptCrdtMessage({
+      ...envelope,
+      noteKeyBase64: binding.note.noteKeyBase64,
+      update: Y.encodeStateAsUpdate(binding.doc)
+    });
+    transport.send({
+      ...envelope,
+      cipher: encrypted.cipher,
+      nonce: encrypted.nonce
+    });
+    compactedUpdateIds.forEach((id) => binding.pendingUpdateIds.delete(id));
+    binding.pendingUpdateIds.add(updateId);
+  } finally {
+    binding.checkpointing = false;
+  }
 }

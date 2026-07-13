@@ -7,6 +7,8 @@ import {
   createRegistrationCrypto,
   decryptNoteKeyShare,
   decryptNote,
+  decryptCrdtMessage,
+  encryptCrdtMessage,
   encryptNoteKeyShare,
   noteKeyToBase64,
   openUserSharingKey,
@@ -129,5 +131,34 @@ describe("client crypto workflows", () => {
         privateKey: bobSharingKey.opened.privateKey
       })
     ).resolves.toBe(noteKeyBase64);
+  });
+
+  it("round-trips encrypted CRDT checkpoints", async () => {
+    const registration = await createRegistrationCrypto("alice", "password");
+    const note = await createEncryptedNoteDraft({
+      userId: "alice_user",
+      rootKey: registration.rootKey,
+      title: "Shared",
+      body: "Shared body"
+    });
+    const input = {
+      type: "crdt-checkpoint" as const,
+      formatVersion: 1,
+      cryptoOwnerId: "alice_user",
+      noteId: note.id,
+      noteKeyBase64: noteKeyToBase64(note.noteKey),
+      keyEpoch: 1,
+      updateId: crypto.randomUUID(),
+      compactedUpdateIds: [crypto.randomUUID()],
+      update: new Uint8Array([1, 2, 3])
+    };
+    const encrypted = await encryptCrdtMessage(input);
+
+    await expect(
+      decryptCrdtMessage({
+        ...input,
+        ...encrypted
+      })
+    ).resolves.toEqual(input.update);
   });
 });

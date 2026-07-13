@@ -1,7 +1,7 @@
 import type { CollaborationEvent, PresenceState, PresenceUser } from "../api";
 import {
   CRDT_REALTIME_CAPABILITY,
-  type EncryptedCrdtUpdate
+  type EncryptedCrdtMessage
 } from "@fortnote/shared";
 
 export type ClientPresenceState = PresenceState | "left";
@@ -11,7 +11,7 @@ export type RealtimeMessage =
   | { type: "replay"; events: CollaborationEvent[] }
   | { type: "event"; event: CollaborationEvent }
   | { type: "presence"; noteId: string; users: PresenceUser[] }
-  | EncryptedCrdtUpdate
+  | EncryptedCrdtMessage
   | { type: "pong" };
 
 interface RealtimeClientOptions {
@@ -26,7 +26,7 @@ export interface RealtimeConnection {
   close: () => void;
   sendPresence: (noteId: string, state: ClientPresenceState) => void;
   subscribeCrdt: (noteId: string) => void;
-  sendCrdtUpdate: (update: EncryptedCrdtUpdate) => void;
+  sendCrdtUpdate: (update: EncryptedCrdtMessage) => void;
 }
 
 export function connectRealtime({
@@ -146,6 +146,18 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
         typeof value.keyEpoch === "number" &&
         typeof value.cipher === "string" &&
         typeof value.nonce === "string"
+      );
+    case "crdt-checkpoint":
+      return (
+        value.formatVersion === 1 &&
+        typeof value.updateId === "string" &&
+        typeof value.noteId === "string" &&
+        typeof value.cryptoOwnerId === "string" &&
+        typeof value.keyEpoch === "number" &&
+        typeof value.cipher === "string" &&
+        typeof value.nonce === "string" &&
+        Array.isArray(value.compactedUpdateIds) &&
+        value.compactedUpdateIds.every((id) => typeof id === "string")
       );
     case "pong":
       return true;

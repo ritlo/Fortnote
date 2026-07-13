@@ -19,7 +19,10 @@ import {
   toBase64,
   utf8
 } from "./crypto.js";
-import { crdtUpdateAssociatedData } from "./crdt.js";
+import {
+  crdtCheckpointAssociatedData,
+  crdtUpdateAssociatedData
+} from "./crdt.js";
 
 describe("crypto helpers", () => {
   beforeAll(async () => {
@@ -120,6 +123,34 @@ describe("crypto helpers", () => {
         encrypted,
         key,
         crdtUpdateAssociatedData({ ...input, updateId: "update_b" })
+      )
+    ).rejects.toThrow();
+  });
+
+  it("binds CRDT checkpoints to the updates they compact", async () => {
+    const key = randomBytes(32);
+    const input = {
+      cryptoOwnerId: "user_a",
+      noteId: "note_a",
+      keyEpoch: 1,
+      updateId: "checkpoint_a",
+      formatVersion: 1,
+      compactedUpdateIds: ["update_a"]
+    };
+    const encrypted = await encryptBytes(
+      utf8("checkpoint"),
+      key,
+      crdtCheckpointAssociatedData(input)
+    );
+
+    await expect(
+      decryptBytes(
+        encrypted,
+        key,
+        crdtCheckpointAssociatedData({
+          ...input,
+          compactedUpdateIds: ["update_b"]
+        })
       )
     ).rejects.toThrow();
   });

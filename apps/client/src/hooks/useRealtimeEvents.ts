@@ -161,7 +161,10 @@ export function useRealtimeEvents() {
             setNotePresence(message.noteId, message.users);
             return;
           }
-          if (message.type === "crdt-update") {
+          if (
+            message.type === "crdt-update" ||
+            message.type === "crdt-checkpoint"
+          ) {
             void receiveCrdtUpdate(message).catch(() => undefined);
           }
         }

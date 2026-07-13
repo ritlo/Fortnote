@@ -14,6 +14,16 @@ export interface EncryptedCrdtUpdate {
   nonce: string;
 }
 
+export interface EncryptedCrdtCheckpoint
+  extends Omit<EncryptedCrdtUpdate, "type"> {
+  type: "crdt-checkpoint";
+  compactedUpdateIds: string[];
+}
+
+export type EncryptedCrdtMessage =
+  | EncryptedCrdtUpdate
+  | EncryptedCrdtCheckpoint;
+
 export function crdtUpdateAssociatedData(input: {
   cryptoOwnerId: string;
   noteId: string;
@@ -23,5 +33,18 @@ export function crdtUpdateAssociatedData(input: {
 }): Uint8Array {
   return utf8(
     `fortnote:crdt-update:v${String(input.formatVersion)}:${input.cryptoOwnerId}:${input.noteId}:${String(input.keyEpoch)}:${input.updateId}`
+  );
+}
+
+export function crdtCheckpointAssociatedData(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  keyEpoch: number;
+  updateId: string;
+  formatVersion: number;
+  compactedUpdateIds: string[];
+}): Uint8Array {
+  return utf8(
+    `fortnote:crdt-checkpoint:v${String(input.formatVersion)}:${input.cryptoOwnerId}:${input.noteId}:${String(input.keyEpoch)}:${input.updateId}:${[...input.compactedUpdateIds].sort().join(",")}`
   );
 }

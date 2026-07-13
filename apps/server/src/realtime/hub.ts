@@ -1,8 +1,8 @@
 import { WebSocket } from "ws";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   CRDT_REALTIME_CAPABILITY,
-  type EncryptedCrdtUpdate
+  type EncryptedCrdtMessage
 } from "@fortnote/shared";
 import type { AppContext } from "../http/app.js";
 import * as schema from "../db/schema.js";
@@ -183,7 +183,9 @@ export class RealtimeHub implements RealtimePublisher {
         keyEpoch: schema.noteUpdates.keyEpoch,
         formatVersion: schema.noteUpdates.formatVersion,
         cipher: schema.noteUpdates.cipher,
-        nonce: schema.noteUpdates.nonce
+        nonce: schema.noteUpdates.nonce,
+        kind: schema.noteUpdates.kind,
+        compactedUpdateIds: schema.noteUpdates.compactedUpdateIds
       })
       .from(schema.noteUpdates)
       .where(and(
@@ -192,11 +194,21 @@ export class RealtimeHub implements RealtimePublisher {
       ))
       .all();
     for (const update of updates) {
-      sendJson(client.socket, { ...update, type: "crdt-update" });
+      const { kind, compactedUpdateIds, ...envelope } = update;
+      sendJson(
+        client.socket,
+        kind === "checkpoint"
+          ? {
+              ...envelope,
+              type: "crdt-checkpoint",
+              compactedUpdateIds: JSON.parse(compactedUpdateIds ?? "[]") as string[]
+            }
+          : { ...envelope, type: "crdt-update" }
+      );
     }
   }
 
-  publishCrdtUpdate(client: RealtimeClient, update: EncryptedCrdtUpdate): void {
+  publishCrdtUpdate(client: RealtimeClient, update: EncryptedCrdtMessage): void {
     if (!this.context || !client.capabilities.has(CRDT_REALTIME_CAPABILITY)) {
       return;
     }
@@ -209,20 +221,40 @@ export class RealtimeHub implements RealtimePublisher {
     ) {
       return;
     }
-    const inserted = this.context.db.orm
-      .insert(schema.noteUpdates)
-      .values({
-        updateId: update.updateId,
-        noteId: update.noteId,
-        cryptoOwnerId: update.cryptoOwnerId,
-        keyEpoch: update.keyEpoch,
-        formatVersion: update.formatVersion,
-        cipher: update.cipher,
-        nonce: update.nonce
-      })
-      .onConflictDoNothing()
-      .run();
-    if (inserted.changes === 0) {
+    const inserted = this.context.db.orm.transaction((tx) => {
+      const result = tx
+        .insert(schema.noteUpdates)
+        .values({
+          updateId: update.updateId,
+          noteId: update.noteId,
+          cryptoOwnerId: update.cryptoOwnerId,
+          keyEpoch: update.keyEpoch,
+          formatVersion: update.formatVersion,
+          cipher: update.cipher,
+          nonce: update.nonce,
+          kind: update.type === "crdt-checkpoint" ? "checkpoint" : "update",
+          compactedUpdateIds:
+            update.type === "crdt-checkpoint"
+              ? JSON.stringify(update.compactedUpdateIds)
+              : null
+        })
+        .onConflictDoNothing()
+        .run();
+      if (result.changes === 0) {
+        return false;
+      }
+      if (update.type === "crdt-checkpoint") {
+        tx.delete(schema.noteUpdates)
+          .where(and(
+            eq(schema.noteUpdates.noteId, update.noteId),
+            eq(schema.noteUpdates.keyEpoch, update.keyEpoch),
+            inArray(schema.noteUpdates.updateId, update.compactedUpdateIds)
+          ))
+          .run();
+      }
+      return true;
+    });
+    if (!inserted) {
       return;
     }
     for (const recipient of this.clients) {

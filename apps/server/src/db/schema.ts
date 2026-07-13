@@ -91,6 +91,8 @@ export const noteUpdates = sqliteTable("note_updates", {
   formatVersion: integer("format_version").notNull(),
   cipher: text("cipher").notNull(),
   nonce: text("nonce").notNull(),
+  kind: text("kind").notNull().default("update"),
+  compactedUpdateIds: text("compacted_update_ids"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`)
 });
 

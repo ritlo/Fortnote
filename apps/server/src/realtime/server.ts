@@ -37,7 +37,19 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     keyEpoch: z.number().int().positive(),
     cipher: z.string().min(1).max(400_000),
     nonce: z.string().min(16).max(128)
-  })
+  }),
+  z.object({
+    type: z.literal("crdt-checkpoint"),
+    formatVersion: z.literal(1),
+    updateId: z.uuid(),
+    noteId: z.uuid(),
+    cryptoOwnerId: z.uuid(),
+    keyEpoch: z.number().int().positive(),
+    cipher: z.string().min(1).max(400_000),
+    nonce: z.string().min(16).max(128),
+    compactedUpdateIds: z.array(z.uuid()).min(1).max(100)
+      .refine((ids) => new Set(ids).size === ids.length)
+  }).refine((message) => !message.compactedUpdateIds.includes(message.updateId))
 ]);
 
 const MAX_REALTIME_MESSAGE_BYTES = 512 * 1024;
