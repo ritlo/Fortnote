@@ -19,6 +19,7 @@ const bindings = new Map<string, Binding>();
 let transport: CrdtTransport | null = null;
 
 interface CrdtTransport {
+  discard: (noteId: string, beforeKeyEpoch: number) => void;
   subscribe: (noteId: string) => void;
   send: (update: EncryptedCrdtMessage) => void;
 }
@@ -36,10 +37,7 @@ export function openCrdtNote(
   onChange: Binding["onChange"]
 ): () => void {
   const binding = bindings.get(note.id);
-  if (
-    binding?.note.noteKeyBase64 !== note.noteKeyBase64 ||
-    binding.note.keyEpoch !== note.keyEpoch
-  ) {
+  if (!binding) {
     // ponytail: snapshot text seeds a field on its first edit; replace with a
     // persisted Yjs migration checkpoint when offline migration lands.
     const doc = new Y.Doc();
@@ -63,8 +61,16 @@ export function openCrdtNote(
       }
     });
   } else {
+    const epochAdvanced = note.keyEpoch > binding.note.keyEpoch;
     binding.note = note;
     binding.onChange = onChange;
+    if (epochAdvanced) {
+      binding.pendingUpdateIds.clear();
+      transport?.discard(note.id, note.keyEpoch);
+      // ponytail: this checkpoints current Yjs state; the still-open migration
+      // work must first seed untouched snapshot fields into that state.
+      void broadcastCheckpoint(binding);
+    }
   }
   transport?.subscribe(note.id);
 
@@ -98,8 +104,9 @@ export function editCrdtNote(
 export function setCrdtTransport(next: CrdtTransport | null): void {
   transport = next;
   if (transport) {
-    for (const noteId of bindings.keys()) {
-      transport.subscribe(noteId);
+    for (const binding of bindings.values()) {
+      transport.discard(binding.note.id, binding.note.keyEpoch);
+      transport.subscribe(binding.note.id);
     }
   }
 }

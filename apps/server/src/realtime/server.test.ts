@@ -248,6 +248,10 @@ describe("realtime server", () => {
     };
     aliceSocket.socket.send(JSON.stringify(update));
 
+    expect(await aliceSocket.next("alice CRDT ack")).toEqual({
+      type: "crdt-ack",
+      updateId: update.updateId
+    });
     expect(await bobSocket.next("bob CRDT update")).toEqual(update);
     await expectNoMessage(legacyBobSocket, "legacy client CRDT update");
     expect(
@@ -264,6 +268,10 @@ describe("realtime server", () => {
     };
     aliceSocket.socket.send(JSON.stringify(checkpoint));
 
+    expect(await aliceSocket.next("alice checkpoint ack")).toEqual({
+      type: "crdt-ack",
+      updateId: checkpoint.updateId
+    });
     expect(await bobSocket.next("bob CRDT checkpoint")).toEqual(checkpoint);
     expect(
       server.db.sqlite
@@ -273,6 +281,25 @@ describe("realtime server", () => {
     expect(
       server.db.sqlite.prepare("SELECT COUNT(*) AS count FROM note_events").get()
     ).toEqual({ count: 2 });
+
+    aliceSocket.socket.send(JSON.stringify(checkpoint));
+    expect(await aliceSocket.next("alice retry ack")).toEqual({
+      type: "crdt-ack",
+      updateId: checkpoint.updateId
+    });
+    await expectNoMessage(bobSocket, "duplicate CRDT checkpoint");
+
+    const epochCheckpoint = {
+      ...checkpoint,
+      updateId: crypto.randomUUID(),
+      compactedUpdateIds: []
+    };
+    aliceSocket.socket.send(JSON.stringify(epochCheckpoint));
+    expect(await aliceSocket.next("alice epoch checkpoint ack")).toEqual({
+      type: "crdt-ack",
+      updateId: epochCheckpoint.updateId
+    });
+    expect(await bobSocket.next("bob epoch checkpoint")).toEqual(epochCheckpoint);
   });
 
   it("pushes actor-scoped folder events only to the actor", async () => {

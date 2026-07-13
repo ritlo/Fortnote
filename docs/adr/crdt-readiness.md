@@ -15,16 +15,37 @@ Implemented in the first end-to-end slice:
 - A separate `note_updates` store with membership-checked replay and broadcast;
   `note_events` remains unchanged as the control/invalidation log.
 - Key-epoch validation and epoch advancement during existing note-key rotation.
+- Periodic update compaction into encrypted Yjs checkpoints. A client encodes the
+  full document state as a `crdt-checkpoint` message once its pending-update count
+  crosses a threshold; the server atomically inserts the checkpoint and deletes
+  only the same-note, same-epoch update IDs it covers. The checkpoint envelope
+  extends the update format with `compactedUpdateIds`, bound by dedicated
+  `crdt-checkpoint` AEAD associated data, and `note_updates` gains `kind` and
+  `compacted_update_ids` columns.
 - A convergence test for two simulated Yjs clients and an end-to-end encrypted
   update storage/broadcast test.
+- A durable encrypted localStorage outbox. Queued `crdt-update` and
+  `crdt-checkpoint` messages persist across reconnects under
+  `fortnote:crdt-outbox:v1`; the server replies with a `crdt-ack` per delivered
+  update and the client drops acknowledged entries, so the outbox flushes
+  idempotently on (re)connect and on each send with no server-side duplicates
+  (the `note_updates` insert is idempotent on `updateId`).
+- Epoch-rotation handling for open documents. When a note's key epoch advances
+  while open, the binding clears pending update IDs, the client discards
+  old-epoch queued updates from the outbox, and broadcasts an encrypted
+  `crdt-checkpoint` under the new epoch; the server inserts the checkpoint and
+  compacts only the covered same-note, same-epoch updates.
+- Reconnect/retry, duplicate, and rotation tests covering the outbox, server
+  acknowledgement, and hub rotation.
 
 Still open:
 
-- Periodic update compaction into encrypted CRDT snapshots.
-- Durable offline update queues and state-vector reconciliation.
+- State-vector reconciliation for peers that reconnect after missed updates. The
+  outbox is durable, but offline merge against peer state vectors is not yet
+  implemented.
 - A persisted migration checkpoint for existing whole-note snapshots. In the
-  first slice, a snapshot field enters Yjs on its first live edit.
-- A CRDT checkpoint under each newly rotated key epoch after revocation.
+  first slice, a snapshot field enters Yjs on its first live edit; rotation
+  checkpointing currently only fires for documents left open at epoch advance.
 - Protocol hardening, storage limits, and security review.
 
 ## Context

@@ -208,9 +208,9 @@ export class RealtimeHub implements RealtimePublisher {
     }
   }
 
-  publishCrdtUpdate(client: RealtimeClient, update: EncryptedCrdtMessage): void {
+  publishCrdtUpdate(client: RealtimeClient, update: EncryptedCrdtMessage): boolean {
     if (!this.context || !client.capabilities.has(CRDT_REALTIME_CAPABILITY)) {
-      return;
+      return false;
     }
     const access = getNoteAccess(this.context, update.noteId, client.userId);
     if (
@@ -219,7 +219,7 @@ export class RealtimeHub implements RealtimePublisher {
       access.cryptoOwnerId !== update.cryptoOwnerId ||
       access.keyEpoch !== update.keyEpoch
     ) {
-      return;
+      return false;
     }
     const inserted = this.context.db.orm.transaction((tx) => {
       const result = tx
@@ -243,7 +243,10 @@ export class RealtimeHub implements RealtimePublisher {
       if (result.changes === 0) {
         return false;
       }
-      if (update.type === "crdt-checkpoint") {
+      if (
+        update.type === "crdt-checkpoint" &&
+        update.compactedUpdateIds.length > 0
+      ) {
         tx.delete(schema.noteUpdates)
           .where(and(
             eq(schema.noteUpdates.noteId, update.noteId),
@@ -255,7 +258,7 @@ export class RealtimeHub implements RealtimePublisher {
       return true;
     });
     if (!inserted) {
-      return;
+      return true;
     }
     for (const recipient of this.clients) {
       if (
@@ -269,6 +272,7 @@ export class RealtimeHub implements RealtimePublisher {
       }
       sendJson(recipient.socket, update);
     }
+    return true;
   }
 
   private clearPresence(client: RealtimeClient): void {

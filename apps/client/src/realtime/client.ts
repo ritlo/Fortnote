@@ -1,6 +1,7 @@
 import type { CollaborationEvent, PresenceState, PresenceUser } from "../api";
 import {
   CRDT_REALTIME_CAPABILITY,
+  type CrdtAck,
   type EncryptedCrdtMessage
 } from "@fortnote/shared";
 
@@ -12,7 +13,11 @@ export type RealtimeMessage =
   | { type: "event"; event: CollaborationEvent }
   | { type: "presence"; noteId: string; users: PresenceUser[] }
   | EncryptedCrdtMessage
+  | CrdtAck
   | { type: "pong" };
+
+const CRDT_OUTBOX_KEY = "fortnote:crdt-outbox:v1";
+const volatileCrdtOutbox = new Map<string, EncryptedCrdtMessage>();
 
 interface RealtimeClientOptions {
   after: number;
@@ -24,6 +29,7 @@ interface RealtimeClientOptions {
 
 export interface RealtimeConnection {
   close: () => void;
+  discardCrdtUpdates: (noteId: string, beforeKeyEpoch: number) => void;
   sendPresence: (noteId: string, state: ClientPresenceState) => void;
   subscribeCrdt: (noteId: string) => void;
   sendCrdtUpdate: (update: EncryptedCrdtMessage) => void;
@@ -51,7 +57,10 @@ export function connectRealtime({
           for (const noteId of pendingSubscriptions) {
             socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
           }
+          flushCrdtOutbox(socket);
         }
+      } else if (message.type === "crdt-ack") {
+        acknowledgeCrdtUpdate(message.updateId);
       }
       onMessage(message);
     }
@@ -64,6 +73,7 @@ export function connectRealtime({
   });
 
   return {
+    discardCrdtUpdates,
     sendPresence: (noteId, state) => {
       if (socket.readyState !== WebSocket.OPEN) {
         return;
@@ -77,9 +87,8 @@ export function connectRealtime({
       }
     },
     sendCrdtUpdate: (update) => {
-      if (socket.readyState === WebSocket.OPEN && crdtEnabled) {
-        socket.send(JSON.stringify(update));
-      }
+      queueCrdtUpdate(update);
+      flushCrdtOutbox(socket, crdtEnabled);
     },
     close: () => {
       socket.close();
@@ -159,10 +168,73 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
         Array.isArray(value.compactedUpdateIds) &&
         value.compactedUpdateIds.every((id) => typeof id === "string")
       );
+    case "crdt-ack":
+      return typeof value.updateId === "string";
     case "pong":
       return true;
     default:
       return false;
+  }
+}
+
+function queueCrdtUpdate(update: EncryptedCrdtMessage): void {
+  readCrdtOutbox();
+  volatileCrdtOutbox.set(update.updateId, update);
+  persistCrdtOutbox();
+}
+
+function acknowledgeCrdtUpdate(updateId: string): void {
+  readCrdtOutbox();
+  volatileCrdtOutbox.delete(updateId);
+  persistCrdtOutbox();
+}
+
+function discardCrdtUpdates(noteId: string, beforeKeyEpoch: number): void {
+  readCrdtOutbox();
+  for (const [updateId, update] of volatileCrdtOutbox) {
+    if (update.noteId === noteId && update.keyEpoch < beforeKeyEpoch) {
+      volatileCrdtOutbox.delete(updateId);
+    }
+  }
+  persistCrdtOutbox();
+}
+
+function flushCrdtOutbox(socket: WebSocket, enabled = true): void {
+  if (socket.readyState !== WebSocket.OPEN || !enabled) {
+    return;
+  }
+  for (const update of readCrdtOutbox().values()) {
+    socket.send(JSON.stringify(update));
+  }
+}
+
+function readCrdtOutbox(): Map<string, EncryptedCrdtMessage> {
+  try {
+    const stored = JSON.parse(localStorage.getItem(CRDT_OUTBOX_KEY) ?? "[]") as unknown;
+    if (Array.isArray(stored)) {
+      for (const value of stored) {
+        if (
+          isRealtimeMessage(value) &&
+          (value.type === "crdt-update" || value.type === "crdt-checkpoint")
+        ) {
+          volatileCrdtOutbox.set(value.updateId, value);
+        }
+      }
+    }
+  } catch {
+    // ponytail: memory fallback; use IndexedDB if outboxes approach localStorage limits.
+  }
+  return volatileCrdtOutbox;
+}
+
+function persistCrdtOutbox(): void {
+  try {
+    localStorage.setItem(
+      CRDT_OUTBOX_KEY,
+      JSON.stringify([...volatileCrdtOutbox.values()])
+    );
+  } catch {
+    // The in-memory copy still covers reconnects in this tab.
   }
 }
 

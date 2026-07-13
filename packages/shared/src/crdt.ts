@@ -24,6 +24,11 @@ export type EncryptedCrdtMessage =
   | EncryptedCrdtUpdate
   | EncryptedCrdtCheckpoint;
 
+export interface CrdtAck {
+  type: "crdt-ack";
+  updateId: string;
+}
+
 export function crdtUpdateAssociatedData(input: {
   cryptoOwnerId: string;
   noteId: string;

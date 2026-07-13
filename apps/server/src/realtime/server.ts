@@ -47,7 +47,7 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     keyEpoch: z.number().int().positive(),
     cipher: z.string().min(1).max(400_000),
     nonce: z.string().min(16).max(128),
-    compactedUpdateIds: z.array(z.uuid()).min(1).max(100)
+    compactedUpdateIds: z.array(z.uuid()).max(100)
       .refine((ids) => new Set(ids).size === ids.length)
   }).refine((message) => !message.compactedUpdateIds.includes(message.updateId))
 ]);
@@ -162,8 +162,8 @@ function handleClientMessage(
     hub.updatePresence(client, parsed.noteId, parsed.state);
   } else if (parsed.type === "crdt-subscribe") {
     hub.subscribeCrdt(client, parsed.noteId);
-  } else {
-    hub.publishCrdtUpdate(client, parsed);
+  } else if (hub.publishCrdtUpdate(client, parsed)) {
+    sendJson(socket, { type: "crdt-ack", updateId: parsed.updateId });
   }
 }
 
