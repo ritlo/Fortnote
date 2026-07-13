@@ -110,8 +110,8 @@ export const useAppStore = create<AppStore>((set) => ({
   rootKey: null,
   keyMaterialVersion: null,
   authMode: "login",
-  username: "alice",
-  password: "correct horse battery staple",
+  username: "",
+  password: "",
   newPassword: "",
   recoveryInput: "",
   recoveryNewPassword: "",
@@ -306,7 +306,10 @@ export const useAppStore = create<AppStore>((set) => ({
       presenceByNote: {},
       openedSharingKey: null,
       revocationRotationFailures: {},
+      password: "",
       newPassword: "",
+      recoveryInput: "",
+      recoveryNewPassword: "",
       user: null,
       status: nextStatus
     });

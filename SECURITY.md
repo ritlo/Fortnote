@@ -96,3 +96,25 @@ access removal does not make the unfinished key rotation complete.
 - Keep presence ephemeral and scoped to active note members.
 - Keep sharing-key trust records encrypted with the vault root key. Never store
   trusted fingerprints as plaintext server metadata.
+
+## Authentication Operations
+
+- Unknown usernames must receive pseudorandom dummy KDF and recovery envelopes
+  with the same response shape as registered accounts. Login and recovery must
+  still perform Argon2 verification against a dummy hash when no account exists.
+- Apply both IP-wide and account-specific limits to every pre-authentication
+  endpoint. Keep authentication request bodies and encoded crypto fields bounded.
+- JSON API requests are capped at 1 MiB. Encrypted attachment uploads use the
+  separate octet-stream route and retain the attachment-specific size limit.
+- Password changes and account recovery revoke every existing server session and
+  replace the caller's cookie only after the credential and key-material updates
+  commit atomically.
+- Enforce key-material versions in the `UPDATE` predicate, not only with a prior
+  read, so concurrent rotations cannot both succeed.
+
+## Realtime Operations
+
+- Every HTTP upgrade socket must be accepted or explicitly rejected; unmatched
+  paths must never be left open.
+- Keep the WebSocket payload limit close to the largest supported client message.
+  Presence and heartbeat messages do not require attachment-sized frames.

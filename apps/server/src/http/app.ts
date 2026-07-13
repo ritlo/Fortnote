@@ -1,6 +1,5 @@
-import express from "express";
+import express, { type ErrorRequestHandler } from "express";
 import helmet from "helmet";
-import { LIMITS } from "@fortnote/shared";
 import type { AppDb } from "../db/client.js";
 import type { ServerConfig } from "../config.js";
 import type { RealtimePublisher } from "../realtime/types.js";
@@ -12,6 +11,8 @@ import { createKeyMaterialRouter } from "../keyMaterial/routes.js";
 import { createNotesRouter } from "../notes/routes.js";
 import { createSharingKeysRouter } from "../sharingKeys/routes.js";
 import { csrfGuard } from "./csrf.js";
+
+const JSON_BODY_LIMIT_BYTES = 1024 * 1024;
 
 export interface AppContext {
   config: ServerConfig;
@@ -42,7 +43,7 @@ export function createApp(context: AppContext) {
       }
     })
   );
-  app.use(express.json({ limit: jsonBodyLimitBytes() }));
+  app.use(express.json({ limit: JSON_BODY_LIMIT_BYTES }));
   app.use(csrfGuard(context.config.allowedOrigin));
 
   app.get("/api/health", (_request, response) => {
@@ -57,9 +58,28 @@ export function createApp(context: AppContext) {
   app.use("/api/notes", createNotesRouter(context));
   app.use("/api/sharing-keys", createSharingKeysRouter(context));
 
+  const handleError: ErrorRequestHandler = (error, _request, response, next) => {
+    if (response.headersSent) {
+      next(error);
+      return;
+    }
+    if (isPayloadTooLargeError(error)) {
+      response.status(413).json({ code: "payload_too_large", message: "Payload too large" });
+      return;
+    }
+    console.error(error);
+    response.status(500).json({ code: "internal_error", message: "Internal server error" });
+  };
+  app.use(handleError);
+
   return app;
 }
 
-function jsonBodyLimitBytes(): number {
-  return Math.ceil(LIMITS.maxAttachmentBytes * 1.4) + 1024 * 1024;
+function isPayloadTooLargeError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "type" in error &&
+    error.type === "entity.too.large"
+  );
 }

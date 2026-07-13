@@ -1,4 +1,5 @@
 import argon2 from "argon2";
+import { createHmac, randomBytes as nodeRandomBytes } from "node:crypto";
 import { Router, type Request, type RequestHandler } from "express";
 import { z } from "zod";
 import { DEFAULT_KDF } from "@fortnote/shared";
@@ -8,59 +9,93 @@ import {
   clearSessionCookie,
   createSession,
   deleteSession,
+  deleteUserSessions,
   findSession,
   readSessionToken,
   setSessionCookie
 } from "./session.js";
 
 const kdfParamsSchema = z.object({
-  salt: z.string().min(16),
-  opsLimit: z.number().int().positive(),
-  memLimit: z.number().int().positive(),
-  version: z.number().int().positive()
+  salt: z.string().min(16).max(128),
+  opsLimit: z.number().int().positive().max(10),
+  memLimit: z.number().int().positive().max(1024 * 1024 * 1024),
+  version: z.number().int().positive().max(100)
 });
+
+const verifierSchema = z.string().min(32).max(128);
+const encryptedKeySchema = z.string().min(32).max(256);
+const nonceSchema = z.string().min(16).max(128);
+const usernameSchema = z.string().min(1).max(64);
 
 const registerSchema = z.object({
   username: z.string().min(3).max(64),
-  authVerifier: z.string().min(32),
+  authVerifier: verifierSchema,
   authKdf: kdfParamsSchema,
   vaultKdf: kdfParamsSchema,
-  encryptedRootKey: z.string().min(32),
-  rootKeyNonce: z.string().min(16),
-  recoveryAuthVerifier: z.string().min(32),
+  encryptedRootKey: encryptedKeySchema,
+  rootKeyNonce: nonceSchema,
+  recoveryAuthVerifier: verifierSchema,
   recoveryKdf: kdfParamsSchema,
-  recoveryEncryptedRootKey: z.string().min(32),
-  recoveryRootKeyNonce: z.string().min(16)
+  recoveryEncryptedRootKey: encryptedKeySchema,
+  recoveryRootKeyNonce: nonceSchema
 });
 
 const loginSchema = z.object({
-  username: z.string().min(1),
-  authVerifier: z.string().min(32)
+  username: usernameSchema,
+  authVerifier: verifierSchema
 });
 
 const recoverSchema = z.object({
-  username: z.string().min(1),
-  recoveryAuthVerifier: z.string().min(32),
-  newAuthVerifier: z.string().min(32),
+  username: usernameSchema,
+  recoveryAuthVerifier: verifierSchema,
+  newAuthVerifier: verifierSchema,
   authKdf: kdfParamsSchema,
   vaultKdf: kdfParamsSchema,
-  encryptedRootKey: z.string().min(32),
-  rootKeyNonce: z.string().min(16),
+  encryptedRootKey: encryptedKeySchema,
+  rootKeyNonce: nonceSchema,
   keyMaterialVersion: z.number().int().positive()
 });
 
-const UNKNOWN_USER_KDF_RESPONSE = {
-  authKdfSalt: "AAAAAAAAAAAAAAAAAAAAAA==",
-  authKdfOpsLimit: DEFAULT_KDF.opsLimit,
-  authKdfMemLimit: DEFAULT_KDF.memLimit,
-  authKdfVersion: DEFAULT_KDF.version,
-  vaultKdfSalt: "/////////////////////w==",
-  vaultKdfOpsLimit: DEFAULT_KDF.opsLimit,
-  vaultKdfMemLimit: DEFAULT_KDF.memLimit,
-  vaultKdfVersion: DEFAULT_KDF.version
-} as const;
+const DUMMY_RESPONSE_SECRET = nodeRandomBytes(32);
+const DUMMY_AUTH_VERIFIER_HASH = argon2.hash(nodeRandomBytes(32));
+
+class KeyMaterialVersionConflict extends Error {}
+
+function unknownUserKdfResponse(username: string) {
+  return {
+    authKdfSalt: pseudorandomBase64(username, "auth-salt", 16),
+    authKdfOpsLimit: DEFAULT_KDF.opsLimit,
+    authKdfMemLimit: DEFAULT_KDF.memLimit,
+    authKdfVersion: DEFAULT_KDF.version,
+    vaultKdfSalt: pseudorandomBase64(username, "vault-salt", 16),
+    vaultKdfOpsLimit: DEFAULT_KDF.opsLimit,
+    vaultKdfMemLimit: DEFAULT_KDF.memLimit,
+    vaultKdfVersion: DEFAULT_KDF.version
+  };
+}
+
+function unknownUserRecoveryResponse(username: string) {
+  return {
+    recoveryEncryptedRootKey: pseudorandomBase64(username, "recovery-root", 48),
+    recoveryRootKeyNonce: pseudorandomBase64(username, "recovery-nonce", 24),
+    recoveryKdfSalt: pseudorandomBase64(username, "recovery-salt", 16),
+    recoveryKdfOpsLimit: DEFAULT_KDF.opsLimit,
+    recoveryKdfMemLimit: DEFAULT_KDF.memLimit,
+    recoveryKdfVersion: DEFAULT_KDF.version,
+    keyMaterialVersion: 1
+  };
+}
+
+function pseudorandomBase64(username: string, label: string, byteLength: number): string {
+  return createHmac("sha512", DUMMY_RESPONSE_SECRET)
+    .update(`${label}:${username}`)
+    .digest()
+    .subarray(0, byteLength)
+    .toString("base64");
+}
 
 function createRateLimiter(options: {
+  key: (request: Request) => string;
   maxAttempts: number;
   windowMs: number;
 }): RequestHandler {
@@ -68,8 +103,19 @@ function createRateLimiter(options: {
 
   return (request, response, next) => {
     const now = Date.now();
-    const key = rateLimitKey(request);
+    if (attempts.size >= 10_000) {
+      for (const [storedKey, attempt] of attempts) {
+        if (attempt.resetAt <= now) {
+          attempts.delete(storedKey);
+        }
+      }
+    }
+    const key = options.key(request);
     const current = attempts.get(key);
+    if (!current && attempts.size >= 10_000) {
+      sendApiError(response, "rate_limited", "Too many attempts");
+      return;
+    }
     if (!current || current.resetAt <= now) {
       attempts.set(key, { count: 1, resetAt: now + options.windowMs });
       next();
@@ -90,7 +136,7 @@ function createRateLimiter(options: {
   };
 }
 
-function rateLimitKey(request: Request): string {
+function accountRateLimitKey(request: Request): string {
   const body = request.body as unknown;
   const bodyUsername =
     typeof body === "object" && body !== null && "username" in body
@@ -98,7 +144,7 @@ function rateLimitKey(request: Request): string {
       : "";
   const queryUsername = stringValue(request.query.username);
   const username = (bodyUsername || queryUsername).trim().toLowerCase();
-  return `${request.method}:${request.path}:${request.ip ?? "unknown"}:${username}`;
+  return `${request.method}:${request.path}:${username}`;
 }
 
 function stringValue(value: unknown): string {
@@ -107,13 +153,20 @@ function stringValue(value: unknown): string {
 
 export function createAuthRouter(context: AppContext): Router {
   const router = Router();
-  const preAuthRateLimit = createRateLimiter({
+  const preAuthIpRateLimit = createRateLimiter({
+    key: (request) => request.ip ?? "unknown",
+    maxAttempts: 60,
+    windowMs: 5 * 60 * 1000
+  });
+  const preAuthAccountRateLimit = createRateLimiter({
+    key: accountRateLimitKey,
     maxAttempts: 20,
     windowMs: 5 * 60 * 1000
   });
+  const preAuthRateLimits = [preAuthIpRateLimit, preAuthAccountRateLimit];
 
-  router.get("/kdf-params", preAuthRateLimit, (request, response) => {
-    const username = z.string().min(1).safeParse(request.query.username);
+  router.get("/kdf-params", ...preAuthRateLimits, (request, response) => {
+    const username = usernameSchema.safeParse(request.query.username);
     if (!username.success) {
       sendApiError(response, "bad_request", "Username is required");
       return;
@@ -135,11 +188,11 @@ export function createAuthRouter(context: AppContext): Router {
       )
       .get(username.data);
 
-    response.json(row ?? UNKNOWN_USER_KDF_RESPONSE);
+    response.json(row ?? unknownUserKdfResponse(username.data));
   });
 
-  router.get("/recovery-params", preAuthRateLimit, (request, response) => {
-    const username = z.string().min(1).safeParse(request.query.username);
+  router.get("/recovery-params", ...preAuthRateLimits, (request, response) => {
+    const username = usernameSchema.safeParse(request.query.username);
     if (!username.success) {
       sendApiError(response, "bad_request", "Username is required");
       return;
@@ -160,15 +213,10 @@ export function createAuthRouter(context: AppContext): Router {
       )
       .get(username.data);
 
-    if (!row) {
-      sendApiError(response, "not_found", "Account not found");
-      return;
-    }
-
-    response.json(row);
+    response.json(row ?? unknownUserRecoveryResponse(username.data));
   });
 
-  router.post("/register", preAuthRateLimit, async (request, response) => {
+  router.post("/register", ...preAuthRateLimits, async (request, response) => {
     const parsed = registerSchema.safeParse(request.body);
     if (!parsed.success) {
       sendApiError(response, "bad_request", "Invalid registration payload");
@@ -252,7 +300,7 @@ export function createAuthRouter(context: AppContext): Router {
     response.status(201).json({ id: userId, username: parsed.data.username });
   });
 
-  router.post("/login", preAuthRateLimit, async (request, response) => {
+  router.post("/login", ...preAuthRateLimits, async (request, response) => {
     const parsed = loginSchema.safeParse(request.body);
     if (!parsed.success) {
       sendApiError(response, "bad_request", "Invalid login payload");
@@ -265,7 +313,12 @@ export function createAuthRouter(context: AppContext): Router {
       | { id: string; authVerifierHash: string }
       | undefined;
 
-    if (!row || !(await argon2.verify(row.authVerifierHash, parsed.data.authVerifier))) {
+    const dummyVerifierHash = await DUMMY_AUTH_VERIFIER_HASH;
+    const verifierMatches = await argon2.verify(
+      row?.authVerifierHash ?? dummyVerifierHash,
+      parsed.data.authVerifier
+    );
+    if (!row || !verifierMatches) {
       sendApiError(response, "unauthorized", "Invalid username or password");
       return;
     }
@@ -275,7 +328,7 @@ export function createAuthRouter(context: AppContext): Router {
     response.json({ id: row.id, username: parsed.data.username });
   });
 
-  router.post("/recover", preAuthRateLimit, async (request, response) => {
+  router.post("/recover", ...preAuthRateLimits, async (request, response) => {
     const parsed = recoverSchema.safeParse(request.body);
     if (!parsed.success) {
       sendApiError(response, "bad_request", "Invalid recovery payload");
@@ -299,67 +352,86 @@ export function createAuthRouter(context: AppContext): Router {
         }
       | undefined;
 
-    if (!row) {
-      sendApiError(response, "unauthorized", "Invalid recovery key");
-      return;
-    }
-
-    if (
-      row.keyMaterialVersion !== parsed.data.keyMaterialVersion ||
-      !(await argon2.verify(
-        row.recoveryAuthVerifierHash,
-        parsed.data.recoveryAuthVerifier
-      ))
-    ) {
+    const dummyVerifierHash = await DUMMY_AUTH_VERIFIER_HASH;
+    const verifierMatches = await argon2.verify(
+      row?.recoveryAuthVerifierHash ?? dummyVerifierHash,
+      parsed.data.recoveryAuthVerifier
+    );
+    if (row?.keyMaterialVersion !== parsed.data.keyMaterialVersion || !verifierMatches) {
       sendApiError(response, "unauthorized", "Invalid recovery key");
       return;
     }
 
     const newAuthVerifierHash = await argon2.hash(parsed.data.newAuthVerifier);
-    context.db.sqlite
-      .prepare(
-        `UPDATE users
-         SET auth_verifier_hash = ?,
-             auth_kdf_salt = ?,
-             auth_kdf_ops_limit = ?,
-             auth_kdf_mem_limit = ?,
-             auth_kdf_version = ?,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`
-      )
-      .run(
-        newAuthVerifierHash,
-        parsed.data.authKdf.salt,
-        parsed.data.authKdf.opsLimit,
-        parsed.data.authKdf.memLimit,
-        parsed.data.authKdf.version,
-        row.id
-      );
+    let recovered: { token: string; revokedSessionIds: string[] };
+    try {
+      const recoverAccount = context.db.sqlite.transaction(() => {
+        context.db.sqlite
+          .prepare(
+            `UPDATE users
+             SET auth_verifier_hash = ?,
+                 auth_kdf_salt = ?,
+                 auth_kdf_ops_limit = ?,
+                 auth_kdf_mem_limit = ?,
+                 auth_kdf_version = ?,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`
+          )
+          .run(
+            newAuthVerifierHash,
+            parsed.data.authKdf.salt,
+            parsed.data.authKdf.opsLimit,
+            parsed.data.authKdf.memLimit,
+            parsed.data.authKdf.version,
+            row.id
+          );
 
-    context.db.sqlite
-      .prepare(
-        `UPDATE user_key_material
-         SET encrypted_root_key = ?,
-             root_key_nonce = ?,
-             kdf_salt = ?,
-             kdf_ops_limit = ?,
-             kdf_mem_limit = ?,
-             kdf_version = ?,
-             key_material_version = key_material_version + 1,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE user_id = ?`
-      )
-      .run(
-        parsed.data.encryptedRootKey,
-        parsed.data.rootKeyNonce,
-        parsed.data.vaultKdf.salt,
-        parsed.data.vaultKdf.opsLimit,
-        parsed.data.vaultKdf.memLimit,
-        parsed.data.vaultKdf.version,
-        row.id
-      );
+        const keyMaterialUpdate = context.db.sqlite
+          .prepare(
+            `UPDATE user_key_material
+             SET encrypted_root_key = ?,
+                 root_key_nonce = ?,
+                 kdf_salt = ?,
+                 kdf_ops_limit = ?,
+                 kdf_mem_limit = ?,
+                 kdf_version = ?,
+                 key_material_version = key_material_version + 1,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE user_id = ? AND key_material_version = ?`
+          )
+          .run(
+            parsed.data.encryptedRootKey,
+            parsed.data.rootKeyNonce,
+            parsed.data.vaultKdf.salt,
+            parsed.data.vaultKdf.opsLimit,
+            parsed.data.vaultKdf.memLimit,
+            parsed.data.vaultKdf.version,
+            row.id,
+            parsed.data.keyMaterialVersion
+          );
+        if (keyMaterialUpdate.changes !== 1) {
+          throw new KeyMaterialVersionConflict();
+        }
 
-    const token = createSession(context.db, row.id);
+        const revokedSessionIds = deleteUserSessions(context.db, row.id);
+        return {
+          token: createSession(context.db, row.id),
+          revokedSessionIds
+        };
+      });
+      recovered = recoverAccount();
+    } catch (error) {
+      if (error instanceof KeyMaterialVersionConflict) {
+        sendApiError(response, "conflict", "Key material version conflict");
+        return;
+      }
+      throw error;
+    }
+
+    for (const sessionId of recovered.revokedSessionIds) {
+      context.realtime?.closeSession(sessionId);
+    }
+    const token = recovered.token;
     setSessionCookie(response, token, context.config.cookieSecure);
     response.json({ id: row.id, username: parsed.data.username });
   });

@@ -79,6 +79,7 @@ export function useAuthActions() {
         await ensureSharingKey(registration.rootKey);
         await loadFolders();
         await loadDecryptedNotes(currentUser, registration.rootKey);
+        setPassword("");
         setStatus("Signed in and decrypted");
         return;
       }
@@ -105,7 +106,7 @@ export function useAuthActions() {
         setUser(currentUser);
         setRootKey(recovery.rootKey);
         setKeyMaterialVersion(recoveryParams.keyMaterialVersion + 1);
-        setPassword(recoveryNewPassword);
+        setPassword("");
         setRecoveryInput("");
         setRecoveryNewPassword("");
         setStatus("Loading vault");
@@ -134,6 +135,7 @@ export function useAuthActions() {
       await ensureSharingKey(openedVault.rootKey);
       await loadFolders();
       await loadDecryptedNotes(currentUser, openedVault.rootKey);
+      setPassword("");
       setStatus("Signed in and decrypted");
     } catch (authError) {
       setStatus("Auth failed");
@@ -169,7 +171,7 @@ export function useAuthActions() {
         keyMaterialVersion: current.keyMaterialVersion
       });
       setKeyMaterialVersion(updated.keyMaterialVersion);
-      setPassword(newPassword);
+      setPassword("");
       setNewPassword("");
       setStatus("Password changed and vault rewrapped");
     } catch (changeError) {

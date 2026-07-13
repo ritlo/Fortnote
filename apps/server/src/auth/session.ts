@@ -116,6 +116,13 @@ export function deleteSession(db: AppDb, token: string | null): string | null {
   return row?.id ?? null;
 }
 
+export function deleteUserSessions(db: AppDb, userId: string): string[] {
+  const rows = db.sqlite
+    .prepare("DELETE FROM sessions WHERE user_id = ? RETURNING id")
+    .all(userId) as { id: string }[];
+  return rows.map((row) => row.id);
+}
+
 export function isSessionActive(db: AppDb, sessionId: string): boolean {
   const now = new Date().toISOString();
   const row = db.sqlite

@@ -1,29 +1,36 @@
 import argon2 from "argon2";
 import { Router } from "express";
 import { z } from "zod";
-import { requireSession } from "../auth/session.js";
+import {
+  createSession,
+  deleteUserSessions,
+  requireSession,
+  setSessionCookie
+} from "../auth/session.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 
 const kdfParamsSchema = z.object({
-  salt: z.string().min(16),
-  opsLimit: z.number().int().positive(),
-  memLimit: z.number().int().positive(),
-  version: z.number().int().positive()
+  salt: z.string().min(16).max(128),
+  opsLimit: z.number().int().positive().max(10),
+  memLimit: z.number().int().positive().max(1024 * 1024 * 1024),
+  version: z.number().int().positive().max(100)
 });
 
 const updateKeyMaterialSchema = z.object({
-  newAuthVerifier: z.string().min(32).optional(),
+  newAuthVerifier: z.string().min(32).max(128).optional(),
   authKdf: kdfParamsSchema.optional(),
-  encryptedRootKey: z.string().min(32),
-  rootKeyNonce: z.string().min(16),
+  encryptedRootKey: z.string().min(32).max(256),
+  rootKeyNonce: z.string().min(16).max(128),
   vaultKdf: kdfParamsSchema,
-  recoveryEncryptedRootKey: z.string().min(32).optional(),
-  recoveryRootKeyNonce: z.string().min(16).optional(),
-  recoveryAuthVerifier: z.string().min(32).optional(),
+  recoveryEncryptedRootKey: z.string().min(32).max(256).optional(),
+  recoveryRootKeyNonce: z.string().min(16).max(128).optional(),
+  recoveryAuthVerifier: z.string().min(32).max(128).optional(),
   recoveryKdf: kdfParamsSchema.optional(),
   keyMaterialVersion: z.number().int().positive()
 });
+
+class KeyMaterialVersionConflict extends Error {}
 
 export function createKeyMaterialRouter(context: AppContext): Router {
   const router = Router();
@@ -101,6 +108,17 @@ export function createKeyMaterialRouter(context: AppContext): Router {
       recoveryRootKeyNonce
     } = parsed.data;
 
+    const recoveryFieldCount = [
+      recoveryAuthVerifier,
+      recoveryEncryptedRootKey,
+      recoveryKdf,
+      recoveryRootKeyNonce
+    ].filter((value) => value !== undefined).length;
+    if (recoveryFieldCount !== 0 && recoveryFieldCount !== 4) {
+      sendApiError(response, "bad_request", "Incomplete recovery key payload");
+      return;
+    }
+
     if ((authKdf && !newAuthVerifier) || (!authKdf && newAuthVerifier)) {
       sendApiError(response, "bad_request", "Incomplete auth verifier payload");
       return;
@@ -108,6 +126,9 @@ export function createKeyMaterialRouter(context: AppContext): Router {
 
     const newAuthVerifierHash = newAuthVerifier
       ? await argon2.hash(newAuthVerifier)
+      : null;
+    const recoveryAuthVerifierHash = recoveryAuthVerifier
+      ? await argon2.hash(recoveryAuthVerifier)
       : null;
 
     const updateUserAuth = () => {
@@ -136,81 +157,78 @@ export function createKeyMaterialRouter(context: AppContext): Router {
         );
     };
 
-    if (
-      recoveryEncryptedRootKey &&
-      recoveryRootKeyNonce &&
-      recoveryAuthVerifier &&
-      recoveryKdf
-    ) {
-      const recoveryAuthVerifierHash = await argon2.hash(recoveryAuthVerifier);
+    let sessionRotation: {
+      replacementToken: string | null;
+      revokedSessionIds: string[];
+    };
+    try {
+      const update = context.db.sqlite.transaction(() => {
+        updateUserAuth();
+        const result = context.db.sqlite
+          .prepare(
+            `UPDATE user_key_material
+             SET encrypted_root_key = ?,
+                 root_key_nonce = ?,
+                 kdf_salt = ?,
+                 kdf_ops_limit = ?,
+                 kdf_mem_limit = ?,
+                 kdf_version = ?,
+                 recovery_encrypted_root_key =
+                   COALESCE(?, recovery_encrypted_root_key),
+                 recovery_root_key_nonce = COALESCE(?, recovery_root_key_nonce),
+                 recovery_auth_verifier_hash =
+                   COALESCE(?, recovery_auth_verifier_hash),
+                 recovery_kdf_salt = COALESCE(?, recovery_kdf_salt),
+                 recovery_kdf_ops_limit = COALESCE(?, recovery_kdf_ops_limit),
+                 recovery_kdf_mem_limit = COALESCE(?, recovery_kdf_mem_limit),
+                 recovery_kdf_version = COALESCE(?, recovery_kdf_version),
+                 key_material_version = key_material_version + 1,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE user_id = ? AND key_material_version = ?`
+          )
+          .run(
+            parsed.data.encryptedRootKey,
+            parsed.data.rootKeyNonce,
+            parsed.data.vaultKdf.salt,
+            parsed.data.vaultKdf.opsLimit,
+            parsed.data.vaultKdf.memLimit,
+            parsed.data.vaultKdf.version,
+            recoveryEncryptedRootKey ?? null,
+            recoveryRootKeyNonce ?? null,
+            recoveryAuthVerifierHash,
+            recoveryKdf?.salt ?? null,
+            recoveryKdf?.opsLimit ?? null,
+            recoveryKdf?.memLimit ?? null,
+            recoveryKdf?.version ?? null,
+            session.userId,
+            parsed.data.keyMaterialVersion
+          );
+        if (result.changes !== 1) {
+          throw new KeyMaterialVersionConflict();
+        }
+        if (!newAuthVerifierHash) {
+          return { replacementToken: null, revokedSessionIds: [] as string[] };
+        }
+        const revokedSessionIds = deleteUserSessions(context.db, session.userId);
+        return {
+          replacementToken: createSession(context.db, session.userId),
+          revokedSessionIds
+        };
+      });
+      sessionRotation = update();
+    } catch (error) {
+      if (error instanceof KeyMaterialVersionConflict) {
+        sendApiError(response, "conflict", "Key material version conflict");
+        return;
+      }
+      throw error;
+    }
 
-      const update = context.db.sqlite.transaction(() => {
-        updateUserAuth();
-        context.db.sqlite
-        .prepare(
-          `UPDATE user_key_material
-           SET encrypted_root_key = ?,
-               root_key_nonce = ?,
-               kdf_salt = ?,
-               kdf_ops_limit = ?,
-               kdf_mem_limit = ?,
-               kdf_version = ?,
-               recovery_encrypted_root_key = ?,
-               recovery_root_key_nonce = ?,
-               recovery_auth_verifier_hash = ?,
-               recovery_kdf_salt = ?,
-               recovery_kdf_ops_limit = ?,
-               recovery_kdf_mem_limit = ?,
-               recovery_kdf_version = ?,
-               key_material_version = key_material_version + 1,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE user_id = ?`
-        )
-        .run(
-          parsed.data.encryptedRootKey,
-          parsed.data.rootKeyNonce,
-          parsed.data.vaultKdf.salt,
-          parsed.data.vaultKdf.opsLimit,
-          parsed.data.vaultKdf.memLimit,
-          parsed.data.vaultKdf.version,
-          recoveryEncryptedRootKey,
-          recoveryRootKeyNonce,
-          recoveryAuthVerifierHash,
-          recoveryKdf.salt,
-          recoveryKdf.opsLimit,
-          recoveryKdf.memLimit,
-          recoveryKdf.version,
-          session.userId
-        );
-      });
-      update();
-    } else {
-      const update = context.db.sqlite.transaction(() => {
-        updateUserAuth();
-        context.db.sqlite
-        .prepare(
-          `UPDATE user_key_material
-           SET encrypted_root_key = ?,
-               root_key_nonce = ?,
-               kdf_salt = ?,
-               kdf_ops_limit = ?,
-               kdf_mem_limit = ?,
-               kdf_version = ?,
-               key_material_version = key_material_version + 1,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE user_id = ?`
-        )
-        .run(
-          parsed.data.encryptedRootKey,
-          parsed.data.rootKeyNonce,
-          parsed.data.vaultKdf.salt,
-          parsed.data.vaultKdf.opsLimit,
-          parsed.data.vaultKdf.memLimit,
-          parsed.data.vaultKdf.version,
-          session.userId
-        );
-      });
-      update();
+    for (const sessionId of sessionRotation.revokedSessionIds) {
+      context.realtime?.closeSession(sessionId);
+    }
+    if (sessionRotation.replacementToken !== null) {
+      setSessionCookie(response, sessionRotation.replacementToken, context.config.cookieSecure);
     }
 
     response.json({ keyMaterialVersion: current.keyMaterialVersion + 1 });

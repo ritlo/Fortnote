@@ -24,18 +24,24 @@ const clientMessageSchema = z.discriminatedUnion("type", [
   })
 ]);
 
+const MAX_REALTIME_MESSAGE_BYTES = 16 * 1024;
+
 export function attachRealtimeServer(
   context: AppContext,
   server: Server,
   hub: RealtimeHub
 ): WebSocketServer {
   hub.attachContext(context);
-  const webSocketServer = new WebSocketServer({ noServer: true });
+  const webSocketServer = new WebSocketServer({
+    noServer: true,
+    maxPayload: MAX_REALTIME_MESSAGE_BYTES
+  });
   const allowedOrigins = allowedOriginAliases(context.config.allowedOrigin);
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url ?? "/", "http://localhost");
     if (url.pathname !== "/api/realtime") {
+      rejectUpgrade(socket, 404, "Not Found");
       return;
     }
 
