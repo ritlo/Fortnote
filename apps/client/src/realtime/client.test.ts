@@ -167,7 +167,7 @@ describe("realtime client", () => {
       sockets[1]!.sent.map((message) => JSON.parse(message) as unknown)
     ).toContainEqual(update);
 
-    sockets[1]!.receive({ type: "crdt-ack", updateId: update.updateId });
+    sockets[0]!.receive({ type: "crdt-ack", updateId: update.updateId });
     await expect(firstDelivery).resolves.toBeUndefined();
     expect(JSON.parse(localStorage.getItem(outboxKey("user_1")) ?? "[]"))
       .toEqual([]);

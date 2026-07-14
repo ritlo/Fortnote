@@ -7,7 +7,9 @@ import {
   checkpointCrdtNote,
   clearCrdtNotes,
   editCrdtNote,
+  ensureCrdtHistoryReadable,
   finishCrdtSync,
+  markCrdtSnapshotVersion,
   openCrdtNote,
   preserveCrdtContent,
   receiveCrdtUpdate,
@@ -221,6 +223,35 @@ describe("CRDT collaboration", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("blocks key rotation while initial synchronization is incomplete", async () => {
+    const current = note();
+    setCrdtTransport({ discard: vi.fn(), send: vi.fn(), subscribe: vi.fn() });
+    openCrdtNote(current, vi.fn());
+
+    await expect(ensureCrdtHistoryReadable(current.id)).rejects.toThrow("synchronizing");
+    await finishCrdtSync(current.id, current.keyEpoch, false);
+    await expect(ensureCrdtHistoryReadable(current.id)).resolves.toBeUndefined();
+  });
+
+  it("publishes successful whole-note snapshot versions into CRDT history", async () => {
+    const current = note();
+    setCrdtTransport({ discard: vi.fn(), send: vi.fn(), subscribe: vi.fn() });
+    openCrdtNote(current, vi.fn());
+    await finishCrdtSync(current.id, current.keyEpoch, false);
+    const checkpoint = vi.mocked(encryptCrdtMessage).mock.calls[0]![0].update;
+    vi.mocked(encryptCrdtMessage).mockClear();
+
+    markCrdtSnapshotVersion(current.id, 2);
+
+    await vi.waitFor(() => {
+      expect(encryptCrdtMessage).toHaveBeenCalledOnce();
+    });
+    const restored = new Y.Doc();
+    Y.applyUpdate(restored, checkpoint);
+    Y.applyUpdate(restored, vi.mocked(encryptCrdtMessage).mock.calls[0]![0].update);
+    expect(restored.getMap<number>("metadata").get("snapshotVersion")).toBe(2);
+  });
+
   it("migrates a newer legacy snapshot on a fresh CRDT open", async () => {
     const current = note({ body: "Newer snapshot", version: 2 });
     const older = createDocument(current.title, "Older CRDT body");
@@ -262,13 +293,15 @@ describe("CRDT collaboration", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("waits for transport before completing a rotation checkpoint", async () => {
+  it("requires fresh sync when transport reconnects during a rotation checkpoint", async () => {
     const current = note({ keyEpoch: 2, noteKeyBase64: "rotated-key" });
     const pending = checkpointCrdtNote(current);
     const send = vi.fn().mockResolvedValue(undefined);
 
     setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
-    await pending;
+    await expect(pending).rejects.toThrow("synchronizing");
+    await finishCrdtSync(current.id, current.keyEpoch, false);
+    await checkpointCrdtNote(current);
 
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({ keyEpoch: 2, type: "crdt-checkpoint" })

@@ -14,6 +14,7 @@ import {
   noteKeyToBase64
 } from "../cryptoClient";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
+import { markCrdtSnapshotVersion } from "../realtime/crdt";
 import { loadDecryptedNotes, loadFolders } from "./useAppData";
 
 export function useNoteActions(selectedNote: DecryptedNote | null) {
@@ -103,6 +104,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         version: noteToSave.version,
         ...encrypted
       });
+      markCrdtSnapshotVersion(noteToSave.id, saved.version);
       setNotes((current) =>
         current.map((note) =>
           note.id === noteToSave.id

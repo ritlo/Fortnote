@@ -170,19 +170,13 @@ function handleClientMessage(
     const outcome = hub.publishCrdtUpdate(client, parsed);
     if (outcome === "accepted") {
       sendJson(socket, { type: "crdt-ack", updateId: parsed.updateId });
-    } else if (outcome === "storage-limit") {
-      sendJson(socket, {
-        type: "crdt-reject",
-        noteId: parsed.noteId,
-        updateId: parsed.updateId,
-        reason: "storage-limit"
-      });
     } else {
+      const reason = outcome === "storage-limit" ? "storage-limit" : "forbidden";
       sendJson(socket, {
         type: "crdt-reject",
         noteId: parsed.noteId,
         updateId: parsed.updateId,
-        reason: "forbidden"
+        reason
       });
     }
   }

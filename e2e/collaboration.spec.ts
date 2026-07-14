@@ -17,7 +17,7 @@ test("syncs a shared note for an online editor and offline viewer", async ({
   const bobBody = `Bob editor update ${alice.suffix}`;
 
   try {
-    const bobPage = await newUserPage(browser, baseURL, contexts);
+    let bobPage = await newUserPage(browser, baseURL, contexts);
     await register(bobPage, bob.username, bob.password);
     await waitForSharingKey(bobPage);
 
@@ -70,6 +70,25 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     );
     await expect(carolPage.locator(".preview-body", { hasText: aliceBody })).toHaveCount(0);
     await closePageContext(carolPage, contexts);
+
+    const aliceEditor = alicePage.getByLabel("Markdown editor");
+    const bobEditor = bobPage.getByLabel("Markdown editor");
+    await Promise.all([aliceEditor.press("Control+Home"), bobEditor.press("Control+End")]);
+    await Promise.all([aliceEditor.press("A"), bobEditor.press("B")]);
+    await expect.poll(async () => {
+      const [aliceValue, bobValue] = await Promise.all([
+        aliceEditor.inputValue(),
+        bobEditor.inputValue()
+      ]);
+      return aliceValue === bobValue ? aliceValue : null;
+    }).toMatch(/^A.*B$/);
+    const convergedBody = await aliceEditor.inputValue();
+
+    await closePageContext(bobPage, contexts);
+    bobPage = await newUserPage(browser, baseURL, contexts);
+    await signIn(bobPage, bob.username, bob.password);
+    await openNote(bobPage, noteTitle);
+    await expect(bobPage.getByLabel("Markdown editor")).toHaveValue(convergedBody);
 
     await editSelectedNote(bobPage, bobBody);
     await expect(alicePage.locator(".preview-body", { hasText: bobBody })).toBeVisible({

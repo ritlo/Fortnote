@@ -395,6 +395,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
         })
       )
     );
+    await ensureCrdtHistoryReadable(note.id);
     const rotated = await rotateNoteKey(note.id, {
       encryptedNoteKey: rotatedKey.encryptedNoteKey,
       noteKeyNonce: rotatedKey.noteKeyNonce,

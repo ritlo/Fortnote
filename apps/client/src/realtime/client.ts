@@ -21,11 +21,6 @@ export type RealtimeMessage =
 
 const CRDT_OUTBOX_KEY_PREFIX = "fortnote:crdt-outbox:v1:";
 const volatileCrdtOutboxes = new Map<string, Map<string, EncryptedCrdtMessage>>();
-const loadedCrdtOutboxes = new Set<string>();
-const pendingCrdtAcks = new Map<
-  string,
-  { reject: (error: Error) => void; resolve: () => void }
->();
 
 interface RealtimeClientOptions {
   after: number;
@@ -56,6 +51,10 @@ export function connectRealtime({
 }: RealtimeClientOptions): RealtimeConnection {
   const socket = new WebSocket(realtimeUrl(after));
   const pendingSubscriptions = new Set<string>();
+  const pendingCrdtAcks = new Map<
+    string,
+    { reject: (error: Error) => void; resolve: () => void }
+  >();
   let crdtEnabled = false;
   socket.addEventListener("open", () => {
     onOpen?.();
@@ -65,7 +64,10 @@ export function connectRealtime({
     if (message) {
       if (message.type === "connected") {
         if (message.userId !== userId) {
-          rejectUserAcks(userId, "Realtime session changed.");
+          for (const pending of pendingCrdtAcks.values()) {
+            pending.reject(new Error("Realtime session changed."));
+          }
+          pendingCrdtAcks.clear();
           socket.close();
           onCrdtError?.("Realtime session changed; reconnect to continue editing.");
           return;
@@ -78,12 +80,11 @@ export function connectRealtime({
           flushCrdtOutbox(socket, userId);
         }
       } else if (message.type === "crdt-ack") {
-        acknowledgeCrdtUpdate(userId, message.updateId);
+        acknowledgeCrdtUpdate(message.updateId);
       } else if (message.type === "crdt-reject" && message.reason !== "storage-limit") {
         readCrdtOutbox(userId).delete(message.updateId);
         persistCrdtOutbox(userId);
         rejectPendingAck(
-          userId,
           message.updateId,
           message.reason === "forbidden"
             ? "Realtime write access was revoked."
@@ -100,9 +101,32 @@ export function connectRealtime({
     onError?.();
   });
 
+  function acknowledgeCrdtUpdate(updateId: string): void {
+    readCrdtOutbox(userId).delete(updateId);
+    persistCrdtOutbox(userId);
+    pendingCrdtAcks.get(updateId)?.resolve();
+    pendingCrdtAcks.delete(updateId);
+  }
+
+  function discardCrdtUpdates(noteId: string, beforeKeyEpoch: number): void {
+    const outbox = readCrdtOutbox(userId);
+    for (const [updateId, update] of outbox) {
+      if (update.noteId === noteId && update.keyEpoch < beforeKeyEpoch) {
+        outbox.delete(updateId);
+        rejectPendingAck(updateId, "Superseded by note-key rotation.");
+      }
+    }
+    persistCrdtOutbox(userId);
+  }
+
+  function rejectPendingAck(updateId: string, message: string): void {
+    pendingCrdtAcks.get(updateId)?.reject(new Error(message));
+    pendingCrdtAcks.delete(updateId);
+  }
+
   return {
     discardCrdtUpdates: (noteId, beforeKeyEpoch) => {
-      discardCrdtUpdates(userId, noteId, beforeKeyEpoch);
+      discardCrdtUpdates(noteId, beforeKeyEpoch);
     },
     sendPresence: (noteId, state) => {
       if (socket.readyState !== WebSocket.OPEN) {
@@ -118,7 +142,7 @@ export function connectRealtime({
     },
     sendCrdtUpdate: (update) => {
       const delivered = new Promise<void>((resolve, reject) => {
-        pendingCrdtAcks.set(ackKey(userId, update.updateId), { reject, resolve });
+        pendingCrdtAcks.set(update.updateId, { reject, resolve });
       });
       try {
         readCrdtOutbox(userId).set(update.updateId, update);
@@ -132,7 +156,10 @@ export function connectRealtime({
       return delivered;
     },
     close: () => {
-      rejectUserAcks(userId, "Realtime connection closed.");
+      for (const pending of pendingCrdtAcks.values()) {
+        pending.reject(new Error("Realtime connection closed."));
+      }
+      pendingCrdtAcks.clear();
       socket.close();
     }
   };
@@ -188,15 +215,7 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
         value.users.every(isPresenceUser)
       );
     case "crdt-update":
-      return (
-        value.formatVersion === 1 &&
-        typeof value.updateId === "string" &&
-        typeof value.noteId === "string" &&
-        typeof value.cryptoOwnerId === "string" &&
-        typeof value.keyEpoch === "number" &&
-        typeof value.cipher === "string" &&
-        typeof value.nonce === "string"
-      );
+      return isCrdtEnvelope(value);
     case "crdt-sync":
       return (
         typeof value.noteId === "string" &&
@@ -207,13 +226,7 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
       );
     case "crdt-checkpoint":
       return (
-        value.formatVersion === 1 &&
-        typeof value.updateId === "string" &&
-        typeof value.noteId === "string" &&
-        typeof value.cryptoOwnerId === "string" &&
-        typeof value.keyEpoch === "number" &&
-        typeof value.cipher === "string" &&
-        typeof value.nonce === "string" &&
+        isCrdtEnvelope(value) &&
         Array.isArray(value.compactedUpdateIds) &&
         value.compactedUpdateIds.every((id) => typeof id === "string")
       );
@@ -234,25 +247,6 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
   }
 }
 
-function acknowledgeCrdtUpdate(userId: string, updateId: string): void {
-  readCrdtOutbox(userId).delete(updateId);
-  persistCrdtOutbox(userId);
-  const key = ackKey(userId, updateId);
-  pendingCrdtAcks.get(key)?.resolve();
-  pendingCrdtAcks.delete(key);
-}
-
-function discardCrdtUpdates(userId: string, noteId: string, beforeKeyEpoch: number): void {
-  const outbox = readCrdtOutbox(userId);
-  for (const [updateId, update] of outbox) {
-    if (update.noteId === noteId && update.keyEpoch < beforeKeyEpoch) {
-      outbox.delete(updateId);
-      rejectPendingAck(userId, updateId, "Superseded by note-key rotation.");
-    }
-  }
-  persistCrdtOutbox(userId);
-}
-
 function flushCrdtOutbox(socket: WebSocket, userId: string, enabled = true): void {
   if (socket.readyState !== WebSocket.OPEN || !enabled) {
     return;
@@ -263,12 +257,11 @@ function flushCrdtOutbox(socket: WebSocket, userId: string, enabled = true): voi
 }
 
 function readCrdtOutbox(userId: string): Map<string, EncryptedCrdtMessage> {
-  const outbox = volatileCrdtOutboxes.get(userId) ?? new Map<string, EncryptedCrdtMessage>();
-  volatileCrdtOutboxes.set(userId, outbox);
-  if (loadedCrdtOutboxes.has(userId)) {
-    return outbox;
+  const existing = volatileCrdtOutboxes.get(userId);
+  if (existing) {
+    return existing;
   }
-  loadedCrdtOutboxes.add(userId);
+  const outbox = new Map<string, EncryptedCrdtMessage>();
   try {
     const stored = JSON.parse(localStorage.getItem(outboxKey(userId)) ?? "[]") as unknown;
     if (Array.isArray(stored)) {
@@ -284,6 +277,7 @@ function readCrdtOutbox(userId: string): Map<string, EncryptedCrdtMessage> {
   } catch {
     // Corrupt storage is ignored; new writes replace it.
   }
+  volatileCrdtOutboxes.set(userId, outbox);
   return outbox;
 }
 
@@ -298,26 +292,6 @@ function persistCrdtOutbox(userId: string, required = false): void {
       throw new Error("CRDT outbox storage is full");
     }
   }
-}
-
-function rejectPendingAck(userId: string, updateId: string, message: string): void {
-  const key = ackKey(userId, updateId);
-  pendingCrdtAcks.get(key)?.reject(new Error(message));
-  pendingCrdtAcks.delete(key);
-}
-
-function rejectUserAcks(userId: string, message: string): void {
-  const prefix = `${userId}:`;
-  for (const [key, pending] of pendingCrdtAcks) {
-    if (key.startsWith(prefix)) {
-      pending.reject(new Error(message));
-      pendingCrdtAcks.delete(key);
-    }
-  }
-}
-
-function ackKey(userId: string, updateId: string): string {
-  return `${userId}:${updateId}`;
 }
 
 function outboxKey(userId: string): string {
@@ -351,6 +325,18 @@ function isPresenceUser(value: unknown): value is PresenceUser {
     typeof value.username === "string" &&
     (value.state === "idle" || value.state === "editing") &&
     typeof value.updatedAt === "string"
+  );
+}
+
+function isCrdtEnvelope(value: Record<string, unknown>): boolean {
+  return (
+    value.formatVersion === 1 &&
+    typeof value.updateId === "string" &&
+    typeof value.noteId === "string" &&
+    typeof value.cryptoOwnerId === "string" &&
+    typeof value.keyEpoch === "number" &&
+    typeof value.cipher === "string" &&
+    typeof value.nonce === "string"
   );
 }
 

@@ -143,6 +143,7 @@ export function useRealtimeEvents() {
         onClose: () => {
           if (connectionRef.current === connection) {
             connectionRef.current = null;
+            setCrdtTransport(null);
           }
           scheduleReconnect();
         },

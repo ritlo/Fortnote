@@ -180,8 +180,6 @@ export function runMigrations(sqlite: Database.Database): void {
 
   addColumnIfMissing(sqlite, "notes", "crypto_owner_id", "TEXT");
   addColumnIfMissing(sqlite, "notes", "key_epoch", "INTEGER NOT NULL DEFAULT 1");
-  addColumnIfMissing(sqlite, "note_updates", "kind", "TEXT NOT NULL DEFAULT 'update'");
-  addColumnIfMissing(sqlite, "note_updates", "compacted_update_ids", "TEXT");
   sqlite.exec("UPDATE notes SET crypto_owner_id = user_id WHERE crypto_owner_id IS NULL");
   removeNoteEventsNoteCascade(sqlite);
   backfillOwnerMemberships(sqlite);

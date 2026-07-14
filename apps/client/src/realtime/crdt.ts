@@ -125,12 +125,26 @@ export function editCrdtNote(
 
 export function setCrdtTransport(next: CrdtTransport | null): void {
   transport = next;
+  for (const binding of bindings.values()) {
+    binding.ready = false;
+  }
   if (next) {
     transportWaiters.splice(0).forEach(({ resolve }) => { resolve(next); });
     for (const binding of bindings.values()) {
       next.discard(binding.note.id, binding.note.keyEpoch);
       next.subscribe(binding.note.id);
     }
+  }
+}
+
+export function markCrdtSnapshotVersion(noteId: string, version: number): void {
+  const binding = bindings.get(noteId);
+  if (!binding) {
+    return;
+  }
+  binding.note = { ...binding.note, version };
+  if (binding.ready && getSnapshotVersion(binding.doc) < version) {
+    binding.doc.getMap<number>("metadata").set(SNAPSHOT_VERSION_KEY, version);
   }
 }
 
@@ -172,6 +186,9 @@ export async function ensureCrdtHistoryReadable(noteId: string): Promise<void> {
   }
   await binding.receiving;
   throwIfCrdtHistoryUnreadable(binding);
+  if (!binding.ready) {
+    throw new Error("Realtime history is still synchronizing");
+  }
 }
 
 export async function checkpointCrdtNote(note: DecryptedNote): Promise<void> {
