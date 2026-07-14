@@ -252,6 +252,42 @@ describe("realtime client", () => {
     await expect(delivery).rejects.toThrow("too large");
   });
 
+  it("retries a storage-limited update after a checkpoint acknowledgement", () => {
+    const update = crdtUpdate();
+    const checkpoint = {
+      type: "crdt-checkpoint" as const,
+      formatVersion: 1 as const,
+      updateId: "checkpoint_1",
+      noteId: update.noteId,
+      cryptoOwnerId: update.cryptoOwnerId,
+      keyEpoch: 1,
+      cipher: "cipher",
+      nonce: "nonce",
+      compactedUpdateIds: [] as string[]
+    };
+    localStorage.setItem(
+      outboxKey("retry_user"),
+      JSON.stringify([update, checkpoint])
+    );
+
+    connectRealtime({ after: 0, userId: "retry_user", onMessage: vi.fn() });
+    sockets[0]!.open();
+    sockets[0]!.receive(connectedMessage("retry_user"));
+
+    sockets[0]!.receive({
+      type: "crdt-reject",
+      noteId: update.noteId,
+      updateId: update.updateId,
+      reason: "storage-limit"
+    });
+    sockets[0]!.receive({ type: "crdt-ack", updateId: checkpoint.updateId });
+
+    const sentUpdates = sockets[0]!.sent
+      .map((message) => JSON.parse(message) as { type: string; updateId?: string })
+      .filter((message) => message.type === "crdt-update" && message.updateId === update.updateId);
+    expect(sentUpdates).toHaveLength(2);
+  });
+
   it("does not resurrect acknowledged updates after storage cleanup fails", () => {
     const update = crdtUpdate();
     const userId = "cleanup-quota";

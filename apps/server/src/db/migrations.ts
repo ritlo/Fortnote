@@ -232,8 +232,9 @@ function createFolderIntegrityTriggers(sqlite: Database.Database): void {
       SELECT RAISE(ABORT, 'invalid note folder');
     END;
 
-    CREATE TRIGGER IF NOT EXISTS folders_reparent_after_delete
-    AFTER DELETE ON folders
+    DROP TRIGGER IF EXISTS folders_reparent_after_delete;
+    CREATE TRIGGER folders_reparent_after_delete
+    BEFORE DELETE ON folders
     BEGIN
       UPDATE notes
       SET folder_id = OLD.parent_folder_id, updated_at = CURRENT_TIMESTAMP

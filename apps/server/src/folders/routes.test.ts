@@ -123,6 +123,38 @@ describe("folders routes", () => {
       .get(noteId);
     expect(storedNote).toEqual({ folderId });
   });
+
+  it("reparents a note to the deleted folder's parent", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "folder_reparent_user");
+    const db = app.locals.db as AppDb;
+
+    const parent = await agent
+      .post("/api/folders")
+      .set(csrfHeaders())
+      .send({ name: "Parent" })
+      .expect(201);
+    const parentId = String(parent.body.id);
+    const nested = await agent
+      .post("/api/folders")
+      .set(csrfHeaders())
+      .send({ name: "Nested", parentFolderId: parentId })
+      .expect(201);
+    const nestedId = String(nested.body.id);
+    const note = await agent
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload(nestedId))
+      .expect(201);
+    const noteId = String(note.body.id);
+
+    await agent.delete(`/api/folders/${nestedId}`).set(csrfHeaders()).expect(204);
+
+    const storedNote = db.sqlite
+      .prepare("SELECT folder_id AS folderId FROM notes WHERE id = ?")
+      .get(noteId);
+    expect(storedNote).toEqual({ folderId: parentId });
+  });
 });
 
 function failNoteEventWrites(app: ReturnType<typeof createTestApp>): void {

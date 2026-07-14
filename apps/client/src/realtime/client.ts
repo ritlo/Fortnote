@@ -102,10 +102,15 @@ export function connectRealtime({
   });
 
   function acknowledgeCrdtUpdate(updateId: string): void {
-    readCrdtOutbox(userId).delete(updateId);
+    const outbox = readCrdtOutbox(userId);
+    const acknowledged = outbox.get(updateId);
+    outbox.delete(updateId);
     persistCrdtOutbox(userId);
     pendingCrdtAcks.get(updateId)?.resolve();
     pendingCrdtAcks.delete(updateId);
+    if (acknowledged?.type === "crdt-checkpoint") {
+      flushCrdtOutbox(socket, userId, crdtEnabled);
+    }
   }
 
   function discardCrdtUpdates(noteId: string, beforeKeyEpoch: number): void {
