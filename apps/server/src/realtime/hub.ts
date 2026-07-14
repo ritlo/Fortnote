@@ -1,9 +1,6 @@
 import { WebSocket } from "ws";
 import { and, eq, inArray, lt } from "drizzle-orm";
-import {
-  CRDT_REALTIME_CAPABILITY,
-  type EncryptedCrdtMessage
-} from "@fortnote/shared";
+import type { EncryptedCrdtMessage } from "@fortnote/shared";
 import type { AppContext } from "../http/app.js";
 import * as schema from "../db/schema.js";
 import { deleteExpiredSessions, isSessionActive } from "../auth/session.js";
@@ -17,7 +14,7 @@ export interface RealtimeClient {
   userId: string;
   username: string;
   socket: WebSocket;
-  capabilities: Set<string>;
+  crdtEnabled: boolean;
   subscribedNoteIds: Set<string>;
 }
 
@@ -94,7 +91,7 @@ export class RealtimeHub implements RealtimePublisher {
     userId: string;
     username: string;
     socket: WebSocket;
-    capabilities: Set<string>;
+    crdtEnabled: boolean;
   }): RealtimeClient {
     const client = {
       id: crypto.randomUUID(),
@@ -102,7 +99,7 @@ export class RealtimeHub implements RealtimePublisher {
       userId: input.userId,
       username: input.username,
       socket: input.socket,
-      capabilities: input.capabilities,
+      crdtEnabled: input.crdtEnabled,
       subscribedNoteIds: new Set<string>()
     };
     this.clients.add(client);
@@ -170,7 +167,7 @@ export class RealtimeHub implements RealtimePublisher {
   }
 
   subscribeCrdt(client: RealtimeClient, noteId: string): void {
-    if (!this.context || !client.capabilities.has(CRDT_REALTIME_CAPABILITY)) {
+    if (!this.context || !client.crdtEnabled) {
       return;
     }
     const access = getNoteAccess(this.context, noteId, client.userId);
@@ -221,7 +218,7 @@ export class RealtimeHub implements RealtimePublisher {
     client: RealtimeClient,
     update: EncryptedCrdtMessage
   ): "accepted" | "forbidden" | "storage-limit" {
-    if (!this.context || !client.capabilities.has(CRDT_REALTIME_CAPABILITY)) {
+    if (!this.context || !client.crdtEnabled) {
       return "forbidden";
     }
     const access = getNoteAccess(this.context, update.noteId, client.userId);
@@ -319,7 +316,7 @@ export class RealtimeHub implements RealtimePublisher {
       if (
         recipient === client ||
         !this.ensureClientSession(recipient) ||
-        !recipient.capabilities.has(CRDT_REALTIME_CAPABILITY) ||
+        !recipient.crdtEnabled ||
         !recipient.subscribedNoteIds.has(update.noteId) ||
         !canReadNote(getNoteAccess(this.context, update.noteId, recipient.userId))
       ) {

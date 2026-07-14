@@ -2,84 +2,44 @@
 
 ## Status
 
-Implemented — owner-review fixes are in the working tree on
-`feat/crdt-realtime-collab`; manual verification and final review remain.
+The automated CRDT merge blockers are fixed and covered by regression tests.
+Browser and manual owner/editor verification remain before merge.
 
-## Progress
+## Resolved merge blockers
 
-Implemented in the first end-to-end slice:
+- Key rotation must stop before changing the server key when any CRDT envelope
+  failed decryption. A checkpoint must not clear that failure or compact prior
+  epochs over partial state.
+- On a fresh CRDT open, a newer whole-note snapshot from a legacy client must be
+  migrated instead of discarded merely because older CRDT updates exist.
+- An envelope over the transport limit is a terminal `payload-too-large` error,
+  not a retryable storage-capacity error. The client must reject its delivery and
+  remove it from the durable outbox.
+- If localStorage cleanup fails after an acknowledgement, stale persisted data
+  must not resurrect and resend the acknowledged update.
 
-- Yjs character-level co-editing for note titles and bodies.
-- Versioned `crdt-v1` realtime capability negotiation.
-- XChaCha20-Poly1305 encrypted update envelopes with associated data binding
-  `cryptoOwnerId`, note ID, key epoch, update ID, and format version.
-- A separate `note_updates` store with membership-checked replay and broadcast;
-  `note_events` remains unchanged as the control/invalidation log.
-- Key-epoch validation and epoch advancement during existing note-key rotation.
-- Periodic update compaction into encrypted Yjs checkpoints. A client encodes the
-  full document state as a `crdt-checkpoint` message once its pending-update count
-  crosses a threshold; the server atomically inserts the checkpoint and deletes
-  only the same-note, same-epoch update IDs it covers. The checkpoint envelope
-  extends the update format with `compactedUpdateIds`, bound by dedicated
-  `crdt-checkpoint` AEAD associated data, and `note_updates` gains `kind` and
-  `compacted_update_ids` columns.
-- A Yjs-level convergence test, a server-level encrypted update
-  storage/broadcast test, and a browser test that drives concurrent edits through
-  the encrypted WebSocket/storage path and verifies both editors converge.
-- An encrypted localStorage outbox. Queued `crdt-update` and
-  `crdt-checkpoint` messages persist across reconnects under
-  a user-scoped `fortnote:crdt-outbox:v1:<userId>` key; the server replies with a
-  `crdt-ack` per delivered
-  update and the client drops acknowledged entries, so the outbox flushes
-  idempotently on (re)connect and on each send with no server-side duplicates
-  (the `note_updates` insert is idempotent on `updateId`). Browser quota failures
-  fall back to memory with an explicit user-facing durability error, so the user
-  knows to keep the tab open until delivery.
-- Epoch-rotation handling for open and closed documents. When a note's key epoch
-  advances, the client clears pending update IDs, discards old-epoch queued
-  updates from the outbox, and broadcasts an encrypted `crdt-checkpoint` under
-  the new epoch. If no CRDT binding exists, it seeds the checkpoint from the
-  decrypted whole-note snapshot. The server inserts the checkpoint and compacts
-  only the covered same-note, same-epoch updates. Once a checkpoint is stored
-  under a newer epoch, the same transaction deletes obsolete envelopes from
-  earlier epochs so repeated revocations do not grow storage indefinitely.
-- Reconnect/retry, duplicate, and rotation tests covering the outbox, server
-  acknowledgement, and hub rotation.
-- Revocation regression coverage verifies that a removed collaborator receives
-  neither new-epoch CRDT broadcasts nor stored updates through re-subscription.
-- Additive snapshot migration. After replaying stored updates the server sends a
-  `crdt-sync` marker carrying the current key epoch and a `hasUpdates` flag. The
-  client ignores stale markers from older epochs. For an empty CRDT epoch it
-  deterministically seeds the full title/body snapshot from the note
-  (`snapshotUpdate` builds a Y.Doc with a client ID derived from the note ID, so
-  the seed is reproducible) and, for non-viewers, persists it as an encrypted
-  `crdt-checkpoint`. Existing CRDT epochs (`hasUpdates`) are no longer reseeded
-  from snapshots. Edits made during initial sync are queued as a pending patch
-  and replayed once sync completes, so no keystrokes are dropped.
-- Shared update tracking for compaction. A single `trackUpdate` records both
-  local (`broadcastUpdate`) and remote (`receiveCrdtUpdate`) update IDs in
-  `pendingUpdateIds` and triggers a `crdt-checkpoint` once the pending count
-  crosses the threshold, so solo editors (local-only traffic) now also compact
-   their updates rather than only peers receiving remote updates.
-- A server-side per-note/key-epoch envelope ceiling
-  (`MAX_CRDT_ENVELOPES_PER_EPOCH = 128`). Inbound updates are idempotent: a
-  duplicate by `updateId` is detected and still acknowledged, so client retries
-  never wedge. The stored count is checkpoint-aware — a `crdt-checkpoint`
-  subtracts its compacted IDs — so reducing checkpoints are admitted even at the
-   ceiling while net growth stays bounded. `publishCrdtUpdate` now returns a
-   discriminated outcome (`accepted` | `forbidden` | `storage-limit`) instead of
-   a boolean; an update that would exceed the ceiling yields an explicit
-   `crdt-reject` message (with `reason: "storage-limit"`) rather than a silent
-   non-acknowledgement. The client surfaces the rejection as a user-facing error
-   and keeps the encrypted update in the outbox for retry once compaction frees
-   space.
+## Remaining merge gate
 
-### Final verification
+- The browser suite and manual cross-account owner/editor verification must pass,
+  including concurrent edits followed by reconnect and reload.
 
-Owner-review fixes and focused regression coverage are present; the user's
-manual verification run and final review remain. State-vector optimization,
-IndexedDB outbox storage, and an external production security audit are deferred
-until replay performance, browser quota pressure, or release policy requires them.
+## Final verification
+
+Automated merge gates now cover:
+
+- Undecryptable CRDT history must remain stored and synchronization must fail
+  visibly. A client must never checkpoint a stale snapshot over envelopes it could
+  not decrypt or list those envelopes for compaction.
+- Realtime transport must explicitly reject an envelope larger than its supported
+  limit without broadcasting it. The accepted realtime document size must be
+  aligned with the existing 1 MiB note API contract so a valid saved note cannot
+  silently fall outside CRDT persistence.
+- `pnpm test` must include and pass the workspace typecheck, preventing a branch
+  that cannot produce a client build from passing the normal merge gate.
+
+State-vector optimization, IndexedDB outbox storage, and an external production
+security audit remain deferred until replay performance, browser quota pressure,
+or release policy requires them.
 
 ## Context
 
@@ -93,8 +53,7 @@ updates for simultaneous character-level edits.
 
 Completing the CRDT data plane requires an encrypted update format, update storage,
 snapshotting, compaction, offline reconciliation, key-epoch handling, and a
-migration path for existing notes. The progress list records which parts now
-exist and which remain release work.
+migration path for existing notes.
 
 ## Decision
 

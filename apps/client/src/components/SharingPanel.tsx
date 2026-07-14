@@ -24,7 +24,7 @@ import {
   getSharingKeyTrustDecision,
   trustSharingKey
 } from "../lib/sharingKeyTrust";
-import { checkpointCrdtNote } from "../realtime/crdt";
+import { checkpointCrdtNote, ensureCrdtHistoryReadable } from "../realtime/crdt";
 
 interface SharingPanelProps {
   selectedNote: DecryptedNote | null;
@@ -343,6 +343,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     nextMemberships: NoteMembership[],
     vaultRootKey: Uint8Array
   ) {
+    await ensureCrdtHistoryReadable(note.id);
     const remainingMembers = nextMemberships.filter(
       (membership) => membership.status === "active" && membership.role !== "owner"
     );

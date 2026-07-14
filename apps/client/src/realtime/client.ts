@@ -9,7 +9,7 @@ import {
 export type ClientPresenceState = PresenceState | "left";
 
 export type RealtimeMessage =
-  | { type: "connected"; userId: string; username: string; protocolVersion: number; capabilities: string[] }
+  | { type: "connected"; userId: string; username: string; capabilities: string[] }
   | { type: "replay"; events: CollaborationEvent[] }
   | { type: "event"; event: CollaborationEvent }
   | { type: "presence"; noteId: string; users: PresenceUser[] }
@@ -21,6 +21,7 @@ export type RealtimeMessage =
 
 const CRDT_OUTBOX_KEY_PREFIX = "fortnote:crdt-outbox:v1:";
 const volatileCrdtOutboxes = new Map<string, Map<string, EncryptedCrdtMessage>>();
+const loadedCrdtOutboxes = new Set<string>();
 const pendingCrdtAcks = new Map<
   string,
   { reject: (error: Error) => void; resolve: () => void }
@@ -78,8 +79,16 @@ export function connectRealtime({
         }
       } else if (message.type === "crdt-ack") {
         acknowledgeCrdtUpdate(userId, message.updateId);
-      } else if (message.type === "crdt-reject" && message.reason === "forbidden") {
-        rejectCrdtUpdate(userId, message.updateId, "Realtime write access was revoked.");
+      } else if (message.type === "crdt-reject" && message.reason !== "storage-limit") {
+        readCrdtOutbox(userId).delete(message.updateId);
+        persistCrdtOutbox(userId);
+        rejectPendingAck(
+          userId,
+          message.updateId,
+          message.reason === "forbidden"
+            ? "Realtime write access was revoked."
+            : "Realtime update is too large."
+        );
       }
       onMessage(message);
     }
@@ -112,7 +121,8 @@ export function connectRealtime({
         pendingCrdtAcks.set(ackKey(userId, update.updateId), { reject, resolve });
       });
       try {
-        queueCrdtUpdate(userId, update);
+        readCrdtOutbox(userId).set(update.updateId, update);
+        persistCrdtOutbox(userId, true);
       } catch {
         onCrdtError?.(
           "Offline edits could not be saved durably; keep this tab open until realtime reconnects."
@@ -164,7 +174,6 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
       return (
         typeof value.userId === "string" &&
         typeof value.username === "string" &&
-        typeof value.protocolVersion === "number" &&
         Array.isArray(value.capabilities) &&
         value.capabilities.every((capability) => typeof capability === "string")
       );
@@ -214,18 +223,15 @@ function isRealtimeMessage(value: unknown): value is RealtimeMessage {
       return (
         typeof value.noteId === "string" &&
         typeof value.updateId === "string" &&
-        (value.reason === "forbidden" || value.reason === "storage-limit")
+        (value.reason === "forbidden" ||
+          value.reason === "payload-too-large" ||
+          value.reason === "storage-limit")
       );
     case "pong":
       return true;
     default:
       return false;
   }
-}
-
-function queueCrdtUpdate(userId: string, update: EncryptedCrdtMessage): void {
-  readCrdtOutbox(userId).set(update.updateId, update);
-  persistCrdtOutbox(userId, true);
 }
 
 function acknowledgeCrdtUpdate(userId: string, updateId: string): void {
@@ -259,6 +265,10 @@ function flushCrdtOutbox(socket: WebSocket, userId: string, enabled = true): voi
 function readCrdtOutbox(userId: string): Map<string, EncryptedCrdtMessage> {
   const outbox = volatileCrdtOutboxes.get(userId) ?? new Map<string, EncryptedCrdtMessage>();
   volatileCrdtOutboxes.set(userId, outbox);
+  if (loadedCrdtOutboxes.has(userId)) {
+    return outbox;
+  }
+  loadedCrdtOutboxes.add(userId);
   try {
     const stored = JSON.parse(localStorage.getItem(outboxKey(userId)) ?? "[]") as unknown;
     if (Array.isArray(stored)) {
@@ -288,12 +298,6 @@ function persistCrdtOutbox(userId: string, required = false): void {
       throw new Error("CRDT outbox storage is full");
     }
   }
-}
-
-function rejectCrdtUpdate(userId: string, updateId: string, message: string): void {
-  readCrdtOutbox(userId).delete(updateId);
-  persistCrdtOutbox(userId);
-  rejectPendingAck(userId, updateId, message);
 }
 
 function rejectPendingAck(userId: string, updateId: string, message: string): void {

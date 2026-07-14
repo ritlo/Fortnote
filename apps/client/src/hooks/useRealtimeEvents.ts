@@ -51,6 +51,7 @@ export function useRealtimeEvents() {
     }
 
     let isActive = true;
+    const userId = user.id;
 
     function clearReconnectTimer() {
       if (reconnectTimerRef.current === null) {
@@ -125,7 +126,7 @@ export function useRealtimeEvents() {
       setRealtimeStatus("connecting");
       const connection = connectRealtime({
         after: useAppStore.getState().eventCursor,
-        userId: user.id,
+        userId,
         onCrdtError: setError,
         onOpen: () => {
           if (!isActive) {
@@ -187,7 +188,9 @@ export function useRealtimeEvents() {
             setError(
               message.reason === "storage-limit"
                 ? "Realtime storage limit reached; waiting for compaction."
-                : "Realtime write access was revoked."
+                : message.reason === "payload-too-large"
+                  ? "Realtime update is too large to synchronize."
+                  : "Realtime write access was revoked."
             );
           }
         }

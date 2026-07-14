@@ -69,7 +69,6 @@ describe("realtime client", () => {
           type: "connected",
           userId: "user_1",
           username: "alice",
-          protocolVersion: 2,
           capabilities: ["crdt-v1"]
         })
       )
@@ -77,7 +76,6 @@ describe("realtime client", () => {
       type: "connected",
       userId: "user_1",
       username: "alice",
-      protocolVersion: 2,
       capabilities: ["crdt-v1"]
     });
     const sync = {
@@ -231,6 +229,48 @@ describe("realtime client", () => {
     expect(JSON.parse(localStorage.getItem(outboxKey("viewer")) ?? "[]"))
       .toEqual([]);
   });
+
+  it("drops terminally oversized updates", async () => {
+    const update = crdtUpdate();
+    const connection = connectRealtime({
+      after: 0,
+      userId: "oversized",
+      onMessage: vi.fn()
+    });
+    const delivery = connection.sendCrdtUpdate(update);
+    sockets[0]!.open();
+    sockets[0]!.receive(connectedMessage("oversized"));
+    sockets[0]!.receive({
+      type: "crdt-reject",
+      noteId: update.noteId,
+      updateId: update.updateId,
+      reason: "payload-too-large"
+    });
+
+    expect(JSON.parse(localStorage.getItem(outboxKey("oversized")) ?? "[]"))
+      .toEqual([]);
+    await expect(delivery).rejects.toThrow("too large");
+  });
+
+  it("does not resurrect acknowledged updates after storage cleanup fails", () => {
+    const update = crdtUpdate();
+    const userId = "cleanup-quota";
+    localStorage.setItem(outboxKey(userId), JSON.stringify([update]));
+
+    connectRealtime({ after: 0, userId, onMessage: vi.fn() });
+    sockets[0]!.open();
+    sockets[0]!.receive(connectedMessage(userId));
+    localStorage.setItem = vi.fn(() => {
+      throw new DOMException("Quota exceeded", "QuotaExceededError");
+    });
+    sockets[0]!.receive({ type: "crdt-ack", updateId: update.updateId });
+
+    connectRealtime({ after: 0, userId, onMessage: vi.fn() });
+    sockets[1]!.open();
+    sockets[1]!.receive(connectedMessage(userId));
+    expect(sockets[1]!.sent.map((message) => JSON.parse(message) as unknown))
+      .not.toContainEqual(update);
+  });
 });
 
 function connectedMessage(userId = "user_1") {
@@ -238,7 +278,6 @@ function connectedMessage(userId = "user_1") {
     type: "connected",
     userId,
     username: "alice",
-    protocolVersion: 2,
     capabilities: ["crdt-v1"]
   };
 }

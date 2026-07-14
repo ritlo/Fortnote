@@ -188,7 +188,7 @@ describe("CRDT collaboration", () => {
       .toBe("Live CRDT body");
   });
 
-  it("seeds the snapshot and checkpoints over undecryptable envelopes", async () => {
+  it("preserves undecryptable envelopes instead of checkpointing over them", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const current = note();
     setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
@@ -197,18 +197,55 @@ describe("CRDT collaboration", () => {
 
     const corrupt = encryptedUpdate(current);
     await expect(receiveCrdtUpdate(corrupt)).rejects.toThrow("bad cipher");
-    await finishCrdtSync(current.id, 1, true);
-
-    const checkpointInput = vi.mocked(encryptCrdtMessage).mock.calls.at(-1)![0];
-    const restored = new Y.Doc();
-    Y.applyUpdate(restored, checkpointInput.update);
-    expect(restored.getText("body").toJSON()).toBe(current.body);
-    expect(send).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        compactedUpdateIds: [corrupt.updateId],
-        type: "crdt-checkpoint"
-      })
+    await expect(finishCrdtSync(current.id, 1, true)).rejects.toThrow(
+      "Realtime history could not be decrypted"
     );
+    expect(send).not.toHaveBeenCalled();
+
+    vi.mocked(decryptCrdtMessage).mockResolvedValueOnce(Y.encodeStateAsUpdate(new Y.Doc()));
+    await receiveCrdtUpdate(corrupt);
+    await expect(finishCrdtSync(current.id, 1, true)).resolves.toBeUndefined();
+  });
+
+  it("blocks key rotation checkpoints while history is undecryptable", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const current = note();
+    setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
+    openCrdtNote(current, vi.fn());
+    vi.mocked(decryptCrdtMessage).mockRejectedValueOnce(new Error("bad cipher"));
+
+    await expect(receiveCrdtUpdate(encryptedUpdate(current))).rejects.toThrow("bad cipher");
+    await expect(
+      checkpointCrdtNote(note({ keyEpoch: 2, noteKeyBase64: "rotated-key" }))
+    ).rejects.toThrow("Realtime history could not be decrypted");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("migrates a newer legacy snapshot on a fresh CRDT open", async () => {
+    const current = note({ body: "Newer snapshot", version: 2 });
+    const older = createDocument(current.title, "Older CRDT body");
+    setCrdtTransport({ discard: vi.fn(), send: vi.fn(), subscribe: vi.fn() });
+    vi.mocked(decryptCrdtMessage).mockResolvedValueOnce(Y.encodeStateAsUpdate(older));
+
+    openCrdtNote(current, vi.fn());
+    await receiveCrdtUpdate(encryptedUpdate(current));
+    await finishCrdtSync(current.id, current.keyEpoch, true);
+
+    expect(preserveCrdtContent(current).body).toBe("Newer snapshot");
+  });
+
+  it("keeps same-version CRDT history authoritative on a fresh open", async () => {
+    const current = note({ body: "Older snapshot", version: 2 });
+    const live = createDocument(current.title, "Newer CRDT body");
+    live.getMap<number>("metadata").set("snapshotVersion", current.version);
+    setCrdtTransport({ discard: vi.fn(), send: vi.fn(), subscribe: vi.fn() });
+    vi.mocked(decryptCrdtMessage).mockResolvedValueOnce(Y.encodeStateAsUpdate(live));
+
+    openCrdtNote(current, vi.fn());
+    await receiveCrdtUpdate(encryptedUpdate(current));
+    await finishCrdtSync(current.id, current.keyEpoch, true);
+
+    expect(preserveCrdtContent(current).body).toBe("Newer CRDT body");
   });
 
   it("does not checkpoint remote traffic as a viewer", async () => {

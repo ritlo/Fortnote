@@ -13,6 +13,9 @@ import { allowedOriginAliases } from "../http/csrf.js";
 import type { AppContext } from "../http/app.js";
 import { RealtimeHub, sendJson, type RealtimeClient } from "./hub.js";
 
+const MAX_CRDT_CIPHER_LENGTH = 1024 * 1024;
+const MAX_REALTIME_MESSAGE_BYTES = 2 * 1024 * 1024;
+
 const realtimeQuerySchema = z.object({
   after: z.coerce.number().int().nonnegative().default(0),
   capabilities: z.string().default("")
@@ -35,7 +38,7 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     noteId: z.uuid(),
     cryptoOwnerId: z.uuid(),
     keyEpoch: z.number().int().positive(),
-    cipher: z.string().min(1).max(400_000),
+    cipher: z.string().min(1),
     nonce: z.string().min(16).max(128)
   }),
   z.object({
@@ -45,14 +48,12 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     noteId: z.uuid(),
     cryptoOwnerId: z.uuid(),
     keyEpoch: z.number().int().positive(),
-    cipher: z.string().min(1).max(400_000),
+    cipher: z.string().min(1),
     nonce: z.string().min(16).max(128),
     compactedUpdateIds: z.array(z.uuid()).max(100)
       .refine((ids) => new Set(ids).size === ids.length)
   }).refine((message) => !message.compactedUpdateIds.includes(message.updateId))
 ]);
-
-const MAX_REALTIME_MESSAGE_BYTES = 512 * 1024;
 
 export function attachRealtimeServer(
   context: AppContext,
@@ -90,16 +91,11 @@ export function attachRealtimeServer(
       Object.fromEntries(url.searchParams.entries())
     );
     const after = parsed.success ? parsed.data.after : 0;
-    const capabilities = new Set(
-      parsed.success
-        ? parsed.data.capabilities
-            .split(",")
-            .filter((capability) => capability === CRDT_REALTIME_CAPABILITY)
-        : []
-    );
+    const crdtEnabled =
+      parsed.success && parsed.data.capabilities.split(",").includes(CRDT_REALTIME_CAPABILITY);
 
     webSocketServer.handleUpgrade(request, socket, head, (socket) => {
-      connectClient(context, hub, socket, session, after, capabilities);
+      connectClient(context, hub, socket, session, after, crdtEnabled);
     });
   });
 
@@ -116,14 +112,14 @@ function connectClient(
   socket: WebSocket,
   session: SessionRecord,
   after: number,
-  capabilities: Set<string>
+  crdtEnabled: boolean
 ): void {
   const client = hub.addClient({
     sessionId: session.id,
     userId: session.userId,
     username: session.username,
     socket,
-    capabilities
+    crdtEnabled
   });
   socket.on("message", (message) => {
     handleClientMessage(hub, client, socket, message);
@@ -133,7 +129,6 @@ function connectClient(
     type: "connected",
     userId: session.userId,
     username: session.username,
-    protocolVersion: 2,
     capabilities: [CRDT_REALTIME_CAPABILITY]
   });
   sendJson(socket, {
@@ -163,6 +158,15 @@ function handleClientMessage(
   } else if (parsed.type === "crdt-subscribe") {
     hub.subscribeCrdt(client, parsed.noteId);
   } else {
+    if (parsed.cipher.length > MAX_CRDT_CIPHER_LENGTH) {
+      sendJson(socket, {
+        type: "crdt-reject",
+        noteId: parsed.noteId,
+        updateId: parsed.updateId,
+        reason: "payload-too-large"
+      });
+      return;
+    }
     const outcome = hub.publishCrdtUpdate(client, parsed);
     if (outcome === "accepted") {
       sendJson(socket, { type: "crdt-ack", updateId: parsed.updateId });

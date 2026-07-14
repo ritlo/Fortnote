@@ -14,14 +14,15 @@ import type { DecryptedNote } from "../store/appStore";
 // Yjs provides battle-tested character-level merging; the server only sees ciphertext.
 const REMOTE_UPDATE = Symbol("remote-update");
 const SNAPSHOT_SEED = Symbol("snapshot-seed");
+const SNAPSHOT_VERSION_KEY = "snapshotVersion";
 // ponytail: fixed threshold; tune from update-size metrics if storage churn matters.
 const CHECKPOINT_UPDATE_COUNT = 64;
 const bindings = new Map<string, Binding>();
 let transport: CrdtTransport | null = null;
-const transportWaiters: Array<{
+const transportWaiters: {
   reject: (error: Error) => void;
   resolve: (next: CrdtTransport) => void;
-}> = [];
+}[] = [];
 
 interface CrdtTransport {
   discard: (noteId: string, beforeKeyEpoch: number) => void;
@@ -125,7 +126,7 @@ export function editCrdtNote(
 export function setCrdtTransport(next: CrdtTransport | null): void {
   transport = next;
   if (next) {
-    transportWaiters.splice(0).forEach(({ resolve }) => resolve(next));
+    transportWaiters.splice(0).forEach(({ resolve }) => { resolve(next); });
     for (const binding of bindings.values()) {
       next.discard(binding.note.id, binding.note.keyEpoch);
       next.subscribe(binding.note.id);
@@ -161,10 +162,19 @@ export function clearCrdtNotes(): void {
     binding.doc.destroy();
   }
   bindings.clear();
-  transportWaiters.splice(0).forEach(({ reject }) => reject(new Error("Vault locked")));
+  transportWaiters.splice(0).forEach(({ reject }) => { reject(new Error("Vault locked")); });
 }
 
-export function checkpointCrdtNote(note: DecryptedNote): Promise<void> {
+export async function ensureCrdtHistoryReadable(noteId: string): Promise<void> {
+  const binding = bindings.get(noteId);
+  if (!binding) {
+    return;
+  }
+  await binding.receiving;
+  throwIfCrdtHistoryUnreadable(binding);
+}
+
+export async function checkpointCrdtNote(note: DecryptedNote): Promise<void> {
   let binding = bindings.get(note.id);
   if (!binding) {
     openCrdtNote(note, () => undefined);
@@ -173,11 +183,12 @@ export function checkpointCrdtNote(note: DecryptedNote): Promise<void> {
     binding.ready = true;
     binding.snapshotSeeded = true;
   }
+  await ensureCrdtHistoryReadable(note.id);
   binding.note = note;
+  binding.doc.transact(() => { setSnapshotVersion(binding.doc, note.version); }, SNAPSHOT_SEED);
   binding.pendingUpdateIds.clear();
-  binding.failedUpdateIds.clear();
   transport?.discard(note.id, note.keyEpoch);
-  return broadcastCheckpoint(binding);
+  await broadcastCheckpoint(binding);
 }
 
 export function receiveCrdtUpdate(update: EncryptedCrdtMessage): Promise<void> {
@@ -196,6 +207,7 @@ export function receiveCrdtUpdate(update: EncryptedCrdtMessage): Promise<void> {
       });
       Y.applyUpdate(binding.doc, plaintext, REMOTE_UPDATE);
       binding.appliedUpdateCount += 1;
+      binding.failedUpdateIds.delete(update.updateId);
       if (update.type === "crdt-checkpoint") {
         update.compactedUpdateIds.forEach((id) => binding.pendingUpdateIds.delete(id));
       }
@@ -223,6 +235,14 @@ export async function finishCrdtSync(
   if (binding.note.keyEpoch !== keyEpoch || binding.ready) {
     return;
   }
+  throwIfCrdtHistoryUnreadable(binding);
+  const snapshotIsNewer = binding.note.version > getSnapshotVersion(binding.doc);
+  if (snapshotIsNewer && hasUpdates && binding.appliedUpdateCount > 0) {
+    replaceWithSnapshot(binding);
+    if (binding.note.role !== "viewer") {
+      await broadcastCheckpoint(binding);
+    }
+  }
   if ((!hasUpdates || binding.appliedUpdateCount === 0) && !binding.snapshotSeeded) {
     Y.applyUpdate(binding.doc, snapshotUpdate(binding.note), SNAPSHOT_SEED);
     binding.snapshotSeeded = true;
@@ -235,9 +255,6 @@ export async function finishCrdtSync(
   binding.pendingPatch = {};
   if (pendingPatch.title !== undefined || pendingPatch.body !== undefined) {
     editCrdtNote(noteId, pendingPatch);
-  }
-  while (binding.failedUpdateIds.size > 0 && canWrite(binding)) {
-    await broadcastCheckpoint(binding);
   }
 }
 
@@ -297,6 +314,7 @@ async function broadcastCheckpoint(
   if (!canWrite(binding)) {
     return;
   }
+  throwIfCrdtHistoryUnreadable(binding);
   binding.checkpointing = true;
   const compactedUpdateIds = [...binding.pendingUpdateIds].slice(0, 100);
   const envelope = {
@@ -333,7 +351,34 @@ function snapshotUpdate(note: DecryptedNote): Uint8Array {
   seed.clientID = Number.parseInt(note.id.slice(0, 8), 16);
   seed.getText("title").insert(0, note.title);
   seed.getText("body").insert(0, note.body);
+  setSnapshotVersion(seed, note.version);
   return Y.encodeStateAsUpdate(seed);
+}
+
+function replaceWithSnapshot(binding: Binding): void {
+  const clientId = binding.doc.clientID;
+  binding.doc.clientID = (Number.parseInt(binding.note.id.slice(0, 8), 16) ^ binding.note.version) >>> 0;
+  binding.doc.transact(() => {
+    replaceYText(binding.doc.getText("title"), binding.note.title);
+    replaceYText(binding.doc.getText("body"), binding.note.body);
+    setSnapshotVersion(binding.doc, binding.note.version);
+  }, SNAPSHOT_SEED);
+  binding.doc.clientID = clientId;
+  binding.snapshotSeeded = true;
+}
+
+function getSnapshotVersion(doc: Y.Doc): number {
+  return doc.getMap<number>("metadata").get(SNAPSHOT_VERSION_KEY) ?? 0;
+}
+
+function setSnapshotVersion(doc: Y.Doc, version: number): void {
+  doc.getMap<number>("metadata").set(SNAPSHOT_VERSION_KEY, version);
+}
+
+function throwIfCrdtHistoryUnreadable(binding: Binding): void {
+  if (binding.failedUpdateIds.size > 0) {
+    throw new Error("Realtime history could not be decrypted");
+  }
 }
 
 function trackUpdate(binding: Binding, updateId: string): void {

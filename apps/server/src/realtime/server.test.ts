@@ -270,12 +270,39 @@ describe("realtime server", () => {
         .prepare("SELECT cipher FROM note_updates WHERE update_id = ?")
         .get(update.updateId)
     ).toEqual({ cipher: update.cipher });
+
+    const largeUpdate = {
+      ...update,
+      updateId: crypto.randomUUID(),
+      cipher: "x".repeat(400_001)
+    };
+    aliceSocket.socket.send(JSON.stringify(largeUpdate));
+    expect(await aliceSocket.next("large CRDT ack")).toEqual({
+      type: "crdt-ack",
+      updateId: largeUpdate.updateId
+    });
+    expect(await bobSocket.next("large CRDT update")).toEqual(largeUpdate);
+
+    const oversizedUpdate = {
+      ...update,
+      updateId: crypto.randomUUID(),
+      cipher: "x".repeat(1024 * 1024 + 1)
+    };
+    aliceSocket.socket.send(JSON.stringify(oversizedUpdate));
+    expect(await aliceSocket.next("oversized CRDT rejection")).toEqual({
+      type: "crdt-reject",
+      noteId,
+      updateId: oversizedUpdate.updateId,
+      reason: "payload-too-large"
+    });
+    await expectNoMessage(bobSocket, "oversized CRDT broadcast");
+
     const checkpoint = {
       ...update,
       type: "crdt-checkpoint",
       updateId: crypto.randomUUID(),
       cipher: "encrypted_crdt_checkpoint_abcdefghijklmnopqrstuvwxyz",
-      compactedUpdateIds: [update.updateId]
+      compactedUpdateIds: [update.updateId, largeUpdate.updateId]
     };
     aliceSocket.socket.send(JSON.stringify(checkpoint));
 

@@ -33,7 +33,7 @@ export interface CrdtReject {
   type: "crdt-reject";
   noteId: string;
   updateId: string;
-  reason: "forbidden" | "storage-limit";
+  reason: "forbidden" | "payload-too-large" | "storage-limit";
 }
 
 export function crdtUpdateAssociatedData(input: {
