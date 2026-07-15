@@ -76,7 +76,6 @@ export function AppShell() {
         moveSelectedToTrash={noteActions.moveSelectedToTrash}
         newPassword={newPassword}
         notesView={notesView}
-        previewHtml={noteView.previewHtml}
         recoverySecret={recoverySecret}
         removeSelectedAttachment={attachmentActions.removeSelectedAttachment}
         restoreSelectedNote={noteActions.restoreSelectedNote}

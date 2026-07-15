@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DecryptedNote } from "../store/appStore";
-import { notesForView } from "./useNoteViewModel";
+import { blockNoteToText, notesForView } from "./useNoteViewModel";
 
 describe("notesForView", () => {
   it("shows only shared notes in the shared view", () => {
@@ -44,6 +44,48 @@ describe("notesForView", () => {
         trashNotes: [deletedNote]
       })
     ).toEqual([deletedNote]);
+  });
+});
+
+describe("blockNoteToText", () => {
+  it("extracts inline text, headings, and nested children", () => {
+    const doc = JSON.stringify([
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "Hello " },
+          { type: "text", text: "world", styles: { bold: true } }
+        ]
+      },
+      { type: "heading", content: [{ type: "text", text: "Title" }] },
+      {
+        type: "bulletListItem",
+        content: [{ type: "text", text: "item" }],
+        children: [{ type: "paragraph", content: [{ type: "text", text: "nested" }] }]
+      }
+    ]);
+
+    expect(blockNoteToText(doc).replace(/\s+/g, " ").trim()).toBe("Hello world Title item nested");
+  });
+
+  it("extracts link inline content", () => {
+    const doc = JSON.stringify([
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "see " },
+          { type: "link", href: "https://example.com", content: [{ type: "text", text: "example" }] }
+        ]
+      }
+    ]);
+
+    expect(blockNoteToText(doc).replace(/\s+/g, " ").trim()).toBe("see example");
+  });
+
+  it("treats legacy markdown and invalid bodies as empty", () => {
+    expect(blockNoteToText("# Legacy\n\nmarkdown body")).toBe("");
+    expect(blockNoteToText("not json at all")).toBe("");
+    expect(blockNoteToText("")).toBe("");
   });
 });
 

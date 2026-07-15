@@ -14,7 +14,7 @@ import {
   noteKeyToBase64
 } from "../cryptoClient";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
-import { markCrdtSnapshotVersion } from "../realtime/crdt";
+import { checkpointCrdtNote } from "../realtime/crdt";
 import { loadDecryptedNotes, loadFolders } from "./useAppData";
 
 export function useNoteActions(selectedNote: DecryptedNote | null) {
@@ -104,7 +104,13 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         version: noteToSave.version,
         ...encrypted
       });
-      markCrdtSnapshotVersion(noteToSave.id, saved.version);
+      const updatedAt = new Date().toISOString();
+      await checkpointCrdtNote({
+        ...noteToSave,
+        contentLength: encrypted.contentLength,
+        updatedAt,
+        version: saved.version
+      });
       setNotes((current) =>
         current.map((note) =>
           note.id === noteToSave.id
@@ -115,7 +121,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
                 folderId: noteToSave.folderId,
                 title: noteToSave.title,
                 version: saved.version,
-                updatedAt: new Date().toISOString()
+                updatedAt
               }
             : note
         )
@@ -168,9 +174,18 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       return;
     }
 
-    setNotes((current) =>
-      current.map((note) => (note.id === selectedNoteId ? { ...note, ...patch } : note))
-    );
+    setNotes((current) => {
+      const note = current.find(({ id }) => id === selectedNoteId);
+      if (
+        !note ||
+        ((patch.folderId === undefined || patch.folderId === note.folderId) &&
+          (patch.title === undefined || patch.title === note.title) &&
+          (patch.body === undefined || patch.body === note.body))
+      ) {
+        return current;
+      }
+      return current.map((item) => (item.id === selectedNoteId ? { ...item, ...patch } : item));
+    });
   }
 
   async function addFolder(parentFolderId: string | null = null) {

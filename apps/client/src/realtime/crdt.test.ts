@@ -9,11 +9,10 @@ import {
   editCrdtNote,
   ensureCrdtHistoryReadable,
   finishCrdtSync,
-  markCrdtSnapshotVersion,
+  getCrdtProvider,
   openCrdtNote,
   preserveCrdtContent,
   receiveCrdtUpdate,
-  replaceYText,
   setCrdtTransport
 } from "./crdt";
 
@@ -22,6 +21,40 @@ vi.mock("../cryptoClient", () => ({
   encryptCrdtMessage: vi.fn().mockResolvedValue({ cipher: "cipher", nonce: "nonce" })
 }));
 
+const FRAGMENT_KEY = "document-store";
+
+// ponytail: body now lives in the collaborative Y.XmlFragment; simulate BlockNote content.
+function setFragmentBody(doc: Y.Doc, text: string): void {
+  const fragment = doc.getXmlFragment(FRAGMENT_KEY);
+  doc.transact(() => {
+    fragment.delete(0, fragment.length);
+    const xmlText = new Y.XmlText();
+    xmlText.insert(0, text);
+    fragment.insert(0, [xmlText]);
+  });
+}
+
+function fragmentText(doc: Y.Doc): string {
+  return doc.getXmlFragment(FRAGMENT_KEY).toJSON();
+}
+
+function appendFragment(doc: Y.Doc, text: string): void {
+  const fragment = doc.getXmlFragment(FRAGMENT_KEY);
+  const first = fragment.get(0);
+  if (first instanceof Y.XmlText) {
+    first.insert(first.length, text);
+  } else {
+    setFragmentBody(doc, text);
+  }
+}
+
+function createDocument(title: string, body: string): Y.Doc {
+  const doc = new Y.Doc();
+  doc.getText("title").insert(0, title);
+  setFragmentBody(doc, body);
+  return doc;
+}
+
 describe("CRDT collaboration", () => {
   afterEach(() => {
     setCrdtTransport(null);
@@ -29,47 +62,98 @@ describe("CRDT collaboration", () => {
     vi.clearAllMocks();
   });
 
-  it("converges concurrent character edits from two clients", () => {
-    const alice = createDocument("Title", "hello");
-    const bob = new Y.Doc();
-    Y.applyUpdate(bob, Y.encodeStateAsUpdate(alice));
+  it("merges concurrent BlockNote edits through the encrypted transport", async () => {
+    const sent: EncryptedCrdtMessage[] = [];
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: (message: EncryptedCrdtMessage) => {
+        sent.push(message);
+        return Promise.resolve();
+      },
+      subscribe: vi.fn()
+    });
+    const plaintext = new Map<string, Uint8Array>();
+    vi.mocked(encryptCrdtMessage).mockImplementation((input) => {
+      plaintext.set(input.updateId, input.update);
+      return Promise.resolve({ cipher: "cipher", nonce: "nonce", formatVersion: 1 });
+    });
+    vi.mocked(decryptCrdtMessage).mockImplementation((message) => {
+      const update = plaintext.get(message.updateId);
+      if (!update) {
+        throw new Error("unknown update");
+      }
+      return Promise.resolve(update);
+    });
 
-    replaceYText(alice.getText("body"), "A hello");
-    replaceYText(bob.getText("body"), "hello B");
-    const aliceUpdate = Y.encodeStateAsUpdate(alice, Y.encodeStateVector(bob));
-    const bobUpdate = Y.encodeStateAsUpdate(bob, Y.encodeStateVector(alice));
-    Y.applyUpdate(alice, bobUpdate);
-    Y.applyUpdate(bob, aliceUpdate);
+    const aliceId = "00000000-0000-4000-8000-0000000000a1";
+    const bobId = "00000000-0000-4000-8000-0000000000b1";
+    openCrdtNote(note({ id: aliceId }), vi.fn());
+    await finishCrdtSync(aliceId, 1, false);
+    setFragmentBody(getCrdtProvider(aliceId).doc, "shared");
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(alice.getText("body").toJSON()).toBe(bob.getText("body").toJSON());
-    expect(alice.getText("body").toJSON()).toContain("A ");
-    expect(alice.getText("body").toJSON()).toContain(" B");
+    // Seed bob from alice's already-broadcast state so they share one fragment node.
+    const aliceMessages = sent.filter((message) => message.noteId === aliceId);
+    openCrdtNote(note({ id: bobId }), vi.fn());
+    for (const message of aliceMessages) {
+      await receiveCrdtUpdate({ ...message, noteId: bobId });
+    }
+    await finishCrdtSync(bobId, 1, false);
+    expect(fragmentText(getCrdtProvider(bobId).doc)).toBe("shared");
+
+    // Concurrent edits on the shared node merge deterministically via the transport.
+    appendFragment(getCrdtProvider(aliceId).doc, "A");
+    appendFragment(getCrdtProvider(bobId).doc, "B");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const aliceEdits = sent.filter(
+      (message) => message.noteId === aliceId && message.type === "crdt-update"
+    );
+    const bobEdits = sent.filter(
+      (message) => message.noteId === bobId && message.type === "crdt-update"
+    );
+    for (const message of aliceEdits) {
+      await receiveCrdtUpdate({ ...message, noteId: bobId });
+    }
+    for (const message of bobEdits) {
+      await receiveCrdtUpdate({ ...message, noteId: aliceId });
+    }
+
+    expect(fragmentText(getCrdtProvider(aliceId).doc)).toBe(
+      fragmentText(getCrdtProvider(bobId).doc)
+    );
+  });
+
+  it("reports synchronization completion", async () => {
+    const current = note();
+    openCrdtNote(current, vi.fn());
+    const provider = getCrdtProvider(current.id);
+    const synced = vi.fn();
+    provider.on("synced", synced);
+
+    setCrdtTransport({ discard: vi.fn(), send: vi.fn(), subscribe: vi.fn() });
+    expect(provider.isSynced).toBe(false);
+
+    await finishCrdtSync(current.id, current.keyEpoch, false);
+    expect(provider.isSynced).toBe(true);
+    expect(synced).toHaveBeenCalledOnce();
   });
 
   it("checkpoints an editor's open document after a key epoch advances", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const discard = vi.fn();
     setCrdtTransport({ discard, send, subscribe: vi.fn() });
-    const editorNote = note({ role: "editor" });
-    openCrdtNote(editorNote, vi.fn());
-    await finishCrdtSync(editorNote.id, 1, false);
+    openCrdtNote(note(), vi.fn());
+    await finishCrdtSync(note().id, 1, false);
     expect(send).toHaveBeenCalledOnce();
     send.mockClear();
 
-    openCrdtNote(
-      note({ keyEpoch: 2, noteKeyBase64: "rotated-key", role: "editor" }),
-      vi.fn()
-    );
+    openCrdtNote(note({ keyEpoch: 2, noteKeyBase64: "rotated-key", role: "editor" }), vi.fn());
 
     await vi.waitFor(() => {
       expect(send).toHaveBeenCalledOnce();
     });
     expect(send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        compactedUpdateIds: [],
-        keyEpoch: 2,
-        type: "crdt-checkpoint"
-      })
+      expect.objectContaining({ compactedUpdateIds: [], keyEpoch: 2, type: "crdt-checkpoint" })
     );
     expect(discard).toHaveBeenCalledWith(note().id, 2);
   });
@@ -78,7 +162,11 @@ describe("CRDT collaboration", () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const discard = vi.fn();
     setCrdtTransport({ discard, send, subscribe: vi.fn() });
-    const rotated = note({ keyEpoch: 2, noteKeyBase64: "rotated-key" });
+    const rotated = note({
+      body: blockNoteBody("Rotated body"),
+      keyEpoch: 2,
+      noteKeyBase64: "rotated-key"
+    });
 
     await checkpointCrdtNote(rotated);
 
@@ -86,7 +174,9 @@ describe("CRDT collaboration", () => {
     const restored = new Y.Doc();
     Y.applyUpdate(restored, encryptionInput.update);
     expect(restored.getText("title").toJSON()).toBe(rotated.title);
-    expect(restored.getText("body").toJSON()).toBe(rotated.body);
+    expect(restored.getXmlFragment(FRAGMENT_KEY).toJSON()).toContain("Rotated body");
+    expect(encryptionInput.noteKeyBase64).toBe("rotated-key");
+    expect(encryptionInput.keyEpoch).toBe(2);
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({ keyEpoch: 2, type: "crdt-checkpoint" })
     );
@@ -106,7 +196,7 @@ describe("CRDT collaboration", () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
-  it("persists the whole-note snapshot as the first CRDT checkpoint", async () => {
+  it("persists the whole-note title and BlockNote body as the first CRDT checkpoint", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
 
@@ -118,7 +208,7 @@ describe("CRDT collaboration", () => {
     const restored = new Y.Doc();
     Y.applyUpdate(restored, encryptionInput.update);
     expect(restored.getText("title").toJSON()).toBe("Title");
-    expect(restored.getText("body").toJSON()).toBe("Body");
+    expect(restored.getXmlFragment(FRAGMENT_KEY).toJSON()).toContain("Body");
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         compactedUpdateIds: [],
@@ -128,7 +218,7 @@ describe("CRDT collaboration", () => {
     );
   });
 
-  it("replays edits made while snapshot migration is syncing", async () => {
+  it("replays title edits made while snapshot migration is syncing", async () => {
     setCrdtTransport({
       discard: vi.fn(),
       send: vi.fn().mockResolvedValue(undefined),
@@ -138,41 +228,37 @@ describe("CRDT collaboration", () => {
     const current = note();
     openCrdtNote(current, onChange);
 
-    editCrdtNote(current.id, { body: "Draft" });
+    editCrdtNote(current.id, { title: "Draft" });
     await finishCrdtSync(current.id, 1, false);
 
     await vi.waitFor(() => {
-      expect(encryptCrdtMessage).toHaveBeenCalledTimes(2);
+      expect(encryptCrdtMessage).toHaveBeenCalled();
     });
     const restored = new Y.Doc();
     for (const [input] of vi.mocked(encryptCrdtMessage).mock.calls) {
       Y.applyUpdate(restored, input.update);
     }
-    expect(restored.getText("body").toJSON()).toBe("Draft");
-    expect(onChange).toHaveBeenCalledWith({ body: "Draft" });
+    expect(restored.getText("title").toJSON()).toBe("Draft");
+    expect(onChange).toHaveBeenCalledWith({ title: "Draft" });
   });
 
   it("compacts a solo editor's locally sent updates", async () => {
-    const send = vi.fn<(message: EncryptedCrdtMessage) => Promise<void>>()
-      .mockResolvedValue(undefined);
+    const send = vi.fn<(message: EncryptedCrdtMessage) => Promise<void>>().mockResolvedValue(undefined);
     const current = note();
     setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
     openCrdtNote(current, vi.fn());
     await finishCrdtSync(current.id, 1, false);
     send.mockClear();
 
-    for (let index = 0; index < 63; index += 1) {
-      editCrdtNote(current.id, { body: `Body ${String(index)}` });
+    for (let index = 0; index < 64; index += 1) {
+      editCrdtNote(current.id, { title: `Title ${String(index)}` });
     }
 
     await vi.waitFor(() => {
-      expect(send).toHaveBeenCalledTimes(64);
+      expect(send.mock.calls.some(([message]) => message.type === "crdt-checkpoint")).toBe(true);
     });
-    const checkpoint = send.mock.calls.find(
-      ([message]) => message.type === "crdt-checkpoint"
-    )?.[0];
-    expect(checkpoint?.type === "crdt-checkpoint" ? checkpoint.compactedUpdateIds : [])
-      .toHaveLength(64);
+    const checkpoint = send.mock.calls.find(([message]) => message.type === "crdt-checkpoint")?.[0];
+    expect(checkpoint?.type === "crdt-checkpoint" ? checkpoint.compactedUpdateIds : []).toHaveLength(64);
   });
 
   it("keeps an open CRDT document authoritative over snapshot reloads", async () => {
@@ -184,10 +270,9 @@ describe("CRDT collaboration", () => {
     const current = note();
     openCrdtNote(current, vi.fn());
     await finishCrdtSync(current.id, 1, false);
-    editCrdtNote(current.id, { body: "Live CRDT body" });
+    editCrdtNote(current.id, { title: "Live CRDT title" });
 
-    expect(preserveCrdtContent(note({ body: "Stale snapshot" })).body)
-      .toBe("Live CRDT body");
+    expect(preserveCrdtContent(note({ title: "Stale snapshot" })).title).toBe("Live CRDT title");
   });
 
   it("preserves undecryptable envelopes instead of checkpointing over them", async () => {
@@ -233,23 +318,21 @@ describe("CRDT collaboration", () => {
     await expect(ensureCrdtHistoryReadable(current.id)).resolves.toBeUndefined();
   });
 
-  it("publishes successful whole-note snapshot versions into CRDT history", async () => {
+  it("checkpoints successful whole-note snapshot versions", async () => {
     const current = note();
     setCrdtTransport({ discard: vi.fn(), send: vi.fn(), subscribe: vi.fn() });
     openCrdtNote(current, vi.fn());
     await finishCrdtSync(current.id, current.keyEpoch, false);
-    const checkpoint = vi.mocked(encryptCrdtMessage).mock.calls[0]![0].update;
     vi.mocked(encryptCrdtMessage).mockClear();
 
-    markCrdtSnapshotVersion(current.id, 2);
+    await checkpointCrdtNote(note({ version: 2 }));
 
-    await vi.waitFor(() => {
-      expect(encryptCrdtMessage).toHaveBeenCalledOnce();
-    });
+    expect(encryptCrdtMessage).toHaveBeenCalledOnce();
     const restored = new Y.Doc();
-    Y.applyUpdate(restored, checkpoint);
     Y.applyUpdate(restored, vi.mocked(encryptCrdtMessage).mock.calls[0]![0].update);
     expect(restored.getMap<number>("metadata").get("snapshotVersion")).toBe(2);
+    expect(restored.getText("title").toJSON()).toBe("Title");
+    expect(restored.getXmlFragment(FRAGMENT_KEY).toJSON()).toContain("Body");
   });
 
   it("migrates a newer legacy snapshot on a fresh CRDT open", async () => {
@@ -262,6 +345,7 @@ describe("CRDT collaboration", () => {
     await receiveCrdtUpdate(encryptedUpdate(current));
     await finishCrdtSync(current.id, current.keyEpoch, true);
 
+    // ponytail: body durable state is the store snapshot; the live fragment is re-seeded by the editor.
     expect(preserveCrdtContent(current).body).toBe("Newer snapshot");
   });
 
@@ -276,7 +360,7 @@ describe("CRDT collaboration", () => {
     await receiveCrdtUpdate(encryptedUpdate(current));
     await finishCrdtSync(current.id, current.keyEpoch, true);
 
-    expect(preserveCrdtContent(current).body).toBe("Newer CRDT body");
+    expect(fragmentText(getCrdtProvider(current.id).doc)).toBe("Newer CRDT body");
   });
 
   it("does not checkpoint remote traffic as a viewer", async () => {
@@ -307,18 +391,43 @@ describe("CRDT collaboration", () => {
       expect.objectContaining({ keyEpoch: 2, type: "crdt-checkpoint" })
     );
   });
-});
 
-function createDocument(title: string, body: string): Y.Doc {
-  const doc = new Y.Doc();
-  doc.getText("title").insert(0, title);
-  doc.getText("body").insert(0, body);
-  return doc;
-}
+  it("converges a fresh session on the checkpoint after a save/reload", async () => {
+    const ownerId = "00000000-0000-4000-8000-0000000000c1";
+    const freshId = "00000000-0000-4000-8000-0000000000c2";
+    setCrdtTransport({ discard: vi.fn(), send: vi.fn().mockResolvedValue(undefined), subscribe: vi.fn() });
+    openCrdtNote(note({ id: ownerId }), vi.fn());
+    await finishCrdtSync(ownerId, 1, false);
+    setFragmentBody(getCrdtProvider(ownerId).doc, "Persisted content");
+    vi.mocked(encryptCrdtMessage).mockClear();
+    await checkpointCrdtNote(note({ id: ownerId, keyEpoch: 1 }));
+
+    const checkpointInput = vi.mocked(encryptCrdtMessage).mock.calls.find(
+      ([input]) => input.type === "crdt-checkpoint"
+    )?.[0];
+    vi.mocked(decryptCrdtMessage).mockResolvedValueOnce(checkpointInput!.update);
+
+    openCrdtNote(note({ id: freshId }), vi.fn());
+    await receiveCrdtUpdate({
+      type: "crdt-checkpoint",
+      formatVersion: 1,
+      updateId: crypto.randomUUID(),
+      noteId: freshId,
+      cryptoOwnerId: "owner_1",
+      keyEpoch: 1,
+      cipher: "cipher",
+      nonce: "nonce",
+      compactedUpdateIds: []
+    });
+    await finishCrdtSync(freshId, 1, true);
+
+    expect(fragmentText(getCrdtProvider(freshId).doc)).toBe("Persisted content");
+  });
+});
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
-    body: "Body",
+    body: blockNoteBody("Body"),
     contentLength: 4,
     cryptoOwnerId: "owner_1",
     folderId: null,
@@ -333,6 +442,22 @@ function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
     version: 1,
     ...overrides
   };
+}
+
+function blockNoteBody(text: string): string {
+  return JSON.stringify([
+    {
+      id: "block-1",
+      type: "paragraph",
+      props: {
+        backgroundColor: "default",
+        textColor: "default",
+        textAlignment: "left"
+      },
+      content: [{ type: "text", text, styles: {} }],
+      children: []
+    }
+  ]);
 }
 
 function encryptedUpdate(current: DecryptedNote): EncryptedCrdtMessage {

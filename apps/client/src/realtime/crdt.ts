@@ -4,17 +4,20 @@ import {
   type EncryptedCrdtUpdate,
   type EncryptedCrdtMessage
 } from "@fortnote/shared";
+import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import {
   decryptCrdtMessage,
   encryptCrdtMessage
 } from "../cryptoClient";
+import { replaceBlockNoteFragment } from "../lib/blockNote";
 import type { DecryptedNote } from "../store/appStore";
 
-// Yjs provides battle-tested character-level merging; the server only sees ciphertext.
+// Yjs provides battle-tested character/structure-level merging; the server only sees ciphertext.
 const REMOTE_UPDATE = Symbol("remote-update");
 const SNAPSHOT_SEED = Symbol("snapshot-seed");
 const SNAPSHOT_VERSION_KEY = "snapshotVersion";
+const FRAGMENT_KEY = "document-store";
 // ponytail: fixed threshold; tune from update-size metrics if storage churn matters.
 const CHECKPOINT_UPDATE_COUNT = 64;
 const bindings = new Map<string, Binding>();
@@ -30,8 +33,43 @@ interface CrdtTransport {
   send: (update: EncryptedCrdtMessage) => Promise<void>;
 }
 
+// BlockNote binds a ProseMirror doc to a Y.XmlFragment; awareness stays local.
+export class CrdtProvider {
+  readonly doc: Y.Doc;
+  readonly awareness: Awareness;
+  isSynced = false;
+  private listeners = new Map<string, Set<(data?: unknown) => void>>();
+
+  constructor(doc: Y.Doc) {
+    this.doc = doc;
+    this.awareness = new Awareness(doc);
+  }
+
+  on(event: string, callback: (data?: unknown) => void): void {
+    const set = this.listeners.get(event) ?? new Set();
+    set.add(callback);
+    this.listeners.set(event, set);
+  }
+
+  off(event: string, callback: (data?: unknown) => void): void {
+    this.listeners.get(event)?.delete(callback);
+  }
+
+  emit(event: string, data?: unknown): void {
+    if (event === "synced") {
+      this.isSynced = true;
+    }
+    this.listeners.get(event)?.forEach((callback) => {
+      callback(data);
+    });
+  }
+
+}
+
 interface Binding {
   doc: Y.Doc;
+  fragment: Y.XmlFragment;
+  provider: CrdtProvider;
   note: DecryptedNote;
   onChange: (patch: Partial<Pick<DecryptedNote, "title" | "body">>) => void;
   pendingUpdateIds: Set<string>;
@@ -42,6 +80,84 @@ interface Binding {
   ready: boolean;
   receiving: Promise<void>;
   snapshotSeeded: boolean;
+  keyEpoch: number;
+}
+
+// Synchronous, render-safe accessor so the editor can bind to the fragment before the
+// sync effect runs. Idempotent per note id; the binding is destroyed on note/epoch switch.
+export function getCrdtFragment(noteId: string, keyEpoch?: number): Y.XmlFragment {
+  return getOrCreateBinding(noteId, keyEpoch).fragment;
+}
+
+export function getCrdtProvider(noteId: string, keyEpoch?: number): CrdtProvider {
+  return getOrCreateBinding(noteId, keyEpoch).provider;
+}
+
+function getOrCreateBinding(noteId: string, keyEpoch?: number): Binding {
+  const existing = bindings.get(noteId);
+  if (existing && (keyEpoch === undefined || existing.keyEpoch === keyEpoch)) {
+    return existing;
+  }
+  const doc = new Y.Doc();
+  const fragment = doc.getXmlFragment(FRAGMENT_KEY);
+  const provider = new CrdtProvider(doc);
+  const created: Binding = {
+    doc,
+    fragment,
+    provider,
+    note: undefined as unknown as DecryptedNote,
+    onChange: () => undefined,
+    pendingUpdateIds: new Set<string>(),
+    failedUpdateIds: new Set<string>(),
+    appliedUpdateCount: 0,
+    checkpointing: false,
+    pendingPatch: {},
+    ready: false,
+    receiving: Promise.resolve(),
+    snapshotSeeded: false,
+    keyEpoch: keyEpoch ?? 0
+  };
+  bindings.set(noteId, created);
+  doc.getText("title").observe((event) => {
+    if (event.transaction.origin !== SNAPSHOT_SEED) {
+      created.onChange({ title: doc.getText("title").toJSON() });
+    }
+  });
+  doc.on("update", (update, origin) => {
+    const note = created.note as DecryptedNote | undefined;
+    if (
+      origin !== REMOTE_UPDATE &&
+      origin !== SNAPSHOT_SEED &&
+      note &&
+      note.role !== "viewer"
+    ) {
+      void broadcastUpdate(created, update).catch(() => undefined);
+    }
+  });
+  return created;
+}
+
+export function attachCrdtNote(
+  note: DecryptedNote,
+  onChange: Binding["onChange"]
+): () => void {
+  const binding = getOrCreateBinding(note.id, note.keyEpoch);
+  binding.onChange = onChange;
+  binding.note = note;
+  transport?.subscribe(note.id);
+  return () => {
+    const current = bindings.get(note.id);
+    if (current) {
+      current.onChange = () => undefined;
+    }
+  };
+}
+
+export function updateCrdtNote(note: DecryptedNote): void {
+  const binding = bindings.get(note.id);
+  if (binding?.keyEpoch === note.keyEpoch) {
+    binding.note = note;
+  }
 }
 
 export function openCrdtNote(
@@ -49,54 +165,24 @@ export function openCrdtNote(
   onChange: Binding["onChange"]
 ): () => void {
   const binding = bindings.get(note.id);
-  if (!binding) {
-    const doc = new Y.Doc();
-    const created = {
-      doc,
-      note,
-      onChange,
-      pendingUpdateIds: new Set<string>(),
-      failedUpdateIds: new Set<string>(),
-      appliedUpdateCount: 0,
-      checkpointing: false,
-      pendingPatch: {},
-      ready: false,
-      receiving: Promise.resolve(),
-      snapshotSeeded: false
-    };
-    bindings.set(note.id, created);
-    doc.getText("title").observe((event) => {
-      if (event.transaction.origin !== SNAPSHOT_SEED) {
-        created.onChange({ title: doc.getText("title").toJSON() });
-      }
-    });
-    doc.getText("body").observe((event) => {
-      if (event.transaction.origin !== SNAPSHOT_SEED) {
-        created.onChange({ body: doc.getText("body").toJSON() });
-      }
-    });
-    doc.on("update", (update, origin) => {
-      if (origin !== REMOTE_UPDATE && origin !== SNAPSHOT_SEED) {
-        void broadcastUpdate(created, update).catch(() => undefined);
-      }
-    });
-  } else {
+  if (binding) {
     const epochAdvanced = note.keyEpoch > binding.note.keyEpoch;
     binding.onChange = onChange;
     if (epochAdvanced && note.role !== "owner") {
+      // ponytail: rotation advanced the epoch; re-checkpoint so collaborators converge.
       void checkpointCrdtNote(note).catch(() => undefined);
     } else {
       binding.note = note;
     }
+    transport?.subscribe(note.id);
+    return () => {
+      const current = bindings.get(note.id);
+      if (current) {
+        current.onChange = () => undefined;
+      }
+    };
   }
-  transport?.subscribe(note.id);
-
-  return () => {
-    const current = bindings.get(note.id);
-    if (current) {
-      current.onChange = () => undefined;
-    }
-  };
+  return attachCrdtNote(note, onChange);
 }
 
 export function editCrdtNote(
@@ -113,11 +199,11 @@ export function editCrdtNote(
     return true;
   }
   binding.doc.transact(() => {
+    // Body lives in the BlockNote editor / Y.XmlFragment; only title routes through Y.Text.
     if (patch.title !== undefined) {
-      replaceYText(binding.doc.getText("title"), patch.title);
-    }
-    if (patch.body !== undefined) {
-      replaceYText(binding.doc.getText("body"), patch.body);
+      const text = binding.doc.getText("title");
+      text.delete(0, text.length);
+      text.insert(0, patch.title);
     }
   });
   return true;
@@ -127,24 +213,19 @@ export function setCrdtTransport(next: CrdtTransport | null): void {
   transport = next;
   for (const binding of bindings.values()) {
     binding.ready = false;
+    binding.provider.isSynced = false;
   }
   if (next) {
-    transportWaiters.splice(0).forEach(({ resolve }) => { resolve(next); });
+    transportWaiters.splice(0).forEach(({ resolve }) => {
+      resolve(next);
+    });
     for (const binding of bindings.values()) {
-      next.discard(binding.note.id, binding.note.keyEpoch);
-      next.subscribe(binding.note.id);
+      const note = binding.note as DecryptedNote | undefined;
+      if (note) {
+        next.discard(note.id, note.keyEpoch);
+        next.subscribe(note.id);
+      }
     }
-  }
-}
-
-export function markCrdtSnapshotVersion(noteId: string, version: number): void {
-  const binding = bindings.get(noteId);
-  if (!binding) {
-    return;
-  }
-  binding.note = { ...binding.note, version };
-  if (binding.ready && getSnapshotVersion(binding.doc) < version) {
-    binding.doc.getMap<number>("metadata").set(SNAPSHOT_VERSION_KEY, version);
   }
 }
 
@@ -158,25 +239,36 @@ export function preserveCrdtContent(note: DecryptedNote): DecryptedNote {
   }
   const content = {
     title: binding.doc.getText("title").toJSON(),
-    body: binding.doc.getText("body").toJSON()
+    body: note.body
   };
-  if (note.keyEpoch === binding.note.keyEpoch) {
+  if (binding.note.keyEpoch === note.keyEpoch) {
     binding.note = { ...note, ...content };
   }
   return { ...note, ...content };
 }
 
-export function removeCrdtNote(noteId: string): void {
-  bindings.get(noteId)?.doc.destroy();
-  bindings.delete(noteId);
+export function removeCrdtNote(noteId: string, expectedProvider?: CrdtProvider): void {
+  const binding = bindings.get(noteId);
+  if (!binding && !expectedProvider) {
+    return;
+  }
+  const provider = expectedProvider ?? binding!.provider;
+  provider.awareness.destroy();
+  provider.doc.destroy();
+  if (binding?.provider === provider) {
+    bindings.delete(noteId);
+  }
 }
 
 export function clearCrdtNotes(): void {
   for (const binding of bindings.values()) {
+    binding.provider.awareness.destroy();
     binding.doc.destroy();
   }
   bindings.clear();
-  transportWaiters.splice(0).forEach(({ reject }) => { reject(new Error("Vault locked")); });
+  transportWaiters.splice(0).forEach(({ reject }) => {
+    reject(new Error("Vault locked"));
+  });
 }
 
 export async function ensureCrdtHistoryReadable(noteId: string): Promise<void> {
@@ -202,7 +294,9 @@ export async function checkpointCrdtNote(note: DecryptedNote): Promise<void> {
   }
   await ensureCrdtHistoryReadable(note.id);
   binding.note = note;
-  binding.doc.transact(() => { setSnapshotVersion(binding.doc, note.version); }, SNAPSHOT_SEED);
+  binding.doc.transact(() => {
+    setSnapshotVersion(binding.doc, note.version);
+  }, SNAPSHOT_SEED);
   binding.pendingUpdateIds.clear();
   transport?.discard(note.id, note.keyEpoch);
   await broadcastCheckpoint(binding);
@@ -261,6 +355,7 @@ export async function finishCrdtSync(
     }
   }
   if ((!hasUpdates || binding.appliedUpdateCount === 0) && !binding.snapshotSeeded) {
+    // ponytail: snapshot seeds title; the BlockNote fragment is seeded by the editor.
     Y.applyUpdate(binding.doc, snapshotUpdate(binding.note), SNAPSHOT_SEED);
     binding.snapshotSeeded = true;
     if (binding.note.role !== "viewer") {
@@ -268,34 +363,11 @@ export async function finishCrdtSync(
     }
   }
   binding.ready = true;
+  binding.provider.emit("synced");
   const pendingPatch = binding.pendingPatch;
   binding.pendingPatch = {};
   if (pendingPatch.title !== undefined || pendingPatch.body !== undefined) {
     editCrdtNote(noteId, pendingPatch);
-  }
-}
-
-export function replaceYText(text: Y.Text, next: string): void {
-  const current = text.toJSON();
-  let start = 0;
-  while (start < current.length && start < next.length && current[start] === next[start]) {
-    start += 1;
-  }
-  let currentEnd = current.length;
-  let nextEnd = next.length;
-  while (
-    currentEnd > start &&
-    nextEnd > start &&
-    current[currentEnd - 1] === next[nextEnd - 1]
-  ) {
-    currentEnd -= 1;
-    nextEnd -= 1;
-  }
-  if (currentEnd > start) {
-    text.delete(start, currentEnd - start);
-  }
-  if (nextEnd > start) {
-    text.insert(start, next.slice(start, nextEnd));
   }
 }
 
@@ -363,25 +435,16 @@ async function broadcastCheckpoint(
   }
 }
 
+// Seeds only the title into a fresh Y.Doc snapshot; the editor owns body content seeding.
 function snapshotUpdate(note: DecryptedNote): Uint8Array {
   const seed = new Y.Doc();
   seed.clientID = Number.parseInt(note.id.slice(0, 8), 16);
-  seed.getText("title").insert(0, note.title);
-  seed.getText("body").insert(0, note.body);
-  setSnapshotVersion(seed, note.version);
-  return Y.encodeStateAsUpdate(seed);
-}
-
-function replaceWithSnapshot(binding: Binding): void {
-  const clientId = binding.doc.clientID;
-  binding.doc.clientID = (Number.parseInt(binding.note.id.slice(0, 8), 16) ^ binding.note.version) >>> 0;
-  binding.doc.transact(() => {
-    replaceYText(binding.doc.getText("title"), binding.note.title);
-    replaceYText(binding.doc.getText("body"), binding.note.body);
-    setSnapshotVersion(binding.doc, binding.note.version);
+  seed.transact(() => {
+    seed.getText("title").insert(0, note.title);
+    replaceBlockNoteFragment(seed.getXmlFragment(FRAGMENT_KEY), note.body);
+    setSnapshotVersion(seed, note.version);
   }, SNAPSHOT_SEED);
-  binding.doc.clientID = clientId;
-  binding.snapshotSeeded = true;
+  return Y.encodeStateAsUpdate(seed);
 }
 
 function getSnapshotVersion(doc: Y.Doc): number {
@@ -390,6 +453,21 @@ function getSnapshotVersion(doc: Y.Doc): number {
 
 function setSnapshotVersion(doc: Y.Doc, version: number): void {
   doc.getMap<number>("metadata").set(SNAPSHOT_VERSION_KEY, version);
+}
+
+function replaceWithSnapshot(binding: Binding): void {
+  const clientId = binding.doc.clientID;
+  binding.doc.clientID =
+    (Number.parseInt(binding.note.id.slice(0, 8), 16) ^ binding.note.version) >>> 0;
+  binding.doc.transact(() => {
+    const text = binding.doc.getText("title");
+    text.delete(0, text.length);
+    text.insert(0, binding.note.title);
+    replaceBlockNoteFragment(binding.fragment, binding.note.body);
+    setSnapshotVersion(binding.doc, binding.note.version);
+  }, SNAPSHOT_SEED);
+  binding.doc.clientID = clientId;
+  binding.snapshotSeeded = true;
 }
 
 function throwIfCrdtHistoryUnreadable(binding: Binding): void {

@@ -2,7 +2,6 @@ import type { AttachmentSummary, FolderSummary, User } from "../api";
 import type { DecryptedNote, NotesView } from "../store/appStore";
 import { EditorHeader } from "./EditorHeader";
 import { NoteEditor } from "./NoteEditor";
-import { PreviewPane } from "./PreviewPane";
 import { SettingsPanel } from "./SettingsPanel";
 
 interface EditorPaneProps {
@@ -10,7 +9,6 @@ interface EditorPaneProps {
   keyMaterialVersion: number | null;
   newPassword: string;
   notesView: NotesView;
-  previewHtml: string;
   recoverySecret: string | null;
   selectedAttachments: AttachmentSummary[];
   selectedNote: DecryptedNote | null;
@@ -38,7 +36,6 @@ export function EditorPane({
   keyMaterialVersion,
   newPassword,
   notesView,
-  previewHtml,
   recoverySecret,
   selectedAttachments,
   selectedNote,
@@ -89,18 +86,15 @@ export function EditorPane({
       ) : (
         <div className="editor-grid">
           <NoteEditor
+            canDeleteAttachments={canDeleteAttachments}
+            downloadSelectedAttachment={downloadSelectedAttachment}
             folders={folders}
             notesView={notesView}
+            removeSelectedAttachment={removeSelectedAttachment}
+            selectedAttachments={selectedAttachments}
             selectedNote={selectedNote}
             updateSelectedNote={updateSelectedNote}
             uploadSelectedAttachment={uploadSelectedAttachment}
-          />
-          <PreviewPane
-            canDeleteAttachments={canDeleteAttachments}
-            downloadSelectedAttachment={downloadSelectedAttachment}
-            previewHtml={previewHtml}
-            removeSelectedAttachment={removeSelectedAttachment}
-            selectedAttachments={selectedAttachments}
           />
         </div>
       )}
