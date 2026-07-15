@@ -10,7 +10,7 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
   await register(page, account.username, account.password);
   await createNote(page, noteTitle, "First encrypted body");
 
-  await page.getByPlaceholder("Search decrypted notes").fill("Launch");
+  await page.getByPlaceholder("Search decrypted notes").fill("First encrypted body");
   await expect(page.getByRole("button", { name: /Launch plan/ })).toBeVisible();
 
   await page.getByLabel("Attach encrypted file").setInputFiles({
@@ -52,7 +52,7 @@ test("recovers a vault with the saved recovery key", async ({ page }) => {
   await expect(page.getByRole("button", { name: new RegExp(noteTitle) })).toBeVisible();
 });
 
-test("sanitizes malicious markdown preview content", async ({ page }) => {
+test("renders potentially malicious editor text without executing it", async ({ page }) => {
   const account = uniqueAccount("markdown");
   const noteTitle = `Markdown note ${account.suffix}`;
   const maliciousBody =
@@ -61,12 +61,12 @@ test("sanitizes malicious markdown preview content", async ({ page }) => {
   await register(page, account.username, account.password);
   await createNote(page, noteTitle, maliciousBody);
 
-  await expect(page.locator(".preview-body h1", { hasText: "Safe heading" })).toBeVisible();
-  await expect(page.locator(".preview-body script")).toHaveCount(0);
-  await expect(page.locator(".preview-body img")).toHaveCount(0);
-  await expect(
-    page.locator(".preview-body", { hasText: "<script>window.__markdownExecuted = true</script>" })
-  ).toBeVisible();
+  await expect(blockEditor(page)).toContainText("Safe heading");
+  await expect(blockEditor(page).locator("script")).toHaveCount(0);
+  await expect(blockEditor(page).locator("img")).toHaveCount(0);
+  await expect(blockEditor(page)).toContainText(
+    "<script>window.__markdownExecuted = true</script>"
+  );
   await expect
     .poll(() => page.evaluate(() => Boolean(window.__markdownExecuted)))
     .toBe(false);
@@ -92,7 +92,7 @@ test("lock and logout clear decrypted note content from the UI", async ({ page }
   await page.getByLabel("Account password").fill(account.password);
   await page.getByRole("button", { name: "Sign in and decrypt" }).click();
 
-  await expect(page.locator(".preview-body", { hasText: noteBody })).toBeVisible();
+  await expect(blockEditor(page)).toContainText(noteBody);
 
   await page.getByRole("button", { name: "Logout" }).click();
 
@@ -127,7 +127,7 @@ async function createNote(page: Page, title: string, body: string): Promise<void
   await titleInput.fill(title);
   await expect(titleInput).toHaveValue(title);
   await expect(page.getByRole("button", { name: new RegExp(title) })).toBeVisible();
-  await page.getByLabel("Markdown editor").fill(body);
+  await setEditorText(page, body);
   const saved = page.waitForResponse(
     (response) =>
       response.request().method() === "PUT" &&
@@ -138,6 +138,18 @@ async function createNote(page: Page, title: string, body: string): Promise<void
   await saved;
   await expect(page.getByText("Note encrypted and saved")).toBeVisible();
   await expect(page.getByRole("button", { name: new RegExp(title) })).toBeVisible();
+}
+
+function blockEditor(page: Page) {
+  return page.locator(".block-editor .bn-editor");
+}
+
+async function setEditorText(page: Page, body: string): Promise<void> {
+  const editor = blockEditor(page);
+  await expect(editor).toBeVisible();
+  await editor.click();
+  await editor.press("ControlOrMeta+A");
+  await editor.pressSequentially(body);
 }
 
 function uniqueAccount(prefix: string) {

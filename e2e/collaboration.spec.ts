@@ -15,9 +15,11 @@ test("syncs a shared note for an online editor and offline viewer", async ({
   const attachmentName = `shared-${alice.suffix}.txt`;
   const attachmentBody = `Shared attachment ${alice.suffix}`;
   const bobBody = `Bob editor update ${alice.suffix}`;
+  const realtimeFrames: string[] = [];
 
   try {
     let bobPage = await newUserPage(browser, baseURL, contexts);
+    captureRealtimeFrames(bobPage, realtimeFrames);
     await register(bobPage, bob.username, bob.password);
     await waitForSharingKey(bobPage);
 
@@ -27,14 +29,15 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     await closePageContext(carolPage, contexts);
 
     const alicePage = await newUserPage(browser, baseURL, contexts);
+    captureRealtimeFrames(alicePage, realtimeFrames);
     await register(alicePage, alice.username, alice.password);
     await createNote(alicePage, noteTitle, `Initial body ${alice.suffix}`);
     await shareNote(alicePage, bob.username, "editor");
     await shareNote(alicePage, carol.username, "viewer");
 
     await openNote(bobPage, noteTitle);
-    await expect(bobPage.locator(".preview-body", { hasText: "Initial body" })).toBeVisible();
-    await bobPage.getByLabel("Markdown editor").focus();
+    await expect(blockEditor(bobPage)).toContainText("Initial body");
+    await blockEditor(bobPage).focus();
     await expect(
       alicePage.locator(".membership-list li", { hasText: bob.username })
     ).toContainText("editing");
@@ -49,53 +52,58 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     await verifyAttachmentDownload(bobPage, attachmentName, attachmentBody);
 
     await editSelectedNote(alicePage, aliceBody);
-    await expect(bobPage.locator(".preview-body", { hasText: aliceBody })).toBeVisible({
+    await expect(blockEditor(bobPage)).toContainText(aliceBody, {
       timeout: 10_000
     });
 
     carolPage = await newUserPage(browser, baseURL, contexts);
     await signIn(carolPage, carol.username, carol.password);
     await openNote(carolPage, noteTitle);
-    await expect(carolPage.locator(".preview-body", { hasText: aliceBody })).toBeVisible();
+    await expect(blockEditor(carolPage)).toContainText(aliceBody);
     const carolAttachment = carolPage.locator(".attachment-list li", { hasText: attachmentName });
     await expect(carolAttachment).toBeVisible();
     await verifyAttachmentDownload(carolPage, attachmentName, attachmentBody);
     await expect(carolAttachment.getByRole("button", { name: "Delete" })).toHaveCount(0);
     await expect(carolPage.getByLabel("Attach encrypted file")).toBeDisabled();
-    await expect(carolPage.getByLabel("Markdown editor")).toBeDisabled();
+    await expect(blockEditor(carolPage)).toHaveAttribute("contenteditable", "false");
     await expect(carolPage.getByRole("button", { name: "Save" })).toBeDisabled();
     await revokeMember(alicePage, carol.username);
     await expect(carolPage.getByRole("button", { name: noteTitlePattern(noteTitle) })).toHaveCount(
       0
     );
-    await expect(carolPage.locator(".preview-body", { hasText: aliceBody })).toHaveCount(0);
+    await expect(blockEditor(carolPage)).toHaveCount(0);
+    expect(realtimeFrames.join("\n")).not.toContain(aliceBody);
+    expect(realtimeFrames.join("\n")).not.toContain(bobBody);
+    expect(realtimeFrames.join("\n")).not.toContain("awareness");
     await closePageContext(carolPage, contexts);
 
-    const aliceEditor = alicePage.getByLabel("Markdown editor");
-    const bobEditor = bobPage.getByLabel("Markdown editor");
+    const aliceEditor = blockEditor(alicePage);
+    const bobEditor = blockEditor(bobPage);
     await Promise.all([aliceEditor.press("Control+Home"), bobEditor.press("Control+End")]);
     await Promise.all([aliceEditor.press("A"), bobEditor.press("B")]);
     await expect.poll(async () => {
       const [aliceValue, bobValue] = await Promise.all([
-        aliceEditor.inputValue(),
-        bobEditor.inputValue()
+        editorText(alicePage),
+        editorText(bobPage)
       ]);
       return aliceValue === bobValue ? aliceValue : null;
     }).toMatch(/^A.*B$/);
-    const convergedBody = await aliceEditor.inputValue();
+    const convergedBody = await editorText(alicePage);
 
     await closePageContext(bobPage, contexts);
     bobPage = await newUserPage(browser, baseURL, contexts);
     await signIn(bobPage, bob.username, bob.password);
     await openNote(bobPage, noteTitle);
-    await expect(bobPage.getByLabel("Markdown editor")).toHaveValue(convergedBody);
+    await expect.poll(() => editorText(bobPage)).toBe(convergedBody);
 
     await editSelectedNote(bobPage, bobBody);
-    await expect(alicePage.locator(".preview-body", { hasText: bobBody })).toBeVisible({
+    await expect(blockEditor(alicePage)).toContainText(bobBody, {
       timeout: 10_000
     });
     await changeMemberRole(alicePage, bob.username, "viewer");
-    await expect(bobPage.getByLabel("Markdown editor")).toBeDisabled({ timeout: 10_000 });
+    await expect(blockEditor(bobPage)).toHaveAttribute("contenteditable", "false", {
+      timeout: 10_000
+    });
     await expect(bobPage.getByRole("button", { name: "Save" })).toBeDisabled();
 
     carolPage = await newUserPage(browser, baseURL, contexts);
@@ -103,7 +111,7 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     await expect(carolPage.getByRole("button", { name: noteTitlePattern(noteTitle) })).toHaveCount(
       0
     );
-    await expect(carolPage.locator(".preview-body", { hasText: bobBody })).toHaveCount(0);
+    await expect(blockEditor(carolPage)).toHaveCount(0);
   } finally {
     await Promise.all(contexts.splice(0).map((context) => context.close()));
   }
@@ -131,17 +139,17 @@ test("syncs edits between two tabs signed in to the same account", async ({
     await openNote(secondPage, noteTitle);
 
     await editSelectedNote(firstPage, firstBody);
-    await expect(secondPage.locator(".preview-body", { hasText: firstBody })).toBeVisible({
+    await expect(blockEditor(secondPage)).toContainText(firstBody, {
       timeout: 10_000
     });
 
     await editSelectedNote(secondPage, secondBody);
-    await expect(firstPage.locator(".preview-body", { hasText: secondBody })).toBeVisible({
+    await expect(blockEditor(firstPage)).toContainText(secondBody, {
       timeout: 10_000
     });
 
-    const firstEditor = firstPage.getByLabel("Markdown editor");
-    const secondEditor = secondPage.getByLabel("Markdown editor");
+    const firstEditor = blockEditor(firstPage);
+    const secondEditor = blockEditor(secondPage);
     await Promise.all([
       firstEditor.press("Control+Home"),
       secondEditor.press("Control+End")
@@ -149,12 +157,12 @@ test("syncs edits between two tabs signed in to the same account", async ({
     await Promise.all([firstEditor.pressSequentially("A "), secondEditor.pressSequentially(" B")]);
     await expect.poll(async () => {
       const [firstValue, secondValue] = await Promise.all([
-        firstEditor.inputValue(),
-        secondEditor.inputValue()
+        editorText(firstPage),
+        editorText(secondPage)
       ]);
       return firstValue === secondValue;
     }).toBe(true);
-    await expect(firstEditor).toHaveValue(/A .* B/);
+    await expect(firstEditor).toContainText(/^A.*B$/);
   } finally {
     await Promise.all(contexts.splice(0).map((context) => context.close()));
   }
@@ -192,7 +200,7 @@ test("removes a permanently deleted shared note after an offline client reconnec
     await expect(bobPage.getByRole("button", { name: noteTitlePattern(noteTitle) })).toHaveCount(0, {
       timeout: 15_000
     });
-    await expect(bobPage.locator(".preview-body", { hasText: "Delete replay body" })).toHaveCount(0);
+    await expect(blockEditor(bobPage)).toHaveCount(0);
   } finally {
     await Promise.all(contexts.splice(0).map((context) => context.close()));
   }
@@ -426,7 +434,7 @@ async function createNote(page: Page, title: string, body: string): Promise<void
   await titleInput.pressSequentially(title);
   await expect(titleInput).toHaveValue(title);
   await expect(page.getByRole("button", { name: noteTitlePattern(title) })).toBeVisible();
-  await page.getByLabel("Markdown editor").fill(body);
+  await setEditorText(page, body);
   const saved = waitForNoteSave(page);
   await page.getByRole("button", { name: "Save" }).click();
   await saved;
@@ -512,11 +520,34 @@ async function openNote(page: Page, title: string): Promise<void> {
 }
 
 async function editSelectedNote(page: Page, body: string): Promise<void> {
-  await page.getByLabel("Markdown editor").fill(body);
+  await setEditorText(page, body);
   const saved = waitForNoteSave(page);
   await page.getByRole("button", { name: "Save" }).click();
   await saved;
   await expect(page.getByText("Note encrypted and saved")).toBeVisible();
+}
+
+function blockEditor(page: Page) {
+  return page.locator(".block-editor .bn-editor");
+}
+
+async function editorText(page: Page): Promise<string> {
+  return (await blockEditor(page).innerText()).trim();
+}
+
+async function setEditorText(page: Page, body: string): Promise<void> {
+  const editor = blockEditor(page);
+  await expect(editor).toBeVisible();
+  await editor.click();
+  await editor.press("ControlOrMeta+A");
+  await editor.pressSequentially(body);
+}
+
+function captureRealtimeFrames(page: Page, frames: string[]): void {
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => frames.push(String(payload)));
+    socket.on("framereceived", ({ payload }) => frames.push(String(payload)));
+  });
 }
 
 async function uploadAttachment(

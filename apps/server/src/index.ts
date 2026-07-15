@@ -12,6 +12,6 @@ const app = createApp({ config, db, realtime });
 const server = createServer(app);
 attachRealtimeServer({ config, db, realtime }, server, realtime);
 
-server.listen(config.port, () => {
-  console.log(`Fortnote API listening on ${String(config.port)}`);
+server.listen(config.port, config.host, () => {
+  console.log(`Fortnote API listening on ${config.host}:${String(config.port)}`);
 });
