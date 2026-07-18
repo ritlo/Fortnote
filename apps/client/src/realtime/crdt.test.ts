@@ -351,6 +351,74 @@ describe("CRDT collaboration", () => {
     expect(checkpoint?.type === "crdt-checkpoint" ? checkpoint.compactedUpdateIds : []).toHaveLength(64);
   });
 
+  it("retains checkpoint eligibility until acknowledgement without losing later edits", async () => {
+    let rejectCheckpoint: ((error: Error) => void) | undefined;
+    let pendingCheckpoint: Promise<void> | undefined;
+    let holdCheckpoint = false;
+    const send = vi.fn<(message: ScopedEncryptedCrdtMessage) => Promise<void>>(
+      (message) => {
+        if (holdCheckpoint && message.type === "crdt-checkpoint") {
+          holdCheckpoint = false;
+          pendingCheckpoint = new Promise<void>((_resolve, reject) => {
+            rejectCheckpoint = reject;
+          });
+          return pendingCheckpoint;
+        }
+        return Promise.resolve();
+      }
+    );
+    const current = note();
+    setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
+    openCrdtNote(current, vi.fn());
+    await finishCrdtSync(current.id, 1, false);
+    send.mockClear();
+    holdCheckpoint = true;
+
+    for (let index = 0; index < 63; index += 1) {
+      editCrdtNote(current.id, { title: `Before checkpoint ${String(index)}` });
+    }
+    await vi.waitFor(() => {
+      expect(rejectCheckpoint).toBeDefined();
+    });
+    const failedCheckpoint = send.mock.calls.find(
+      ([message]) => message.type === "crdt-checkpoint"
+    )?.[0];
+    expect(failedCheckpoint?.compactedUpdateIds).toHaveLength(64);
+
+    editCrdtNote(current.id, { title: "Concurrent later edit" });
+    await vi.waitFor(() => {
+      expect(send.mock.calls.filter(([message]) => message.type === "crdt-update"))
+        .toHaveLength(64);
+    });
+    const concurrentUpdate = send.mock.calls.filter(
+      ([message]) => message.type === "crdt-update"
+    ).at(-1)?.[0];
+    rejectCheckpoint!(new Error("acknowledgement lost"));
+    await expect(pendingCheckpoint).rejects.toThrow("acknowledgement lost");
+
+    send.mockClear();
+    await checkpointCrdtNote(current);
+    const acknowledgedCheckpoint = send.mock.calls.find(
+      ([message]) => message.type === "crdt-checkpoint"
+    )?.[0];
+    expect(acknowledgedCheckpoint?.compactedUpdateIds).toEqual(
+      expect.arrayContaining([
+        ...(failedCheckpoint?.compactedUpdateIds ?? []),
+        concurrentUpdate?.updateId
+      ])
+    );
+    expect(acknowledgedCheckpoint?.compactedUpdateIds).toHaveLength(65);
+
+    send.mockClear();
+    await checkpointCrdtNote(current);
+    const nextCheckpoint = send.mock.calls.find(
+      ([message]) => message.type === "crdt-checkpoint"
+    )?.[0];
+    expect(nextCheckpoint?.compactedUpdateIds).toEqual([
+      acknowledgedCheckpoint?.updateId
+    ]);
+  });
+
   it("keeps an open CRDT document authoritative over snapshot reloads", async () => {
     setCrdtTransport({
       discard: vi.fn(),
