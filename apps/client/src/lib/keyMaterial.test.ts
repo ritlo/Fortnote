@@ -160,7 +160,6 @@ function decryptedNote(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
     id: "note-a",
     folderId: null,
     title: "Title",
-    body: "Body",
     noteKeyBase64: noteKeyToBase64(key(30)),
     contentLength: 4,
     version: 1,

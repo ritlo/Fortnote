@@ -519,9 +519,8 @@ describe("note autosave", () => {
 });
 
 describe("note save conflict handling", () => {
-  it("keeps the local metadata draft while adopting latest server content metadata", () => {
+  it("keeps the local metadata draft while adopting latest server state", () => {
     const latestNote = note({
-      body: "Server copy",
       folderId: "server-folder",
       role: "viewer",
       title: "Server title",
@@ -529,7 +528,6 @@ describe("note save conflict handling", () => {
       version: 4
     });
     const localDraft = note({
-      body: "Unsaved local draft",
       folderId: "local-folder",
       role: "editor",
       title: "Local title",
@@ -540,7 +538,6 @@ describe("note save conflict handling", () => {
     const merged = mergeDraftAfterConflict(latestNote, localDraft);
 
     expect(merged).toMatchObject({
-      body: "Server copy",
       folderId: "local-folder",
       role: "viewer",
       title: "Local title",
@@ -553,7 +550,6 @@ describe("note save conflict handling", () => {
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
-    body: "",
     contentLength: 0,
     cryptoOwnerId: "alice",
     folderId: null,

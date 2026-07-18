@@ -37,11 +37,7 @@ export function useNoteViewModel() {
       return viewNotes;
     }
 
-    return viewNotes.filter(
-      (note) =>
-        note.title.toLowerCase().includes(query) ||
-        blockNoteToText(note.body).toLowerCase().includes(query)
-    );
+    return viewNotes.filter((note) => note.title.toLowerCase().includes(query));
   }, [viewNotes, search]);
 
   return {
@@ -49,49 +45,6 @@ export function useNoteViewModel() {
     selectedAttachments,
     selectedNote
   };
-}
-
-// ponytail: BlockNote bodies are JSON; extract plaintext without a dependency.
-export function blockNoteToText(body: string): string {
-  try {
-    const parsed: unknown = JSON.parse(body);
-    return Array.isArray(parsed) ? walkBlocks(parsed) : "";
-  } catch {
-    return "";
-  }
-}
-
-function walkBlocks(blocks: unknown[]): string {
-  const parts: string[] = [];
-  for (const block of blocks) {
-    if (!block || typeof block !== "object") {
-      continue;
-    }
-    const record = block as Record<string, unknown>;
-    if (Array.isArray(record.content)) {
-      for (const item of record.content) {
-        parts.push(walkInline(item));
-      }
-    }
-    if (Array.isArray(record.children)) {
-      parts.push(walkBlocks(record.children));
-    }
-  }
-  return parts.join(" ");
-}
-
-function walkInline(content: unknown): string {
-  if (!content || typeof content !== "object") {
-    return "";
-  }
-  const record = content as Record<string, unknown>;
-  if (typeof record.text === "string") {
-    return record.text;
-  }
-  if (Array.isArray(record.content)) {
-    return record.content.map(walkInline).join("");
-  }
-  return "";
 }
 
 export function notesForView({

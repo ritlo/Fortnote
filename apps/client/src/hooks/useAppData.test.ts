@@ -29,6 +29,7 @@ const migrationMocks = vi.hoisted(() => ({
   openSection: vi.fn(),
   replaceOrder: vi.fn(),
   reserveSection: vi.fn(),
+  seedLegacySection: vi.fn(),
   waitDurable: vi.fn(),
   waitReady: vi.fn()
 }));
@@ -56,6 +57,7 @@ vi.mock("../realtime/crdt", () => ({
   openCrdtSection: migrationMocks.openSection,
   preserveCrdtContent: <T>(note: T) => note,
   replaceCrdtSectionOrder: migrationMocks.replaceOrder,
+  seedLegacyCrdtSection: migrationMocks.seedLegacySection,
   waitForCrdtSectionDurable: migrationMocks.waitDurable,
   waitForCrdtSectionReady: migrationMocks.waitReady
 }));
@@ -197,8 +199,9 @@ describe("app data collaboration bootstrap", () => {
     expect(mockedDecryptNoteSummary).toHaveBeenCalledOnce();
     expect(mockedDecryptNoteSummary.mock.calls[0]?.[2]).toBe(summary);
     expect(useAppStore.getState().notes).toEqual([
-      expect.objectContaining({ id: "body-free", body: "" })
+      expect.not.objectContaining({ body: expect.anything() })
     ]);
+    expect(useAppStore.getState().notes[0]?.id).toBe("body-free");
   });
 
   it("preserves the current selection during realtime note reloads", async () => {
@@ -272,7 +275,6 @@ describe("app data collaboration bootstrap", () => {
   it("migrates one legacy body through a resumable CAS initialization", async () => {
     const legacy = decryptedNote({
       id: "legacy-note",
-      body: "",
       legacyContentAvailable: true,
       legacyBodyLoaded: false,
       rootSectionId: null,
@@ -292,13 +294,18 @@ describe("app data collaboration bootstrap", () => {
     );
     expect(migrationMocks.openSection).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ body: "legacy body", rootSectionId: "section-1" }),
+      expect.objectContaining({ rootSectionId: "section-1" }),
       "root"
     );
     expect(migrationMocks.openSection).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ body: "legacy body", rootSectionId: "section-1" }),
+      expect.objectContaining({ rootSectionId: "section-1" }),
       "section-1"
+    );
+    expect(migrationMocks.seedLegacySection).toHaveBeenCalledWith(
+      expect.objectContaining({ rootSectionId: "section-1" }),
+      "section-1",
+      "legacy body"
     );
     expect(migrationMocks.replaceOrder).toHaveBeenCalledWith(
       legacy.id,
@@ -314,7 +321,6 @@ describe("app data collaboration bootstrap", () => {
       }
     );
     expect(useAppStore.getState().notes[0]).toMatchObject({
-      body: "",
       contentLength: 0,
       legacyBodyLoaded: false,
       legacyContentAvailable: false,
@@ -382,11 +388,16 @@ describe("app data collaboration bootstrap", () => {
     await ensureLegacyNoteMigrated(legacy);
 
     expect(migrationMocks.reserveSection).not.toHaveBeenCalled();
+    expect(migrationMocks.seedLegacySection).toHaveBeenCalledWith(
+      expect.objectContaining({ id: legacy.id }),
+      "root",
+      "legacy body"
+    );
     expect(useAppStore.getState().notes[0]).toMatchObject({
-      body: "legacy body",
       legacyBodyLoaded: true,
       legacyContentAvailable: true
     });
+    expect(useAppStore.getState().notes[0]).not.toHaveProperty("body");
   });
 
   it("does not restore decrypted notes after the vault is locked", async () => {
@@ -487,7 +498,6 @@ function mockedListNotesWith(...notes: NoteSummary[]) {
   vi.mocked(listNotes).mockResolvedValue({ notes });
   mockedDecryptNoteSummary.mockImplementation((_user, _rootKey, note) =>
     Promise.resolve({
-      body: "",
       contentLength: note.contentLength,
       cryptoOwnerId: note.cryptoOwnerId,
       folderId: note.folderId,
@@ -527,7 +537,6 @@ function decryptedNote(
   overrides: Partial<Awaited<ReturnType<typeof decryptNoteSummary>>>
 ): Awaited<ReturnType<typeof decryptNoteSummary>> {
   return {
-    body: "Body",
     contentLength: 1,
     cryptoOwnerId: "alice-id",
     folderId: null,

@@ -181,7 +181,6 @@ describe("useRealtimeEvents lifecycle", () => {
           id: "fresh-note",
           folderId: "folder-1",
           title: "Fresh",
-          body: "",
           noteKeyBase64: "fresh-key",
           contentLength: 0,
           version: 1,

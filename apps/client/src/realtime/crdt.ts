@@ -134,7 +134,7 @@ interface Binding {
   sectionId: string;
   provider: CrdtProvider;
   note: DecryptedNote;
-  onChange: (patch: Partial<Pick<DecryptedNote, "title" | "body">>) => void;
+  onChange: (patch: Partial<Pick<DecryptedNote, "title">>) => void;
   pendingUpdateIds: Set<string>;
   failedUpdateIds: Set<string>;
   receivedServerSequences: Map<string, number>;
@@ -142,7 +142,7 @@ interface Binding {
   appliedUpdateCount: number;
   checkpointing: boolean;
   observedServerSequence: number;
-  pendingPatch: Partial<Pick<DecryptedNote, "title" | "body">>;
+  pendingPatch: Partial<Pick<DecryptedNote, "title">>;
   pendingBroadcasts: Set<Promise<void>>;
   openGeneration: number;
   ready: boolean;
@@ -185,6 +185,22 @@ export function openCrdtSection(
     binding.observedServerSequence
   );
   return { provider: binding.provider, generation: binding.openGeneration };
+}
+
+export function seedLegacyCrdtSection(
+  note: DecryptedNote,
+  sectionId: string,
+  body: string
+): void {
+  const binding = getOrCreateBinding(note.id, sectionId, note.keyEpoch);
+  binding.note = note;
+  binding.doc.transact(() => {
+    replaceBlockNoteFragment(binding.fragment, body);
+    setSnapshotVersion(binding.doc, note.version);
+  }, SNAPSHOT_SEED);
+  binding.snapshotSeeded = true;
+  binding.ready = true;
+  binding.provider.emit("synced");
 }
 
 export function getCrdtSectionOrder(noteId: string): string[] {
@@ -536,7 +552,7 @@ export function openCrdtNote(
 
 export function editCrdtNote(
   noteId: string,
-  patch: Partial<Pick<DecryptedNote, "title" | "body">>
+  patch: Partial<Pick<DecryptedNote, "title">>
 ): boolean {
   const root = bindings.get(bindingKey(noteId, ROOT_SECTION_ID));
   if (!root) {
@@ -594,8 +610,7 @@ export function preserveCrdtContent(note: DecryptedNote): DecryptedNote {
     return { ...note, ...root.pendingPatch };
   }
   const content = {
-    title: root.doc.getText("title").toJSON(),
-    body: root.note.body
+    title: root.doc.getText("title").toJSON()
   };
   root.note = { ...note, ...content };
   return root.note;
@@ -799,7 +814,7 @@ async function finishBindingSync(
   binding.pendingPatch = {};
   if (
     binding.sectionId === ROOT_SECTION_ID &&
-    (pendingPatch.title !== undefined || pendingPatch.body !== undefined)
+    pendingPatch.title !== undefined
   ) {
     editCrdtNote(binding.noteId, pendingPatch);
   }
@@ -1017,10 +1032,7 @@ function seedBinding(binding: Binding, note: DecryptedNote): void {
         sections.insert(0, [note.rootSectionId]);
       }
     } else if (binding.fragment.length === 0) {
-      replaceBlockNoteFragment(binding.fragment, note.body);
-    }
-    if (!note.rootSectionId && binding.sectionId === ROOT_SECTION_ID) {
-      replaceBlockNoteFragment(binding.fragment, note.body);
+      replaceBlockNoteFragment(binding.fragment, undefined);
     }
     setSnapshotVersion(binding.doc, note.version);
   }, SNAPSHOT_SEED);
@@ -1041,8 +1053,8 @@ function replaceWithSnapshot(binding: Binding): void {
       text.delete(0, text.length);
       text.insert(0, binding.note.title);
     }
-    if (binding.sectionId !== ROOT_SECTION_ID || !binding.note.rootSectionId) {
-      replaceBlockNoteFragment(binding.fragment, binding.note.body);
+    if (binding.sectionId !== ROOT_SECTION_ID && binding.fragment.length === 0) {
+      replaceBlockNoteFragment(binding.fragment, undefined);
     }
     setSnapshotVersion(binding.doc, binding.note.version);
   }, SNAPSHOT_SEED);

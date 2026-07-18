@@ -93,7 +93,6 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         id: draft.id,
         folderId: selectedFolderId,
         title: "Untitled note",
-        body: "",
         noteKeyBase64: noteKeyToBase64(draft.noteKey),
         contentLength: 0,
         legacyContentAvailable: false,

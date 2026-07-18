@@ -247,7 +247,6 @@ function note(): DecryptedNote {
     id: "note-1",
     folderId: null,
     title: "Note",
-    body: "",
     noteKeyBase64: "AQIDBA==",
     contentLength: 0,
     version: 1,

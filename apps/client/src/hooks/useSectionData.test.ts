@@ -271,7 +271,6 @@ function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
     id: "note-1",
     folderId: null,
     title: "Large note",
-    body: "",
     noteKeyBase64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     contentLength: 0,
     version: 1,

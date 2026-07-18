@@ -20,8 +20,8 @@ import {
   releaseCrdtSection,
   replaceCrdtSectionOrder,
   requiresContentTransfer,
+  seedLegacyCrdtSection,
   setCrdtTransport,
-  updateCrdtNote,
   waitForCrdtSectionDurable,
   type ScopedEncryptedCrdtMessage
 } from "./crdt";
@@ -350,7 +350,8 @@ describe("CRDT collaboration", () => {
     expect(root).not.toBe(section);
     expect(root.getText("title").toJSON()).toBe(current.title);
     expect(root.getArray<string>("sections").toArray()).toEqual([current.rootSectionId]);
-    expect(fragmentText(section)).toContain("Body");
+    expect(fragmentText(root)).toBe("");
+    expect(fragmentText(section)).not.toContain("Body");
     expect(new Set(send.mock.calls.map(([message]) => message.sectionId))).toEqual(
       new Set(["root", current.rootSectionId])
     );
@@ -445,7 +446,6 @@ describe("CRDT collaboration", () => {
 
   it("creates a valid first checkpoint for an empty section", async () => {
     const current = note({
-      body: "[]",
       rootSectionId: "00000000-0000-4000-8000-000000000002"
     });
     const send = vi
@@ -611,12 +611,11 @@ describe("CRDT collaboration", () => {
     expect(discard).toHaveBeenCalledWith(note().id, 2);
   });
 
-  it("checkpoints snapshot state after a closed document rotates", async () => {
+  it("checkpoints metadata after a closed document rotates", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const discard = vi.fn();
     setCrdtTransport({ discard, send, subscribe: vi.fn() });
     const rotated = note({
-      body: blockNoteBody("Rotated body"),
       keyEpoch: 2,
       noteKeyBase64: "rotated-key"
     });
@@ -627,7 +626,7 @@ describe("CRDT collaboration", () => {
     const restored = new Y.Doc();
     Y.applyUpdate(restored, encryptionInput.update);
     expect(restored.getText("title").toJSON()).toBe(rotated.title);
-    expect(restored.getXmlFragment(FRAGMENT_KEY).toJSON()).toContain("Rotated body");
+    expect(restored.getXmlFragment(FRAGMENT_KEY).toJSON()).toBe("");
     expect(encryptionInput.noteKeyBase64).toBe("rotated-key");
     expect(encryptionInput.keyEpoch).toBe(2);
     expect(send).toHaveBeenCalledWith(
@@ -649,7 +648,7 @@ describe("CRDT collaboration", () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
-  it("persists the whole-note title and BlockNote body as the first CRDT checkpoint", async () => {
+  it("persists metadata without synthesizing section content from the note summary", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
 
@@ -661,7 +660,7 @@ describe("CRDT collaboration", () => {
     const restored = new Y.Doc();
     Y.applyUpdate(restored, encryptionInput.update);
     expect(restored.getText("title").toJSON()).toBe("Title");
-    expect(restored.getXmlFragment(FRAGMENT_KEY).toJSON()).toContain("Body");
+    expect(restored.getXmlFragment(FRAGMENT_KEY).toJSON()).toBe("");
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         compactedUpdateIds: [],
@@ -794,17 +793,14 @@ describe("CRDT collaboration", () => {
     openCrdtNote(current, vi.fn());
     await finishCrdtSync(current.id, 1, false);
     editCrdtNote(current.id, { title: "Live CRDT title" });
-    updateCrdtNote({ ...current, body: blockNoteBody("Live CRDT body") });
 
     expect(
       preserveCrdtContent(note({
-        body: blockNoteBody("Stale snapshot body"),
         title: "Stale snapshot",
         updatedAt: "2026-07-14T00:00:00.000Z",
         version: 2
       }))
     ).toMatchObject({
-      body: blockNoteBody("Live CRDT body"),
       title: "Live CRDT title",
       updatedAt: "2026-07-14T00:00:00.000Z",
       version: 2
@@ -854,7 +850,7 @@ describe("CRDT collaboration", () => {
     await expect(ensureCrdtHistoryReadable(current.id)).resolves.toBeUndefined();
   });
 
-  it("checkpoints successful whole-note snapshot versions", async () => {
+  it("checkpoints successful root metadata versions", async () => {
     const current = note();
     setCrdtTransport({ discard: vi.fn(), send: vi.fn(), subscribe: vi.fn() });
     openCrdtNote(current, vi.fn());
@@ -868,25 +864,20 @@ describe("CRDT collaboration", () => {
     Y.applyUpdate(restored, vi.mocked(encryptCrdtMessage).mock.calls[0]![0].update);
     expect(restored.getMap<number>("metadata").get("snapshotVersion")).toBe(2);
     expect(restored.getText("title").toJSON()).toBe("Title");
-    expect(restored.getXmlFragment(FRAGMENT_KEY).toJSON()).toContain("Body");
+    expect(restored.getXmlFragment(FRAGMENT_KEY).toJSON()).toBe("");
   });
 
-  it("migrates a newer legacy snapshot on a fresh CRDT open", async () => {
-    const current = note({ body: "Newer snapshot", version: 2 });
-    const older = createDocument(current.title, "Older CRDT body");
-    setCrdtTransport({ discard: vi.fn(), send: vi.fn(), subscribe: vi.fn() });
-    vi.mocked(decryptCrdtMessage).mockResolvedValueOnce(Y.encodeStateAsUpdate(older));
+  it("seeds requested legacy content outside the vault summary", () => {
+    const current = note({ rootSectionId: null, version: 2 });
 
-    openCrdtNote(current, vi.fn());
-    await receiveCrdtUpdate(encryptedUpdate(current));
-    await finishCrdtSync(current.id, current.keyEpoch, true);
+    seedLegacyCrdtSection(current, "root", "Newer snapshot");
 
-    // ponytail: body durable state is the store snapshot; the live fragment is re-seeded by the editor.
-    expect(preserveCrdtContent(current).body).toBe("Newer snapshot");
+    expect(fragmentText(getCrdtProvider(current.id).doc)).toContain("Newer snapshot");
+    expect(preserveCrdtContent(current)).not.toHaveProperty("body");
   });
 
   it("keeps same-version CRDT history authoritative on a fresh open", async () => {
-    const current = note({ body: "Older snapshot", version: 2 });
+    const current = note({ version: 2 });
     const live = createDocument(current.title, "Newer CRDT body");
     live.getMap<number>("metadata").set("snapshotVersion", current.version);
     setCrdtTransport({ discard: vi.fn(), send: vi.fn(), subscribe: vi.fn() });
@@ -901,7 +892,6 @@ describe("CRDT collaboration", () => {
 
   it("keeps section-backed history authoritative over root metadata versions", async () => {
     const current = note({
-      body: "",
       rootSectionId: "00000000-0000-4000-8000-000000000002",
       version: 2
     });
@@ -981,7 +971,6 @@ describe("CRDT collaboration", () => {
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
-    body: blockNoteBody("Body"),
     contentLength: 4,
     cryptoOwnerId: "owner_1",
     folderId: null,
@@ -996,22 +985,6 @@ function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
     version: 1,
     ...overrides
   };
-}
-
-function blockNoteBody(text: string): string {
-  return JSON.stringify([
-    {
-      id: "block-1",
-      type: "paragraph",
-      props: {
-        backgroundColor: "default",
-        textColor: "default",
-        textAlignment: "left"
-      },
-      content: [{ type: "text", text, styles: {} }],
-      children: []
-    }
-  ]);
 }
 
 function encryptedUpdate(current: DecryptedNote): EncryptedCrdtMessage {

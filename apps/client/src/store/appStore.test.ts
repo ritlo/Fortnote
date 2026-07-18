@@ -152,7 +152,6 @@ function collaborationEvent(
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
-    body: "",
     contentLength: 0,
     cryptoOwnerId: "alice",
     folderId: null,

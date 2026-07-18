@@ -29,6 +29,7 @@ import {
   openCrdtSection,
   preserveCrdtContent,
   replaceCrdtSectionOrder,
+  seedLegacyCrdtSection,
   waitForCrdtSectionDurable,
   waitForCrdtSectionReady
 } from "../realtime/crdt";
@@ -65,8 +66,8 @@ export async function ensureLegacyNoteMigrated(
   });
   throwIfAborted(signal);
   if (note.isDeleted || note.role === "viewer") {
+    seedLegacyCrdtSection(note, "root", body);
     updateMigratingNote(note, {
-      body,
       contentLength: legacy.contentLength,
       legacyBodyLoaded: true,
       rootVersion: legacy.rootVersion,
@@ -114,7 +115,6 @@ export async function ensureLegacyNoteMigrated(
 
     const migratingNote: DecryptedNote = {
       ...note,
-      body,
       contentLength: legacy.contentLength,
       legacyBodyLoaded: true,
       rootSectionId: reservation.sectionId,
@@ -135,6 +135,7 @@ export async function ensureLegacyNoteMigrated(
       editCrdtNote(note.id, { title: latestTitle });
     }
     await waitForCrdtSectionDurable(note.id, note.keyEpoch, "root");
+    seedLegacyCrdtSection(migratingNote, reservation.sectionId, body);
     openCrdtSection(migratingNote, reservation.sectionId);
     await waitForCrdtSectionReady(
       note.id,
@@ -181,7 +182,6 @@ function finishLegacyMigration(
   migrated: { sectionId: string; rootVersion: number; version: number }
 ): void {
   updateMigratingNote(note, {
-    body: "",
     contentLength: 0,
     legacyBodyLoaded: false,
     legacyContentAvailable: false,

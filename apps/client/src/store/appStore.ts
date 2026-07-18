@@ -19,7 +19,6 @@ export interface DecryptedNote {
   id: string;
   folderId: string | null;
   title: string;
-  body: string;
   noteKeyBase64: string;
   contentLength: number;
   legacyContentAvailable?: boolean;

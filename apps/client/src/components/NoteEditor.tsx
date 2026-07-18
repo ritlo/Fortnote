@@ -21,7 +21,6 @@ import {
   getCrdtProvider,
   updateCrdtNote
 } from "../realtime/crdt";
-import { blockNoteInitialContent } from "../lib/blockNote";
 import {
   formatAttachmentReference,
   isAttachmentMimeCompatible
@@ -161,18 +160,6 @@ function restoreDevelopmentUndoManager(editor: BlockNoteEditor<BlockSchema>): vo
   // BlockNote 0.51/y-prosemirror 1.3 destroys this manager during StrictMode replay.
   undoManager.trackedOrigins.add(undoManager);
   doc.on("afterTransaction", undoManager.afterTransactionHandler);
-}
-
-function ReadOnlyBlockNoteField({
-  resolveAttachmentUrl,
-  selectedNote
-}: Pick<BlockNoteFieldProps, "resolveAttachmentUrl" | "selectedNote">) {
-  const editor = useCreateBlockNote({
-    initialContent: blockNoteInitialContent(selectedNote.body),
-    resolveFileUrl: resolveAttachmentUrl
-  }) as unknown as BlockNoteEditor<BlockSchema>;
-
-  return <BlockNoteView editor={editor} editable={false} filePanel={false} />;
 }
 
 export function FortnoteFilePanel({ blockId }: FilePanelProps) {
@@ -376,11 +363,20 @@ export function NoteEditor({
             </div>
           )
         ) : notesView === "trash" ? (
-          <ReadOnlyBlockNoteField
-            key={`${selectedNote.id}:${String(selectedNote.keyEpoch)}:trash`}
-            resolveAttachmentUrl={resolveAttachmentUrl}
-            selectedNote={selectedNote}
-          />
+          selectedNote.legacyContentAvailable ? (
+            <CollaborativeBlockNoteField
+              key={`${selectedNote.id}:root:${String(selectedNote.keyEpoch)}:trash`}
+              canEdit={false}
+              resolveAttachmentUrl={resolveAttachmentUrl}
+              selectedNote={selectedNote}
+              sectionId="root"
+              uploadSelectedAttachment={uploadSelectedAttachment}
+            />
+          ) : (
+            <div className="section-loading-status">
+              Restore this note to open its encrypted sections.
+            </div>
+          )
         ) : selectedNote.legacyContentAvailable || !selectedNote.rootSectionId ? (
           <CollaborativeBlockNoteField
             key={`${selectedNote.id}:root:${String(selectedNote.keyEpoch)}:${canEdit ? "edit" : "view"}`}

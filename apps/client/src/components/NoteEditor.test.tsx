@@ -207,12 +207,12 @@ describe("NoteEditor BlockNote lifecycle", () => {
     await flushCleanup();
   });
 
-  it("does not serialize editor frames into the monolithic note body", () => {
+  it("does not serialize editor frames into vault note summaries", () => {
     const update = vi.fn();
     const view = renderEditor(note(), update);
 
-    view.rerender(editor(note({ body: JSON.stringify([{ id: "one" }]) }), update));
-    view.rerender(editor(note({ body: JSON.stringify([{ id: "two" }]) }), update));
+    view.rerender(editor(note({ updatedAt: "2026-07-15T00:00:01.000Z" }), update));
+    view.rerender(editor(note({ updatedAt: "2026-07-15T00:00:02.000Z" }), update));
 
     expect(update).not.toHaveBeenCalled();
     expect(blockNoteInitialContent("# legacy")).toEqual([
@@ -248,13 +248,11 @@ describe("NoteEditor BlockNote lifecycle", () => {
     viewer.unmount();
 
     vi.clearAllMocks();
+    const createdEditorCount = mocks.createOptions.length;
     renderEditor(note({ isDeleted: true }), vi.fn(), "trash");
-    expect(screen.getByTestId("block-note").getAttribute("data-editable")).toBe("false");
-    expect(mocks.createOptions.at(-1)).toMatchObject({
-      initialContent: expect.arrayContaining([expect.objectContaining({ type: "paragraph" })]),
-      resolveFileUrl: expect.any(Function)
-    });
-    expect(mocks.createOptions.at(-1)).not.toHaveProperty("uploadFile");
+    expect(screen.queryByTestId("block-note")).toBeNull();
+    expect(screen.getByText("Restore this note to open its encrypted sections.")).toBeTruthy();
+    expect(mocks.createOptions).toHaveLength(createdEditorCount);
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Redo" })).toBeNull();
   });
@@ -355,7 +353,11 @@ describe("NoteEditor BlockNote lifecycle", () => {
   it("does not autosave legacy bodies and rejects malformed BlockNote arrays", () => {
     const update = vi.fn();
     mocks.provider.isSynced = true;
-    renderEditor(note({ body: "# legacy", rootSectionId: null }), update);
+    renderEditor(note({
+      legacyBodyLoaded: true,
+      legacyContentAvailable: true,
+      rootSectionId: null
+    }), update);
 
     expect(update).not.toHaveBeenCalled();
     expect(parseBlockNoteBody(JSON.stringify([{}]))).toBeNull();
@@ -464,7 +466,6 @@ function installSection(
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
-    body: validBody(),
     contentLength: 0,
     cryptoOwnerId: "alice",
     folderId: null,

@@ -12,7 +12,6 @@ import {
 } from "@fortnote/shared";
 import {
   decryptLegacyNoteKey,
-  decryptNoteBodyWithKey,
   decryptNoteKeyEnvelopeV2,
   decryptNoteKeyShare,
   decryptNoteKeyShareV2,
@@ -183,7 +182,6 @@ export async function decryptNoteSummary(
     id: note.id,
     folderId: note.folderId,
     title,
-    body: decrypted.body,
     noteKeyBase64: decrypted.noteKeyBase64,
     contentLength: note.contentLength,
     legacyContentAvailable: Boolean(note.legacyContentAvailable),
@@ -208,7 +206,7 @@ async function decryptOwnedNote(
   user: User,
   rootKey: Uint8Array,
   note: NoteSummary
-): Promise<{ body: string; noteKey: Uint8Array; noteKeyBase64: string }> {
+): Promise<{ noteKey: Uint8Array; noteKeyBase64: string }> {
   if (!note.encryptedNoteKey || !note.noteKeyNonce) {
     throw new Error("Owned note key is missing");
   }
@@ -238,7 +236,6 @@ async function decryptOwnedNote(
         });
   const noteKeyBase64 = noteKeyToBase64(noteKey);
   return {
-    body: await decryptLegacyBody(note, noteKeyBase64),
     noteKey,
     noteKeyBase64
   };
@@ -249,7 +246,7 @@ async function decryptSharedNote(
   rootKey: Uint8Array,
   note: NoteSummary,
   openedSharingKey: OpenedSharingKey | null
-): Promise<{ body: string; noteKey: Uint8Array; noteKeyBase64: string }> {
+): Promise<{ noteKey: Uint8Array; noteKeyBase64: string }> {
   const keyShare = await getNoteKeyShare(note.id);
   const sharingKey =
     openedSharingKey?.sharingKeyVersion === keyShare.sharingKeyVersion
@@ -282,7 +279,6 @@ async function decryptSharedNote(
   const noteKeyBase64 = noteKeyToBase64(noteKey);
 
   return {
-    body: await decryptLegacyBody(note, noteKeyBase64),
     noteKey,
     noteKeyBase64
   };
@@ -329,22 +325,6 @@ async function decryptNoteTitle(note: NoteSummary, noteKey: Uint8Array): Promise
       cipher: note.titleCipher,
       nonce: note.titleNonce,
       formatVersion: 2
-    }
-  });
-}
-
-function decryptLegacyBody(note: NoteSummary, noteKeyBase64: string): Promise<string> {
-  if (!note.contentCipher || !note.contentNonce) {
-    return Promise.resolve("");
-  }
-  return decryptNoteBodyWithKey({
-    cryptoOwnerId: note.cryptoOwnerId,
-    noteId: note.id,
-    noteKeyBase64,
-    encryptedBody: {
-      cipher: note.contentCipher,
-      nonce: note.contentNonce,
-      formatVersion: 1
     }
   });
 }
