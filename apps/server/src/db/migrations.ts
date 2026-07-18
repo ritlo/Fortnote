@@ -5,6 +5,9 @@ export function runMigrations(sqlite: Database.Database): void {
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
+      display_name TEXT,
+      canonical_handle TEXT,
+      handle_state TEXT NOT NULL DEFAULT 'legacy',
       auth_verifier_hash TEXT NOT NULL,
       auth_kdf_salt TEXT NOT NULL,
       auth_kdf_ops_limit INTEGER NOT NULL,
@@ -48,6 +51,9 @@ export function runMigrations(sqlite: Database.Database): void {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
+      name_cipher TEXT,
+      name_nonce TEXT,
+      name_format_version INTEGER,
       parent_folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -58,15 +64,21 @@ export function runMigrations(sqlite: Database.Database): void {
 	      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	      crypto_owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	      folder_id TEXT REFERENCES folders(id) ON DELETE SET NULL,
-      title TEXT NOT NULL,
+	      title TEXT NOT NULL,
+	      title_cipher TEXT,
+	      title_nonce TEXT,
+	      title_format_version INTEGER,
       encrypted_note_key TEXT NOT NULL,
       note_key_nonce TEXT NOT NULL,
       content_cipher TEXT NOT NULL,
       content_nonce TEXT NOT NULL,
       content_length INTEGER NOT NULL,
       content_updated_at TEXT NOT NULL,
-      version INTEGER NOT NULL DEFAULT 1,
-      key_epoch INTEGER NOT NULL DEFAULT 1,
+	      version INTEGER NOT NULL DEFAULT 1,
+	      root_version INTEGER NOT NULL DEFAULT 1,
+	      root_section_id TEXT,
+	      key_epoch INTEGER NOT NULL DEFAULT 1,
+	      rotation_fenced INTEGER NOT NULL DEFAULT 0,
       is_deleted INTEGER NOT NULL DEFAULT 0,
       deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -77,8 +89,12 @@ export function runMigrations(sqlite: Database.Database): void {
       id TEXT PRIMARY KEY,
       note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      filename TEXT NOT NULL,
-      mime_type TEXT NOT NULL,
+	      filename TEXT NOT NULL,
+	      mime_type TEXT NOT NULL,
+	      metadata_cipher TEXT,
+	      metadata_nonce TEXT,
+	      metadata_format_version INTEGER,
+	      key_epoch INTEGER NOT NULL DEFAULT 1,
       size INTEGER NOT NULL,
       encrypted_attachment_key TEXT NOT NULL,
       attachment_key_nonce TEXT NOT NULL,
@@ -146,6 +162,111 @@ export function runMigrations(sqlite: Database.Database): void {
 	      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 	    );
 
+        CREATE TABLE IF NOT EXISTS note_sections (
+          id TEXT PRIMARY KEY,
+          note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+          created_epoch INTEGER NOT NULL,
+          current_sequence INTEGER NOT NULL DEFAULT 0,
+          initialization_manifest_id TEXT,
+          is_deleted INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS section_updates (
+          update_id TEXT PRIMARY KEY,
+          note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+          section_id TEXT NOT NULL REFERENCES note_sections(id) ON DELETE CASCADE,
+          server_sequence INTEGER NOT NULL,
+          crypto_owner_id TEXT NOT NULL,
+          key_epoch INTEGER NOT NULL,
+          format_version INTEGER NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('update', 'checkpoint', 'root-update')),
+          inline_cipher BLOB,
+          nonce BLOB,
+          manifest_id TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS content_uploads (
+          id TEXT PRIMARY KEY,
+          update_id TEXT NOT NULL UNIQUE,
+          note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+          section_id TEXT NOT NULL REFERENCES note_sections(id) ON DELETE CASCADE,
+          crypto_owner_id TEXT NOT NULL,
+          key_epoch INTEGER NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('update', 'checkpoint', 'root-update')),
+          format_version INTEGER NOT NULL,
+          total_cipher_bytes INTEGER NOT NULL CHECK (total_cipher_bytes > 0),
+          chunk_count INTEGER NOT NULL CHECK (chunk_count > 0),
+          manifest_hash TEXT NOT NULL,
+          checkpoint_sequence_cutoff INTEGER,
+          status TEXT NOT NULL CHECK (
+            status IN ('receiving', 'complete', 'committed', 'aborted', 'expired', 'invalid')
+          ),
+          expires_at TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS content_chunks (
+          upload_id TEXT NOT NULL REFERENCES content_uploads(id) ON DELETE CASCADE,
+          chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+          cipher_length INTEGER NOT NULL CHECK (cipher_length > 0),
+          cipher_hash TEXT NOT NULL,
+          file_cipher_path TEXT NOT NULL,
+          nonce BLOB NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (upload_id, chunk_index)
+        );
+
+        CREATE TABLE IF NOT EXISTS content_manifests (
+          id TEXT PRIMARY KEY,
+          upload_id TEXT NOT NULL UNIQUE REFERENCES content_uploads(id) ON DELETE RESTRICT,
+          update_id TEXT NOT NULL UNIQUE,
+          note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+          section_id TEXT NOT NULL REFERENCES note_sections(id) ON DELETE CASCADE,
+          key_epoch INTEGER NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('update', 'checkpoint', 'root-update')),
+          format_version INTEGER NOT NULL,
+          first_sequence INTEGER NOT NULL,
+          last_sequence INTEGER NOT NULL,
+          total_cipher_bytes INTEGER NOT NULL CHECK (total_cipher_bytes > 0),
+          chunk_count INTEGER NOT NULL CHECK (chunk_count > 0),
+          manifest_hash TEXT NOT NULL,
+          checkpoint_sequence_cutoff INTEGER,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS crdt_initializations (
+          note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+          section_id TEXT NOT NULL REFERENCES note_sections(id) ON DELETE CASCADE,
+          key_epoch INTEGER NOT NULL,
+          manifest_id TEXT NOT NULL REFERENCES content_manifests(id) ON DELETE RESTRICT,
+          legacy_root_version INTEGER NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (note_id, section_id, key_epoch)
+        );
+
+        CREATE TABLE IF NOT EXISTS storage_accounts (
+          user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          used_bytes INTEGER NOT NULL DEFAULT 0 CHECK (used_bytes >= 0),
+          reserved_bytes INTEGER NOT NULL DEFAULT 0 CHECK (reserved_bytes >= 0),
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS note_epoch_links (
+          note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+          target_epoch INTEGER NOT NULL,
+          source_epoch INTEGER NOT NULL,
+          previous_key_cipher TEXT NOT NULL,
+          nonce TEXT NOT NULL,
+          format_version INTEGER NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (note_id, target_epoch),
+          CHECK (target_epoch = source_epoch + 1)
+        );
+
 	    CREATE TABLE IF NOT EXISTS event_acknowledgements (
 	      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 	      note_id TEXT NOT NULL,
@@ -172,15 +293,54 @@ export function runMigrations(sqlite: Database.Database): void {
 	      ON note_events (resource_type, resource_id, cursor);
 	    CREATE INDEX IF NOT EXISTS idx_note_updates_note_epoch_created
 	      ON note_updates (note_id, key_epoch, created_at);
+	    CREATE INDEX IF NOT EXISTS idx_note_sections_note_deleted
+	      ON note_sections (note_id, is_deleted);
+	    CREATE UNIQUE INDEX IF NOT EXISTS idx_section_updates_sequence
+	      ON section_updates (note_id, section_id, key_epoch, server_sequence);
+	    CREATE INDEX IF NOT EXISTS idx_section_updates_page
+	      ON section_updates (note_id, section_id, key_epoch, server_sequence);
+	    CREATE UNIQUE INDEX IF NOT EXISTS idx_content_uploads_update
+	      ON content_uploads (update_id);
+	    CREATE INDEX IF NOT EXISTS idx_content_uploads_note_status
+	      ON content_uploads (note_id, status);
+	    CREATE INDEX IF NOT EXISTS idx_content_uploads_expiry
+	      ON content_uploads (status, expires_at);
+	    CREATE UNIQUE INDEX IF NOT EXISTS idx_content_manifests_upload
+	      ON content_manifests (upload_id);
+	    CREATE UNIQUE INDEX IF NOT EXISTS idx_content_manifests_update
+	      ON content_manifests (update_id);
+	    CREATE INDEX IF NOT EXISTS idx_content_manifests_page
+	      ON content_manifests (note_id, section_id, key_epoch, last_sequence);
 	    CREATE INDEX IF NOT EXISTS idx_event_acknowledgements_user_cursor
 	      ON event_acknowledgements (user_id, cursor);
 	    CREATE INDEX IF NOT EXISTS idx_event_cursors_cursor
 	      ON event_cursors (cursor);
 	  `);
 
-  addColumnIfMissing(sqlite, "notes", "crypto_owner_id", "TEXT");
-  addColumnIfMissing(sqlite, "notes", "key_epoch", "INTEGER NOT NULL DEFAULT 1");
-  sqlite.exec("UPDATE notes SET crypto_owner_id = user_id WHERE crypto_owner_id IS NULL");
+	addColumnIfMissing(sqlite, "users", "display_name", "TEXT");
+	addColumnIfMissing(sqlite, "users", "canonical_handle", "TEXT");
+	addColumnIfMissing(sqlite, "users", "handle_state", "TEXT NOT NULL DEFAULT 'legacy'");
+	addColumnIfMissing(sqlite, "folders", "name_cipher", "TEXT");
+	addColumnIfMissing(sqlite, "folders", "name_nonce", "TEXT");
+	addColumnIfMissing(sqlite, "folders", "name_format_version", "INTEGER");
+	addColumnIfMissing(sqlite, "notes", "crypto_owner_id", "TEXT");
+	addColumnIfMissing(sqlite, "notes", "title_cipher", "TEXT");
+	addColumnIfMissing(sqlite, "notes", "title_nonce", "TEXT");
+	addColumnIfMissing(sqlite, "notes", "title_format_version", "INTEGER");
+	addColumnIfMissing(sqlite, "notes", "root_version", "INTEGER NOT NULL DEFAULT 1");
+	addColumnIfMissing(sqlite, "notes", "root_section_id", "TEXT");
+	addColumnIfMissing(sqlite, "notes", "key_epoch", "INTEGER NOT NULL DEFAULT 1");
+	addColumnIfMissing(sqlite, "notes", "rotation_fenced", "INTEGER NOT NULL DEFAULT 0");
+	addColumnIfMissing(sqlite, "attachments", "metadata_cipher", "TEXT");
+	addColumnIfMissing(sqlite, "attachments", "metadata_nonce", "TEXT");
+	addColumnIfMissing(sqlite, "attachments", "metadata_format_version", "INTEGER");
+	addColumnIfMissing(sqlite, "attachments", "key_epoch", "INTEGER NOT NULL DEFAULT 1");
+	sqlite.exec(`
+	  UPDATE users SET display_name = username WHERE display_name IS NULL;
+	  UPDATE notes SET crypto_owner_id = user_id WHERE crypto_owner_id IS NULL;
+	  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_canonical_handle
+	    ON users (canonical_handle) WHERE canonical_handle IS NOT NULL;
+	`);
   removeNoteEventsNoteCascade(sqlite);
   backfillOwnerMemberships(sqlite);
   createFolderIntegrityTriggers(sqlite);

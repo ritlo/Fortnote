@@ -251,4 +251,148 @@ describe("database migrations", () => {
       true
     );
   });
+
+  it("adds the protected section, content, quota, identity, and epoch model idempotently", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+
+    runMigrations(sqlite);
+    runMigrations(sqlite);
+
+    const tables = new Set(
+      (
+        sqlite
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+          .all() as { name: string }[]
+      ).map(({ name }) => name)
+    );
+    expect(tables).toEqual(
+      expect.objectContaining({
+        has: expect.any(Function)
+      })
+    );
+    for (const table of [
+      "note_sections",
+      "section_updates",
+      "crdt_initializations",
+      "content_uploads",
+      "content_chunks",
+      "content_manifests",
+      "storage_accounts",
+      "note_epoch_links"
+    ]) {
+      expect(tables.has(table), table).toBe(true);
+    }
+
+    expect(columnNames(sqlite, "users")).toEqual(
+      expect.arrayContaining(["display_name", "canonical_handle", "handle_state"])
+    );
+    expect(columnNames(sqlite, "notes")).toEqual(
+      expect.arrayContaining([
+        "title_cipher",
+        "title_nonce",
+        "title_format_version",
+        "root_section_id",
+        "root_version",
+        "rotation_fenced"
+      ])
+    );
+    expect(columnNames(sqlite, "folders")).toEqual(
+      expect.arrayContaining(["name_cipher", "name_nonce", "name_format_version"])
+    );
+    expect(columnNames(sqlite, "attachments")).toEqual(
+      expect.arrayContaining([
+        "metadata_cipher",
+        "metadata_nonce",
+        "metadata_format_version",
+        "key_epoch"
+      ])
+    );
+
+    const sectionIndexes = sqlite.prepare("PRAGMA index_list(section_updates)").all() as {
+      name: string;
+      unique: number;
+    }[];
+    expect(
+      sectionIndexes.some(
+        ({ name, unique }) => name === "idx_section_updates_sequence" && unique === 1
+      )
+    ).toBe(true);
+  });
+
+  it("preserves legacy note data and rolls back an invalid content transaction", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.pragma("foreign_keys = ON");
+    runMigrations(sqlite);
+    sqlite
+      .prepare(
+        `INSERT INTO users (
+          id, username, auth_verifier_hash, auth_kdf_salt,
+          auth_kdf_ops_limit, auth_kdf_mem_limit, auth_kdf_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run("user-1", "Legacy User", "hash", "salt", 1, 1, 1);
+    sqlite
+      .prepare(
+        `INSERT INTO notes (
+          id, user_id, crypto_owner_id, title, encrypted_note_key, note_key_nonce,
+          content_cipher, content_nonce, content_length, content_updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+      )
+      .run(
+        "note-1",
+        "user-1",
+        "user-1",
+        "Legacy title",
+        "wrapped-key",
+        "key-nonce",
+        "legacy-cipher",
+        "content-nonce",
+        42
+      );
+
+    runMigrations(sqlite);
+
+    expect(
+      sqlite
+        .prepare("SELECT title, content_cipher AS contentCipher FROM notes WHERE id = ?")
+        .get("note-1")
+    ).toEqual({ title: "Legacy title", contentCipher: "legacy-cipher" });
+
+    const writeInvalidUpload = sqlite.transaction(() => {
+      sqlite
+        .prepare(
+          `INSERT INTO content_uploads (
+            id, update_id, note_id, section_id, crypto_owner_id, key_epoch, kind,
+            format_version, total_cipher_bytes, chunk_count, manifest_hash, status,
+            expires_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          "upload-1",
+          "update-1",
+          "note-1",
+          "missing-section",
+          "user-1",
+          1,
+          "update",
+          2,
+          10,
+          1,
+          "digest",
+          "receiving",
+          new Date(Date.now() + 60_000).toISOString()
+        );
+    });
+    expect(writeInvalidUpload).toThrow();
+    expect(
+      sqlite.prepare("SELECT COUNT(*) AS count FROM content_uploads").get()
+    ).toEqual({ count: 0 });
+  });
 });
+
+function columnNames(sqlite: Database.Database, table: string): string[] {
+  return (
+    sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  ).map(({ name }) => name);
+}
