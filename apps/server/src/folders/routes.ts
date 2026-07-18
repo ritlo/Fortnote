@@ -7,11 +7,42 @@ import { sendApiError } from "../http/errors.js";
 import { requireSession } from "../auth/session.js";
 import { writeRequestEvent } from "../notes/events.js";
 
-const folderPayloadSchema = z.object({
+const legacyFolderPayloadSchema = z.object({
   id: z.uuid().optional(),
   name: z.string().min(1).max(120),
   parentFolderId: z.uuid().nullable().optional()
 });
+const protectedFolderPayloadSchema = z.object({
+  id: z.uuid().optional(),
+  nameCipher: z.string().min(1),
+  nameNonce: z.string().min(16),
+  nameFormatVersion: z.literal(2),
+  parentFolderId: z.uuid().nullable().optional()
+});
+const folderPayloadSchema = z.union([
+  protectedFolderPayloadSchema,
+  legacyFolderPayloadSchema
+]);
+
+function protectedFolderValues(
+  payload:
+    | z.infer<typeof protectedFolderPayloadSchema>
+    | z.infer<typeof legacyFolderPayloadSchema>
+) {
+  return "nameCipher" in payload
+    ? {
+        name: "",
+        nameCipher: payload.nameCipher,
+        nameNonce: payload.nameNonce,
+        nameFormatVersion: payload.nameFormatVersion
+      }
+    : {
+        name: payload.name,
+        nameCipher: null,
+        nameNonce: null,
+        nameFormatVersion: null
+      };
+}
 
 function getFolder(context: AppContext, folderId: string) {
   return context.db.orm
@@ -19,6 +50,9 @@ function getFolder(context: AppContext, folderId: string) {
       id: schema.folders.id,
       userId: schema.folders.userId,
       name: schema.folders.name,
+      nameCipher: schema.folders.nameCipher,
+      nameNonce: schema.folders.nameNonce,
+      nameFormatVersion: schema.folders.nameFormatVersion,
       parentFolderId: schema.folders.parentFolderId
     })
     .from(schema.folders)
@@ -61,13 +95,16 @@ export function createFoldersRouter(context: AppContext): Router {
       .select({
         id: schema.folders.id,
         name: schema.folders.name,
+        nameCipher: schema.folders.nameCipher,
+        nameNonce: schema.folders.nameNonce,
+        nameFormatVersion: schema.folders.nameFormatVersion,
         parentFolderId: schema.folders.parentFolderId,
         createdAt: schema.folders.createdAt,
         updatedAt: schema.folders.updatedAt
       })
       .from(schema.folders)
       .where(eq(schema.folders.userId, session.userId))
-      .orderBy(sql`${schema.folders.parentFolderId} IS NOT NULL`, schema.folders.name)
+      .orderBy(sql`${schema.folders.parentFolderId} IS NOT NULL`, schema.folders.id)
       .all();
 
     response.json({ folders: rows });
@@ -92,11 +129,12 @@ export function createFoldersRouter(context: AppContext): Router {
     }
 
     const id = parsed.data.id ?? crypto.randomUUID();
+    const nameValues = protectedFolderValues(parsed.data);
     const cursor = context.db.orm.transaction((tx) => {
       tx.insert(schema.folders).values({
         id,
         userId: session.userId,
-        name: parsed.data.name,
+        ...nameValues,
         parentFolderId
       }).run();
       return writeRequestEvent(context, request, {
@@ -113,7 +151,11 @@ export function createFoldersRouter(context: AppContext): Router {
     });
     publishEventCursor(context, cursor);
 
-    response.status(201).json({ id, name: parsed.data.name, parentFolderId });
+    response.status(201).json({
+      id,
+      ...nameValues,
+      parentFolderId
+    });
   });
 
   router.put("/:id", (request, response) => {
@@ -122,7 +164,12 @@ export function createFoldersRouter(context: AppContext): Router {
       return;
     }
 
-    const parsed = folderPayloadSchema.omit({ id: true }).safeParse(request.body);
+    const parsed = z
+      .union([
+        protectedFolderPayloadSchema.omit({ id: true }),
+        legacyFolderPayloadSchema.omit({ id: true })
+      ])
+      .safeParse(request.body);
     if (!parsed.success) {
       sendApiError(response, "bad_request", "Invalid folder payload");
       return;
@@ -144,10 +191,11 @@ export function createFoldersRouter(context: AppContext): Router {
       return;
     }
 
+    const nameValues = protectedFolderValues(parsed.data);
     const cursor = context.db.orm.transaction((tx) => {
       tx.update(schema.folders)
         .set({
-          name: parsed.data.name,
+          ...nameValues,
           parentFolderId,
           updatedAt: sql`CURRENT_TIMESTAMP`
         })
@@ -170,7 +218,11 @@ export function createFoldersRouter(context: AppContext): Router {
     });
     publishEventCursor(context, cursor);
 
-    response.json({ id: folder.id, name: parsed.data.name, parentFolderId });
+    response.json({
+      id: folder.id,
+      ...nameValues,
+      parentFolderId
+    });
   });
 
   router.delete("/:id", (request, response) => {

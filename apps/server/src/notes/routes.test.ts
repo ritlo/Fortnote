@@ -17,7 +17,228 @@ function sharingKeyPayload(version = 1) {
   };
 }
 
+function protectedNotePayload() {
+  return {
+    id: crypto.randomUUID(),
+    rootSectionId: crypto.randomUUID(),
+    titleCipher: "encrypted_title_cipher_abcdefghijklmnopqrstuvwxyz",
+    titleNonce: "encrypted_title_nonce_abcdefghijklmnopqrstuvwxyz",
+    titleFormatVersion: 2,
+    encryptedNoteKey: "encrypted_note_key_v2_abcdefghijklmnopqrstuvwxyz",
+    noteKeyNonce: "encrypted_note_key_nonce_v2_abcdefghijklmnopqrstuvwxyz",
+    noteKeyFormatVersion: 2
+  };
+}
+
 describe("notes and folders routes", () => {
+	  it("persists encrypted display metadata and returns body-free lists", async () => {
+	    const app = createTestApp();
+	    const agent = await registerAgent(app, "protected_metadata_user");
+	    const folderId = crypto.randomUUID();
+	    await agent
+	      .post("/api/folders")
+	      .set(csrfHeaders())
+	      .send({
+	        id: folderId,
+	        nameCipher: "encrypted_folder_name_abcdefghijklmnopqrstuvwxyz",
+	        nameNonce: "encrypted_folder_nonce_abcdefghijklmnopqrstuvwxyz",
+	        nameFormatVersion: 2
+	      })
+	      .expect(201);
+	    const payload = { ...protectedNotePayload(), folderId };
+	    await agent.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
+
+	    const listed = await agent.get("/api/notes").expect(200);
+	    expect(listed.body.notes).toHaveLength(1);
+	    expect(listed.body.notes[0]).toMatchObject({
+	      id: payload.id,
+	      title: "",
+	      titleCipher: payload.titleCipher,
+	      titleNonce: payload.titleNonce,
+	      titleFormatVersion: 2,
+	      rootSectionId: payload.rootSectionId,
+	      rootVersion: 1,
+	      keyEpoch: 1
+	    });
+	    expect(listed.body.notes[0]).not.toHaveProperty("contentCipher");
+	    expect(listed.body.notes[0]).not.toHaveProperty("contentNonce");
+	    const folders = await agent.get("/api/folders").expect(200);
+	    expect(folders.body.folders[0]).toMatchObject({
+	      id: folderId,
+	      name: "",
+	      nameCipher: "encrypted_folder_name_abcdefghijklmnopqrstuvwxyz",
+	      nameFormatVersion: 2
+	    });
+
+	    const stored = app.locals.db.sqlite
+	      .prepare(
+	        `SELECT title, title_cipher AS titleCipher,
+	                content_cipher AS contentCipher, content_length AS contentLength
+	         FROM notes WHERE id = ?`
+	      )
+	      .get(payload.id);
+	    expect(stored).toEqual({
+	      title: "",
+	      titleCipher: payload.titleCipher,
+	      contentCipher: "",
+	      contentLength: 0
+	    });
+	  });
+
+	  it("revalidates metadata role, root version, and epoch with concealed denial", async () => {
+	    const app = createTestApp();
+	    const owner = await registerAgent(app, "metadata_owner");
+	    const outsider = await registerAgent(app, "metadata_outsider");
+	    const payload = protectedNotePayload();
+	    await owner.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
+
+	    await owner
+	      .put(`/api/notes/${payload.id}`)
+	      .set(csrfHeaders())
+	      .send({
+	        titleCipher: "updated_title_cipher_abcdefghijklmnopqrstuvwxyz",
+	        titleNonce: "updated_title_nonce_abcdefghijklmnopqrstuvwxyz",
+	        titleFormatVersion: 2,
+	        rootVersion: 1,
+	        keyEpoch: 1
+	      })
+	      .expect(200)
+	      .expect(({ body }) => {
+	        expect(body).toMatchObject({ rootVersion: 2, keyEpoch: 1 });
+	      });
+    await owner
+      .put(`/api/notes/${payload.id}`)
+      .set(csrfHeaders())
+      .send({ rootVersion: 1, keyEpoch: 1 })
+      .expect(409);
+    await owner
+      .put(`/api/notes/${payload.id}`)
+      .set(csrfHeaders())
+      .send({ rootVersion: 2, keyEpoch: 2 })
+      .expect(409);
+
+	    const denied = await outsider.get(`/api/notes/${payload.id}`).expect(404);
+	    const absent = await outsider.get(`/api/notes/${crypto.randomUUID()}`).expect(404);
+	    expect(denied.body.error).toMatchObject({
+	      code: absent.body.error.code,
+	      message: absent.body.error.message
+	    });
+	  });
+
+	  it("atomically revokes a member and activates an adjacent linked epoch", async () => {
+	    const app = createTestApp();
+	    const owner = await registerAgent(app, "linked_owner");
+	    const revoked = await registerAgent(app, "linked_revoked");
+	    const remaining = await registerAgent(app, "linked_remaining");
+	    const revokedUser = await revoked.get("/api/auth/me").expect(200);
+	    const remainingUser = await remaining.get("/api/auth/me").expect(200);
+	    await revoked
+	      .put("/api/sharing-keys/current")
+	      .set(csrfHeaders())
+	      .send({ ...sharingKeyPayload(2), formatVersion: 2 })
+	      .expect(201);
+	    await remaining
+	      .put("/api/sharing-keys/current")
+	      .set(csrfHeaders())
+	      .send({ ...sharingKeyPayload(2), formatVersion: 2 })
+	      .expect(201);
+	    const payload = protectedNotePayload();
+	    await owner.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
+	    for (const username of ["linked_revoked", "linked_remaining"]) {
+	      await owner
+	        .post(`/api/notes/${payload.id}/memberships`)
+	        .set(csrfHeaders())
+	        .send({
+	          username,
+	          role: "editor",
+	          sharingKeyVersion: 2,
+	          encryptedNoteKey: `initial_share_${username}_abcdefghijklmnopqrstuvwxyz`,
+	          formatVersion: 2
+	        })
+	        .expect(201);
+	    }
+
+	    const rotationPayload = {
+	      mode: "linked",
+	      revokedUserId: revokedUser.body.id,
+	      rootVersion: 1,
+	      sourceEpoch: 1,
+	      targetEpoch: 2,
+	      encryptedNoteKey: "new_owner_note_key_abcdefghijklmnopqrstuvwxyz",
+	      noteKeyNonce: "new_owner_note_nonce_abcdefghijklmnopqrstuvwxyz",
+	      noteKeyFormatVersion: 2,
+	      previousKeyCipher: "linked_previous_key_cipher_abcdefghijklmnopqrstuvwxyz",
+	      previousKeyNonce: "linked_previous_key_nonce_abcdefghijklmnopqrstuvwxyz",
+	      linkFormatVersion: 2,
+	      shares: [
+	        {
+	          recipientUserId: remainingUser.body.id,
+	          sharingKeyVersion: 2,
+	          encryptedNoteKey: "new_remaining_share_abcdefghijklmnopqrstuvwxyz",
+	          formatVersion: 2
+	        }
+	      ]
+	    };
+
+	    await owner
+	      .post(`/api/notes/${payload.id}/key-rotation`)
+	      .set(csrfHeaders())
+	      .send({ ...rotationPayload, shares: [] })
+	      .expect(400);
+	    expect(
+	      app.locals.db.sqlite
+	        .prepare(
+	          "SELECT key_epoch AS keyEpoch, root_version AS rootVersion, rotation_fenced AS rotationFenced FROM notes WHERE id = ?"
+	        )
+	        .get(payload.id)
+	    ).toEqual({ keyEpoch: 1, rootVersion: 1, rotationFenced: 0 });
+	    expect(
+	      app.locals.db.sqlite
+	        .prepare(
+	          "SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?"
+	        )
+	        .get(payload.id, revokedUser.body.id)
+	    ).toEqual({ status: "active" });
+
+	    await owner
+	      .post(`/api/notes/${payload.id}/key-rotation`)
+	      .set(csrfHeaders())
+	      .send(rotationPayload)
+	      .expect(200)
+	      .expect(({ body }) => {
+	        expect(body).toMatchObject({ rootVersion: 2, keyEpoch: 2 });
+	      });
+
+	    const note = app.locals.db.sqlite
+	      .prepare(
+	        `SELECT key_epoch AS keyEpoch, root_version AS rootVersion,
+	                rotation_fenced AS rotationFenced
+	         FROM notes WHERE id = ?`
+	      )
+	      .get(payload.id);
+	    expect(note).toEqual({ keyEpoch: 2, rootVersion: 2, rotationFenced: 0 });
+	    expect(
+	      app.locals.db.sqlite
+	        .prepare(
+	          "SELECT source_epoch AS sourceEpoch, target_epoch AS targetEpoch FROM note_epoch_links WHERE note_id = ?"
+	        )
+	        .get(payload.id)
+	    ).toEqual({ sourceEpoch: 1, targetEpoch: 2 });
+	    expect(
+	      app.locals.db.sqlite
+	        .prepare(
+	          "SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?"
+	        )
+	        .get(payload.id, revokedUser.body.id)
+	    ).toEqual({ status: "revoked" });
+	    expect(
+	      app.locals.db.sqlite
+	        .prepare(
+	          "SELECT encrypted_note_key AS encryptedNoteKey FROM note_key_shares WHERE note_id = ? AND recipient_user_id = ?"
+	        )
+	        .get(payload.id, remainingUser.body.id)
+	    ).toEqual({ encryptedNoteKey: "new_remaining_share_abcdefghijklmnopqrstuvwxyz" });
+	  });
 	  it("creates folder and note, then updates with optimistic version", async () => {
 	    const app = createTestApp();
 	    const agent = await registerAgent(app, "notes_user");

@@ -84,6 +84,7 @@ export const notes = sqliteTable("notes", {
   titleFormatVersion: integer("title_format_version"),
   encryptedNoteKey: text("encrypted_note_key").notNull(),
   noteKeyNonce: text("note_key_nonce").notNull(),
+  noteKeyFormatVersion: integer("note_key_format_version").notNull().default(1),
   contentCipher: text("content_cipher").notNull(),
   contentNonce: text("content_nonce").notNull(),
   contentLength: integer("content_length").notNull(),

@@ -69,8 +69,9 @@ export function runMigrations(sqlite: Database.Database): void {
 	      title_cipher TEXT,
 	      title_nonce TEXT,
 	      title_format_version INTEGER,
-      encrypted_note_key TEXT NOT NULL,
-      note_key_nonce TEXT NOT NULL,
+		      encrypted_note_key TEXT NOT NULL,
+		      note_key_nonce TEXT NOT NULL,
+		      note_key_format_version INTEGER NOT NULL DEFAULT 1,
       content_cipher TEXT NOT NULL,
       content_nonce TEXT NOT NULL,
       content_length INTEGER NOT NULL,
@@ -328,6 +329,7 @@ export function runMigrations(sqlite: Database.Database): void {
 	addColumnIfMissing(sqlite, "notes", "title_cipher", "TEXT");
 	addColumnIfMissing(sqlite, "notes", "title_nonce", "TEXT");
 	addColumnIfMissing(sqlite, "notes", "title_format_version", "INTEGER");
+	addColumnIfMissing(sqlite, "notes", "note_key_format_version", "INTEGER NOT NULL DEFAULT 1");
 	addColumnIfMissing(sqlite, "notes", "root_version", "INTEGER NOT NULL DEFAULT 1");
 	addColumnIfMissing(sqlite, "notes", "root_section_id", "TEXT");
 	addColumnIfMissing(sqlite, "notes", "key_epoch", "INTEGER NOT NULL DEFAULT 1");

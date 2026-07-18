@@ -9,7 +9,7 @@ import { deleteEncryptedAttachment } from "../attachments/storage.js";
 import { canEditNote, canOwnNote, canReadNote, getNoteAccess } from "./access.js";
 import { writeRequestEvent } from "./events.js";
 
-const createNoteSchema = z.object({
+const legacyCreateNoteSchema = z.object({
   id: z.uuid(),
   folderId: z.uuid().nullable().optional(),
   title: z.string().min(1).max(200),
@@ -20,7 +20,21 @@ const createNoteSchema = z.object({
   contentLength: z.number().int().nonnegative()
 });
 
-const updateNoteSchema = z.object({
+const protectedCreateNoteSchema = z.object({
+  id: z.uuid(),
+  folderId: z.uuid().nullable().optional(),
+  rootSectionId: z.uuid(),
+  titleCipher: z.string().min(1),
+  titleNonce: z.string().min(16),
+  titleFormatVersion: z.literal(2),
+  encryptedNoteKey: z.string().min(16),
+  noteKeyNonce: z.string().min(16),
+  noteKeyFormatVersion: z.literal(2)
+});
+
+const createNoteSchema = z.union([protectedCreateNoteSchema, legacyCreateNoteSchema]);
+
+const legacyUpdateNoteSchema = z.object({
   folderId: z.uuid().nullable().optional(),
   title: z.string().min(1).max(200).optional(),
   contentCipher: z.string().min(1),
@@ -28,7 +42,27 @@ const updateNoteSchema = z.object({
   contentLength: z.number().int().nonnegative(),
   version: z.number().int().positive()
 });
-const rotateNoteKeySchema = z.object({
+const protectedUpdateNoteSchema = z
+  .object({
+    folderId: z.uuid().nullable().optional(),
+    titleCipher: z.string().min(1).optional(),
+    titleNonce: z.string().min(16).optional(),
+    titleFormatVersion: z.literal(2).optional(),
+    rootVersion: z.number().int().positive(),
+    keyEpoch: z.number().int().positive()
+  })
+  .superRefine((value, context) => {
+    const titleFieldCount = [
+      value.titleCipher,
+      value.titleNonce,
+      value.titleFormatVersion
+    ].filter((field) => field !== undefined).length;
+    if (titleFieldCount !== 0 && titleFieldCount !== 3) {
+      context.addIssue({ code: "custom", message: "Incomplete encrypted title" });
+    }
+  });
+const updateNoteSchema = z.union([protectedUpdateNoteSchema, legacyUpdateNoteSchema]);
+const legacyRotateNoteKeySchema = z.object({
   encryptedNoteKey: z.string().min(16),
   noteKeyNonce: z.string().min(16),
   contentCipher: z.string().min(1),
@@ -51,6 +85,31 @@ const rotateNoteKeySchema = z.object({
     })
   )
 });
+const linkedRotateNoteKeySchema = z.object({
+  mode: z.literal("linked"),
+  revokedUserId: z.uuid(),
+  rootVersion: z.number().int().positive(),
+  sourceEpoch: z.number().int().positive(),
+  targetEpoch: z.number().int().positive(),
+  encryptedNoteKey: z.string().min(16),
+  noteKeyNonce: z.string().min(16),
+  noteKeyFormatVersion: z.literal(2),
+  previousKeyCipher: z.string().min(16),
+  previousKeyNonce: z.string().min(16),
+  linkFormatVersion: z.literal(2),
+  shares: z.array(
+    z.object({
+      recipientUserId: z.uuid(),
+      sharingKeyVersion: z.number().int().positive(),
+      encryptedNoteKey: z.string().min(32),
+      formatVersion: z.literal(2)
+    })
+  )
+});
+const rotateNoteKeySchema = z.union([
+  linkedRotateNoteKeySchema,
+  legacyRotateNoteKeySchema
+]);
 
 const memberRoleSchema = z.enum(["editor", "viewer"]);
 
@@ -99,13 +158,16 @@ const noteSelection = {
   id: schema.notes.id,
   folderId: schema.notes.folderId,
   title: schema.notes.title,
+  titleCipher: schema.notes.titleCipher,
+  titleNonce: schema.notes.titleNonce,
+  titleFormatVersion: schema.notes.titleFormatVersion,
   encryptedNoteKey: sql<string | null>`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.encryptedNoteKey} ELSE NULL END`,
   noteKeyNonce: sql<string | null>`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyNonce} ELSE NULL END`,
-  contentCipher: schema.notes.contentCipher,
-  contentNonce: schema.notes.contentNonce,
+  noteKeyFormatVersion: sql<number | null>`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyFormatVersion} ELSE NULL END`,
   contentLength: schema.notes.contentLength,
-  contentUpdatedAt: schema.notes.contentUpdatedAt,
   version: schema.notes.version,
+  rootVersion: schema.notes.rootVersion,
+  rootSectionId: schema.notes.rootSectionId,
   keyEpoch: schema.notes.keyEpoch,
   isDeleted: schema.notes.isDeleted,
   deletedAt: schema.notes.deletedAt,
@@ -162,20 +224,33 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
+    const payload = parsed.data;
     const cursor = context.db.orm.transaction((tx) => {
       tx.insert(schema.notes).values({
-        id: parsed.data.id,
+        id: payload.id,
         userId: session.userId,
         cryptoOwnerId: session.userId,
         folderId,
-        title: parsed.data.title,
-        encryptedNoteKey: parsed.data.encryptedNoteKey,
-        noteKeyNonce: parsed.data.noteKeyNonce,
-        contentCipher: parsed.data.contentCipher,
-        contentNonce: parsed.data.contentNonce,
-        contentLength: parsed.data.contentLength,
+        title: "title" in payload ? payload.title : "",
+        titleCipher: "titleCipher" in payload ? payload.titleCipher : null,
+        titleNonce: "titleCipher" in payload ? payload.titleNonce : null,
+        titleFormatVersion: "titleCipher" in payload ? payload.titleFormatVersion : null,
+        encryptedNoteKey: payload.encryptedNoteKey,
+        noteKeyNonce: payload.noteKeyNonce,
+        noteKeyFormatVersion: "titleCipher" in payload ? payload.noteKeyFormatVersion : 1,
+        contentCipher: "contentCipher" in payload ? payload.contentCipher : "",
+        contentNonce: "contentCipher" in payload ? payload.contentNonce : "",
+        contentLength: "contentCipher" in payload ? payload.contentLength : 0,
+        rootSectionId: "rootSectionId" in payload ? payload.rootSectionId : null,
         contentUpdatedAt: sql`CURRENT_TIMESTAMP`
       }).run();
+      if ("rootSectionId" in payload) {
+        tx.insert(schema.noteSections).values({
+          id: payload.rootSectionId,
+          noteId: payload.id,
+          createdEpoch: 1
+        }).run();
+      }
       tx.insert(schema.noteMemberships).values({
         noteId: parsed.data.id,
         userId: session.userId,
@@ -191,7 +266,13 @@ export function createNotesRouter(context: AppContext): Router {
     });
     publishEventCursors(context, [cursor]);
 
-    response.status(201).json({ id: parsed.data.id, version: 1 });
+    response.status(201).json({
+      id: parsed.data.id,
+      version: 1,
+      rootVersion: 1,
+      keyEpoch: 1,
+      rootSectionId: "rootSectionId" in payload ? payload.rootSectionId : null
+    });
   });
 
   router.get("/:id", (request, response) => {
@@ -529,6 +610,240 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
+    if ("mode" in parsed.data) {
+      const linkedRotation = parsed.data;
+      const outcome = context.db.orm.transaction((tx) => {
+        const current = tx
+          .select({
+            noteId: schema.notes.id,
+            version: schema.notes.version,
+            rootVersion: schema.notes.rootVersion,
+            keyEpoch: schema.notes.keyEpoch,
+            isDeleted: schema.notes.isDeleted,
+            rotationFenced: schema.notes.rotationFenced,
+            role: schema.noteMemberships.role,
+            status: schema.noteMemberships.status
+          })
+          .from(schema.notes)
+          .innerJoin(
+            schema.noteMemberships,
+            eq(schema.noteMemberships.noteId, schema.notes.id)
+          )
+          .where(
+            and(
+              eq(schema.notes.id, request.params.id),
+              eq(schema.noteMemberships.userId, session.userId)
+            )
+          )
+          .get();
+        if (current?.role !== "owner" || current.status !== "active") {
+          return { kind: "not-found" as const };
+        }
+        if (
+          current.isDeleted ||
+          current.rotationFenced ||
+          current.rootVersion !== linkedRotation.rootVersion ||
+          current.keyEpoch !== linkedRotation.sourceEpoch ||
+          linkedRotation.targetEpoch !== linkedRotation.sourceEpoch + 1
+        ) {
+          return { kind: "conflict" as const };
+        }
+
+        const activeMembers = tx
+          .select({
+            userId: schema.noteMemberships.userId,
+            role: schema.noteMemberships.role,
+            status: schema.noteMemberships.status
+          })
+          .from(schema.noteMemberships)
+          .where(eq(schema.noteMemberships.noteId, current.noteId))
+          .all();
+        const revoked = activeMembers.find(
+          (member) =>
+            member.userId === linkedRotation.revokedUserId &&
+            member.status === "active" &&
+            member.role !== "owner"
+        );
+        if (!revoked) {
+          return { kind: "not-found" as const };
+        }
+        const remainingIds = activeMembers
+          .filter(
+            (member) =>
+              member.status === "active" &&
+              member.role !== "owner" &&
+              member.userId !== linkedRotation.revokedUserId
+          )
+          .map((member) => member.userId);
+        if (
+          !sameMembers(
+            remainingIds,
+            linkedRotation.shares.map((share) => share.recipientUserId)
+          )
+        ) {
+          return { kind: "invalid-set" as const };
+        }
+        for (const share of linkedRotation.shares) {
+          const trustedKey = tx
+            .select({ userId: schema.userSharingKeys.userId })
+            .from(schema.userSharingKeys)
+            .where(
+              and(
+                eq(schema.userSharingKeys.userId, share.recipientUserId),
+                eq(
+                  schema.userSharingKeys.sharingKeyVersion,
+                  share.sharingKeyVersion
+                )
+              )
+            )
+            .get();
+          if (!trustedKey) {
+            return { kind: "invalid-set" as const };
+          }
+        }
+
+        const fence = tx
+          .update(schema.notes)
+          .set({ rotationFenced: true })
+          .where(
+            and(
+              eq(schema.notes.id, current.noteId),
+              eq(schema.notes.rootVersion, linkedRotation.rootVersion),
+              eq(schema.notes.keyEpoch, linkedRotation.sourceEpoch),
+              eq(schema.notes.rotationFenced, false)
+            )
+          )
+          .run();
+        if (fence.changes !== 1) {
+          return { kind: "conflict" as const };
+        }
+        const revokedMembership = tx
+          .update(schema.noteMemberships)
+          .set({ status: "revoked", updatedAt: sql`CURRENT_TIMESTAMP` })
+          .where(
+            and(
+              eq(schema.noteMemberships.noteId, current.noteId),
+              eq(schema.noteMemberships.userId, linkedRotation.revokedUserId),
+              eq(schema.noteMemberships.status, "active"),
+              ne(schema.noteMemberships.role, "owner")
+            )
+          )
+          .run();
+        if (revokedMembership.changes !== 1) {
+          return { kind: "conflict" as const };
+        }
+        tx.delete(schema.noteKeyShares)
+          .where(
+            and(
+              eq(schema.noteKeyShares.noteId, current.noteId),
+              eq(
+                schema.noteKeyShares.recipientUserId,
+                linkedRotation.revokedUserId
+              )
+            )
+          )
+          .run();
+        for (const share of linkedRotation.shares) {
+          tx.insert(schema.noteKeyShares)
+            .values({
+              noteId: current.noteId,
+              recipientUserId: share.recipientUserId,
+              senderUserId: session.userId,
+              sharingKeyVersion: share.sharingKeyVersion,
+              encryptedNoteKey: share.encryptedNoteKey,
+              formatVersion: share.formatVersion
+            })
+            .onConflictDoUpdate({
+              target: [
+                schema.noteKeyShares.noteId,
+                schema.noteKeyShares.recipientUserId
+              ],
+              set: {
+                senderUserId: session.userId,
+                sharingKeyVersion: share.sharingKeyVersion,
+                encryptedNoteKey: share.encryptedNoteKey,
+                formatVersion: share.formatVersion,
+                createdAt: sql`CURRENT_TIMESTAMP`
+              }
+            })
+            .run();
+        }
+        tx.insert(schema.noteEpochLinks)
+          .values({
+            noteId: current.noteId,
+            sourceEpoch: linkedRotation.sourceEpoch,
+            targetEpoch: linkedRotation.targetEpoch,
+            previousKeyCipher: linkedRotation.previousKeyCipher,
+            nonce: linkedRotation.previousKeyNonce,
+            formatVersion: linkedRotation.linkFormatVersion
+          })
+          .run();
+        tx.update(schema.notes)
+          .set({
+            encryptedNoteKey: linkedRotation.encryptedNoteKey,
+            noteKeyNonce: linkedRotation.noteKeyNonce,
+            noteKeyFormatVersion: linkedRotation.noteKeyFormatVersion,
+            keyEpoch: linkedRotation.targetEpoch,
+            rootVersion: sql`${schema.notes.rootVersion} + 1`,
+            version: sql`${schema.notes.version} + 1`,
+            rotationFenced: false,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(
+            and(
+              eq(schema.notes.id, current.noteId),
+              eq(schema.notes.rotationFenced, true)
+            )
+          )
+          .run();
+        const eventCursor = writeRequestEvent(
+          context,
+          request,
+          {
+            noteId: current.noteId,
+            actorUserId: session.userId,
+            eventType: "membership.revoked",
+            noteVersion: current.version + 1,
+            resourceType: "membership",
+            resourceId: `${current.noteId}:${linkedRotation.revokedUserId}`,
+            payloadMetadata: {
+              membershipUserId: linkedRotation.revokedUserId,
+              targetEpoch: linkedRotation.targetEpoch
+            }
+          },
+          tx
+        );
+        return {
+          kind: "rotated" as const,
+          eventCursor,
+          version: current.version + 1,
+          rootVersion: current.rootVersion + 1
+        };
+      });
+      if (outcome.kind === "not-found") {
+        sendApiError(response, "not_found", "Note not found");
+        return;
+      }
+      if (outcome.kind === "invalid-set") {
+        sendApiError(response, "bad_request", "Key shares must match active members");
+        return;
+      }
+      if (outcome.kind === "conflict") {
+        sendApiError(response, "conflict", "Note rotation state changed");
+        return;
+      }
+      publishEventCursors(context, [outcome.eventCursor]);
+      response.json({
+        id: request.params.id,
+        version: outcome.version,
+        rootVersion: outcome.rootVersion,
+        keyEpoch: linkedRotation.targetEpoch
+      });
+      return;
+    }
+
+    const legacyRotation = parsed.data;
+
     const access = getNoteAccess(context, request.params.id, session.userId);
     if (!canOwnNote(access)) {
       sendApiError(response, "not_found", "Note not found");
@@ -538,7 +853,7 @@ export function createNotesRouter(context: AppContext): Router {
       sendApiError(response, "conflict", "Restore note before rotating keys");
       return;
     }
-    if (access.version !== parsed.data.version) {
+    if (access.version !== legacyRotation.version) {
       sendApiError(response, "conflict", "Note version conflict");
       return;
     }
@@ -553,19 +868,19 @@ export function createNotesRouter(context: AppContext): Router {
       ))
       .all();
     const activeMemberIds = activeMembers.map((member) => member.userId);
-    const shareRecipientIds = parsed.data.shares.map((share) => share.recipientUserId);
+    const shareRecipientIds = legacyRotation.shares.map((share) => share.recipientUserId);
     if (!sameMembers(activeMemberIds, shareRecipientIds)) {
       sendApiError(response, "bad_request", "Key shares must cover all active members");
       return;
     }
 
-    const validShareRows = parsed.data.shares.length
+    const validShareRows = legacyRotation.shares.length
       ? context.db.orm.all<{ userId: string; sharingKeyVersion: number }>(sql`
           SELECT user_id AS userId, sharing_key_version AS sharingKeyVersion
           FROM ${schema.userSharingKeys}
           WHERE (user_id, sharing_key_version) IN (
             ${sql.join(
-              parsed.data.shares.map((share) =>
+              legacyRotation.shares.map((share) =>
                 sql`(${share.recipientUserId}, ${share.sharingKeyVersion})`
               ),
               sql`, `
@@ -577,7 +892,7 @@ export function createNotesRouter(context: AppContext): Router {
       validShareRows.map((row) => `${row.userId}:${String(row.sharingKeyVersion)}`)
     );
     if (
-      parsed.data.shares.some(
+      legacyRotation.shares.some(
         (share) =>
           !validShareKeys.has(`${share.recipientUserId}:${String(share.sharingKeyVersion)}`)
       )
@@ -592,7 +907,7 @@ export function createNotesRouter(context: AppContext): Router {
       .where(eq(schema.attachments.noteId, access.noteId))
       .all();
     const attachmentIds = attachmentRows.map((attachment) => attachment.id);
-    const rotatedAttachmentIds = parsed.data.attachmentKeys.map(
+    const rotatedAttachmentIds = legacyRotation.attachmentKeys.map(
       (attachment) => attachment.attachmentId
     );
     if (!sameMembers(attachmentIds, rotatedAttachmentIds)) {
@@ -604,11 +919,11 @@ export function createNotesRouter(context: AppContext): Router {
     const eventCursor = context.db.orm.transaction((tx) => {
       const updateResult = tx.update(schema.notes)
         .set({
-          encryptedNoteKey: parsed.data.encryptedNoteKey,
-          noteKeyNonce: parsed.data.noteKeyNonce,
-          contentCipher: parsed.data.contentCipher,
-          contentNonce: parsed.data.contentNonce,
-          contentLength: parsed.data.contentLength,
+          encryptedNoteKey: legacyRotation.encryptedNoteKey,
+          noteKeyNonce: legacyRotation.noteKeyNonce,
+          contentCipher: legacyRotation.contentCipher,
+          contentNonce: legacyRotation.contentNonce,
+          contentLength: legacyRotation.contentLength,
           contentUpdatedAt: sql`CURRENT_TIMESTAMP`,
           version: sql`${schema.notes.version} + 1`,
           keyEpoch: sql`${schema.notes.keyEpoch} + 1`,
@@ -616,13 +931,13 @@ export function createNotesRouter(context: AppContext): Router {
         })
         .where(and(
           eq(schema.notes.id, access.noteId),
-          eq(schema.notes.version, parsed.data.version)
+          eq(schema.notes.version, legacyRotation.version)
         ))
         .run();
       if (updateResult.changes !== 1) {
         return null;
       }
-      for (const share of parsed.data.shares) {
+      for (const share of legacyRotation.shares) {
         tx.insert(schema.noteKeyShares)
           .values({
             noteId: access.noteId,
@@ -644,7 +959,7 @@ export function createNotesRouter(context: AppContext): Router {
           })
           .run();
       }
-      for (const attachmentKey of parsed.data.attachmentKeys) {
+      for (const attachmentKey of legacyRotation.attachmentKeys) {
         tx.update(schema.attachments)
           .set({
             encryptedAttachmentKey: attachmentKey.encryptedAttachmentKey,
@@ -691,6 +1006,143 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
+    if ("rootVersion" in parsed.data) {
+      const protectedUpdate = parsed.data;
+      const metadataUpdate = context.db.orm.transaction((tx) => {
+        const current = tx
+          .select({
+            noteId: schema.notes.id,
+            folderId: schema.notes.folderId,
+            rootVersion: schema.notes.rootVersion,
+            keyEpoch: schema.notes.keyEpoch,
+            isDeleted: schema.notes.isDeleted,
+            rotationFenced: schema.notes.rotationFenced,
+            role: schema.noteMemberships.role,
+            status: schema.noteMemberships.status
+          })
+          .from(schema.notes)
+          .innerJoin(
+            schema.noteMemberships,
+            eq(schema.noteMemberships.noteId, schema.notes.id)
+          )
+          .where(
+            and(
+              eq(schema.notes.id, request.params.id),
+              eq(schema.noteMemberships.userId, session.userId)
+            )
+          )
+          .get();
+        if (
+          current?.status !== "active" ||
+          (current.role !== "owner" && current.role !== "editor")
+        ) {
+          return { kind: "not-found" as const };
+        }
+        if (
+          current.isDeleted ||
+          current.rotationFenced ||
+          current.rootVersion !== protectedUpdate.rootVersion ||
+          current.keyEpoch !== protectedUpdate.keyEpoch
+        ) {
+          return { kind: "conflict" as const };
+        }
+        const folderId = protectedUpdate.folderId ?? current.folderId;
+        if (
+          current.role !== "owner" &&
+          protectedUpdate.folderId !== undefined &&
+          protectedUpdate.folderId !== current.folderId
+        ) {
+          return { kind: "invalid-folder" as const };
+        }
+        if (current.role === "owner" && folderId) {
+          const folder = tx
+            .select({ id: schema.folders.id })
+            .from(schema.folders)
+            .where(
+              and(
+                eq(schema.folders.id, folderId),
+                eq(schema.folders.userId, session.userId)
+              )
+            )
+            .get();
+          if (!folder) {
+            return { kind: "invalid-folder" as const };
+          }
+        }
+
+        const updateResult = tx
+          .update(schema.notes)
+          .set({
+            folderId,
+            titleCipher: protectedUpdate.titleCipher,
+            titleNonce: protectedUpdate.titleNonce,
+            titleFormatVersion: protectedUpdate.titleFormatVersion,
+            rootVersion: sql`${schema.notes.rootVersion} + 1`,
+            version: sql`${schema.notes.version} + 1`,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(
+            and(
+              eq(schema.notes.id, current.noteId),
+              eq(schema.notes.rootVersion, protectedUpdate.rootVersion),
+              eq(schema.notes.keyEpoch, protectedUpdate.keyEpoch),
+              eq(schema.notes.rotationFenced, false)
+            )
+          )
+          .run();
+        if (updateResult.changes !== 1) {
+          return { kind: "conflict" as const };
+        }
+        const nextRootVersion = current.rootVersion + 1;
+        const eventCursor = writeRequestEvent(
+          context,
+          request,
+          {
+            noteId: current.noteId,
+            actorUserId: session.userId,
+            eventType: "note.updated",
+            noteVersion: nextRootVersion
+          },
+          tx
+        );
+        const saved = tx
+          .select({ updatedAt: schema.notes.updatedAt })
+          .from(schema.notes)
+          .where(eq(schema.notes.id, current.noteId))
+          .get();
+        return saved
+          ? {
+              kind: "saved" as const,
+              eventCursor,
+              rootVersion: nextRootVersion,
+              updatedAt: saved.updatedAt
+            }
+          : { kind: "conflict" as const };
+      });
+      if (metadataUpdate.kind === "not-found") {
+        sendApiError(response, "not_found", "Note not found");
+        return;
+      }
+      if (metadataUpdate.kind === "invalid-folder") {
+        sendApiError(response, "bad_request", "Invalid folder");
+        return;
+      }
+      if (metadataUpdate.kind === "conflict") {
+        sendApiError(response, "conflict", "Note metadata changed");
+        return;
+      }
+      publishEventCursors(context, [metadataUpdate.eventCursor]);
+      response.json({
+        id: request.params.id,
+        rootVersion: metadataUpdate.rootVersion,
+        keyEpoch: protectedUpdate.keyEpoch,
+        updatedAt: `${metadataUpdate.updatedAt.replace(" ", "T")}Z`
+      });
+      return;
+    }
+
+    const legacyUpdate = parsed.data;
+
     const access = getNoteAccess(context, request.params.id, session.userId);
     if (!canEditNote(access)) {
       sendApiError(response, "not_found", "Note not found");
@@ -700,16 +1152,16 @@ export function createNotesRouter(context: AppContext): Router {
       sendApiError(response, "conflict", "Restore note before updating");
       return;
     }
-    if (access.version !== parsed.data.version) {
+    if (access.version !== legacyUpdate.version) {
       sendApiError(response, "conflict", "Note version conflict");
       return;
     }
 
-    const folderId = parsed.data.folderId ?? access.folderId;
+    const folderId = legacyUpdate.folderId ?? access.folderId;
     if (
       access.role !== "owner" &&
-      parsed.data.folderId !== undefined &&
-      parsed.data.folderId !== access.folderId
+      legacyUpdate.folderId !== undefined &&
+      legacyUpdate.folderId !== access.folderId
     ) {
       sendApiError(response, "bad_request", "Shared notes cannot be moved");
       return;
@@ -719,23 +1171,23 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const title = parsed.data.title ?? undefined;
+    const title = legacyUpdate.title ?? undefined;
     const nextVersion = access.version + 1;
     const update = context.db.orm.transaction((tx) => {
       const updateResult = tx.update(schema.notes)
         .set({
           folderId,
           title,
-          contentCipher: parsed.data.contentCipher,
-          contentNonce: parsed.data.contentNonce,
-          contentLength: parsed.data.contentLength,
+          contentCipher: legacyUpdate.contentCipher,
+          contentNonce: legacyUpdate.contentNonce,
+          contentLength: legacyUpdate.contentLength,
           contentUpdatedAt: sql`CURRENT_TIMESTAMP`,
           version: sql`${schema.notes.version} + 1`,
           updatedAt: sql`CURRENT_TIMESTAMP`
         })
         .where(and(
           eq(schema.notes.id, access.noteId),
-          eq(schema.notes.version, parsed.data.version)
+          eq(schema.notes.version, legacyUpdate.version)
         ))
         .run();
       if (updateResult.changes !== 1) {
