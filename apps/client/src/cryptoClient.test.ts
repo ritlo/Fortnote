@@ -5,7 +5,9 @@ import {
   createEpochLinkV2,
   createUserSharingKey,
   createLoginAuthVerifier,
+  createPasswordChangeCrypto,
   createRegistrationCrypto,
+  createRecoveryRotationCrypto,
   decryptNoteKeyShare,
   decryptNote,
   decryptCrdtMessage,
@@ -97,6 +99,45 @@ describe("client crypto workflows", () => {
 
     expect(opened.rootKey).toEqual(registration.rootKey);
     expect(newVerifier).toBe(recovery.passwordChange.authVerifier);
+  });
+
+  it("opens context-bound password and recovery root envelopes", async () => {
+    const registration = await createRegistrationCrypto("alice", "old password");
+    const passwordChange = await createPasswordChangeCrypto(
+      registration.rootKey,
+      "new password",
+      { userId: "user-a", keyMaterialVersion: 2 }
+    );
+    const opened = await openVault(
+      "new password",
+      passwordChange.authKdf,
+      passwordChange.vaultKdf,
+      passwordChange.encryptedRootKey,
+      passwordChange.rootKeyNonce,
+      { userId: "user-a", formatVersion: 2, contextVersion: 2 }
+    );
+    expect(opened.rootKey).toEqual(registration.rootKey);
+
+    const recoveryRotation = await createRecoveryRotationCrypto(
+      registration.rootKey,
+      { userId: "user-a", keyMaterialVersion: 3 }
+    );
+    const recovered = await createAccountRecoveryCrypto({
+      recoverySecret: recoveryRotation.recoverySecret,
+      recoveryKdf: recoveryRotation.recoveryKdf,
+      recoveryEncryptedRootKey: recoveryRotation.recoveryEncryptedRootKey,
+      recoveryRootKeyNonce: recoveryRotation.recoveryRootKeyNonce,
+      recoveryRootKeyFormatVersion: 2,
+      recoveryRootKeyContextVersion: 3,
+      userId: "user-a",
+      nextKeyMaterialVersion: 4,
+      newPassword: "recovered password"
+    });
+    expect(recovered.rootKey).toEqual(registration.rootKey);
+    expect(recovered.passwordChange).toMatchObject({
+      rootKeyFormatVersion: 2,
+      rootKeyContextVersion: 4
+    });
   });
 
   it("wraps sharing keys with the root key", async () => {
@@ -279,6 +320,7 @@ describe("client crypto workflows", () => {
     const privateEnvelope = await encryptSharingPrivateKeyEnvelopeV2({
       userId: "owner-a",
       sharingKeyVersion: 4,
+      publicKey: "public-key-a",
       rootKey,
       privateKey
     });
@@ -286,10 +328,20 @@ describe("client crypto workflows", () => {
       decryptSharingPrivateKeyEnvelopeV2({
         userId: "owner-a",
         sharingKeyVersion: 4,
+        publicKey: "public-key-a",
         rootKey,
         envelope: privateEnvelope
       })
     ).resolves.toEqual(privateKey);
+    await expect(
+      decryptSharingPrivateKeyEnvelopeV2({
+        userId: "owner-a",
+        sharingKeyVersion: 4,
+        publicKey: "public-key-b",
+        rootKey,
+        envelope: privateEnvelope
+      })
+    ).rejects.toThrow();
 
     const noteEnvelope = await encryptNoteKeyEnvelopeV2({
       cryptoOwnerId: "owner-a",
@@ -316,7 +368,8 @@ describe("client crypto workflows", () => {
       noteId: "note-a",
       keyEpoch: 4,
       recipientUserId: "recipient-a",
-      recipientSharingKeyVersion: 5
+      recipientSharingKeyVersion: 5,
+      senderUserId: "owner-a"
     };
     const encryptedNoteKey = await encryptNoteKeyShareV2({
       ...context,

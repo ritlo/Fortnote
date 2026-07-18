@@ -32,6 +32,38 @@ describe("sharing key routes", () => {
       .expect(409);
   });
 
+  it("upgrades a private-key envelope without replacing its public identity", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "sharing_migration");
+    const legacy = buildSharingKeyPayload(1);
+    const upgraded = {
+      ...legacy,
+      encryptedPrivateKey: "protected_private_key_v2_abcdefghijklmnopqrstuvwxyz",
+      privateKeyNonce: "protected_private_nonce_v2_abcdefghijklmnopqrstuvwxyz",
+      formatVersion: 2
+    };
+
+    await agent
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(legacy)
+      .expect(201);
+    await agent
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send(upgraded)
+      .expect(200);
+
+    const current = await agent.get("/api/sharing-keys/current").expect(200);
+    expect(current.body).toMatchObject(upgraded);
+
+    await agent
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send({ ...upgraded, publicKey: `${upgraded.publicKey}_changed` })
+      .expect(409);
+  });
+
   it("looks up only another user's public sharing key", async () => {
     const app = createTestApp();
     const alice = await registerAgent(app, "sharing_alice");

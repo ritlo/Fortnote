@@ -24,7 +24,12 @@ import {
   createUserSharingKey,
   openVault
 } from "../cryptoClient";
-import { authKdf, recoveryKdf, vaultKdf } from "../lib/keyMaterial";
+import {
+  authKdf,
+  migrateRootKeyEnvelopeV2,
+  recoveryKdf,
+  vaultKdf
+} from "../lib/keyMaterial";
 import { openFortnoteIndexedDb, type FortnoteIndexedDb } from "../lib/indexedDb";
 import { removeSharingKeyTrustRecords } from "../lib/sharingKeyTrust";
 import { useAppStore } from "../store/appStore";
@@ -85,7 +90,20 @@ export function useAuthActions() {
         const currentUser = await register(registration.payload);
         setUser(currentUser);
         setRootKey(registration.rootKey);
-        setKeyMaterialVersion(1);
+        let registeredKeyMaterialVersion = 1;
+        try {
+          registeredKeyMaterialVersion = await migrateRootKeyEnvelopeV2({
+            userId: currentUser.id,
+            rootKey: registration.rootKey,
+            vaultKey: registration.vaultKey,
+            vaultKdf: registration.payload.vaultKdf,
+            keyMaterialVersion: 1,
+            rootKeyFormatVersion: 1
+          });
+        } catch {
+          // Registration remains usable; the next unlock retries the v2 envelope write.
+        }
+        setKeyMaterialVersion(registeredKeyMaterialVersion);
         setRecoverySecret(registration.recoverySecret);
         setStatus("Loading vault");
         await ensureSharingKey(registration.rootKey);
@@ -103,6 +121,20 @@ export function useAuthActions() {
           recoveryKdf: recoveryKdf(recoveryParams),
           recoveryEncryptedRootKey: recoveryParams.recoveryEncryptedRootKey,
           recoveryRootKeyNonce: recoveryParams.recoveryRootKeyNonce,
+          ...(recoveryParams.recoveryRootKeyFormatVersion !== undefined
+            ? {
+                recoveryRootKeyFormatVersion:
+                  recoveryParams.recoveryRootKeyFormatVersion
+              }
+            : {}),
+          ...(recoveryParams.recoveryRootKeyContextVersion !== undefined
+            ? {
+                recoveryRootKeyContextVersion:
+                  recoveryParams.recoveryRootKeyContextVersion
+              }
+            : {}),
+          ...(recoveryParams.userId ? { userId: recoveryParams.userId } : {}),
+          nextKeyMaterialVersion: recoveryParams.keyMaterialVersion + 1,
           newPassword: recoveryNewPassword
         });
         const currentUser = await recover({
@@ -113,6 +145,8 @@ export function useAuthActions() {
           vaultKdf: recovery.passwordChange.vaultKdf,
           encryptedRootKey: recovery.passwordChange.encryptedRootKey,
           rootKeyNonce: recovery.passwordChange.rootKeyNonce,
+          rootKeyFormatVersion: recovery.passwordChange.rootKeyFormatVersion,
+          rootKeyContextVersion: recovery.passwordChange.rootKeyContextVersion,
           keyMaterialVersion: recoveryParams.keyMaterialVersion
         });
         setUser(currentUser);
@@ -138,11 +172,30 @@ export function useAuthActions() {
         authKdf(kdf),
         vaultKdf(keyMaterial),
         keyMaterial.encryptedRootKey,
-        keyMaterial.rootKeyNonce
+        keyMaterial.rootKeyNonce,
+        {
+          userId: currentUser.id,
+          formatVersion: keyMaterial.rootKeyFormatVersion ?? 1,
+          contextVersion:
+            keyMaterial.rootKeyContextVersion ?? keyMaterial.keyMaterialVersion
+        }
       );
       setUser(currentUser);
       setRootKey(openedVault.rootKey);
-      setKeyMaterialVersion(keyMaterial.keyMaterialVersion);
+      let currentKeyMaterialVersion = keyMaterial.keyMaterialVersion;
+      try {
+        currentKeyMaterialVersion = await migrateRootKeyEnvelopeV2({
+          userId: currentUser.id,
+          rootKey: openedVault.rootKey,
+          vaultKey: openedVault.vaultKey,
+          vaultKdf: vaultKdf(keyMaterial),
+          keyMaterialVersion: keyMaterial.keyMaterialVersion,
+          rootKeyFormatVersion: keyMaterial.rootKeyFormatVersion ?? 1
+        });
+      } catch {
+        // The v1 read succeeded; keep the vault open and retry migration next unlock.
+      }
+      setKeyMaterialVersion(currentKeyMaterialVersion);
       setStatus("Loading vault");
       await ensureSharingKey(openedVault.rootKey);
       await loadFolders();
@@ -262,7 +315,7 @@ export function useAuthActions() {
   }
 
   async function changePassword() {
-    if (!rootKey || !newPassword.trim()) {
+    if (!rootKey || !user || !newPassword.trim()) {
       return;
     }
 
@@ -270,12 +323,17 @@ export function useAuthActions() {
     setStatus("Rewrapping vault");
     try {
       const current = await getKeyMaterial();
-      const rewrapped = await createPasswordChangeCrypto(rootKey, newPassword);
+      const rewrapped = await createPasswordChangeCrypto(rootKey, newPassword, {
+        userId: user.id,
+        keyMaterialVersion: current.keyMaterialVersion + 1
+      });
       const updated = await updateKeyMaterial({
         newAuthVerifier: rewrapped.authVerifier,
         authKdf: rewrapped.authKdf,
         encryptedRootKey: rewrapped.encryptedRootKey,
         rootKeyNonce: rewrapped.rootKeyNonce,
+        rootKeyFormatVersion: rewrapped.rootKeyFormatVersion,
+        rootKeyContextVersion: rewrapped.rootKeyContextVersion,
         vaultKdf: rewrapped.vaultKdf,
         keyMaterialVersion: current.keyMaterialVersion
       });
@@ -292,7 +350,7 @@ export function useAuthActions() {
   }
 
   async function rotateRecoveryKey() {
-    if (!rootKey) {
+    if (!rootKey || !user) {
       return;
     }
 
@@ -300,15 +358,23 @@ export function useAuthActions() {
     setStatus("Rotating recovery key");
     try {
       const current = await getKeyMaterial();
-      const rotated = await createRecoveryRotationCrypto(rootKey);
+      const rotated = await createRecoveryRotationCrypto(rootKey, {
+        userId: user.id,
+        keyMaterialVersion: current.keyMaterialVersion + 1
+      });
       const updated = await updateKeyMaterial({
         encryptedRootKey: current.encryptedRootKey,
         rootKeyNonce: current.rootKeyNonce,
+        rootKeyFormatVersion: current.rootKeyFormatVersion ?? 1,
+        rootKeyContextVersion:
+          current.rootKeyContextVersion ?? current.keyMaterialVersion,
         vaultKdf: vaultKdf(current),
         recoveryAuthVerifier: rotated.recoveryAuthVerifier,
         recoveryKdf: rotated.recoveryKdf,
         recoveryEncryptedRootKey: rotated.recoveryEncryptedRootKey,
         recoveryRootKeyNonce: rotated.recoveryRootKeyNonce,
+        recoveryRootKeyFormatVersion: rotated.recoveryRootKeyFormatVersion,
+        recoveryRootKeyContextVersion: rotated.recoveryRootKeyContextVersion,
         keyMaterialVersion: current.keyMaterialVersion
       });
       setKeyMaterialVersion(updated.keyMaterialVersion);
@@ -323,7 +389,7 @@ export function useAuthActions() {
   }
 
   async function rotateSharingKey() {
-    if (!rootKey) {
+    if (!rootKey || !user) {
       return;
     }
 
@@ -331,7 +397,11 @@ export function useAuthActions() {
     setStatus("Rotating sharing key");
     try {
       const current = await getCurrentSharingKey();
-      const created = await createUserSharingKey(rootKey, current.sharingKeyVersion + 1);
+      const created = await createUserSharingKey(
+        rootKey,
+        current.sharingKeyVersion + 1,
+        user.id
+      );
       await storeCurrentSharingKey(created.payload);
       setOpenedSharingKey(created.opened);
       setStatus("Sharing key rotated");

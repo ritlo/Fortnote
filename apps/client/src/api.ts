@@ -108,8 +108,11 @@ export interface AuthKdfResponse {
 }
 
 export interface RecoveryParamsResponse {
+  userId?: string;
   recoveryEncryptedRootKey: string;
   recoveryRootKeyNonce: string;
+  recoveryRootKeyFormatVersion?: number;
+  recoveryRootKeyContextVersion?: number;
   recoveryKdfSalt: string;
   recoveryKdfOpsLimit: number;
   recoveryKdfMemLimit: number;
@@ -120,12 +123,16 @@ export interface RecoveryParamsResponse {
 export interface KeyMaterialResponse {
   encryptedRootKey: string;
   rootKeyNonce: string;
+  rootKeyFormatVersion?: number;
+  rootKeyContextVersion?: number;
   kdfSalt: string;
   kdfOpsLimit: number;
   kdfMemLimit: number;
   kdfVersion: number;
   recoveryEncryptedRootKey: string;
   recoveryRootKeyNonce: string;
+  recoveryRootKeyFormatVersion?: number;
+  recoveryRootKeyContextVersion?: number;
   recoveryKdfSalt: string;
   recoveryKdfOpsLimit: number;
   recoveryKdfMemLimit: number;
@@ -304,11 +311,15 @@ export interface UpdateKeyMaterialPayload {
   authKdf?: KdfParams;
   encryptedRootKey: string;
   rootKeyNonce: string;
+  rootKeyFormatVersion?: number;
+  rootKeyContextVersion?: number;
   vaultKdf: KdfParams;
   recoveryAuthVerifier?: string;
   recoveryKdf?: KdfParams;
   recoveryEncryptedRootKey?: string;
   recoveryRootKeyNonce?: string;
+  recoveryRootKeyFormatVersion?: number;
+  recoveryRootKeyContextVersion?: number;
   keyMaterialVersion: number;
 }
 
@@ -396,6 +407,8 @@ export interface RecoverPayload {
   vaultKdf: KdfParams;
   encryptedRootKey: string;
   rootKeyNonce: string;
+  rootKeyFormatVersion?: number;
+  rootKeyContextVersion?: number;
   keyMaterialVersion: number;
 }
 

@@ -56,6 +56,8 @@ const recoverSchema = z.object({
   vaultKdf: kdfParamsSchema,
   encryptedRootKey: encryptedKeySchema,
   rootKeyNonce: nonceSchema,
+  rootKeyFormatVersion: z.number().int().min(1).max(2).optional(),
+  rootKeyContextVersion: z.number().int().positive().optional(),
   keyMaterialVersion: z.number().int().positive()
 });
 
@@ -79,14 +81,28 @@ function unknownUserKdfResponse(username: string) {
 
 function unknownUserRecoveryResponse(username: string) {
   return {
+    userId: pseudorandomUuid(username, "user-id"),
     recoveryEncryptedRootKey: pseudorandomBase64(username, "recovery-root", 48),
     recoveryRootKeyNonce: pseudorandomBase64(username, "recovery-nonce", 24),
+    recoveryRootKeyFormatVersion: 1,
+    recoveryRootKeyContextVersion: 1,
     recoveryKdfSalt: pseudorandomBase64(username, "recovery-salt", 16),
     recoveryKdfOpsLimit: DEFAULT_KDF.opsLimit,
     recoveryKdfMemLimit: DEFAULT_KDF.memLimit,
     recoveryKdfVersion: DEFAULT_KDF.version,
     keyMaterialVersion: 1
   };
+}
+
+function pseudorandomUuid(username: string, label: string): string {
+  const bytes = createHmac("sha256", DUMMY_RESPONSE_SECRET)
+    .update(`${label}:${username}`)
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function pseudorandomBase64(username: string, label: string, byteLength: number): string {
@@ -259,8 +275,13 @@ export function createAuthRouter(context: AppContext): Router {
     const identity = findAccountIdentity(context, username.data);
     const row = identity ? context.db.orm
       .select({
+        userId: schema.userKeyMaterial.userId,
         recoveryEncryptedRootKey: schema.userKeyMaterial.recoveryEncryptedRootKey,
         recoveryRootKeyNonce: schema.userKeyMaterial.recoveryRootKeyNonce,
+        recoveryRootKeyFormatVersion:
+          schema.userKeyMaterial.recoveryRootKeyFormatVersion,
+        recoveryRootKeyContextVersion:
+          schema.userKeyMaterial.recoveryRootKeyContextVersion,
         recoveryKdfSalt: schema.userKeyMaterial.recoveryKdfSalt,
         recoveryKdfOpsLimit: schema.userKeyMaterial.recoveryKdfOpsLimit,
         recoveryKdfMemLimit: schema.userKeyMaterial.recoveryKdfMemLimit,
@@ -286,7 +307,6 @@ export function createAuthRouter(context: AppContext): Router {
       sendApiError(response, "bad_request", "Invalid registration payload");
       return;
     }
-
     const canonicalHandle = canonicalizeHandle(parsed.data.username);
     if (!canonicalHandle) {
       sendApiError(response, "bad_request", "Invalid account handle");
@@ -386,6 +406,13 @@ export function createAuthRouter(context: AppContext): Router {
       sendApiError(response, "bad_request", "Invalid recovery payload");
       return;
     }
+    if (
+      parsed.data.rootKeyFormatVersion === 2 &&
+      parsed.data.rootKeyContextVersion === undefined
+    ) {
+      sendApiError(response, "bad_request", "Incomplete protected key context");
+      return;
+    }
 
     const identity = findAccountIdentity(context, parsed.data.username);
     const row = identity ? context.db.orm
@@ -436,6 +463,9 @@ export function createAuthRouter(context: AppContext): Router {
           .set({
             encryptedRootKey: parsed.data.encryptedRootKey,
             rootKeyNonce: parsed.data.rootKeyNonce,
+            rootKeyFormatVersion: parsed.data.rootKeyFormatVersion ?? 1,
+            rootKeyContextVersion:
+              parsed.data.rootKeyContextVersion ?? parsed.data.keyMaterialVersion + 1,
             kdfSalt: parsed.data.vaultKdf.salt,
             kdfOpsLimit: parsed.data.vaultKdf.opsLimit,
             kdfMemLimit: parsed.data.vaultKdf.memLimit,

@@ -52,6 +52,7 @@ function attachmentKeyAad(
 export interface RegistrationCrypto {
   payload: RegisterPayload;
   rootKey: Uint8Array;
+  vaultKey: Uint8Array;
   recoverySecret: string;
 }
 
@@ -103,6 +104,8 @@ export interface PasswordChangeCrypto {
   vaultKdf: KdfParams;
   encryptedRootKey: string;
   rootKeyNonce: string;
+  rootKeyFormatVersion: 1 | 2;
+  rootKeyContextVersion: number;
 }
 
 export interface RecoveryRotationCrypto {
@@ -111,6 +114,8 @@ export interface RecoveryRotationCrypto {
   recoveryKdf: KdfParams;
   recoveryEncryptedRootKey: string;
   recoveryRootKeyNonce: string;
+  recoveryRootKeyFormatVersion: 1 | 2;
+  recoveryRootKeyContextVersion: number;
 }
 
 export interface AccountRecoveryCrypto {
@@ -187,6 +192,7 @@ export async function createRegistrationCrypto(
 
   return {
     rootKey,
+    vaultKey,
     recoverySecret,
     payload: {
       username,
@@ -208,19 +214,28 @@ export async function openVault(
   authKdf: KdfParams,
   vaultKdf: KdfParams,
   encryptedRootKey: string,
-  rootKeyNonce: string
+  rootKeyNonce: string,
+  context?: {
+    userId: string;
+    formatVersion: number;
+    contextVersion: number;
+  }
 ): Promise<OpenedVault> {
   const authVerifier = await deriveAuthVerifier(password, authKdf);
   const vaultKey = await deriveVaultWrappingKey(password, vaultKdf);
-  const rootKey = await decryptBytes(
-    {
-      cipher: encryptedRootKey,
-      nonce: rootKeyNonce,
-      formatVersion: 1
-    },
-    vaultKey,
-    ROOT_KEY_AAD
-  );
+  const envelope = {
+    cipher: encryptedRootKey,
+    nonce: rootKeyNonce,
+    formatVersion: context?.formatVersion ?? 1
+  };
+  const rootKey = context?.formatVersion === 2
+    ? await decryptRootKeyEnvelopeV2({
+        userId: context.userId,
+        keyMaterialVersion: context.contextVersion,
+        wrappingKey: vaultKey,
+        envelope
+      })
+    : await decryptBytes(envelope, vaultKey, ROOT_KEY_AAD);
 
   return {
     authVerifier: toBase64(authVerifier),
@@ -238,26 +253,37 @@ export async function createLoginAuthVerifier(
 
 export async function createPasswordChangeCrypto(
   rootKey: Uint8Array,
-  newPassword: string
+  newPassword: string,
+  context?: { userId: string; keyMaterialVersion: number }
 ): Promise<PasswordChangeCrypto> {
   await cryptoReady();
   const authKdf = createKdfParams();
   const vaultKdf = createKdfParams();
   const authVerifier = await deriveAuthVerifier(newPassword, authKdf);
   const vaultKey = await deriveVaultWrappingKey(newPassword, vaultKdf);
-  const encryptedRoot = await encryptBytes(rootKey, vaultKey, ROOT_KEY_AAD);
+  const encryptedRoot = context
+    ? await encryptRootKeyEnvelopeV2({
+        userId: context.userId,
+        keyMaterialVersion: context.keyMaterialVersion,
+        rootKey,
+        wrappingKey: vaultKey
+      })
+    : await encryptBytes(rootKey, vaultKey, ROOT_KEY_AAD);
 
   return {
     authVerifier: toBase64(authVerifier),
     authKdf,
     vaultKdf,
     encryptedRootKey: encryptedRoot.cipher,
-    rootKeyNonce: encryptedRoot.nonce
+    rootKeyNonce: encryptedRoot.nonce,
+    rootKeyFormatVersion: context ? 2 : 1,
+    rootKeyContextVersion: context?.keyMaterialVersion ?? 1
   };
 }
 
 export async function createRecoveryRotationCrypto(
-  rootKey: Uint8Array
+  rootKey: Uint8Array,
+  context?: { userId: string; keyMaterialVersion: number }
 ): Promise<RecoveryRotationCrypto> {
   await cryptoReady();
   const recoverySecret = generateRecoverySecret();
@@ -270,18 +296,23 @@ export async function createRecoveryRotationCrypto(
     recoverySecret,
     recoveryKdf
   );
-  const recoveryEncryptedRoot = await encryptBytes(
-    rootKey,
-    recoveryWrappingKey,
-    ROOT_KEY_AAD
-  );
+  const recoveryEncryptedRoot = context
+    ? await encryptRootKeyEnvelopeV2({
+        userId: context.userId,
+        keyMaterialVersion: context.keyMaterialVersion,
+        rootKey,
+        wrappingKey: recoveryWrappingKey
+      })
+    : await encryptBytes(rootKey, recoveryWrappingKey, ROOT_KEY_AAD);
 
   return {
     recoverySecret,
     recoveryAuthVerifier: toBase64(recoveryAuthVerifier),
     recoveryKdf,
     recoveryEncryptedRootKey: recoveryEncryptedRoot.cipher,
-    recoveryRootKeyNonce: recoveryEncryptedRoot.nonce
+    recoveryRootKeyNonce: recoveryEncryptedRoot.nonce,
+    recoveryRootKeyFormatVersion: context ? 2 : 1,
+    recoveryRootKeyContextVersion: context?.keyMaterialVersion ?? 1
   };
 }
 
@@ -290,6 +321,10 @@ export async function createAccountRecoveryCrypto(input: {
   recoveryKdf: KdfParams;
   recoveryEncryptedRootKey: string;
   recoveryRootKeyNonce: string;
+  recoveryRootKeyFormatVersion?: number;
+  recoveryRootKeyContextVersion?: number;
+  userId?: string;
+  nextKeyMaterialVersion?: number;
   newPassword: string;
 }): Promise<AccountRecoveryCrypto> {
   const recoveryAuthVerifier = await deriveRecoveryAuthVerifier(
@@ -300,33 +335,57 @@ export async function createAccountRecoveryCrypto(input: {
     input.recoverySecret,
     input.recoveryKdf
   );
-  const rootKey = await decryptBytes(
-    {
-      cipher: input.recoveryEncryptedRootKey,
-      nonce: input.recoveryRootKeyNonce,
-      formatVersion: 1
-    },
-    recoveryWrappingKey,
-    ROOT_KEY_AAD
-  );
+  const recoveryEnvelope = {
+    cipher: input.recoveryEncryptedRootKey,
+    nonce: input.recoveryRootKeyNonce,
+    formatVersion: input.recoveryRootKeyFormatVersion ?? 1
+  };
+  const rootKey = input.recoveryRootKeyFormatVersion === 2
+    ? await decryptRootKeyEnvelopeV2({
+        userId: requireEnvelopeUserId(input.userId),
+        keyMaterialVersion: requireKeyMaterialVersion(
+          input.recoveryRootKeyContextVersion
+        ),
+        wrappingKey: recoveryWrappingKey,
+        envelope: recoveryEnvelope
+      })
+    : await decryptBytes(recoveryEnvelope, recoveryWrappingKey, ROOT_KEY_AAD);
 
   return {
     rootKey,
     recoveryAuthVerifier: toBase64(recoveryAuthVerifier),
-    passwordChange: await createPasswordChangeCrypto(rootKey, input.newPassword)
+    passwordChange: await createPasswordChangeCrypto(
+      rootKey,
+      input.newPassword,
+      input.userId && input.nextKeyMaterialVersion
+        ? {
+            userId: input.userId,
+            keyMaterialVersion: input.nextKeyMaterialVersion
+          }
+        : undefined
+    )
   };
 }
 
 export async function createUserSharingKey(
   rootKey: Uint8Array,
-  sharingKeyVersion = 1
+  sharingKeyVersion = 1,
+  userId?: string
 ): Promise<CreatedSharingKey> {
   const keyPair = await createSharingKeyPair();
-  const encryptedPrivateKey = await encryptBytes(
-    fromBase64(keyPair.privateKey),
-    rootKey,
-    SHARING_PRIVATE_KEY_AAD
-  );
+  const encryptedPrivateKey = userId
+    ? await encryptSharingPrivateKeyEnvelopeV2({
+        userId,
+        sharingKeyVersion,
+        publicKey: keyPair.publicKey,
+        rootKey,
+        privateKey: fromBase64(keyPair.privateKey)
+      })
+    : await encryptBytes(
+        fromBase64(keyPair.privateKey),
+        rootKey,
+        SHARING_PRIVATE_KEY_AAD
+      );
 
   return {
     payload: {
@@ -334,7 +393,7 @@ export async function createUserSharingKey(
       publicKey: keyPair.publicKey,
       encryptedPrivateKey: encryptedPrivateKey.cipher,
       privateKeyNonce: encryptedPrivateKey.nonce,
-      formatVersion: 1
+      formatVersion: encryptedPrivateKey.formatVersion
     },
     opened: {
       publicKey: keyPair.publicKey,
@@ -345,18 +404,28 @@ export async function createUserSharingKey(
 }
 
 export async function openUserSharingKey(input: {
+  userId?: string;
   rootKey: Uint8Array;
   envelope: SharingKeyEnvelope;
 }): Promise<OpenedSharingKey> {
-  const privateKey = await decryptBytes(
-    {
-      cipher: input.envelope.encryptedPrivateKey,
-      nonce: input.envelope.privateKeyNonce,
-      formatVersion: input.envelope.formatVersion
-    },
-    input.rootKey,
-    SHARING_PRIVATE_KEY_AAD
-  );
+  const encryptedPrivateKey = {
+    cipher: input.envelope.encryptedPrivateKey,
+    nonce: input.envelope.privateKeyNonce,
+    formatVersion: input.envelope.formatVersion
+  };
+  const privateKey = input.envelope.formatVersion === 2
+    ? await decryptSharingPrivateKeyEnvelopeV2({
+        userId: requireEnvelopeUserId(input.userId),
+        sharingKeyVersion: input.envelope.sharingKeyVersion,
+        publicKey: input.envelope.publicKey,
+        rootKey: input.rootKey,
+        envelope: encryptedPrivateKey
+      })
+    : await decryptBytes(
+        encryptedPrivateKey,
+        input.rootKey,
+        SHARING_PRIVATE_KEY_AAD
+      );
 
   return {
     publicKey: input.envelope.publicKey,
@@ -840,6 +909,7 @@ export function decryptRootKeyEnvelopeV2(input: {
 export function encryptSharingPrivateKeyEnvelopeV2(input: {
   userId: string;
   sharingKeyVersion: number;
+  publicKey: string;
   rootKey: Uint8Array;
   privateKey: Uint8Array;
 }): Promise<ProtectedEnvelopeV2> {
@@ -847,13 +917,14 @@ export function encryptSharingPrivateKeyEnvelopeV2(input: {
     input.privateKey,
     input.rootKey,
     "sharing-private-key",
-    protectedContext(input, ["userId", "sharingKeyVersion"])
+    protectedContext(input, ["userId", "sharingKeyVersion", "publicKey"])
   );
 }
 
 export function decryptSharingPrivateKeyEnvelopeV2(input: {
   userId: string;
   sharingKeyVersion: number;
+  publicKey: string;
   rootKey: Uint8Array;
   envelope: EncryptedPayload;
 }): Promise<Uint8Array> {
@@ -861,8 +932,22 @@ export function decryptSharingPrivateKeyEnvelopeV2(input: {
     input.envelope,
     input.rootKey,
     "sharing-private-key",
-    protectedContext(input, ["userId", "sharingKeyVersion"])
+    protectedContext(input, ["userId", "sharingKeyVersion", "publicKey"])
   );
+}
+
+function requireEnvelopeUserId(userId: string | undefined): string {
+  if (!userId) {
+    throw new Error("Protected sharing key account context is missing");
+  }
+  return userId;
+}
+
+function requireKeyMaterialVersion(version: number | undefined): number {
+  if (!version) {
+    throw new Error("Protected root key material context is missing");
+  }
+  return version;
 }
 
 export function encryptNoteKeyEnvelopeV2(input: {
@@ -901,6 +986,7 @@ interface NoteShareContextV2 {
   keyEpoch: number;
   recipientUserId: string;
   recipientSharingKeyVersion: number;
+  senderUserId: string;
 }
 
 export function encryptNoteKeyShareV2(
@@ -918,7 +1004,8 @@ export function encryptNoteKeyShareV2(
           "noteId",
           "keyEpoch",
           "recipientUserId",
-          "recipientSharingKeyVersion"
+          "recipientSharingKeyVersion",
+          "senderUserId"
         ]),
         noteKey: toBase64(input.noteKey)
       })
@@ -948,6 +1035,7 @@ export async function decryptNoteKeyShareV2(
     value.keyEpoch !== input.keyEpoch ||
     value.recipientUserId !== input.recipientUserId ||
     value.recipientSharingKeyVersion !== input.recipientSharingKeyVersion ||
+    value.senderUserId !== input.senderUserId ||
     typeof value.noteKey !== "string"
   ) {
     throw new Error("Protected note share context mismatch");

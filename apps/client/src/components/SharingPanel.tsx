@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Share2, UserPlus } from "lucide-react";
+import { fromBase64 } from "@fortnote/shared";
 import {
   inviteNoteMember,
   listNoteMemberships,
@@ -13,7 +14,7 @@ import {
   type PublicSharingKey
 } from "../api";
 import {
-  encryptNoteKeyShare,
+  encryptNoteKeyShareV2,
   rewrapAttachmentKey,
   rotateNoteKeyMaterial
 } from "../cryptoClient";
@@ -218,12 +219,18 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     memberRole: "editor" | "viewer",
     collaboratorUsername: string
   ) {
-    if (note.role !== "owner") {
+    if (note.role !== "owner" || !user) {
       return;
     }
 
-    const encryptedNoteKey = await encryptNoteKeyShare({
-      noteKeyBase64: note.noteKeyBase64,
+    const encryptedNoteKey = await encryptNoteKeyShareV2({
+      cryptoOwnerId: note.cryptoOwnerId,
+      noteId: note.id,
+      keyEpoch: note.keyEpoch,
+      recipientUserId: publicKey.userId,
+      recipientSharingKeyVersion: publicKey.sharingKeyVersion,
+      senderUserId: user.id,
+      noteKey: fromBase64(note.noteKeyBase64),
       recipientPublicKey: publicKey.publicKey
     });
     await inviteNoteMember(note.id, {
@@ -231,7 +238,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
       role: memberRole,
       sharingKeyVersion: publicKey.sharingKeyVersion,
       encryptedNoteKey,
-      formatVersion: 1
+      formatVersion: 2
     });
     const payload = await listNoteMemberships(note.id);
     setMemberships(payload.memberships);
@@ -370,6 +377,9 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
           throw new Error("Vault is locked");
         }
         const publicKey = await lookupSharingKey(membership.username);
+        if (publicKey.userId !== membership.userId) {
+          throw new Error(`Sharing identity changed for ${membership.username}`);
+        }
         const trust = await getSharingKeyTrustDecision({
           ownerUserId: user.id,
           rootKey: vaultRootKey,
@@ -384,11 +394,17 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
         return {
           recipientUserId: membership.userId,
           sharingKeyVersion: publicKey.sharingKeyVersion,
-          encryptedNoteKey: await encryptNoteKeyShare({
-            noteKeyBase64: rotatedKey.noteKeyBase64,
+          encryptedNoteKey: await encryptNoteKeyShareV2({
+            cryptoOwnerId: note.cryptoOwnerId,
+            noteId: note.id,
+            keyEpoch: note.keyEpoch + 1,
+            recipientUserId: membership.userId,
+            recipientSharingKeyVersion: publicKey.sharingKeyVersion,
+            senderUserId: user.id,
+            noteKey: fromBase64(rotatedKey.noteKeyBase64),
             recipientPublicKey: publicKey.publicKey
           }),
-          formatVersion: 1
+          formatVersion: 2
         };
       })
     );

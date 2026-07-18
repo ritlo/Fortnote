@@ -84,6 +84,8 @@ beforeEach(() => {
   mocks.getKeyMaterial.mockResolvedValue({
     encryptedRootKey: "cipher",
     rootKeyNonce: "nonce",
+    rootKeyFormatVersion: 2,
+    rootKeyContextVersion: 1,
     keyMaterialVersion: 1,
     kdfSalt: "salt",
     kdfOpsLimit: 4,

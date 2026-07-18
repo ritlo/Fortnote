@@ -14,7 +14,10 @@ import {
   openUserSharingKey,
   type OpenedSharingKey
 } from "../cryptoClient";
-import { decryptNoteSummary } from "../lib/keyMaterial";
+import {
+  decryptNoteSummary,
+  prepareSharingKeyEnvelopeMigrationV2
+} from "../lib/keyMaterial";
 import { preserveCrdtContent } from "../realtime/crdt";
 import { useAppStore } from "../store/appStore";
 
@@ -137,11 +140,30 @@ export async function loadFolders() {
 export async function ensureSharingKey(
   currentRootKey: Uint8Array
 ): Promise<OpenedSharingKey> {
-  const { setOpenedSharingKey } = useAppStore.getState();
+  const { setOpenedSharingKey, user } = useAppStore.getState();
   try {
     const envelope = await getCurrentSharingKey();
-    const opened = await openUserSharingKey({ rootKey: currentRootKey, envelope });
+    const opened = await openUserSharingKey({
+      ...(user ? { userId: user.id } : {}),
+      rootKey: currentRootKey,
+      envelope
+    });
     setOpenedSharingKey(opened);
+    if (user) {
+      const migration = await prepareSharingKeyEnvelopeMigrationV2({
+        userId: user.id,
+        rootKey: currentRootKey,
+        envelope,
+        opened
+      });
+      if (migration) {
+        try {
+          await storeCurrentSharingKey(migration);
+        } catch {
+          // The opened v1 key remains usable; retry the idempotent migration next unlock.
+        }
+      }
+    }
     return opened;
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes("Sharing key not found")) {
@@ -149,7 +171,10 @@ export async function ensureSharingKey(
     }
   }
 
-  const created = await createUserSharingKey(currentRootKey);
+  if (!user) {
+    throw new Error("Vault account is missing");
+  }
+  const created = await createUserSharingKey(currentRootKey, 1, user.id);
   await storeCurrentSharingKey(created.payload);
   setOpenedSharingKey(created.opened);
   return created.opened;

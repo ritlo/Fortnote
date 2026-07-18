@@ -21,7 +21,8 @@ vi.mock("../api", () => ({
   updateFolder: vi.fn()
 }));
 
-vi.mock("../lib/keyMaterial", () => ({
+vi.mock("../lib/keyMaterial", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/keyMaterial")>()),
   decryptNoteSummary: vi.fn()
 }));
 
@@ -34,12 +35,15 @@ vi.mocked(listNotes).mockResolvedValue({ notes: [] });
 describe("app data collaboration bootstrap", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedStoreCurrentSharingKey.mockReset();
+    mockedStoreCurrentSharingKey.mockResolvedValue({ sharingKeyVersion: 1 });
     useAppStore.getState().resetVaultState("test reset");
   });
 
-  it("opens an existing sharing key envelope", async () => {
+  it("opens and upgrades an existing v1 sharing key envelope", async () => {
     const rootKey = crypto.getRandomValues(new Uint8Array(32));
     const created = await createUserSharingKey(rootKey);
+    useAppStore.setState({ rootKey, user: currentUser() });
     mockedGetCurrentSharingKey.mockResolvedValue({
       ...created.payload,
       createdAt: new Date().toISOString(),
@@ -50,11 +54,34 @@ describe("app data collaboration bootstrap", () => {
 
     expect(opened).toEqual(created.opened);
     expect(useAppStore.getState().openedSharingKey).toEqual(created.opened);
-    expect(mockedStoreCurrentSharingKey).not.toHaveBeenCalled();
+    expect(mockedStoreCurrentSharingKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sharingKeyVersion: created.opened.sharingKeyVersion,
+        publicKey: created.opened.publicKey,
+        formatVersion: 2
+      })
+    );
+  });
+
+  it("keeps a v1 sharing key open when its v2 migration must be retried", async () => {
+    const rootKey = crypto.getRandomValues(new Uint8Array(32));
+    const created = await createUserSharingKey(rootKey);
+    useAppStore.setState({ rootKey, user: currentUser() });
+    mockedGetCurrentSharingKey.mockResolvedValue({
+      ...created.payload,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    mockedStoreCurrentSharingKey.mockRejectedValueOnce(new Error("offline"));
+
+    await expect(ensureSharingKey(rootKey)).resolves.toEqual(created.opened);
+
+    expect(useAppStore.getState().openedSharingKey).toEqual(created.opened);
   });
 
   it("creates and stores a sharing key when none exists", async () => {
     const rootKey = crypto.getRandomValues(new Uint8Array(32));
+    useAppStore.setState({ rootKey, user: currentUser() });
     mockedGetCurrentSharingKey.mockRejectedValue(new Error("Sharing key not found"));
     mockedStoreCurrentSharingKey.mockResolvedValue({ sharingKeyVersion: 1 });
 
@@ -69,7 +96,7 @@ describe("app data collaboration bootstrap", () => {
         publicKey: opened.publicKey,
         encryptedPrivateKey: expect.any(String),
         privateKeyNonce: expect.any(String),
-        formatVersion: 1
+        formatVersion: 2
       })
     );
     expect(useAppStore.getState().openedSharingKey).toEqual(opened);

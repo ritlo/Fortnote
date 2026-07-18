@@ -5,7 +5,7 @@ import type {
   RecoveryParamsResponse,
   User
 } from "../api";
-import { fromBase64 } from "@fortnote/shared";
+import { fromBase64, type KdfParams } from "@fortnote/shared";
 import {
   decryptLegacyNoteKey,
   decryptNoteBodyWithKey,
@@ -13,12 +13,49 @@ import {
   decryptNoteKeyShare,
   decryptNoteKeyShareV2,
   decryptNoteTitleV2,
+  encryptRootKeyEnvelopeV2,
+  encryptSharingPrivateKeyEnvelopeV2,
   noteKeyToBase64,
   openUserSharingKey,
   type OpenedSharingKey
 } from "../cryptoClient";
-import { getNoteKeyShare, getSharingKeyVersion } from "../api";
+import {
+  getNoteKeyShare,
+  getSharingKeyVersion,
+  updateKeyMaterial,
+  type SharingKeyEnvelope,
+  type StoreSharingKeyPayload
+} from "../api";
 import type { DecryptedNote } from "../store/appStore";
+
+export async function migrateRootKeyEnvelopeV2(input: {
+  userId: string;
+  rootKey: Uint8Array;
+  vaultKey: Uint8Array;
+  vaultKdf: KdfParams;
+  keyMaterialVersion: number;
+  rootKeyFormatVersion?: number;
+}): Promise<number> {
+  if (input.rootKeyFormatVersion === 2) {
+    return input.keyMaterialVersion;
+  }
+  const nextVersion = input.keyMaterialVersion + 1;
+  const encrypted = await encryptRootKeyEnvelopeV2({
+    userId: input.userId,
+    keyMaterialVersion: nextVersion,
+    rootKey: input.rootKey,
+    wrappingKey: input.vaultKey
+  });
+  const updated = await updateKeyMaterial({
+    encryptedRootKey: encrypted.cipher,
+    rootKeyNonce: encrypted.nonce,
+    rootKeyFormatVersion: 2,
+    rootKeyContextVersion: nextVersion,
+    vaultKdf: input.vaultKdf,
+    keyMaterialVersion: input.keyMaterialVersion
+  });
+  return updated.keyMaterialVersion;
+}
 
 export async function decryptNoteSummary(
   user: User,
@@ -29,7 +66,7 @@ export async function decryptNoteSummary(
   const decrypted =
     note.role === "owner"
       ? await decryptOwnedNote(user, rootKey, note)
-      : await decryptSharedNote(rootKey, note, openedSharingKey);
+      : await decryptSharedNote(user, rootKey, note, openedSharingKey);
 
   const title = await decryptNoteTitle(note, decrypted.noteKey);
   return {
@@ -96,6 +133,7 @@ async function decryptOwnedNote(
 }
 
 async function decryptSharedNote(
+  user: User,
   rootKey: Uint8Array,
   note: NoteSummary,
   openedSharingKey: OpenedSharingKey | null
@@ -105,6 +143,7 @@ async function decryptSharedNote(
     openedSharingKey?.sharingKeyVersion === keyShare.sharingKeyVersion
       ? openedSharingKey
       : await openUserSharingKey({
+          userId: user.id,
           rootKey,
           envelope: await getSharingKeyVersion(keyShare.sharingKeyVersion)
         });
@@ -116,6 +155,7 @@ async function decryptSharedNote(
           keyEpoch: note.keyEpoch,
           recipientUserId: keyShare.recipientUserId,
           recipientSharingKeyVersion: keyShare.sharingKeyVersion,
+          senderUserId: keyShare.senderUserId,
           encryptedNoteKey: keyShare.encryptedNoteKey,
           publicKey: sharingKey.publicKey,
           privateKey: sharingKey.privateKey
@@ -133,6 +173,31 @@ async function decryptSharedNote(
     body: await decryptLegacyBody(note, noteKeyBase64),
     noteKey,
     noteKeyBase64
+  };
+}
+
+export async function prepareSharingKeyEnvelopeMigrationV2(input: {
+  userId: string;
+  rootKey: Uint8Array;
+  envelope: SharingKeyEnvelope;
+  opened: OpenedSharingKey;
+}): Promise<StoreSharingKeyPayload | null> {
+  if (input.envelope.formatVersion === 2) {
+    return null;
+  }
+  const encrypted = await encryptSharingPrivateKeyEnvelopeV2({
+    userId: input.userId,
+    sharingKeyVersion: input.envelope.sharingKeyVersion,
+    publicKey: input.envelope.publicKey,
+    rootKey: input.rootKey,
+    privateKey: fromBase64(input.opened.privateKey)
+  });
+  return {
+    sharingKeyVersion: input.envelope.sharingKeyVersion,
+    publicKey: input.envelope.publicKey,
+    encryptedPrivateKey: encrypted.cipher,
+    privateKeyNonce: encrypted.nonce,
+    formatVersion: 2
   };
 }
 

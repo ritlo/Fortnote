@@ -30,14 +30,18 @@ export function runMigrations(sqlite: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS user_key_material (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-      encrypted_root_key TEXT NOT NULL,
-      root_key_nonce TEXT NOT NULL,
+	      encrypted_root_key TEXT NOT NULL,
+	      root_key_nonce TEXT NOT NULL,
+	      root_key_format_version INTEGER NOT NULL DEFAULT 1,
+	      root_key_context_version INTEGER NOT NULL DEFAULT 1,
       kdf_salt TEXT NOT NULL,
       kdf_ops_limit INTEGER NOT NULL,
       kdf_mem_limit INTEGER NOT NULL,
       kdf_version INTEGER NOT NULL,
-      recovery_encrypted_root_key TEXT NOT NULL,
-      recovery_root_key_nonce TEXT NOT NULL,
+	      recovery_encrypted_root_key TEXT NOT NULL,
+	      recovery_root_key_nonce TEXT NOT NULL,
+	      recovery_root_key_format_version INTEGER NOT NULL DEFAULT 1,
+	      recovery_root_key_context_version INTEGER NOT NULL DEFAULT 1,
       recovery_auth_verifier_hash TEXT NOT NULL,
       recovery_kdf_salt TEXT NOT NULL,
       recovery_kdf_ops_limit INTEGER NOT NULL,
@@ -322,6 +326,30 @@ export function runMigrations(sqlite: Database.Database): void {
 	addColumnIfMissing(sqlite, "users", "display_name", "TEXT");
 	addColumnIfMissing(sqlite, "users", "canonical_handle", "TEXT");
 	addColumnIfMissing(sqlite, "users", "handle_state", "TEXT NOT NULL DEFAULT 'legacy'");
+	addColumnIfMissing(
+	  sqlite,
+	  "user_key_material",
+	  "root_key_format_version",
+	  "INTEGER NOT NULL DEFAULT 1"
+	);
+	addColumnIfMissing(
+	  sqlite,
+	  "user_key_material",
+	  "root_key_context_version",
+	  "INTEGER NOT NULL DEFAULT 1"
+	);
+	addColumnIfMissing(
+	  sqlite,
+	  "user_key_material",
+	  "recovery_root_key_format_version",
+	  "INTEGER NOT NULL DEFAULT 1"
+	);
+	addColumnIfMissing(
+	  sqlite,
+	  "user_key_material",
+	  "recovery_root_key_context_version",
+	  "INTEGER NOT NULL DEFAULT 1"
+	);
 	addColumnIfMissing(sqlite, "folders", "name_cipher", "TEXT");
 	addColumnIfMissing(sqlite, "folders", "name_nonce", "TEXT");
 	addColumnIfMissing(sqlite, "folders", "name_format_version", "INTEGER");

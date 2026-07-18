@@ -24,9 +24,13 @@ const updateKeyMaterialSchema = z.object({
   authKdf: kdfParamsSchema.optional(),
   encryptedRootKey: z.string().min(32).max(256),
   rootKeyNonce: z.string().min(16).max(128),
+  rootKeyFormatVersion: z.number().int().min(1).max(2).optional(),
+  rootKeyContextVersion: z.number().int().positive().optional(),
   vaultKdf: kdfParamsSchema,
   recoveryEncryptedRootKey: z.string().min(32).max(256).optional(),
   recoveryRootKeyNonce: z.string().min(16).max(128).optional(),
+  recoveryRootKeyFormatVersion: z.number().int().min(1).max(2).optional(),
+  recoveryRootKeyContextVersion: z.number().int().positive().optional(),
   recoveryAuthVerifier: z.string().min(32).max(128).optional(),
   recoveryKdf: kdfParamsSchema.optional(),
   keyMaterialVersion: z.number().int().positive()
@@ -47,12 +51,18 @@ export function createKeyMaterialRouter(context: AppContext): Router {
       .select({
         encryptedRootKey: schema.userKeyMaterial.encryptedRootKey,
         rootKeyNonce: schema.userKeyMaterial.rootKeyNonce,
+        rootKeyFormatVersion: schema.userKeyMaterial.rootKeyFormatVersion,
+        rootKeyContextVersion: schema.userKeyMaterial.rootKeyContextVersion,
         kdfSalt: schema.userKeyMaterial.kdfSalt,
         kdfOpsLimit: schema.userKeyMaterial.kdfOpsLimit,
         kdfMemLimit: schema.userKeyMaterial.kdfMemLimit,
         kdfVersion: schema.userKeyMaterial.kdfVersion,
         recoveryEncryptedRootKey: schema.userKeyMaterial.recoveryEncryptedRootKey,
         recoveryRootKeyNonce: schema.userKeyMaterial.recoveryRootKeyNonce,
+        recoveryRootKeyFormatVersion:
+          schema.userKeyMaterial.recoveryRootKeyFormatVersion,
+        recoveryRootKeyContextVersion:
+          schema.userKeyMaterial.recoveryRootKeyContextVersion,
         recoveryKdfSalt: schema.userKeyMaterial.recoveryKdfSalt,
         recoveryKdfOpsLimit: schema.userKeyMaterial.recoveryKdfOpsLimit,
         recoveryKdfMemLimit: schema.userKeyMaterial.recoveryKdfMemLimit,
@@ -105,6 +115,8 @@ export function createKeyMaterialRouter(context: AppContext): Router {
       recoveryAuthVerifier,
       recoveryEncryptedRootKey,
       recoveryKdf,
+      recoveryRootKeyContextVersion,
+      recoveryRootKeyFormatVersion,
       recoveryRootKeyNonce
     } = parsed.data;
 
@@ -116,6 +128,19 @@ export function createKeyMaterialRouter(context: AppContext): Router {
     ].filter((value) => value !== undefined).length;
     if (recoveryFieldCount !== 0 && recoveryFieldCount !== 4) {
       sendApiError(response, "bad_request", "Incomplete recovery key payload");
+      return;
+    }
+
+    if (
+      (parsed.data.rootKeyFormatVersion === 2 &&
+        parsed.data.rootKeyContextVersion === undefined) ||
+      (recoveryRootKeyFormatVersion === 2 &&
+        recoveryRootKeyContextVersion === undefined) ||
+      ((recoveryRootKeyFormatVersion !== undefined ||
+        recoveryRootKeyContextVersion !== undefined) &&
+        recoveryFieldCount !== 4)
+    ) {
+      sendApiError(response, "bad_request", "Incomplete protected key context");
       return;
     }
 
@@ -154,12 +179,21 @@ export function createKeyMaterialRouter(context: AppContext): Router {
           .set({
             encryptedRootKey: parsed.data.encryptedRootKey,
             rootKeyNonce: parsed.data.rootKeyNonce,
+            rootKeyFormatVersion: parsed.data.rootKeyFormatVersion ?? 1,
+            rootKeyContextVersion:
+              parsed.data.rootKeyContextVersion ?? current.keyMaterialVersion + 1,
             kdfSalt: parsed.data.vaultKdf.salt,
             kdfOpsLimit: parsed.data.vaultKdf.opsLimit,
             kdfMemLimit: parsed.data.vaultKdf.memLimit,
             kdfVersion: parsed.data.vaultKdf.version,
             recoveryEncryptedRootKey,
             recoveryRootKeyNonce,
+            recoveryRootKeyFormatVersion:
+              recoveryFieldCount === 4 ? (recoveryRootKeyFormatVersion ?? 1) : undefined,
+            recoveryRootKeyContextVersion:
+              recoveryFieldCount === 4
+                ? (recoveryRootKeyContextVersion ?? current.keyMaterialVersion + 1)
+                : undefined,
             recoveryAuthVerifierHash: recoveryAuthVerifierHash ?? undefined,
             recoveryKdfSalt: recoveryKdf?.salt,
             recoveryKdfOpsLimit: recoveryKdf?.opsLimit,

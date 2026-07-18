@@ -11,6 +11,10 @@ describe("key material routes", () => {
 
     expect(response.body).toMatchObject({
       encryptedRootKey: "encrypted_root_key_key_user_abcdefghijklmnopqrstuvwxyz",
+      rootKeyFormatVersion: 1,
+      rootKeyContextVersion: 1,
+      recoveryRootKeyFormatVersion: 1,
+      recoveryRootKeyContextVersion: 1,
       keyMaterialVersion: 1
     });
   });
@@ -25,6 +29,8 @@ describe("key material routes", () => {
       .send({
         encryptedRootKey: "new_encrypted_root_key_abcdefghijklmnopqrstuvwxyz",
         rootKeyNonce: "new_root_key_nonce_abcdefghijklmnopqrstuvwxyz",
+        rootKeyFormatVersion: 2,
+        rootKeyContextVersion: 2,
         vaultKdf: {
           salt: "new_vault_salt_abcdefghijklmnopqrstuvwxyz",
           opsLimit: 4,
@@ -36,6 +42,12 @@ describe("key material routes", () => {
       .expect(200);
 
     expect(updated.body).toEqual({ keyMaterialVersion: 2 });
+    await expect(agent.get("/api/key-material")).resolves.toMatchObject({
+      body: expect.objectContaining({
+        rootKeyFormatVersion: 2,
+        rootKeyContextVersion: 2
+      })
+    });
 
     await agent
       .put("/api/key-material")

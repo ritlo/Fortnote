@@ -12,7 +12,7 @@ const sharingKeySchema = z.object({
   publicKey: z.string().min(32),
   encryptedPrivateKey: z.string().min(32),
   privateKeyNonce: z.string().min(16),
-  formatVersion: z.number().int().positive()
+  formatVersion: z.number().int().min(1).max(2)
 });
 
 export function createSharingKeysRouter(context: AppContext): Router {
@@ -94,6 +94,49 @@ export function createSharingKeysRouter(context: AppContext): Router {
     const parsed = sharingKeySchema.safeParse(request.body);
     if (!parsed.success) {
       sendApiError(response, "bad_request", "Invalid sharing key payload");
+      return;
+    }
+
+    const existing = context.db.orm
+      .select({
+        publicKey: schema.userSharingKeys.publicKey,
+        formatVersion: schema.userSharingKeys.formatVersion
+      })
+      .from(schema.userSharingKeys)
+      .where(and(
+        eq(schema.userSharingKeys.userId, session.userId),
+        eq(schema.userSharingKeys.sharingKeyVersion, parsed.data.sharingKeyVersion)
+      ))
+      .get();
+    if (existing) {
+      if (
+        existing.publicKey !== parsed.data.publicKey ||
+        existing.formatVersion !== 1 ||
+        parsed.data.formatVersion !== 2
+      ) {
+        sendApiError(response, "conflict", "Sharing key version already exists");
+        return;
+      }
+      const migrated = context.db.orm
+        .update(schema.userSharingKeys)
+        .set({
+          encryptedPrivateKey: parsed.data.encryptedPrivateKey,
+          privateKeyNonce: parsed.data.privateKeyNonce,
+          formatVersion: 2,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(and(
+          eq(schema.userSharingKeys.userId, session.userId),
+          eq(schema.userSharingKeys.sharingKeyVersion, parsed.data.sharingKeyVersion),
+          eq(schema.userSharingKeys.publicKey, parsed.data.publicKey),
+          eq(schema.userSharingKeys.formatVersion, 1)
+        ))
+        .run();
+      if (migrated.changes !== 1) {
+        sendApiError(response, "conflict", "Sharing key version already exists");
+        return;
+      }
+      response.json({ sharingKeyVersion: parsed.data.sharingKeyVersion });
       return;
     }
 

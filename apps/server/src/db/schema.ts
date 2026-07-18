@@ -40,12 +40,20 @@ export const userKeyMaterial = sqliteTable("user_key_material", {
   userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
   encryptedRootKey: text("encrypted_root_key").notNull(),
   rootKeyNonce: text("root_key_nonce").notNull(),
+  rootKeyFormatVersion: integer("root_key_format_version").notNull().default(1),
+  rootKeyContextVersion: integer("root_key_context_version").notNull().default(1),
   kdfSalt: text("kdf_salt").notNull(),
   kdfOpsLimit: integer("kdf_ops_limit").notNull(),
   kdfMemLimit: integer("kdf_mem_limit").notNull(),
   kdfVersion: integer("kdf_version").notNull(),
   recoveryEncryptedRootKey: text("recovery_encrypted_root_key").notNull(),
   recoveryRootKeyNonce: text("recovery_root_key_nonce").notNull(),
+  recoveryRootKeyFormatVersion: integer("recovery_root_key_format_version")
+    .notNull()
+    .default(1),
+  recoveryRootKeyContextVersion: integer("recovery_root_key_context_version")
+    .notNull()
+    .default(1),
   recoveryAuthVerifierHash: text("recovery_auth_verifier_hash").notNull(),
   recoveryKdfSalt: text("recovery_kdf_salt").notNull(),
   recoveryKdfOpsLimit: integer("recovery_kdf_ops_limit").notNull(),
