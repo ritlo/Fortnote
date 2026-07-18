@@ -9,11 +9,14 @@ const mocks = vi.hoisted(() => ({
   getKeyMaterial: vi.fn(),
   getMe: vi.fn(),
   login: vi.fn(),
+  logout: vi.fn(),
   openVault: vi.fn(),
+  openFortnoteIndexedDb: vi.fn(),
   createLoginAuthVerifier: vi.fn(),
   ensureSharingKey: vi.fn(),
   loadFolders: vi.fn(),
   loadNotes: vi.fn(),
+  removeSharingKeyTrustRecords: vi.fn(),
   repairAccountHandle: vi.fn()
 }));
 
@@ -26,12 +29,20 @@ vi.mock("../api", async (importOriginal) => ({
   getMe: mocks.getMe,
   getRecoveryParams: vi.fn(),
   login: mocks.login,
-  logout: vi.fn(),
+  logout: mocks.logout,
   recover: vi.fn(),
   register: vi.fn(),
   repairAccountHandle: mocks.repairAccountHandle,
   storeCurrentSharingKey: vi.fn(),
   updateKeyMaterial: vi.fn()
+}));
+
+vi.mock("../lib/indexedDb", () => ({
+  openFortnoteIndexedDb: mocks.openFortnoteIndexedDb
+}));
+
+vi.mock("../lib/sharingKeyTrust", () => ({
+  removeSharingKeyTrustRecords: mocks.removeSharingKeyTrustRecords
 }));
 
 vi.mock("../cryptoClient", () => ({
@@ -83,6 +94,13 @@ beforeEach(() => {
   mocks.ensureSharingKey.mockResolvedValue(undefined);
   mocks.loadFolders.mockResolvedValue(undefined);
   mocks.loadNotes.mockResolvedValue(undefined);
+  mocks.logout.mockResolvedValue(undefined);
+  mocks.openFortnoteIndexedDb.mockResolvedValue({
+    clearAccount: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn(),
+    listOutbox: vi.fn().mockResolvedValue([]),
+    listSectionCache: vi.fn().mockResolvedValue([])
+  });
   useAppStore.setState({
     authMode: "login",
     error: null,
@@ -157,5 +175,69 @@ describe("useAuthActions identity lifecycle", () => {
     expect(writeText).toHaveBeenCalledWith("private-recovery-secret");
     expect(useAppStore.getState().status).not.toContain("private-recovery-secret");
     expect(useAppStore.getState().status).toContain("somewhere private and offline");
+  });
+
+  it("warns before discarding recoverable offline work on logout", async () => {
+    const database = {
+      clearAccount: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn(),
+      listOutbox: vi.fn().mockResolvedValue([{ updateId: "pending-update" }]),
+      listSectionCache: vi.fn().mockResolvedValue([])
+    };
+    mocks.openFortnoteIndexedDb.mockResolvedValue(database);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    useAppStore.setState({
+      user: { id: "user-a", username: "alice.example" },
+      rootKey: new Uint8Array([1]),
+      notes: [{ id: "decrypted-note" }] as never
+    });
+    const { result } = renderHook(() => useAuthActions());
+
+    await act(async () => {
+      await result.current.submitLogout();
+    });
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("recoverable offline"));
+    expect(mocks.logout).not.toHaveBeenCalled();
+    expect(database.clearAccount).not.toHaveBeenCalled();
+    expect(useAppStore.getState().rootKey).not.toBeNull();
+    confirm.mockRestore();
+  });
+
+  it("clears account-scoped browser data and decrypted state after confirmation", async () => {
+    const database = {
+      clearAccount: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn(),
+      listOutbox: vi.fn().mockResolvedValue([]),
+      listSectionCache: vi.fn().mockResolvedValue([
+        { manifestId: "pending-cache", pending: true }
+      ])
+    };
+    mocks.openFortnoteIndexedDb.mockResolvedValue(database);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    useAppStore.setState({
+      user: { id: "user-a", username: "alice.example" },
+      rootKey: new Uint8Array([1]),
+      notes: [{ id: "decrypted-note" }] as never,
+      search: "decrypted title"
+    });
+    const { result } = renderHook(() => useAuthActions());
+
+    await act(async () => {
+      await result.current.submitLogout();
+    });
+
+    expect(mocks.logout).toHaveBeenCalledOnce();
+    expect(database.clearAccount).toHaveBeenCalledWith("user-a");
+    expect(mocks.removeSharingKeyTrustRecords).toHaveBeenCalledWith("user-a");
+    expect(database.close).toHaveBeenCalledOnce();
+    expect(useAppStore.getState()).toMatchObject({
+      rootKey: null,
+      notes: [],
+      search: "",
+      user: null,
+      status: "Signed out"
+    });
+    confirm.mockRestore();
   });
 });

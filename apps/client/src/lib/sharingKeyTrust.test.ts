@@ -4,6 +4,7 @@ import { createRegistrationCrypto, createUserSharingKey } from "../cryptoClient"
 import {
   fingerprintPublicSharingKey,
   getSharingKeyTrustDecision,
+  removeSharingKeyTrustRecords,
   trustSharingKey
 } from "./sharingKeyTrust";
 
@@ -16,6 +17,10 @@ class MemoryStorage {
 
   setItem(key: string, value: string): void {
     this.values.set(key, value);
+  }
+
+  removeItem(key: string): void {
+    this.values.delete(key);
   }
 }
 
@@ -138,6 +143,89 @@ describe("sharing key trust", () => {
         storage
       })
     ).resolves.toMatchObject({ status: "untrusted" });
+  });
+
+  it("binds trust to the exact collaborator account and key version", async () => {
+    const owner = await createRegistrationCrypto("alice", "password");
+    const bob = await createRegistrationCrypto("bob", "password");
+    const key = await createUserSharingKey(bob.rootKey, 1);
+    const storage = new MemoryStorage();
+    const trusted = publicSharingKey({
+      userId: "bob_id",
+      username: "bob",
+      sharingKeyVersion: 1,
+      publicKey: key.opened.publicKey
+    });
+
+    await trustSharingKey({
+      ownerUserId: "alice_id",
+      rootKey: owner.rootKey,
+      publicKey: trusted,
+      storage
+    });
+
+    await expect(
+      getSharingKeyTrustDecision({
+        ownerUserId: "alice_id",
+        rootKey: owner.rootKey,
+        publicKey: { ...trusted, userId: "mallory_id", username: "mallory" },
+        storage
+      })
+    ).resolves.toMatchObject({ status: "untrusted" });
+    await expect(
+      getSharingKeyTrustDecision({
+        ownerUserId: "alice_id",
+        rootKey: owner.rootKey,
+        publicKey: { ...trusted, sharingKeyVersion: 2 },
+        storage
+      })
+    ).resolves.toMatchObject({ status: "untrusted" });
+  });
+
+  it("removes only the signed-out account's encrypted trust record", async () => {
+    const alice = await createRegistrationCrypto("alice", "password");
+    const charlie = await createRegistrationCrypto("charlie", "password");
+    const bob = await createRegistrationCrypto("bob", "password");
+    const bobKey = await createUserSharingKey(bob.rootKey);
+    const storage = new MemoryStorage();
+    const publicKey = publicSharingKey({
+      userId: "bob_id",
+      username: "bob",
+      sharingKeyVersion: 1,
+      publicKey: bobKey.opened.publicKey
+    });
+
+    await trustSharingKey({
+      ownerUserId: "alice_id",
+      rootKey: alice.rootKey,
+      publicKey,
+      storage
+    });
+    await trustSharingKey({
+      ownerUserId: "charlie_id",
+      rootKey: charlie.rootKey,
+      publicKey,
+      storage
+    });
+
+    removeSharingKeyTrustRecords("alice_id", storage);
+
+    await expect(
+      getSharingKeyTrustDecision({
+        ownerUserId: "alice_id",
+        rootKey: alice.rootKey,
+        publicKey,
+        storage
+      })
+    ).resolves.toMatchObject({ status: "untrusted" });
+    await expect(
+      getSharingKeyTrustDecision({
+        ownerUserId: "charlie_id",
+        rootKey: charlie.rootKey,
+        publicKey,
+        storage
+      })
+    ).resolves.toMatchObject({ status: "trusted" });
   });
 });
 

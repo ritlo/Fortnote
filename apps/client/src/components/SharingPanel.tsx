@@ -78,6 +78,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   const [role, setRole] = useState<"editor" | "viewer">("editor");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingTrust, setPendingTrust] = useState<PendingSharingTrust | null>(null);
+  const [isTrustConfirmed, setIsTrustConfirmed] = useState(false);
   const user = useAppStore((state) => state.user);
   const rootKey = useAppStore((state) => state.rootKey);
   const setAttachmentsByNote = useAppStore((state) => state.setAttachmentsByNote);
@@ -120,6 +121,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
 
   useEffect(() => {
     setPendingTrust(null);
+    setIsTrustConfirmed(false);
   }, [selectedNote?.id]);
 
   async function submitInvite() {
@@ -148,6 +150,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
         return;
       }
       if (trust.status === "untrusted") {
+        setIsTrustConfirmed(false);
         setPendingTrust({
           publicKey,
           fingerprint: trust.fingerprint,
@@ -170,6 +173,10 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
 
   async function confirmPendingTrust() {
     if (!pendingTrust || !user || !rootKey) {
+      return;
+    }
+    if (!canConfirmSharingKeyTrust(isTrustConfirmed)) {
+      setError("Confirm that you independently verified this exact sharing key");
       return;
     }
     if (!pendingTrustMatchesNote(pendingTrust, selectedNote)) {
@@ -196,6 +203,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
         pendingTrust.username
       );
       setPendingTrust(null);
+      setIsTrustConfirmed(false);
     } catch (trustError) {
       setStatus("Share failed");
       setError(trustError instanceof Error ? trustError.message : "Unable to trust key");
@@ -449,6 +457,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
               onChange={(event) => {
                 setUsername(event.target.value);
                 setPendingTrust(null);
+                setIsTrustConfirmed(false);
               }}
             />
             <select
@@ -457,6 +466,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
               onChange={(event) => {
                 setRole(event.target.value as "editor" | "viewer");
                 setPendingTrust(null);
+                setIsTrustConfirmed(false);
               }}
             >
               <option value="editor">Editor</option>
@@ -478,13 +488,27 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
             <div className="trust-confirmation">
               <span>
                 <strong>{pendingTrust.publicKey.username}</strong>
+                <small>
+                  Sharing key version {pendingTrust.publicKey.sharingKeyVersion}
+                </small>
                 <code>{pendingTrust.fingerprint}</code>
               </span>
+              <p>{sharingKeyTrustInstruction(pendingTrust.publicKey.username)}</p>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={isTrustConfirmed}
+                  onChange={(event) => {
+                    setIsTrustConfirmed(event.target.checked);
+                  }}
+                />
+                I independently verified this exact key
+              </label>
               <div>
                 <button
                   className="text-button"
                   type="button"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !canConfirmSharingKeyTrust(isTrustConfirmed)}
                   onClick={() => {
                     void confirmPendingTrust();
                   }}
@@ -497,6 +521,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
                   disabled={isSubmitting}
                   onClick={() => {
                     setPendingTrust(null);
+                    setIsTrustConfirmed(false);
                     setStatus("Share cancelled");
                   }}
                 >
@@ -587,6 +612,14 @@ export function pendingTrustMatchesNote(
     note?.id === pendingTrust.noteId &&
     note.noteKeyBase64 === pendingTrust.noteKeyBase64
   );
+}
+
+export function canConfirmSharingKeyTrust(isConfirmed: boolean): boolean {
+  return isConfirmed;
+}
+
+export function sharingKeyTrustInstruction(username: string): string {
+  return `Compare this exact fingerprint with ${username} through an independent channel before trusting it.`;
 }
 
 function applyAttachmentKeyRotation(

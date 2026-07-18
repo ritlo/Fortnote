@@ -310,11 +310,13 @@ export const useAppStore = create<AppStore>((set) => ({
       presenceByNote: {},
       openedSharingKey: null,
       revocationRotationFailures: {},
+      search: "",
       password: "",
       newPassword: "",
       recoveryInput: "",
       recoveryNewPassword: "",
       user: null,
+      error: null,
       status: nextStatus
     });
   }

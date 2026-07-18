@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { NoteMembership } from "../api";
 import type { DecryptedNote } from "../store/appStore";
 import {
+  canConfirmSharingKeyTrust,
   pendingTrustMatchesNote,
-  recoverCommittedRevocationAfterFailure
+  recoverCommittedRevocationAfterFailure,
+  sharingKeyTrustInstruction
 } from "./SharingPanel";
 
 describe("recoverCommittedRevocationAfterFailure", () => {
@@ -74,6 +76,21 @@ describe("pendingTrustMatchesNote", () => {
     const pending = { noteId: "note-1", noteKeyBase64: "key-1" };
 
     expect(pendingTrustMatchesNote(pending, note({ id: "note-1" }))).toBe(true);
+  });
+});
+
+describe("sharing key confirmation", () => {
+  it("requires explicit confirmation of the exact key", () => {
+    expect(canConfirmSharingKeyTrust(false)).toBe(false);
+    expect(canConfirmSharingKeyTrust(true)).toBe(true);
+  });
+
+  it("instructs users to compare the fingerprint independently", () => {
+    const instruction = sharingKeyTrustInstruction("bob");
+
+    expect(instruction).toContain("exact fingerprint");
+    expect(instruction).toContain("bob");
+    expect(instruction).toContain("independent channel");
   });
 });
 

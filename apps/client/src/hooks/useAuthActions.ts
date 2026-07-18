@@ -25,6 +25,8 @@ import {
   openVault
 } from "../cryptoClient";
 import { authKdf, recoveryKdf, vaultKdf } from "../lib/keyMaterial";
+import { openFortnoteIndexedDb, type FortnoteIndexedDb } from "../lib/indexedDb";
+import { removeSharingKeyTrustRecords } from "../lib/sharingKeyTrust";
 import { useAppStore } from "../store/appStore";
 import { ensureSharingKey, loadDecryptedNotes, loadFolders } from "./useAppData";
 
@@ -57,6 +59,7 @@ export function useAuthActions() {
   const recoveryNewPassword = useAppStore((state) => state.recoveryNewPassword);
   const recoverySecret = useAppStore((state) => state.recoverySecret);
   const rootKey = useAppStore((state) => state.rootKey);
+  const user = useAppStore((state) => state.user);
   const setUsername = useAppStore((state) => state.setUsername);
   const setUser = useAppStore((state) => state.setUser);
   const setRootKey = useAppStore((state) => state.setRootKey);
@@ -153,8 +156,77 @@ export function useAuthActions() {
   }
 
   async function submitLogout() {
-    await logout();
-    resetVaultState("Signed out");
+    const userId = user?.id;
+    let database: FortnoteIndexedDb | null = null;
+
+    if (userId) {
+      try {
+        database = await openFortnoteIndexedDb();
+        const [outbox, sectionCache] = await Promise.all([
+          database.listOutbox(userId),
+          database.listSectionCache(userId)
+        ]);
+        const recoverableItems =
+          outbox.length + sectionCache.filter((record) => record.pending).length;
+        if (
+          recoverableItems > 0 &&
+          !window.confirm(
+            `This browser has ${String(recoverableItems)} recoverable offline change${recoverableItems === 1 ? "" : "s"}. Signing out removes that local work. Continue?`
+          )
+        ) {
+          database.close();
+          return;
+        }
+      } catch {
+        database?.close();
+        database = null;
+        if (
+          !window.confirm(
+            "Fortnote could not inspect recoverable offline work. Sign out and clear local account data anyway?"
+          )
+        ) {
+          return;
+        }
+      }
+    }
+
+    setError(null);
+    setStatus("Signing out");
+    let logoutFailure: unknown;
+    let cleanupFailure: unknown;
+    try {
+      await logout();
+    } catch (error) {
+      logoutFailure = error;
+    }
+
+    if (userId) {
+      try {
+        database ??= await openFortnoteIndexedDb();
+        await database.clearAccount(userId);
+      } catch (error) {
+        cleanupFailure = error;
+      } finally {
+        try {
+          removeSharingKeyTrustRecords(userId);
+        } catch (error) {
+          cleanupFailure ??= error;
+        }
+        database?.close();
+      }
+    }
+
+    const nextStatus = logoutFailure
+      ? "Vault cleared locally; server sign-out failed"
+      : cleanupFailure
+        ? "Signed out; local cleanup incomplete"
+        : "Signed out";
+    resetVaultState(nextStatus);
+    if (logoutFailure) {
+      setError("The decrypted vault was cleared, but the server session may still be active");
+    } else if (cleanupFailure) {
+      setError("Signed out, but some encrypted browser data could not be removed");
+    }
   }
 
   async function repairLegacyHandle(handle: string) {

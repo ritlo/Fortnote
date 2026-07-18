@@ -25,6 +25,7 @@ interface SharingKeyTrustState {
 
 interface StorageLike {
   getItem(key: string): string | null;
+  removeItem(key: string): void;
   setItem(key: string, value: string): void;
 }
 
@@ -118,6 +119,13 @@ export async function trustSharingKey(input: {
     input
   );
   return record;
+}
+
+export function removeSharingKeyTrustRecords(
+  ownerUserId: string,
+  storage?: StorageLike
+): void {
+  getStorage(storage).removeItem(storageKey(ownerUserId));
 }
 
 async function loadSharingKeyTrustState(input: {
