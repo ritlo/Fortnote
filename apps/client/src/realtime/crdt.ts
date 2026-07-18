@@ -358,7 +358,13 @@ export async function finishCrdtSync(
   }
   throwIfCrdtHistoryUnreadable(binding);
   const snapshotIsNewer = binding.note.version > getSnapshotVersion(binding.doc);
-  if (snapshotIsNewer && hasUpdates && binding.appliedUpdateCount > 0) {
+  const hasLegacyWholeNoteSnapshot = !binding.note.rootSectionId;
+  if (
+    hasLegacyWholeNoteSnapshot &&
+    snapshotIsNewer &&
+    hasUpdates &&
+    binding.appliedUpdateCount > 0
+  ) {
     replaceWithSnapshot(binding);
     if (binding.note.role !== "viewer") {
       await broadcastCheckpoint(binding);

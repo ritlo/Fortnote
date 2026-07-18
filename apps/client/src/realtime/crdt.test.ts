@@ -383,6 +383,24 @@ describe("CRDT collaboration", () => {
     expect(fragmentText(getCrdtProvider(current.id).doc)).toBe("Newer CRDT body");
   });
 
+  it("keeps section-backed history authoritative over root metadata versions", async () => {
+    const current = note({
+      body: "",
+      rootSectionId: "00000000-0000-4000-8000-000000000002",
+      version: 2
+    });
+    const live = createDocument(current.title, "Persisted CRDT body");
+    live.getMap<number>("metadata").set("snapshotVersion", 1);
+    setCrdtTransport({ discard: vi.fn(), send: vi.fn(), subscribe: vi.fn() });
+    vi.mocked(decryptCrdtMessage).mockResolvedValueOnce(Y.encodeStateAsUpdate(live));
+
+    openCrdtNote(current, vi.fn());
+    await receiveCrdtUpdate(encryptedUpdate(current));
+    await finishCrdtSync(current.id, current.keyEpoch, true);
+
+    expect(fragmentText(getCrdtProvider(current.id).doc)).toBe("Persisted CRDT body");
+  });
+
   it("does not checkpoint remote traffic as a viewer", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const current = note({ role: "viewer" });
