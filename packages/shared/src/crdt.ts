@@ -246,7 +246,7 @@ function validateBinaryHeader(value: unknown): CrdtBinaryHeader {
     record.formatVersion !== CRDT_BINARY_FORMAT_VERSION ||
     !isUuid(record.updateId) ||
     !isUuid(record.noteId) ||
-    !isUuid(record.sectionId) ||
+    !isSectionId(record.sectionId) ||
     !isUuid(record.cryptoOwnerId) ||
     !isPositiveInteger(record.expectedKeyEpoch) ||
     typeof record.nonce !== "string" ||

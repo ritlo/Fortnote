@@ -19,6 +19,12 @@ describe("bounded CRDT v2 protocol", () => {
     expect(decoded.cipher).toEqual(cipher);
     expect(frame.length).toBeLessThan(1024);
     expect(new TextDecoder().decode(frame)).not.toContain(toBase64(cipher));
+
+    const rootHeader = { ...header, sectionId: "root", kind: "root-update" as const };
+    expect(decodeCrdtBinaryFrame(
+      encodeCrdtBinaryFrame(rootHeader, cipher, 1024),
+      1024
+    ).header).toEqual(rootHeader);
   });
 
   it("rejects mismatched lengths, malformed headers, and oversized frames", () => {

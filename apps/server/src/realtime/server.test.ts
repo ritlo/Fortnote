@@ -230,6 +230,110 @@ describe("realtime server", () => {
     });
   });
 
+  it("commits checkpoints before compacting only through their observed cutoff", async () => {
+    await cryptoReady();
+    const server = await createRealtimeTestServer();
+    const alice = await register(server.url, "checkpoint_alice");
+    const noteId = crypto.randomUUID();
+    const sectionId = crypto.randomUUID();
+    await authed(server.url, alice.cookie)
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(protectedNotePayload(noteId, sectionId))
+      .expect(201);
+    const cryptoOwnerId = (
+      server.db.sqlite
+        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
+        .get(noteId) as { cryptoOwnerId: string }
+    ).cryptoOwnerId;
+    const socket = await connectBinary(server.url, alice.cookie);
+    await socket.nextJson("checkpoint connected");
+    await socket.nextJson("checkpoint replay");
+    const cipher = Uint8Array.from([4, 8, 15, 16, 23, 42]);
+
+    const rootUpdate = {
+      ...binaryHeader({ noteId, sectionId: "root", cryptoOwnerId }),
+      kind: "root-update" as const
+    };
+    socket.socket.send(encodeCrdtBinaryFrame(rootUpdate, cipher, 256 * 1024));
+    expect(await socket.nextJson("root update ack")).toMatchObject({
+      type: "crdt-ack",
+      updateId: rootUpdate.updateId,
+      serverSequence: 1
+    });
+
+    const first = binaryHeader({ noteId, sectionId, cryptoOwnerId });
+    const concurrentLater = binaryHeader({ noteId, sectionId, cryptoOwnerId });
+    socket.socket.send(encodeCrdtBinaryFrame(first, cipher, 256 * 1024));
+    expect(await socket.nextJson("first section ack")).toMatchObject({
+      updateId: first.updateId,
+      serverSequence: 1
+    });
+    socket.socket.send(encodeCrdtBinaryFrame(concurrentLater, cipher, 256 * 1024));
+    expect(await socket.nextJson("later section ack")).toMatchObject({
+      updateId: concurrentLater.updateId,
+      serverSequence: 2
+    });
+
+    const checkpoint = {
+      ...binaryHeader({ noteId, sectionId, cryptoOwnerId }),
+      kind: "checkpoint" as const,
+      checkpointSequenceCutoff: 1
+    };
+    socket.socket.send(encodeCrdtBinaryFrame(checkpoint, cipher, 256 * 1024));
+    expect(await socket.nextJson("checkpoint ack")).toEqual({
+      type: "crdt-ack",
+      updateId: checkpoint.updateId,
+      sectionId,
+      result: "inserted",
+      keyEpoch: 1,
+      serverSequence: 3
+    });
+
+    expect(
+      server.db.sqlite
+        .prepare(`
+          SELECT
+            update_id AS updateId,
+            server_sequence AS serverSequence,
+            checkpoint_sequence_cutoff AS checkpointSequenceCutoff
+          FROM section_updates
+          WHERE note_id = ? AND section_id = ?
+          ORDER BY server_sequence
+        `)
+        .all(noteId, sectionId)
+    ).toEqual([
+      {
+        updateId: concurrentLater.updateId,
+        serverSequence: 2,
+        checkpointSequenceCutoff: null
+      },
+      {
+        updateId: checkpoint.updateId,
+        serverSequence: 3,
+        checkpointSequenceCutoff: 1
+      }
+    ]);
+    expect(
+      server.db.sqlite
+        .prepare("SELECT COUNT(*) AS count FROM section_updates WHERE update_id = ?")
+        .get(rootUpdate.updateId)
+    ).toEqual({ count: 1 });
+
+    const futureCutoff = {
+      ...binaryHeader({ noteId, sectionId, cryptoOwnerId }),
+      kind: "checkpoint" as const,
+      checkpointSequenceCutoff: 99
+    };
+    socket.socket.send(encodeCrdtBinaryFrame(futureCutoff, cipher, 256 * 1024));
+    expect(await socket.nextJson("future cutoff reject")).toEqual({
+      type: "crdt-reject",
+      updateId: futureCutoff.updateId,
+      sectionId,
+      code: "forbidden"
+    });
+  });
+
   it("rejects unauthenticated websocket connections", async () => {
     const server = await createRealtimeTestServer();
 

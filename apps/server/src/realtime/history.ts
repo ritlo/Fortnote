@@ -85,6 +85,13 @@ export function persistBinaryUpdate(
     if (!section) {
       return { status: "rejected", code: "forbidden" };
     }
+    const checkpointCutoff = input.header.checkpointSequenceCutoff;
+    if (
+      (input.header.kind === "checkpoint") !== (checkpointCutoff !== undefined) ||
+      (checkpointCutoff !== undefined && checkpointCutoff > section.currentSequence)
+    ) {
+      return { status: "rejected", code: "forbidden" };
+    }
 
     const storedSectionId = storageSectionId(input.header.noteId, input.header.sectionId);
     const existing = context.db.sqlite
@@ -134,6 +141,24 @@ export function persistBinaryUpdate(
         WHERE id = ? AND note_id = ?
       `)
       .run(nextSequence, storedSectionId, input.header.noteId);
+    if (checkpointCutoff !== undefined && checkpointCutoff > 0) {
+      context.db.sqlite
+        .prepare(`
+          DELETE FROM section_updates
+          WHERE note_id = ?
+            AND section_id = ?
+            AND key_epoch = ?
+            AND server_sequence <= ?
+            AND update_id <> ?
+        `)
+        .run(
+          input.header.noteId,
+          storedSectionId,
+          input.header.expectedKeyEpoch,
+          checkpointCutoff,
+          input.header.updateId
+        );
+    }
     return { status: "inserted", serverSequence: nextSequence };
   });
   return commit.immediate();
