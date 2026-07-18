@@ -219,8 +219,15 @@ describe("CRDT collaboration", () => {
       rootSectionId: sectionId,
       noteKeyBase64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
     });
+    let finishDownload!: (bytes: Uint8Array) => void;
+    const downloadContent = vi.fn(
+      () => new Promise<Uint8Array>((resolve) => {
+        finishDownload = resolve;
+      })
+    );
     setCrdtTransport({
       discard: vi.fn(),
+      downloadContent,
       send: vi.fn().mockResolvedValue(undefined),
       subscribe: vi.fn()
     });
@@ -229,13 +236,6 @@ describe("CRDT collaboration", () => {
     const provider = getCrdtProvider(current.id, current.keyEpoch, sectionId);
     const remote = new Y.Doc();
     setFragmentBody(remote, "Verified remote content");
-    let finishDownload!: (bytes: Uint8Array) => void;
-    vi.mocked(contentTransfer.downloadVerifiedContent).mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishDownload = resolve;
-        })
-    );
 
     const receiving = receiveCrdtUpdate({
       type: "crdt-manifest",
@@ -260,6 +260,7 @@ describe("CRDT collaboration", () => {
 
     finishDownload(Y.encodeStateAsUpdate(remote));
     await receiving;
+    expect(downloadContent).toHaveBeenCalledOnce();
     expect(fragmentText(provider.doc)).toContain("Verified remote content");
   });
 

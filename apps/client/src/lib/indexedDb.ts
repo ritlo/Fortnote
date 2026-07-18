@@ -164,8 +164,9 @@ export interface FortnoteIndexedDb {
   clearAccount(userId: string): Promise<void>;
   close(): void;
   deleteContentTransfer(userId: string, uploadId: string): Promise<void>;
+  deleteSectionCache(record: CacheKey): Promise<void>;
   deleteDatabase(): Promise<void>;
-  evictSectionCache(userId: string, maxEntries: number): Promise<string[]>;
+  evictSectionCache(userId: string, maxEntries: number, maxBytes?: number): Promise<string[]>;
   getAcknowledgement(record: OutboxKey): Promise<AcknowledgementRecord | null>;
   getContentTransfer(
     userId: string,
@@ -173,6 +174,7 @@ export interface FortnoteIndexedDb {
   ): Promise<EncryptedContentTransferRecord | null>;
   getOutbox(record: OutboxKey): Promise<EncryptedOutboxRecord | null>;
   getSearchIndexSection(record: SearchIndexKey): Promise<ProtectedSearchIndexRecord | null>;
+  getSectionCache(record: CacheKey): Promise<SectionCacheRecord | null>;
   listOutbox(userId: string): Promise<EncryptedOutboxRecord[]>;
   listContentTransfers(userId: string): Promise<EncryptedContentTransferRecord[]>;
   listSearchIndex(userId: string): Promise<ProtectedSearchIndexRecord[]>;
@@ -329,33 +331,69 @@ function createDatabaseApi(
       await deleteRecord(database, CONTENT_TRANSFER_STORE, [userId, uploadId]);
       notify({ store: "content-transfers", userId });
     },
+    async deleteSectionCache(record) {
+      await deleteRecord(database, SECTION_CACHE_STORE, cacheKey(record));
+      notify({ store: "section-cache", userId: record.userId });
+    },
     async deleteDatabase() {
       close();
       await safeOperation(() => deleteDatabase(factory, name));
     },
-    async evictSectionCache(userId, maxEntries) {
-      if (!Number.isSafeInteger(maxEntries) || maxEntries < 0) {
+    async evictSectionCache(userId, maxEntries, maxBytes = Number.MAX_SAFE_INTEGER) {
+      if (
+        !Number.isSafeInteger(maxEntries) ||
+        maxEntries < 0 ||
+        !Number.isSafeInteger(maxBytes) ||
+        maxBytes < 0
+      ) {
         throw new IndexedDbOperationError();
       }
-      const records = await this.listSectionCache(userId);
-      const removable = records
-        .filter((record) => !record.pending)
-        .sort(compareCacheRecords);
-      const removeCount = Math.min(Math.max(records.length - maxEntries, 0), removable.length);
-      const selected = removable.slice(0, removeCount);
-      if (selected.length === 0) {
-        return [];
-      }
-      await safeOperation(async () => {
+      const selected = await safeOperation(async () => {
         const transaction = database.transaction(SECTION_CACHE_STORE, "readwrite");
         const done = transactionDone(transaction);
         const store = transaction.objectStore(SECTION_CACHE_STORE);
-        selected.forEach((record) => {
-          store.delete(cacheKey(record));
+        const selectedRecords = await new Promise<SectionCacheRecord[]>((resolve, reject) => {
+          const request = store.index("byUserId").getAll(userId) as IDBRequest<
+            SectionCacheRecord[]
+          >;
+          request.onsuccess = () => {
+            try {
+              const records = request.result;
+              const removable = records
+                .filter((record) => !record.pending)
+                .sort(compareCacheRecords);
+              let remainingEntries = records.length;
+              let remainingBytes = records.reduce(
+                (total, record) => total + record.encryptedBytes.byteLength,
+                0
+              );
+              const selected: SectionCacheRecord[] = [];
+              for (const record of removable) {
+                if (remainingEntries <= maxEntries && remainingBytes <= maxBytes) {
+                  break;
+                }
+                selected.push(record);
+                remainingEntries -= 1;
+                remainingBytes -= record.encryptedBytes.byteLength;
+              }
+              selected.forEach((record) => {
+                store.delete(cacheKey(record));
+              });
+              resolve(selected);
+            } catch (error) {
+              reject(error instanceof Error ? error : new IndexedDbOperationError());
+            }
+          };
+          request.onerror = () => {
+            reject(idbError(request.error));
+          };
         });
         await done;
+        return selectedRecords;
       });
-      notify({ store: "section-cache", userId });
+      if (selected.length > 0) {
+        notify({ store: "section-cache", userId });
+      }
       return selected.map((record) => record.manifestId);
     },
     async getAcknowledgement(record) {
@@ -381,6 +419,9 @@ function createDatabaseApi(
         SEARCH_INDEX_STORE,
         searchIndexKey(record)
       );
+    },
+    async getSectionCache(record) {
+      return getRecord<SectionCacheRecord>(database, SECTION_CACHE_STORE, cacheKey(record));
     },
     async listOutbox(userId) {
       const records = await listByUser<EncryptedOutboxRecord>(database, OUTBOX_STORE, userId);

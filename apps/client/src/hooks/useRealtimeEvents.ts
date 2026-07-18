@@ -254,6 +254,7 @@ export function useRealtimeEvents() {
       connectionRef.current = connection;
       setCrdtTransport({
         discard: connection.discardCrdtUpdates,
+        downloadContent: connection.downloadCrdtContent,
         subscribe: connection.subscribeCrdt,
         unsubscribe: connection.unsubscribeCrdt,
         send: connection.sendCrdtUpdate,

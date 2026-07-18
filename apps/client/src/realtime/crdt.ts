@@ -17,7 +17,10 @@ import {
   type PreparedEncryptedContentV2
 } from "../cryptoClient";
 import type { ContentManifestSummary } from "../api";
-import { downloadVerifiedContent } from "./contentTransfer";
+import {
+  downloadVerifiedContent,
+  type VerifiedContentDownloadInput
+} from "./contentTransfer";
 import {
   appendBlockNoteFragmentSnapshot,
   replaceBlockNoteFragment,
@@ -65,6 +68,7 @@ interface CrdtTransport {
   sendContentDurably?: (
     prepared: PreparedEncryptedContentV2
   ) => DurableDelivery<ContentManifestSummary>;
+  downloadContent?: (input: VerifiedContentDownloadInput) => Promise<Uint8Array>;
 }
 
 interface DurableDelivery<T> {
@@ -1199,7 +1203,8 @@ function decryptReceivedUpdate(
         ? {}
         : { checkpointSequenceCutoff: update.checkpointSequenceCutoff })
     };
-    return downloadVerifiedContent({
+    const download = transport?.downloadContent ?? downloadVerifiedContent;
+    return download({
       manifest,
       cryptoOwnerId: update.cryptoOwnerId,
       noteKey: fromBase64(binding.note.noteKeyBase64),

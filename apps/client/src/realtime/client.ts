@@ -36,8 +36,10 @@ import {
   type OutboxFence
 } from "./outbox";
 import {
+  downloadVerifiedContent,
   persistPreparedTransfer,
-  resumeContentUpload
+  resumeContentUpload,
+  type VerifiedContentDownloadInput
 } from "./contentTransfer";
 import type {
   ReceivedBinaryCrdtMessage,
@@ -87,6 +89,7 @@ interface RealtimeClientOptions {
 export interface RealtimeConnection {
   close: () => void;
   discardCrdtUpdates: (noteId: string, beforeKeyEpoch: number) => void;
+  downloadCrdtContent: (input: VerifiedContentDownloadInput) => Promise<Uint8Array>;
   sendPresence: (noteId: string, state: ClientPresenceState) => void;
   subscribeCrdt: (
     noteId: string,
@@ -442,6 +445,13 @@ export function connectRealtime({
     discardCrdtUpdates: (noteId, beforeKeyEpoch) => {
       discardCrdtUpdates(noteId, beforeKeyEpoch);
     },
+    downloadCrdtContent: (input) => trackContentTransfer((async () => {
+      const database = await getContentDatabase();
+      return downloadVerifiedContent({
+        ...input,
+        cache: { database, userId }
+      });
+    })()),
     sendPresence: (noteId, state) => {
       if (socket.readyState !== WebSocket.OPEN) {
         return;

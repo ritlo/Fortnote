@@ -231,6 +231,65 @@ describe("resumable encrypted content transfer", () => {
       })
     ).rejects.toThrow("hash mismatch");
   });
+
+  it("reuses only verified account-scoped ciphertext and repairs corrupt cache entries", async () => {
+    const database = await openDatabase();
+    const prepared = await preparedContent();
+    const contentManifest = manifest(prepared);
+    let downloadCount = 0;
+    const api = fakeApi({
+      downloadContentChunk(_manifestId, chunkIndex) {
+        downloadCount += 1;
+        const chunk = prepared.chunks[chunkIndex];
+        if (!chunk) {
+          throw new Error("Unexpected chunk index");
+        }
+        return Promise.resolve({
+          bytes: chunk.cipherBytes,
+          cipherHash: chunk.cipherHash,
+          cipherLength: chunk.cipherBytes.byteLength,
+          nonce: chunk.nonce
+        });
+      }
+    });
+    const input = {
+      manifest: contentManifest,
+      cryptoOwnerId: prepared.cryptoOwnerId,
+      noteKey: noteKey(),
+      api,
+      cache: { database, userId: "user-a" }
+    };
+
+    await expect(downloadVerifiedContent(input)).resolves.toEqual(
+      Uint8Array.from({ length: 37 }, (_, index) => index)
+    );
+    expect(downloadCount).toBe(prepared.chunkCount);
+    const [cached] = await database.listSectionCache("user-a");
+    expect(cached).toMatchObject({
+      manifestId: contentManifest.manifestId,
+      noteId: contentManifest.noteId,
+      pending: false,
+      sectionId: contentManifest.sectionId
+    });
+
+    await expect(downloadVerifiedContent(input)).resolves.toEqual(
+      Uint8Array.from({ length: 37 }, (_, index) => index)
+    );
+    expect(downloadCount).toBe(prepared.chunkCount);
+
+    if (!cached) {
+      throw new Error("Expected verified ciphertext cache");
+    }
+    await database.putSectionCache({
+      ...cached,
+      encryptedBytes: Uint8Array.of(1, 2, 3)
+    });
+    await expect(downloadVerifiedContent(input)).resolves.toEqual(
+      Uint8Array.from({ length: 37 }, (_, index) => index)
+    );
+    expect(downloadCount).toBe(prepared.chunkCount * 2);
+    await expect(database.listSectionCache("user-a")).resolves.toHaveLength(1);
+  });
 });
 
 async function openDatabase(): Promise<FortnoteIndexedDb> {

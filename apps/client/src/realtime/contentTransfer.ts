@@ -11,6 +11,7 @@ import {
   type ContentUploadStatus,
   type DownloadedContentChunk
 } from "../api";
+import { fromCanonicalBase64, toBase64 } from "@fortnote/shared";
 import {
   decryptContentChunksV2,
   type EncryptedContentChunkV2,
@@ -19,8 +20,15 @@ import {
 import {
   IndexedDbCapacityError,
   type EncryptedContentTransferRecord,
-  type FortnoteIndexedDb
+  type FortnoteIndexedDb,
+  type SectionCacheRecord
 } from "../lib/indexedDb";
+
+const DEFAULT_SECTION_CACHE_MAX_ENTRIES = 12;
+const DEFAULT_SECTION_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+const CACHE_FORMAT_VERSION = 1;
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 export interface ContentTransferProgress {
   phase: "uploading" | "downloading" | "verifying";
@@ -42,6 +50,21 @@ export interface ContentTransferApi {
   downloadContentChunk: typeof downloadContentChunk;
   inspectContentUpload: typeof inspectContentUpload;
   putContentChunk: typeof putContentChunk;
+}
+
+export interface VerifiedContentDownloadInput {
+  manifest: ContentManifestSummary;
+  cryptoOwnerId: string;
+  noteKey: Uint8Array;
+  api?: ContentTransferApi;
+  signal?: AbortSignal;
+  onProgress?: (progress: ContentTransferProgress) => void;
+  cache?: {
+    database: FortnoteIndexedDb;
+    userId: string;
+    maxEntries?: number;
+    maxBytes?: number;
+  };
 }
 
 export async function uploadPreparedContent(input: {
@@ -129,14 +152,13 @@ export async function abortPersistedContentUpload(input: {
   await input.database.deleteContentTransfer(input.userId, input.uploadId);
 }
 
-export async function downloadVerifiedContent(input: {
-  manifest: ContentManifestSummary;
-  cryptoOwnerId: string;
-  noteKey: Uint8Array;
-  api?: ContentTransferApi;
-  signal?: AbortSignal;
-  onProgress?: (progress: ContentTransferProgress) => void;
-}): Promise<Uint8Array> {
+export async function downloadVerifiedContent(
+  input: VerifiedContentDownloadInput
+): Promise<Uint8Array> {
+  const cached = await readVerifiedCache(input);
+  if (cached) {
+    return cached;
+  }
   const api = input.api ?? defaultContentTransferApi();
   const chunks: EncryptedContentChunkV2[] = [];
   let transferredBytes = 0;
@@ -165,6 +187,15 @@ export async function downloadVerifiedContent(input: {
     transferredBytes,
     totalBytes: input.manifest.totalCipherBytes
   });
+  const plaintext = await decryptDownloadedChunks(input, chunks);
+  await cacheVerifiedChunks(input, chunks);
+  return plaintext;
+}
+
+function decryptDownloadedChunks(
+  input: VerifiedContentDownloadInput,
+  chunks: EncryptedContentChunkV2[]
+): Promise<Uint8Array> {
   return decryptContentChunksV2({
     cryptoOwnerId: input.cryptoOwnerId,
     noteId: input.manifest.noteId,
@@ -181,6 +212,146 @@ export async function downloadVerifiedContent(input: {
     chunkCount: input.manifest.chunkCount,
     manifestHash: input.manifest.manifestHash,
     chunks
+  });
+}
+
+async function readVerifiedCache(
+  input: VerifiedContentDownloadInput
+): Promise<Uint8Array | null> {
+  if (!input.cache) {
+    return null;
+  }
+  const key = sectionCacheKey(input);
+  try {
+    const cached = await input.cache.database.getSectionCache(key);
+    if (!cached || cached.pending) {
+      return null;
+    }
+    const chunks = decodeCachedChunks(cached.encryptedBytes);
+    input.onProgress?.({
+      phase: "verifying",
+      completedChunks: chunks.length,
+      totalChunks: input.manifest.chunkCount,
+      transferredBytes: input.manifest.totalCipherBytes,
+      totalBytes: input.manifest.totalCipherBytes
+    });
+    const plaintext = await decryptDownloadedChunks(input, chunks);
+    await input.cache.database.putSectionCache({
+      ...cached,
+      lastAccessedAt: Date.now()
+    }).catch(() => undefined);
+    return plaintext;
+  } catch {
+    await input.cache.database.deleteSectionCache(key).catch(() => undefined);
+    return null;
+  }
+}
+
+async function cacheVerifiedChunks(
+  input: VerifiedContentDownloadInput,
+  chunks: EncryptedContentChunkV2[]
+): Promise<void> {
+  if (!input.cache) {
+    return;
+  }
+  const maxEntries = input.cache.maxEntries ?? DEFAULT_SECTION_CACHE_MAX_ENTRIES;
+  const maxBytes = input.cache.maxBytes ?? DEFAULT_SECTION_CACHE_MAX_BYTES;
+  const encryptedBytes = encodeCachedChunks(chunks);
+  if (
+    !Number.isSafeInteger(maxEntries) ||
+    maxEntries <= 0 ||
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes <= 0 ||
+    encryptedBytes.byteLength > maxBytes
+  ) {
+    return;
+  }
+  const record: SectionCacheRecord = {
+    ...sectionCacheKey(input),
+    encryptedBytes,
+    lastAccessedAt: Date.now(),
+    pending: false
+  };
+  try {
+    await input.cache.database.evictSectionCache(
+      input.cache.userId,
+      Math.max(0, maxEntries - 1),
+      Math.max(0, maxBytes - encryptedBytes.byteLength)
+    );
+    await input.cache.database.putSectionCache(record);
+    await input.cache.database.evictSectionCache(
+      input.cache.userId,
+      maxEntries,
+      maxBytes
+    );
+  } catch (error) {
+    if (!(error instanceof IndexedDbCapacityError)) {
+      return;
+    }
+    await input.cache.database
+      .evictSectionCache(
+        input.cache.userId,
+        Math.max(0, maxEntries - 1),
+        Math.max(0, maxBytes - encryptedBytes.byteLength)
+      )
+      .catch(() => []);
+    await input.cache.database.putSectionCache(record).catch(() => undefined);
+    await input.cache.database
+      .evictSectionCache(input.cache.userId, maxEntries, maxBytes)
+      .catch(() => []);
+  }
+}
+
+function sectionCacheKey(input: VerifiedContentDownloadInput) {
+  if (!input.cache) {
+    throw new Error("Section cache is unavailable");
+  }
+  return {
+    userId: input.cache.userId,
+    noteId: input.manifest.noteId,
+    sectionId: input.manifest.sectionId,
+    keyEpoch: input.manifest.keyEpoch,
+    manifestId: input.manifest.manifestId
+  };
+}
+
+function encodeCachedChunks(chunks: EncryptedContentChunkV2[]): Uint8Array {
+  return textEncoder.encode(JSON.stringify({
+    version: CACHE_FORMAT_VERSION,
+    chunks: chunks.map((chunk) => ({
+      chunkIndex: chunk.chunkIndex,
+      cipherBytes: toBase64(chunk.cipherBytes),
+      cipherHash: chunk.cipherHash,
+      nonce: chunk.nonce
+    }))
+  }));
+}
+
+function decodeCachedChunks(bytes: Uint8Array): EncryptedContentChunkV2[] {
+  const parsed: unknown = JSON.parse(textDecoder.decode(bytes));
+  if (
+    !isRecord(parsed) ||
+    parsed.version !== CACHE_FORMAT_VERSION ||
+    !Array.isArray(parsed.chunks)
+  ) {
+    throw new Error("Invalid encrypted section cache");
+  }
+  return parsed.chunks.map((value) => {
+    if (
+      !isRecord(value) ||
+      !Number.isSafeInteger(value.chunkIndex) ||
+      typeof value.cipherBytes !== "string" ||
+      typeof value.cipherHash !== "string" ||
+      typeof value.nonce !== "string"
+    ) {
+      throw new Error("Invalid encrypted section cache");
+    }
+    return {
+      chunkIndex: value.chunkIndex as number,
+      cipherBytes: fromCanonicalBase64(value.cipherBytes),
+      cipherHash: value.cipherHash,
+      nonce: value.nonce
+    };
   });
 }
 
@@ -337,4 +508,8 @@ function defaultContentTransferApi(): ContentTransferApi {
     inspectContentUpload,
     putContentChunk
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

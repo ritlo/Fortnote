@@ -82,6 +82,32 @@ describe("protected IndexedDB storage", () => {
     await expect(database.listSectionCache("user-a")).resolves.toEqual([pending, newest]);
   });
 
+  it("reads and deletes one exact account-scoped ciphertext cache entry", async () => {
+    const database = await openDatabase();
+    const first = cacheRecord({ userId: "user-a", manifestId: "shared-manifest" });
+    const second = cacheRecord({ userId: "user-b", manifestId: "shared-manifest" });
+    await database.putSectionCache(first);
+    await database.putSectionCache(second);
+
+    await expect(database.getSectionCache(first)).resolves.toEqual(first);
+    await database.deleteSectionCache(first);
+    await expect(database.getSectionCache(first)).resolves.toBeNull();
+    await expect(database.getSectionCache(second)).resolves.toEqual(second);
+  });
+
+  it("bounds cache bytes while retaining pending ciphertext", async () => {
+    const database = await openDatabase();
+    const pending = cacheRecord({ manifestId: "pending", lastAccessedAt: 1, pending: true });
+    const oldest = cacheRecord({ manifestId: "oldest", lastAccessedAt: 2 });
+    const newest = cacheRecord({ manifestId: "newest", lastAccessedAt: 3 });
+    await database.putSectionCache(pending);
+    await database.putSectionCache(oldest);
+    await database.putSectionCache(newest);
+
+    await expect(database.evictSectionCache("user-a", 10, 6)).resolves.toEqual(["oldest"]);
+    await expect(database.listSectionCache("user-a")).resolves.toEqual([pending, newest]);
+  });
+
   it("clears one account without deleting another account's protected records", async () => {
     const database = await openDatabase();
     const first = outboxRecord({ userId: "user-a" });
