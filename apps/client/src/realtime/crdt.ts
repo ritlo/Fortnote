@@ -23,6 +23,7 @@ const SECTION_ORDER_KEY = "sections";
 // ponytail: fixed threshold; tune from update-size metrics if storage churn matters.
 const CHECKPOINT_UPDATE_COUNT = 64;
 const bindings = new Map<string, Binding>();
+let nextBindingGeneration = 1;
 let transport: CrdtTransport | null = null;
 const transportWaiters: {
   reject: (error: Error) => void;
@@ -104,6 +105,7 @@ interface Binding {
   onChange: (patch: Partial<Pick<DecryptedNote, "title" | "body">>) => void;
   pendingUpdateIds: Set<string>;
   failedUpdateIds: Set<string>;
+  generation: number;
   appliedUpdateCount: number;
   checkpointing: boolean;
   observedServerSequence: number;
@@ -164,6 +166,7 @@ function getOrCreateBinding(
     onChange: () => undefined,
     pendingUpdateIds: new Set(epochAdvanced ? [] : (existing?.pendingUpdateIds ?? [])),
     failedUpdateIds: new Set(existing?.failedUpdateIds ?? []),
+    generation: nextBindingGeneration,
     appliedUpdateCount: epochAdvanced ? 0 : (existing?.appliedUpdateCount ?? 0),
     checkpointing: false,
     observedServerSequence: epochAdvanced ? 0 : (existing?.observedServerSequence ?? 0),
@@ -173,13 +176,19 @@ function getOrCreateBinding(
     snapshotSeeded: inheritedState !== null,
     keyEpoch: keyEpoch ?? 0
   };
+  nextBindingGeneration += 1;
   if (inheritedState) {
     Y.applyUpdate(doc, inheritedState, SNAPSHOT_SEED);
+  }
+  if (epochAdvanced && existing) {
+    existing.onChange = () => undefined;
+    existing.provider.awareness.destroy();
+    existing.doc.destroy();
   }
   bindings.set(key, created);
   if (sectionId === ROOT_SECTION_ID) {
     doc.getText("title").observe((event) => {
-      if (event.transaction.origin !== SNAPSHOT_SEED) {
+      if (event.transaction.origin !== SNAPSHOT_SEED && isActiveBinding(created)) {
         created.onChange({ title: doc.getText("title").toJSON() });
       }
     });
@@ -189,6 +198,7 @@ function getOrCreateBinding(
     if (
       origin !== REMOTE_UPDATE &&
       origin !== SNAPSHOT_SEED &&
+      isActiveBinding(created) &&
       note &&
       note.role !== "viewer"
     ) {
@@ -233,6 +243,9 @@ export function openCrdtNote(
   onChange: Binding["onChange"]
 ): () => void {
   const currentBindings = bindingsForNote(note.id);
+  if (currentBindings.some((binding) => binding.keyEpoch > note.keyEpoch)) {
+    return () => undefined;
+  }
   if (currentBindings.length === 0) {
     return attachCrdtNote(note, onChange);
   }
@@ -408,6 +421,9 @@ export function receiveCrdtUpdate(
   const received = binding.receiving.then(async () => {
     try {
       const plaintext = await decryptReceivedUpdate(binding, update);
+      if (!isActiveBinding(binding) || binding.note.keyEpoch !== messageKeyEpoch(update)) {
+        return;
+      }
       Y.applyUpdate(binding.doc, plaintext, REMOTE_UPDATE);
       binding.appliedUpdateCount += 1;
       binding.failedUpdateIds.delete(update.updateId);
@@ -422,6 +438,9 @@ export function receiveCrdtUpdate(
       }
       trackUpdate(binding, update.updateId);
     } catch (error) {
+      if (!isActiveBinding(binding)) {
+        return;
+      }
       binding.failedUpdateIds.add(update.updateId);
       binding.pendingUpdateIds.add(update.updateId);
       throw error;
@@ -446,6 +465,9 @@ export async function finishCrdtSync(
   }
   const primarySectionId = defaultSectionId(noteId);
   for (const binding of candidates) {
+    if (!isActiveBinding(binding) || binding.keyEpoch !== keyEpoch) {
+      continue;
+    }
     if (serverSequence !== undefined) {
       binding.observedServerSequence = Math.max(
         binding.observedServerSequence,
@@ -468,7 +490,7 @@ async function finishBindingSync(
   hasUpdates: boolean
 ): Promise<void> {
   await binding.receiving;
-  if (binding.note.keyEpoch !== keyEpoch || binding.ready) {
+  if (!isActiveBinding(binding) || binding.note.keyEpoch !== keyEpoch || binding.ready) {
     return;
   }
   throwIfCrdtHistoryUnreadable(binding);
@@ -506,24 +528,34 @@ async function finishBindingSync(
 }
 
 async function broadcastUpdate(binding: Binding, update: Uint8Array): Promise<void> {
+  const note = binding.note;
+  if (!isActiveBindingForNote(binding, note)) {
+    return;
+  }
   const currentTransport = await getTransport();
+  if (!isActiveBindingForNote(binding, note)) {
+    return;
+  }
   const updateId = crypto.randomUUID();
   const kind = binding.sectionId === ROOT_SECTION_ID ? "root-update" : "update";
   const envelope = {
     type: "crdt-update" as const,
     formatVersion: CRDT_BINARY_FORMAT_VERSION,
     updateId,
-    noteId: binding.note.id,
-    cryptoOwnerId: binding.note.cryptoOwnerId,
-    keyEpoch: binding.note.keyEpoch,
+    noteId: note.id,
+    cryptoOwnerId: note.cryptoOwnerId,
+    keyEpoch: note.keyEpoch,
     sectionId: binding.sectionId,
     kind
   } satisfies Omit<ScopedEncryptedCrdtMessage, "cipher" | "nonce">;
   const encrypted = await encryptCrdtMessage({
     ...envelope,
-    noteKeyBase64: binding.note.noteKeyBase64,
+    noteKeyBase64: note.noteKeyBase64,
     update
   });
+  if (!isActiveBindingForNote(binding, note)) {
+    return;
+  }
   const delivered = currentTransport.send({
     ...envelope,
     cipher: encrypted.cipher,
@@ -540,6 +572,10 @@ async function broadcastCheckpoint(
   if (!canWrite(binding)) {
     return;
   }
+  const note = binding.note;
+  if (!isActiveBindingForNote(binding, note)) {
+    return;
+  }
   throwIfCrdtHistoryUnreadable(binding);
   binding.checkpointing = true;
   const compactedUpdateIds = [...binding.pendingUpdateIds].slice(0, 100);
@@ -548,9 +584,9 @@ async function broadcastCheckpoint(
     type: "crdt-checkpoint" as const,
     formatVersion: CRDT_BINARY_FORMAT_VERSION,
     updateId,
-    noteId: binding.note.id,
-    cryptoOwnerId: binding.note.cryptoOwnerId,
-    keyEpoch: binding.note.keyEpoch,
+    noteId: note.id,
+    cryptoOwnerId: note.cryptoOwnerId,
+    keyEpoch: note.keyEpoch,
     sectionId: binding.sectionId,
     kind: "checkpoint" as const,
     compactedUpdateIds,
@@ -558,16 +594,25 @@ async function broadcastCheckpoint(
   } satisfies Omit<ScopedEncryptedCrdtMessage, "cipher" | "nonce">;
   try {
     const currentTransport = await getTransport();
+    if (!isActiveBindingForNote(binding, note)) {
+      return;
+    }
     const encrypted = await encryptCrdtMessage({
       ...envelope,
-      noteKeyBase64: binding.note.noteKeyBase64,
+      noteKeyBase64: note.noteKeyBase64,
       update: Y.encodeStateAsUpdate(binding.doc)
     });
+    if (!isActiveBindingForNote(binding, note)) {
+      return;
+    }
     await currentTransport.send({
       ...envelope,
       cipher: encrypted.cipher,
       nonce: encrypted.nonce
     });
+    if (!isActiveBindingForNote(binding, note)) {
+      return;
+    }
     compactedUpdateIds.forEach((id) => binding.pendingUpdateIds.delete(id));
     compactedUpdateIds.forEach((id) => binding.failedUpdateIds.delete(id));
     binding.pendingUpdateIds.add(updateId);
@@ -716,6 +761,20 @@ function decryptReceivedUpdate(
 
 function isBinding(binding: Binding | undefined): binding is Binding {
   return binding !== undefined;
+}
+
+function isActiveBinding(binding: Binding): boolean {
+  const active = bindings.get(bindingKey(binding.noteId, binding.sectionId));
+  return active === binding && active.generation === binding.generation;
+}
+
+function isActiveBindingForNote(binding: Binding, note: DecryptedNote): boolean {
+  return (
+    isActiveBinding(binding) &&
+    binding.note === note &&
+    binding.keyEpoch === note.keyEpoch &&
+    binding.note.cryptoOwnerId === note.cryptoOwnerId
+  );
 }
 
 function getTransport(): Promise<CrdtTransport> {

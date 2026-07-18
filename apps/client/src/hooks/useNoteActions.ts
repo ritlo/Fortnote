@@ -63,6 +63,8 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       return;
     }
 
+    const sessionUserId = user.id;
+    const sessionRootKey = rootKey;
     setError(null);
     setStatus("Encrypting note");
     try {
@@ -71,6 +73,9 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         rootKey,
         title: "Untitled note"
       });
+      if (!isCurrentSession(sessionUserId, sessionRootKey)) {
+        return;
+      }
       const created = await createNote({
         id: draft.id,
         folderId: selectedFolderId,
@@ -82,6 +87,9 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         noteKeyNonce: draft.noteKeyNonce,
         noteKeyFormatVersion: 2
       });
+      if (!isCurrentSession(sessionUserId, sessionRootKey)) {
+        return;
+      }
       const note: DecryptedNote = {
         id: draft.id,
         folderId: selectedFolderId,
@@ -104,6 +112,9 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       setSelectedNoteId(note.id);
       setStatus("Note encrypted and saved");
     } catch (noteError) {
+      if (!isCurrentSession(sessionUserId, sessionRootKey)) {
+        return;
+      }
       setStatus("Save failed");
       setError(noteError instanceof Error ? noteError.message : "Unable to create note");
     }
@@ -183,6 +194,11 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     ) {
       return "skipped";
     }
+    const operation = createNoteOperationFence(
+      state.user.id,
+      state.rootKey,
+      noteToSave
+    );
 
     autosave.current.issues.delete(noteId);
     if (!showSaveIssues() && state.selectedNoteId === noteId) {
@@ -199,6 +215,10 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         noteKey,
         title: noteToSave.title
       });
+      if (!isCurrentNoteOperation(operation)) {
+        finishSuccessfulSave(noteId);
+        return "skipped";
+      }
       const shouldMigrateOwnedKey =
         noteToSave.role === "owner" && noteToSave.metadataMigration !== "current";
       const rootSectionId =
@@ -212,6 +232,10 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
             noteKey
           })
         : null;
+      if (!isCurrentNoteOperation(operation)) {
+        finishSuccessfulSave(noteId);
+        return "skipped";
+      }
       const saved = await updateNote(noteToSave.id, {
         titleCipher: encryptedTitle.cipher,
         titleNonce: encryptedTitle.nonce,
@@ -228,6 +252,10 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
             }
           : {})
       });
+      if (!isCurrentNoteOperation(operation)) {
+        finishSuccessfulSave(noteId);
+        return "skipped";
+      }
       const contentLength = new TextEncoder().encode(noteToSave.body).length;
       await checkpointCrdtNote({
         ...noteToSave,
@@ -238,7 +266,8 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
           saved.rootVersion ?? noteToSave.rootVersion ?? noteToSave.version,
         rootSectionId
       });
-      if (!isCurrentSession(state.user.id, state.rootKey)) {
+      if (!isCurrentNoteOperation(operation)) {
+        finishSuccessfulSave(noteId);
         return "skipped";
       }
       setNotes((current) =>
@@ -264,7 +293,8 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       finishSuccessfulSave(noteId);
       return "saved";
     } catch (saveError) {
-      if (!isCurrentSession(state.user.id, state.rootKey)) {
+      if (!isCurrentNoteOperation(operation)) {
+        finishSuccessfulSave(noteId);
         return "skipped";
       }
       if (isApiRequestError(saveError) && saveError.code === "conflict") {
@@ -572,6 +602,45 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
 function isCurrentSession(userId: string, rootKey: Uint8Array): boolean {
   const state = useAppStore.getState();
   return state.user?.id === userId && state.rootKey === rootKey;
+}
+
+interface NoteOperationFence {
+  userId: string;
+  rootKey: Uint8Array;
+  noteId: string;
+  cryptoOwnerId: string;
+  keyEpoch: number;
+  version: number;
+  rootVersion: number;
+}
+
+function createNoteOperationFence(
+  userId: string,
+  rootKey: Uint8Array,
+  note: DecryptedNote
+): NoteOperationFence {
+  return {
+    userId,
+    rootKey,
+    noteId: note.id,
+    cryptoOwnerId: note.cryptoOwnerId,
+    keyEpoch: note.keyEpoch,
+    version: note.version,
+    rootVersion: note.rootVersion ?? note.version
+  };
+}
+
+function isCurrentNoteOperation(fence: NoteOperationFence): boolean {
+  const state = useAppStore.getState();
+  const note = state.notes.find((candidate) => candidate.id === fence.noteId);
+  return (
+    state.user?.id === fence.userId &&
+    state.rootKey === fence.rootKey &&
+    note?.cryptoOwnerId === fence.cryptoOwnerId &&
+    note.keyEpoch === fence.keyEpoch &&
+    note.version === fence.version &&
+    (note.rootVersion ?? note.version) === fence.rootVersion
+  );
 }
 
 export function mergeDraftAfterConflict(

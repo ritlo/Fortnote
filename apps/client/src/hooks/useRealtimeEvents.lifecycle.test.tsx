@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => ({
   connections: [] as MockConnection[],
   getCursor: vi.fn(),
   loadFolders: vi.fn(),
-  loadNotes: vi.fn()
+  loadNote: vi.fn()
 }));
 
 vi.mock("../api", () => ({
@@ -47,7 +47,7 @@ vi.mock("../realtime/client", () => ({
 }));
 
 vi.mock("./useAppData", () => ({
-  loadDecryptedNotes: mocks.loadNotes,
+  loadDecryptedNote: mocks.loadNote,
   loadFolders: mocks.loadFolders
 }));
 
@@ -60,7 +60,7 @@ describe("useRealtimeEvents lifecycle", () => {
     mocks.connections.length = 0;
     mocks.getCursor.mockReset();
     mocks.loadFolders.mockReset();
-    mocks.loadNotes.mockReset();
+    mocks.loadNote.mockReset();
     useAppStore.getState().resetVaultState("reset");
     useAppStore.setState({
       eventCursor: 3,
@@ -130,6 +130,69 @@ describe("useRealtimeEvents lifecycle", () => {
     });
     expect(mocks.connections).toHaveLength(2);
   });
+
+  it("does not continue a delayed event reload into a replacement vault", async () => {
+    const delayedFolders = deferred<undefined>();
+    mocks.getCursor.mockResolvedValue({ cursor: 3 });
+    mocks.loadFolders.mockReturnValueOnce(delayedFolders.promise);
+    mocks.loadNote.mockResolvedValue(undefined);
+    render(<RealtimeHarness />);
+    await flushEffects();
+    const first = mocks.connections[0]!;
+    act(() => {
+      first.options.onMessage({
+        type: "replay",
+        events: [
+          collaborationEvent({
+            eventId: "folder-event",
+            resourceId: "folder-1",
+            resourceType: "folder",
+            type: "folder.deleted"
+          }),
+          collaborationEvent({
+            cursor: 2,
+            eventId: "note-event",
+            noteId: "note-1",
+            resourceId: "note-1",
+            resourceType: "note",
+            type: "note.updated"
+          })
+        ]
+      });
+    });
+    await flushEffects();
+    expect(mocks.loadFolders).toHaveBeenCalledOnce();
+
+    const replacementRootKey = new Uint8Array([9]);
+    act(() => {
+      useAppStore.setState({
+        rootKey: replacementRootKey,
+        user: { id: "user-2", username: "bob" },
+        notes: [{
+          id: "fresh-note",
+          folderId: "folder-1",
+          title: "Fresh",
+          body: "",
+          noteKeyBase64: "fresh-key",
+          contentLength: 0,
+          version: 1,
+          keyEpoch: 1,
+          isDeleted: false,
+          updatedAt: "2026-07-18T00:00:00.000Z",
+          ownerUserId: "user-2",
+          cryptoOwnerId: "user-2",
+          role: "owner"
+        }]
+      });
+      delayedFolders.resolve(undefined);
+    });
+    await flushEffects();
+
+    expect(mocks.loadNote).not.toHaveBeenCalled();
+    expect(useAppStore.getState().notes).toEqual([
+      expect.objectContaining({ id: "fresh-note", folderId: "folder-1" })
+    ]);
+  });
 });
 
 function RealtimeHarness() {
@@ -142,4 +205,28 @@ async function flushEffects() {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+function collaborationEvent(overrides: Record<string, unknown>) {
+  return {
+    actorUserId: "user-3",
+    createdAt: "2026-07-18T00:00:00.000Z",
+    cursor: 1,
+    eventId: "event-1",
+    metadata: { clientInstanceId: "other-client" },
+    noteId: null,
+    resourceId: "resource-1",
+    resourceType: "note",
+    type: "note.updated",
+    version: 1,
+    ...overrides
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }

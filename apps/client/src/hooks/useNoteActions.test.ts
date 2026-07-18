@@ -265,6 +265,54 @@ describe("note autosave", () => {
     });
   });
 
+  it("does not checkpoint an old epoch after realtime replaces the note", async () => {
+    let finishSave!: (value: {
+      id: string;
+      rootVersion: number;
+      version: number;
+      updatedAt: string;
+    }) => void;
+    mocks.updateNote.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        finishSave = resolve;
+      })
+    );
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "Old epoch draft" });
+    });
+    await advanceAutosave();
+    act(() => {
+      useAppStore.setState({
+        notes: [note({
+          keyEpoch: 2,
+          noteKeyBase64: "replacement-key",
+          rootVersion: 2,
+          title: "New epoch title",
+          version: 2
+        })]
+      });
+      finishSave({
+        id: "note_1",
+        rootVersion: 2,
+        version: 2,
+        updatedAt: "2026-07-03T00:00:00.000Z"
+      });
+    });
+    await waitForAssertion(() => {
+      expect(useAppStore.getState().status).toBe("Ready");
+    });
+
+    expect(mocks.checkpoint).not.toHaveBeenCalled();
+    expect(useAppStore.getState().notes[0]).toMatchObject({
+      keyEpoch: 2,
+      noteKeyBase64: "replacement-key",
+      title: "New epoch title",
+      version: 2
+    });
+  });
+
   it("does not retry conflicts until another edit", async () => {
     mocks.updateNote.mockRejectedValueOnce({ code: "conflict" });
     const { result } = renderHook(() => useNoteActions(note()));

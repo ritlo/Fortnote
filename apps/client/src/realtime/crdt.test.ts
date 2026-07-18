@@ -124,6 +124,48 @@ describe("CRDT collaboration", () => {
     );
   });
 
+  it("ignores a delayed decrypt after its provider generation is replaced", async () => {
+    const current = note();
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      subscribe: vi.fn()
+    });
+    openCrdtNote(current, vi.fn());
+    await finishCrdtSync(current.id, 1, false);
+    let finishDecrypt!: (update: Uint8Array) => void;
+    vi.mocked(decryptCrdtMessage).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        finishDecrypt = resolve;
+      })
+    );
+    const receiving = receiveCrdtUpdate({
+      type: "crdt-update",
+      formatVersion: 1,
+      updateId: crypto.randomUUID(),
+      noteId: current.id,
+      cryptoOwnerId: current.cryptoOwnerId,
+      keyEpoch: 1,
+      cipher: "cipher",
+      nonce: "nonce"
+    });
+    await vi.waitFor(() => {
+      expect(finishDecrypt).toBeTypeOf("function");
+    });
+    const replacementChange = vi.fn();
+    const replacement = note({ keyEpoch: 2, noteKeyBase64: "replacement-key" });
+    openCrdtNote(replacement, replacementChange);
+    const replacementProvider = getCrdtProvider(current.id, 2);
+    const stale = createDocument("Stale remote title", "Stale remote body");
+
+    finishDecrypt(Y.encodeStateAsUpdate(stale));
+    await receiving;
+
+    expect(replacementProvider.doc.getText("title").toJSON()).toBe(current.title);
+    expect(replacementChange).not.toHaveBeenCalledWith({ title: "Stale remote title" });
+    expect(getCrdtProvider(current.id, 1)).toBe(replacementProvider);
+  });
+
   it("never assigns or reuses Yjs client IDs across root and section documents", () => {
     const current = note({
       rootSectionId: "00000000-0000-4000-8000-000000000002"
