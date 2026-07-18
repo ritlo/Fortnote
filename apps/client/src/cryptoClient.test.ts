@@ -2,17 +2,35 @@ import { describe, expect, it } from "vitest";
 import {
   createAccountRecoveryCrypto,
   createEncryptedNoteDraft,
+  createEpochLinkV2,
   createUserSharingKey,
   createLoginAuthVerifier,
   createRegistrationCrypto,
   decryptNoteKeyShare,
   decryptNote,
   decryptCrdtMessage,
+  decryptAttachmentMetadataV2,
+  decryptContentChunkV2,
+  decryptFolderNameV2,
+  decryptNoteKeyEnvelopeV2,
+  decryptNoteKeyShareV2,
+  decryptNoteTitleV2,
+  decryptRootKeyEnvelopeV2,
+  decryptSharingPrivateKeyEnvelopeV2,
+  encryptAttachmentMetadataV2,
+  encryptContentChunkV2,
   encryptCrdtMessage,
+  encryptFolderNameV2,
+  encryptNoteKeyEnvelopeV2,
+  encryptNoteKeyShareV2,
+  encryptNoteTitleV2,
+  encryptRootKeyEnvelopeV2,
+  encryptSharingPrivateKeyEnvelopeV2,
   encryptNoteKeyShare,
   noteKeyToBase64,
   openUserSharingKey,
-  openVault
+  openVault,
+  traverseEpochLinksBackward
 } from "./cryptoClient";
 
 describe("client crypto workflows", () => {
@@ -161,4 +179,239 @@ describe("client crypto workflows", () => {
       })
     ).resolves.toEqual(input.update);
   });
+
+  it("binds protected display metadata to its exact v2 context", async () => {
+    const rootKey = key(1);
+    const noteKey = key(2);
+    const title = await encryptNoteTitleV2({
+      cryptoOwnerId: "owner-a",
+      noteId: "note-a",
+      keyEpoch: 2,
+      noteKey,
+      title: "Private title"
+    });
+    await expect(
+      decryptNoteTitleV2({
+        cryptoOwnerId: "owner-a",
+        noteId: "note-a",
+        keyEpoch: 2,
+        noteKey,
+        envelope: title
+      })
+    ).resolves.toBe("Private title");
+    await expect(
+      decryptNoteTitleV2({
+        cryptoOwnerId: "owner-a",
+        noteId: "note-b",
+        keyEpoch: 2,
+        noteKey,
+        envelope: title
+      })
+    ).rejects.toThrow();
+
+    const folder = await encryptFolderNameV2({
+      userId: "owner-a",
+      folderId: "folder-a",
+      rootKey,
+      name: "Private folder"
+    });
+    await expect(
+      decryptFolderNameV2({
+        userId: "owner-a",
+        folderId: "folder-a",
+        rootKey,
+        envelope: folder
+      })
+    ).resolves.toBe("Private folder");
+
+    const metadata = await encryptAttachmentMetadataV2({
+      cryptoOwnerId: "owner-a",
+      noteId: "note-a",
+      attachmentId: "attachment-a",
+      keyEpoch: 2,
+      noteKey,
+      filename: "private-plan.pdf",
+      mimeType: "application/pdf"
+    });
+    await expect(
+      decryptAttachmentMetadataV2({
+        cryptoOwnerId: "owner-a",
+        noteId: "note-a",
+        attachmentId: "attachment-a",
+        keyEpoch: 2,
+        noteKey,
+        envelope: metadata
+      })
+    ).resolves.toEqual({
+      filename: "private-plan.pdf",
+      mimeType: "application/pdf"
+    });
+  });
+
+  it("binds root, private-sharing, and note-key envelopes and rejects v1 downgrade", async () => {
+    const wrappingKey = key(3);
+    const rootKey = key(4);
+    const noteKey = key(5);
+    const privateKey = key(6);
+    const rootEnvelope = await encryptRootKeyEnvelopeV2({
+      userId: "owner-a",
+      keyMaterialVersion: 3,
+      rootKey,
+      wrappingKey
+    });
+    await expect(
+      decryptRootKeyEnvelopeV2({
+        userId: "owner-a",
+        keyMaterialVersion: 3,
+        wrappingKey,
+        envelope: rootEnvelope
+      })
+    ).resolves.toEqual(rootKey);
+    await expect(
+      decryptRootKeyEnvelopeV2({
+        userId: "owner-a",
+        keyMaterialVersion: 3,
+        wrappingKey,
+        envelope: { ...rootEnvelope, formatVersion: 1 }
+      })
+    ).rejects.toThrow("downgrade");
+
+    const privateEnvelope = await encryptSharingPrivateKeyEnvelopeV2({
+      userId: "owner-a",
+      sharingKeyVersion: 4,
+      rootKey,
+      privateKey
+    });
+    await expect(
+      decryptSharingPrivateKeyEnvelopeV2({
+        userId: "owner-a",
+        sharingKeyVersion: 4,
+        rootKey,
+        envelope: privateEnvelope
+      })
+    ).resolves.toEqual(privateKey);
+
+    const noteEnvelope = await encryptNoteKeyEnvelopeV2({
+      cryptoOwnerId: "owner-a",
+      noteId: "note-a",
+      keyEpoch: 2,
+      rootKey,
+      noteKey
+    });
+    await expect(
+      decryptNoteKeyEnvelopeV2({
+        cryptoOwnerId: "owner-a",
+        noteId: "note-a",
+        keyEpoch: 2,
+        rootKey,
+        envelope: noteEnvelope
+      })
+    ).resolves.toEqual(noteKey);
+  });
+
+  it("validates the exact note-share account, key version, note, and epoch", async () => {
+    const recipient = await createUserSharingKey(key(7), 5);
+    const context = {
+      cryptoOwnerId: "owner-a",
+      noteId: "note-a",
+      keyEpoch: 4,
+      recipientUserId: "recipient-a",
+      recipientSharingKeyVersion: 5
+    };
+    const encryptedNoteKey = await encryptNoteKeyShareV2({
+      ...context,
+      noteKey: key(8),
+      recipientPublicKey: recipient.opened.publicKey
+    });
+    await expect(
+      decryptNoteKeyShareV2({
+        ...context,
+        encryptedNoteKey,
+        publicKey: recipient.opened.publicKey,
+        privateKey: recipient.opened.privateKey
+      })
+    ).resolves.toEqual(key(8));
+    await expect(
+      decryptNoteKeyShareV2({
+        ...context,
+        recipientSharingKeyVersion: 6,
+        encryptedNoteKey,
+        publicKey: recipient.opened.publicKey,
+        privateKey: recipient.opened.privateKey
+      })
+    ).rejects.toThrow("context mismatch");
+  });
+
+  it("authenticates each bounded chunk independently", async () => {
+    const context = {
+      cryptoOwnerId: "owner-a",
+      noteId: "note-a",
+      sectionId: "section-a",
+      keyEpoch: 2,
+      updateId: crypto.randomUUID(),
+      uploadId: crypto.randomUUID(),
+      chunkIndex: 0,
+      chunkCount: 2,
+      totalCipherBytes: 128,
+      kind: "update" as const,
+      noteKey: key(9)
+    };
+    const envelope = await encryptContentChunkV2({
+      ...context,
+      plaintext: new Uint8Array([1, 2, 3])
+    });
+    await expect(decryptContentChunkV2({ ...context, envelope })).resolves.toEqual(
+      new Uint8Array([1, 2, 3])
+    );
+    await expect(
+      decryptContentChunkV2({ ...context, chunkIndex: 1, envelope })
+    ).rejects.toThrow();
+  });
+
+  it("traverses only adjacent authenticated epoch links backward", async () => {
+    const first = key(10);
+    const second = key(11);
+    const third = key(12);
+    const firstLink = await createEpochLinkV2({
+      cryptoOwnerId: "owner-a",
+      noteId: "note-a",
+      sourceEpoch: 1,
+      targetEpoch: 2,
+      sourceNoteKey: first,
+      targetNoteKey: second
+    });
+    const secondLink = await createEpochLinkV2({
+      cryptoOwnerId: "owner-a",
+      noteId: "note-a",
+      sourceEpoch: 2,
+      targetEpoch: 3,
+      sourceNoteKey: second,
+      targetNoteKey: third
+    });
+
+    await expect(
+      traverseEpochLinksBackward({
+        cryptoOwnerId: "owner-a",
+        noteId: "note-a",
+        currentEpoch: 3,
+        targetEpoch: 1,
+        currentNoteKey: third,
+        links: [firstLink, secondLink]
+      })
+    ).resolves.toEqual(first);
+    await expect(
+      traverseEpochLinksBackward({
+        cryptoOwnerId: "owner-a",
+        noteId: "note-a",
+        currentEpoch: 3,
+        targetEpoch: 1,
+        currentNoteKey: third,
+        links: [firstLink]
+      })
+    ).rejects.toThrow("Missing adjacent");
+  });
 });
+
+function key(seed: number): Uint8Array {
+  return Uint8Array.from({ length: 32 }, (_, index) => (seed + index) % 256);
+}
