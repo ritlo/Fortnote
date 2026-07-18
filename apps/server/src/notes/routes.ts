@@ -721,7 +721,7 @@ export function createNotesRouter(context: AppContext): Router {
 
     const title = parsed.data.title ?? undefined;
     const nextVersion = access.version + 1;
-    const eventCursor = context.db.orm.transaction((tx) => {
+    const update = context.db.orm.transaction((tx) => {
       const updateResult = tx.update(schema.notes)
         .set({
           folderId,
@@ -741,20 +741,31 @@ export function createNotesRouter(context: AppContext): Router {
       if (updateResult.changes !== 1) {
         return null;
       }
-      return writeRequestEvent(context, request, {
+      const eventCursor = writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,
         eventType: "note.updated",
         noteVersion: nextVersion
       }, tx);
+      const saved = tx
+        .select({ updatedAt: schema.notes.updatedAt })
+        .from(schema.notes)
+        .where(eq(schema.notes.id, access.noteId))
+        .get();
+
+      return saved ? { eventCursor, updatedAt: saved.updatedAt } : null;
     });
-    if (eventCursor === null) {
+    if (update === null) {
       sendApiError(response, "conflict", "Note version conflict");
       return;
     }
-    publishEventCursors(context, [eventCursor]);
+    publishEventCursors(context, [update.eventCursor]);
 
-    response.json({ id: access.noteId, version: nextVersion });
+    response.json({
+      id: access.noteId,
+      version: nextVersion,
+      updatedAt: `${update.updatedAt.replace(" ", "T")}Z`
+    });
   });
 
   router.delete("/:id", (request, response) => {

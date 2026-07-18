@@ -20,7 +20,12 @@ const mocks = vi.hoisted(() => ({
         content: [],
         children: []
       }
-    ]
+    ],
+    prosemirrorState: {
+      plugins: []
+    },
+    redo: vi.fn(),
+    undo: vi.fn()
   },
   editorChange: undefined as ((editor: { document: unknown[] }) => void) | undefined,
   editorChanges: [] as ((editor: { document: unknown[] }) => void)[],
@@ -152,6 +157,18 @@ describe("NoteEditor BlockNote lifecycle", () => {
     expect(mocks.createOptions.at(-1)).toMatchObject({
       initialContent: expect.arrayContaining([expect.objectContaining({ type: "paragraph" })])
     });
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Redo" })).toBeNull();
+  });
+
+  it("uses BlockNote's native undo and redo for writable notes", () => {
+    renderEditor(note(), vi.fn());
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+
+    expect(mocks.editor.undo).toHaveBeenCalledOnce();
+    expect(mocks.editor.redo).toHaveBeenCalledOnce();
   });
 
   it("canonicalizes legacy content after sync and rejects malformed arrays", () => {

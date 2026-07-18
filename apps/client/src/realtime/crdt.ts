@@ -95,9 +95,15 @@ export function getCrdtProvider(noteId: string, keyEpoch?: number): CrdtProvider
 
 function getOrCreateBinding(noteId: string, keyEpoch?: number): Binding {
   const existing = bindings.get(noteId);
-  if (existing && (keyEpoch === undefined || existing.keyEpoch === keyEpoch)) {
+  if (
+    existing &&
+    (keyEpoch === undefined || existing.keyEpoch === keyEpoch || keyEpoch < existing.keyEpoch)
+  ) {
     return existing;
   }
+  const inheritedState = existing
+    ? Y.encodeStateAsUpdate(existing.doc)
+    : null;
   const doc = new Y.Doc();
   const fragment = doc.getXmlFragment(FRAGMENT_KEY);
   const provider = new CrdtProvider(doc);
@@ -114,9 +120,12 @@ function getOrCreateBinding(noteId: string, keyEpoch?: number): Binding {
     pendingPatch: {},
     ready: false,
     receiving: Promise.resolve(),
-    snapshotSeeded: false,
+    snapshotSeeded: inheritedState !== null,
     keyEpoch: keyEpoch ?? 0
   };
+  if (inheritedState) {
+    Y.applyUpdate(doc, inheritedState, SNAPSHOT_SEED);
+  }
   bindings.set(noteId, created);
   doc.getText("title").observe((event) => {
     if (event.transaction.origin !== SNAPSHOT_SEED) {
@@ -234,17 +243,18 @@ export function preserveCrdtContent(note: DecryptedNote): DecryptedNote {
   if (!binding) {
     return note;
   }
+  if (binding.note.keyEpoch !== note.keyEpoch) {
+    return note;
+  }
   if (!binding.ready) {
     return { ...note, ...binding.pendingPatch };
   }
   const content = {
     title: binding.doc.getText("title").toJSON(),
-    body: note.body
+    body: binding.note.body
   };
-  if (binding.note.keyEpoch === note.keyEpoch) {
-    binding.note = { ...note, ...content };
-  }
-  return { ...note, ...content };
+  binding.note = { ...note, ...content };
+  return binding.note;
 }
 
 export function removeCrdtNote(noteId: string, expectedProvider?: CrdtProvider): void {

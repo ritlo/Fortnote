@@ -23,7 +23,6 @@ interface EditorPaneProps {
   restoreSelectedNote: () => Promise<void>;
   rotateRecoveryKey: () => Promise<void>;
   rotateSharingKey: () => Promise<void>;
-  saveSelectedNote: () => Promise<void>;
   setNewPassword: (value: string) => void;
   updateSelectedNote: (
     patch: Partial<Pick<DecryptedNote, "folderId" | "title" | "body">>
@@ -50,7 +49,6 @@ export function EditorPane({
   restoreSelectedNote,
   rotateRecoveryKey,
   rotateSharingKey,
-  saveSelectedNote,
   setNewPassword,
   updateSelectedNote,
   uploadSelectedAttachment
@@ -69,7 +67,6 @@ export function EditorPane({
         moveSelectedToTrash={moveSelectedToTrash}
         notesView={notesView}
         restoreSelectedNote={restoreSelectedNote}
-        saveSelectedNote={saveSelectedNote}
         selectedNote={selectedNote}
         user={user}
       />
@@ -84,19 +81,17 @@ export function EditorPane({
           setNewPassword={setNewPassword}
         />
       ) : (
-        <div className="editor-grid">
-          <NoteEditor
-            canDeleteAttachments={canDeleteAttachments}
-            downloadSelectedAttachment={downloadSelectedAttachment}
-            folders={folders}
-            notesView={notesView}
-            removeSelectedAttachment={removeSelectedAttachment}
-            selectedAttachments={selectedAttachments}
-            selectedNote={selectedNote}
-            updateSelectedNote={updateSelectedNote}
-            uploadSelectedAttachment={uploadSelectedAttachment}
-          />
-        </div>
+        <NoteEditor
+          canDeleteAttachments={canDeleteAttachments}
+          downloadSelectedAttachment={downloadSelectedAttachment}
+          folders={folders}
+          notesView={notesView}
+          removeSelectedAttachment={removeSelectedAttachment}
+          selectedAttachments={selectedAttachments}
+          selectedNote={selectedNote}
+          updateSelectedNote={updateSelectedNote}
+          uploadSelectedAttachment={uploadSelectedAttachment}
+        />
       )}
     </section>
   );

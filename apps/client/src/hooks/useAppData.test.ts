@@ -76,6 +76,7 @@ describe("app data collaboration bootstrap", () => {
   it("selects the newest note by default after loading notes", async () => {
     const user = currentUser();
     const rootKey = crypto.getRandomValues(new Uint8Array(32));
+    useAppStore.setState({ rootKey, user });
     mockedListNotesWith(
       noteSummary({ id: "older", updatedAt: "2026-07-02T09:00:00.000Z" }),
       noteSummary({ id: "newer", updatedAt: "2026-07-02T10:00:00.000Z" })
@@ -89,6 +90,7 @@ describe("app data collaboration bootstrap", () => {
   it("preserves the current selection during realtime note reloads", async () => {
     const user = currentUser();
     const rootKey = crypto.getRandomValues(new Uint8Array(32));
+    useAppStore.setState({ rootKey, user });
     mockedListNotesWith(
       noteSummary({ id: "older", updatedAt: "2026-07-02T09:00:00.000Z" }),
       noteSummary({ id: "newer", updatedAt: "2026-07-02T10:00:00.000Z" })
@@ -103,6 +105,7 @@ describe("app data collaboration bootstrap", () => {
   it("does not clear a trash selection while reloading active notes", async () => {
     const user = currentUser();
     const rootKey = crypto.getRandomValues(new Uint8Array(32));
+    useAppStore.setState({ rootKey, user });
     mockedListNotesWith(noteSummary({ id: "active-note" }));
     useAppStore.getState().setNotesView("trash");
     useAppStore.getState().setSelectedNoteId("deleted-note");
@@ -110,6 +113,26 @@ describe("app data collaboration bootstrap", () => {
     await loadDecryptedNotes(user, rootKey, false, { preserveSelection: true });
 
     expect(useAppStore.getState().selectedNoteId).toBe("deleted-note");
+  });
+
+  it("does not restore decrypted notes after the vault is locked", async () => {
+    const user = currentUser();
+    const rootKey = crypto.getRandomValues(new Uint8Array(32));
+    let finishLoad!: (value: { notes: NoteSummary[] }) => void;
+    vi.mocked(listNotes).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        finishLoad = resolve;
+      })
+    );
+    useAppStore.setState({ rootKey, user });
+
+    const loading = loadDecryptedNotes(user, rootKey);
+    useAppStore.getState().resetVaultState("Vault locked");
+    finishLoad({ notes: [noteSummary({ id: "stale-note" })] });
+    await loading;
+
+    expect(useAppStore.getState().notes).toEqual([]);
+    expect(useAppStore.getState().status).toBe("Vault locked");
   });
 });
 

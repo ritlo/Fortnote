@@ -9,6 +9,11 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
 
   await register(page, account.username, account.password);
   await createNote(page, noteTitle, "First encrypted body");
+  await expect(page.locator(".editor-grid")).toHaveCount(0);
+  await expectEditorToFillPane(page);
+
+  await page.setViewportSize({ width: 800, height: 800 });
+  await expectEditorToFillPane(page);
 
   await page.getByPlaceholder("Search decrypted notes").fill("First encrypted body");
   await expect(page.getByRole("button", { name: /Launch plan/ })).toBeVisible();
@@ -26,10 +31,46 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
     .click();
   await page.getByRole("button", { name: "Trash" }).click();
   await expect(page.getByRole("button", { name: /Launch plan/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Redo", exact: true })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Restore" }).click();
   await page.getByRole("button", { name: "All notes" }).click();
   await expect(page.getByRole("button", { name: /Launch plan/ })).toBeVisible();
+});
+
+test("autosaves undo and redo and retains the result after relogin", async ({ page }) => {
+  const account = uniqueAccount("undo-redo");
+  const suffix = ` undo-redo-${account.suffix}`;
+
+  await test.step("create the note", async () => {
+    await register(page, account.username, account.password);
+    await createNote(page, `History note ${account.suffix}`, "Initial body");
+  });
+
+  await test.step("undo and redo the local edit", async () => {
+    const editor = blockEditor(page);
+    await editor.press("ControlOrMeta+End");
+    let saved = waitForNoteSave(page);
+    await editor.pressSequentially(suffix);
+    await saved;
+    saved = waitForNoteSave(page);
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await saved;
+    await expect(editor).not.toContainText(suffix);
+    saved = waitForNoteSave(page);
+    await page.getByRole("button", { name: "Redo", exact: true }).click();
+    await expect(editor).toContainText(suffix);
+    await saved;
+  });
+
+  await test.step("reload the persisted result", async () => {
+    await page.reload();
+    await page.getByLabel("Account password").fill(account.password);
+    await page.getByRole("button", { name: "Sign in and decrypt" }).click();
+    await expect(blockEditor(page)).toContainText(suffix);
+  });
 });
 
 test("recovers a vault with the saved recovery key", async ({ page }) => {
@@ -122,22 +163,35 @@ async function createNote(page: Page, title: string, body: string): Promise<void
   await page.getByLabel("New note").click();
   await expect(page.getByRole("button", { name: /Untitled note/ })).toBeVisible();
   await expect(page.getByText("Note encrypted and saved")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
   const titleInput = page.getByLabel("Title");
   await expect(titleInput).toHaveValue("Untitled note");
-  await titleInput.fill(title);
-  await expect(titleInput).toHaveValue(title);
-  await expect(page.getByRole("button", { name: new RegExp(title) })).toBeVisible();
+  const saved = waitForNoteSave(page);
   await setEditorText(page, body);
-  const saved = page.waitForResponse(
+  await titleInput.fill(title);
+  await saved;
+  await expect(titleInput).toHaveValue(title);
+  await expect(page.getByText(/^Last saved \d+ seconds ago$/)).toBeVisible();
+  await expect(page.getByRole("button", { name: new RegExp(title) })).toBeVisible();
+}
+
+async function expectEditorToFillPane(page: Page): Promise<void> {
+  const pane = await page.locator(".editor-pane").boundingBox();
+  const column = await page.locator(".editor-column").boundingBox();
+  expect(pane).toBeTruthy();
+  expect(column).toBeTruthy();
+  expect(Math.abs(pane!.width - column!.width)).toBeLessThanOrEqual(1);
+}
+
+async function waitForNoteSave(page: Page) {
+  const response = await page.waitForResponse(
     (response) =>
       response.request().method() === "PUT" &&
       response.url().includes("/api/notes/") &&
       response.ok()
   );
-  await page.getByRole("button", { name: "Save" }).click();
-  await saved;
-  await expect(page.getByText("Note encrypted and saved")).toBeVisible();
-  await expect(page.getByRole("button", { name: new RegExp(title) })).toBeVisible();
+  await expect(page.locator(".status-pill")).toHaveText("Ready");
+  return response;
 }
 
 function blockEditor(page: Page) {

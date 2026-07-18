@@ -1,6 +1,421 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DecryptedNote } from "../store/appStore";
-import { mergeDraftAfterConflict } from "./useNoteActions";
+import { useAppStore } from "../store/appStore";
+
+const mocks = vi.hoisted(() => ({
+  checkpoint: vi.fn(),
+  deleteNote: vi.fn(),
+  encrypt: vi.fn(),
+  loadNotes: vi.fn(),
+  updateNote: vi.fn()
+}));
+
+vi.mock("../api", () => ({
+  createFolder: vi.fn(),
+  createNote: vi.fn(),
+  deleteFolder: vi.fn(),
+  deleteNote: mocks.deleteNote,
+  isApiRequestError: (error: unknown) =>
+    typeof error === "object" && error !== null && "code" in error,
+  permanentlyDeleteNote: vi.fn(),
+  restoreNote: vi.fn(),
+  updateNote: mocks.updateNote
+}));
+
+vi.mock("../cryptoClient", () => ({
+  createEncryptedNoteDraft: vi.fn(),
+  encryptExistingNoteBody: mocks.encrypt,
+  noteKeyToBase64: vi.fn()
+}));
+
+vi.mock("../realtime/crdt", () => ({ checkpointCrdtNote: mocks.checkpoint }));
+vi.mock("./useAppData", () => ({
+  loadDecryptedNotes: mocks.loadNotes,
+  loadFolders: vi.fn()
+}));
+
+import { mergeDraftAfterConflict, useNoteActions } from "./useNoteActions";
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.clearAllMocks();
+  mocks.encrypt.mockResolvedValue({
+    contentCipher: "cipher",
+    contentLength: 7,
+    contentNonce: "nonce"
+  });
+  mocks.updateNote.mockResolvedValue({
+    id: "note_1",
+    version: 2,
+    updatedAt: "2026-07-02T00:00:01.000Z"
+  });
+  mocks.checkpoint.mockResolvedValue(undefined);
+  mocks.deleteNote.mockResolvedValue(undefined);
+  mocks.loadNotes.mockResolvedValue(undefined);
+  useAppStore.setState({
+    error: null,
+    notes: [note()],
+    notesView: "notes",
+    rootKey: new Uint8Array([1]),
+    selectedNoteId: "note_1",
+    status: "Ready",
+    user: { id: "alice", username: "alice" }
+  });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  useAppStore.getState().resetVaultState("reset");
+});
+
+describe("note autosave", () => {
+  it("coalesces real changes and encrypts the latest snapshot after 500 ms", async () => {
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "First" });
+      result.current.updateSelectedNote({ title: "Latest", body: "Latest body" });
+      result.current.updateSelectedNote({ title: "Latest", body: "Latest body" });
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(499));
+    expect(mocks.updateNote).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(mocks.checkpoint).toHaveBeenCalledWith(
+      expect.objectContaining({ updatedAt: "2026-07-02T00:00:01.000Z" })
+    );
+
+    expect(mocks.updateNote).toHaveBeenCalledOnce();
+    expect(mocks.encrypt).toHaveBeenCalledWith(
+      expect.objectContaining({ body: "Latest body", noteId: "note_1" })
+    );
+    expect(mocks.updateNote).toHaveBeenCalledWith(
+      "note_1",
+      expect.objectContaining({ title: "Latest", version: 1 })
+    );
+  });
+
+  it("saves every note edited before the debounce expires", async () => {
+    useAppStore.setState({ notes: [note(), note({ id: "note_2", title: "Second" })] });
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "First draft" });
+      useAppStore.getState().setSelectedNoteId("note_2");
+    });
+    act(() => {
+      result.current.updateSelectedNote({ title: "Second draft" });
+    });
+    await advanceAutosave();
+
+    expect(mocks.updateNote).toHaveBeenNthCalledWith(1, "note_1", expect.any(Object));
+    expect(mocks.updateNote).toHaveBeenNthCalledWith(2, "note_2", expect.any(Object));
+  });
+
+  it("does not autosave identical, viewer, or trash updates", async () => {
+    const { result, rerender } = renderHook(
+      ({ selected }) => useNoteActions(selected),
+      { initialProps: { selected: note() } }
+    );
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "Title" });
+    });
+    await advanceAutosave();
+
+    useAppStore.setState({ notes: [note({ role: "viewer" })] });
+    rerender({ selected: note({ role: "viewer" }) });
+    act(() => {
+      result.current.updateSelectedNote({ title: "Viewer edit" });
+    });
+    await advanceAutosave();
+
+    useAppStore.setState({ notes: [note()], notesView: "trash" });
+    rerender({ selected: note() });
+    act(() => {
+      result.current.updateSelectedNote({ title: "Trash edit" });
+    });
+    await advanceAutosave();
+
+    expect(mocks.updateNote).not.toHaveBeenCalled();
+  });
+
+  it("finishes a pending active-note save after opening trash", async () => {
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "Pending draft" });
+      useAppStore.getState().setNotesView("trash");
+    });
+    await advanceAutosave();
+
+    expect(mocks.updateNote).toHaveBeenCalledWith(
+      "note_1",
+      expect.objectContaining({ title: "Pending draft" })
+    );
+  });
+
+  it("saves a pending draft before moving its note to trash", async () => {
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "Draft before delete" });
+    });
+    await act(async () => result.current.moveSelectedToTrash());
+
+    expect(mocks.updateNote).toHaveBeenCalledOnce();
+    expect(mocks.deleteNote).toHaveBeenCalledWith("note_1");
+    expect(mocks.updateNote.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.deleteNote.mock.invocationCallOrder[0] ?? 0
+    );
+  });
+
+  it("serializes saves and follows an in-flight save with the latest draft", async () => {
+    let finishFirst!: (value: { id: string; version: number; updatedAt: string }) => void;
+    mocks.updateNote
+      .mockImplementationOnce(
+        () => new Promise((resolve) => {
+          finishFirst = resolve;
+        })
+      )
+      .mockResolvedValueOnce({
+        id: "note_1",
+        version: 3,
+        updatedAt: "2026-07-02T00:00:02.000Z"
+      });
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "First" });
+    });
+    await advanceAutosave();
+    expect(mocks.updateNote).toHaveBeenCalledOnce();
+    act(() => {
+      result.current.updateSelectedNote({ title: "Latest" });
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    expect(mocks.updateNote).toHaveBeenCalledOnce();
+
+    act(() => {
+      finishFirst({
+        id: "note_1",
+        version: 2,
+        updatedAt: "2026-07-02T00:00:01.000Z"
+      });
+    });
+    await waitForAssertion(() => {
+      expect(mocks.updateNote).toHaveBeenCalledTimes(2);
+    });
+    expect(mocks.updateNote.mock.calls[1]?.[1]).toMatchObject({
+      title: "Latest",
+      version: 2
+    });
+    expect(useAppStore.getState().notes[0]?.title).toBe("Latest");
+  });
+
+  it("does not downgrade metadata advanced by realtime during a save", async () => {
+    let finishCheckpoint!: () => void;
+    mocks.checkpoint.mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        finishCheckpoint = resolve;
+      })
+    );
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "Local draft" });
+    });
+    await advanceAutosave();
+    act(() => {
+      useAppStore.setState({
+        notes: [note({ title: "Converged draft", updatedAt: "2026-07-03T00:00:00.000Z", version: 3 })]
+      });
+      finishCheckpoint();
+    });
+    await waitForAssertion(() => {
+      expect(useAppStore.getState().status).toBe("Ready");
+    });
+
+    expect(useAppStore.getState().notes[0]).toMatchObject({
+      title: "Converged draft",
+      updatedAt: "2026-07-03T00:00:00.000Z",
+      version: 3
+    });
+  });
+
+  it("does not retry conflicts until another edit", async () => {
+    mocks.updateNote.mockRejectedValueOnce({ code: "conflict" });
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "Conflicting draft" });
+    });
+    await advanceAutosave();
+    await waitForAssertion(() => {
+      expect(useAppStore.getState().status).toBe("Save conflict");
+    });
+    await act(async () => vi.runAllTimersAsync());
+    expect(mocks.updateNote).toHaveBeenCalledOnce();
+    expect(useAppStore.getState().notes[0]?.title).toBe("Conflicting draft");
+    expect(useAppStore.getState().status).toBe("Save conflict");
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "Edited again" });
+    });
+    await advanceAutosave();
+    expect(mocks.updateNote).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves edits made while a conflicting save is in flight", async () => {
+    let rejectSave!: (reason: unknown) => void;
+    mocks.updateNote.mockImplementationOnce(
+      () => new Promise((_resolve, reject) => {
+        rejectSave = reject;
+      })
+    );
+    mocks.loadNotes.mockImplementationOnce(() => {
+      useAppStore.setState({ notes: [note({ title: "Server title", version: 2 })] });
+    });
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "Saving draft" });
+    });
+    await advanceAutosave();
+    act(() => {
+      result.current.updateSelectedNote({ title: "Newest draft" });
+      rejectSave({ code: "conflict" });
+    });
+    await waitForAssertion(() => {
+      expect(useAppStore.getState().notes[0]?.version).toBe(2);
+    });
+
+    expect(useAppStore.getState().notes[0]).toMatchObject({
+      title: "Newest draft",
+      version: 2
+    });
+  });
+
+  it("continues autosaving after conflict recovery throws", async () => {
+    mocks.updateNote.mockRejectedValueOnce({ code: "conflict" });
+    mocks.loadNotes.mockRejectedValueOnce(new Error("reload failed"));
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "Conflicting draft" });
+    });
+    await advanceAutosave();
+    act(() => {
+      result.current.updateSelectedNote({ title: "Retry draft" });
+    });
+    await advanceAutosave();
+
+    expect(mocks.updateNote).toHaveBeenCalledTimes(2);
+  });
+
+  it("saves a newly selected note after the previous note conflicts", async () => {
+    let rejectSave!: (reason: unknown) => void;
+    mocks.updateNote
+      .mockImplementationOnce(
+        () => new Promise((_resolve, reject) => {
+          rejectSave = reject;
+        })
+      )
+      .mockResolvedValueOnce({
+        id: "note_2",
+        version: 2,
+        updatedAt: "2026-07-02T00:00:01.000Z"
+      });
+    mocks.loadNotes.mockImplementationOnce(() => {
+      useAppStore.setState({
+        notes: [note({ title: "Server first", version: 2 }), note({ id: "note_2", title: "Server second" })]
+      });
+    });
+    useAppStore.setState({ notes: [note(), note({ id: "note_2", title: "Second" })] });
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "First draft" });
+    });
+    await advanceAutosave();
+    act(() => {
+      useAppStore.getState().setSelectedNoteId("note_2");
+    });
+    act(() => {
+      result.current.updateSelectedNote({ title: "Second draft" });
+      rejectSave({ code: "conflict" });
+    });
+    await waitForAssertion(() => {
+      expect(mocks.updateNote).toHaveBeenCalledTimes(2);
+    });
+
+    expect(mocks.updateNote.mock.calls[1]?.[0]).toBe("note_2");
+    expect(mocks.updateNote.mock.calls[1]?.[1]).toMatchObject({ title: "Second draft" });
+    expect(useAppStore.getState().status).toBe("Save conflict");
+    expect(useAppStore.getState().error).toContain("Your draft is still open");
+  });
+
+  it("does not recover a conflict after the vault session is replaced", async () => {
+    let rejectSave!: (reason: unknown) => void;
+    mocks.updateNote.mockImplementationOnce(
+      () => new Promise((_resolve, reject) => {
+        rejectSave = reject;
+      })
+    );
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "Draft" });
+    });
+    await advanceAutosave();
+    act(() => {
+      useAppStore.getState().resetVaultState("Vault locked");
+      rejectSave({ code: "conflict" });
+      useAppStore.setState({
+        notes: [note({ title: "Fresh session" })],
+        rootKey: new Uint8Array([2]),
+        selectedNoteId: "note_1",
+        status: "Ready",
+        user: { id: "alice", username: "alice" }
+      });
+    });
+    act(() => {
+      result.current.updateSelectedNote({ title: "Fresh session edit" });
+    });
+    await advanceAutosave();
+    await waitForAssertion(() => {
+      expect(mocks.updateNote).toHaveBeenCalledTimes(2);
+    });
+
+    expect(mocks.loadNotes).not.toHaveBeenCalled();
+    expect(useAppStore.getState().notes[0]?.title).toBe("Fresh session edit");
+  });
+
+  it("keeps failed drafts and retries only after a later edit", async () => {
+    mocks.updateNote.mockRejectedValueOnce(new Error("offline"));
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ body: "Unsaved draft" });
+    });
+    await advanceAutosave();
+    await waitForAssertion(() => {
+      expect(useAppStore.getState().status).toBe("Save failed");
+    });
+    await act(async () => vi.runAllTimersAsync());
+    expect(mocks.updateNote).toHaveBeenCalledOnce();
+    expect(useAppStore.getState().notes[0]?.body).toBe("Unsaved draft");
+    expect(useAppStore.getState().status).toBe("Save failed");
+
+    act(() => {
+      result.current.updateSelectedNote({ body: "Retry draft" });
+    });
+    await advanceAutosave();
+    expect(mocks.updateNote).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe("note save conflict handling", () => {
   it("keeps the local draft while adopting latest server metadata", () => {
@@ -52,4 +467,14 @@ function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
     keyEpoch: 1,
     ...overrides
   };
+}
+
+async function advanceAutosave(): Promise<void> {
+  await act(async () => vi.advanceTimersByTimeAsync(500));
+}
+
+async function waitForAssertion(assertion: () => void): Promise<void> {
+  await act(async () => {
+    await vi.waitFor(assertion);
+  });
 }

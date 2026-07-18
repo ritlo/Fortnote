@@ -13,9 +13,12 @@ import {
   encryptExistingNoteBody,
   noteKeyToBase64
 } from "../cryptoClient";
+import { useEffect, useRef } from "react";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
 import { checkpointCrdtNote } from "../realtime/crdt";
 import { loadDecryptedNotes, loadFolders } from "./useAppData";
+
+type SaveResult = "saved" | "conflict" | "failed" | "skipped";
 
 export function useNoteActions(selectedNote: DecryptedNote | null) {
   const user = useAppStore((state) => state.user);
@@ -31,6 +34,26 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
   const setSelectedNoteId = useAppStore((state) => state.setSelectedNoteId);
   const setError = useAppStore((state) => state.setError);
   const setStatus = useAppStore((state) => state.setStatus);
+  const autosave = useRef({
+    inFlightNoteId: null as string | null,
+    issues: new Map<
+      string,
+      { error: string; result: "conflict" | "failed"; status: "Save conflict" | "Save failed" }
+    >(),
+    pending: new Set<string>(),
+    statusNoteId: null as string | null,
+    timer: null as number | null,
+    waiters: new Map<string, ((result: SaveResult) => void)[]>()
+  });
+
+  useEffect(
+    () => () => {
+      if (autosave.current.timer !== null) {
+        window.clearTimeout(autosave.current.timer);
+      }
+    },
+    []
+  );
 
   async function addNote() {
     if (!user || !rootKey) {
@@ -80,17 +103,87 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     }
   }
 
-  async function saveSelectedNote() {
-    if (!user || !selectedNote) {
+  function showSaveIssues(): boolean {
+    const coordinator = autosave.current;
+    const selectedId = useAppStore.getState().selectedNoteId;
+    const selectedIssue = selectedId
+      ? coordinator.issues.get(selectedId)
+      : undefined;
+    const issue =
+      (selectedId && selectedIssue
+        ? ([selectedId, selectedIssue] as const)
+        : undefined) ??
+      [...coordinator.issues.entries()].find(([, value]) => value.result === "conflict") ??
+      coordinator.issues.entries().next().value;
+    if (!issue) {
+      return false;
+    }
+    const [noteId, value] = issue;
+    coordinator.statusNoteId = noteId;
+    setStatus(value.status);
+    setError(value.error);
+    return true;
+  }
+
+  function recordSaveIssue(
+    noteId: string,
+    result: "conflict" | "failed",
+    error: string
+  ) {
+    autosave.current.issues.set(noteId, {
+      error,
+      result,
+      status: result === "conflict" ? "Save conflict" : "Save failed"
+    });
+    showSaveIssues();
+  }
+
+  function finishSuccessfulSave(noteId: string) {
+    const coordinator = autosave.current;
+    coordinator.issues.delete(noteId);
+    if (
+      !showSaveIssues() &&
+      coordinator.statusNoteId === noteId &&
+      useAppStore.getState().status === "Encrypting note"
+    ) {
+      setStatus("Ready");
+      setError(null);
+    }
+    if (coordinator.statusNoteId === noteId) {
+      coordinator.statusNoteId = null;
+    }
+  }
+
+  function resolveSaveWaiters(noteId: string, result: SaveResult) {
+    const coordinator = autosave.current;
+    if (coordinator.pending.has(noteId)) {
       return;
     }
+    const waiters = coordinator.waiters.get(noteId) ?? [];
+    coordinator.waiters.delete(noteId);
+    waiters.forEach((resolve) => {
+      resolve(result);
+    });
+  }
 
-    await waitForPendingEditorUpdates();
-    const noteToSave =
-      useAppStore.getState().notes.find((note) => note.id === selectedNote.id) ??
-      selectedNote;
-    setError(null);
-    setStatus("Encrypting note");
+  async function saveNote(noteId: string): Promise<SaveResult> {
+    const state = useAppStore.getState();
+    const noteToSave = state.notes.find((note) => note.id === noteId);
+    if (
+      !state.user ||
+      !state.rootKey ||
+      !noteToSave ||
+      noteToSave.role === "viewer"
+    ) {
+      return "skipped";
+    }
+
+    autosave.current.issues.delete(noteId);
+    if (!showSaveIssues() && state.selectedNoteId === noteId) {
+      autosave.current.statusNoteId = noteId;
+      setError(null);
+      setStatus("Encrypting note");
+    }
     try {
       const encrypted = await encryptExistingNoteBody({
         userId: noteToSave.cryptoOwnerId,
@@ -104,67 +197,172 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         version: noteToSave.version,
         ...encrypted
       });
-      const updatedAt = new Date().toISOString();
       await checkpointCrdtNote({
         ...noteToSave,
         contentLength: encrypted.contentLength,
-        updatedAt,
+        updatedAt: saved.updatedAt,
         version: saved.version
       });
+      if (!isCurrentSession(state.user.id, state.rootKey)) {
+        return "skipped";
+      }
       setNotes((current) =>
         current.map((note) =>
           note.id === noteToSave.id
-            ? {
+            ? note.version > noteToSave.version
+              ? note
+              : {
                 ...note,
-                body: noteToSave.body,
-                contentLength: encrypted.contentLength,
-                folderId: noteToSave.folderId,
-                title: noteToSave.title,
+                contentLength:
+                  note.body === noteToSave.body
+                    ? encrypted.contentLength
+                    : new TextEncoder().encode(note.body).length,
                 version: saved.version,
-                updatedAt
+                updatedAt: saved.updatedAt
               }
             : note
         )
       );
-      setStatus("Note encrypted and saved");
+      finishSuccessfulSave(noteId);
+      return "saved";
     } catch (saveError) {
-      if (isApiRequestError(saveError) && saveError.code === "conflict" && rootKey) {
-        await preserveDraftAfterSaveConflict(noteToSave);
-        return;
+      if (!isCurrentSession(state.user.id, state.rootKey)) {
+        return "skipped";
+      }
+      if (isApiRequestError(saveError) && saveError.code === "conflict") {
+        await preserveDraftAfterSaveConflict(noteToSave.id, state.user.id, state.rootKey);
+        return "conflict";
       }
 
-      setStatus("Save failed");
-      setError(saveError instanceof Error ? saveError.message : "Unable to save note");
+      recordSaveIssue(
+        noteId,
+        "failed",
+        saveError instanceof Error ? saveError.message : "Unable to save note"
+      );
+      return "failed";
     }
   }
 
-  async function preserveDraftAfterSaveConflict(noteToSave: DecryptedNote) {
-    if (!user || !rootKey) {
+  function scheduleAutosave(noteId: string) {
+    const coordinator = autosave.current;
+    coordinator.pending.add(noteId);
+    if (coordinator.timer !== null) {
+      window.clearTimeout(coordinator.timer);
+    }
+    if (!coordinator.inFlightNoteId) {
+      coordinator.timer = window.setTimeout(() => {
+        void flushAutosave();
+      }, 500);
+    }
+  }
+
+  async function flushAutosave() {
+    const coordinator = autosave.current;
+    const noteId = coordinator.pending.values().next().value;
+    if (!noteId || coordinator.inFlightNoteId) {
       return;
     }
 
+    coordinator.pending.delete(noteId);
+    coordinator.timer = null;
+    coordinator.inFlightNoteId = noteId;
+    const session = useAppStore.getState();
+    let result: SaveResult = "failed";
+    try {
+      result = await saveNote(noteId);
+    } catch (saveError) {
+      if (session.user && session.rootKey && isCurrentSession(session.user.id, session.rootKey)) {
+        recordSaveIssue(
+          noteId,
+          "failed",
+          saveError instanceof Error ? saveError.message : "Unable to save note"
+        );
+      }
+    } finally {
+      coordinator.inFlightNoteId = null;
+    }
+
+    if (result === "conflict") {
+      coordinator.pending.delete(noteId);
+    }
+    resolveSaveWaiters(noteId, result);
+    if (coordinator.pending.size > 0) {
+      void flushAutosave();
+    }
+  }
+
+  async function drainAutosave(noteId: string): Promise<SaveResult> {
+    const coordinator = autosave.current;
+    if (coordinator.timer !== null) {
+      window.clearTimeout(coordinator.timer);
+      coordinator.timer = null;
+    }
+    if (!coordinator.inFlightNoteId) {
+      void flushAutosave();
+    }
+    if (coordinator.inFlightNoteId === noteId || coordinator.pending.has(noteId)) {
+      return new Promise<SaveResult>((resolve) => {
+        coordinator.waiters.set(noteId, [
+          ...(coordinator.waiters.get(noteId) ?? []),
+          resolve
+        ]);
+      });
+    }
+    return coordinator.issues.get(noteId)?.result ?? "saved";
+  }
+
+  async function preserveDraftAfterSaveConflict(
+    noteId: string,
+    userId: string,
+    sessionRootKey: Uint8Array
+  ) {
+    const session = useAppStore.getState();
+    const draft = session.notes.find((note) => note.id === noteId);
+    const queuedDrafts = new Map(
+      session.notes
+        .filter((note) => autosave.current.pending.has(note.id) && note.id !== noteId)
+        .map((note) => [note.id, note])
+    );
+    if (session.user?.id !== userId || session.rootKey !== sessionRootKey || !draft) {
+      return;
+    }
+
+    autosave.current.statusNoteId = noteId;
     setStatus("Resolving save conflict");
-    await loadDecryptedNotes(user, rootKey, false);
+    await loadDecryptedNotes(session.user, sessionRootKey, false);
+    if (!isCurrentSession(userId, sessionRootKey)) {
+      return;
+    }
 
     const latestNote = useAppStore
       .getState()
-      .notes.find((note) => note.id === noteToSave.id);
+      .notes.find((note) => note.id === noteId);
     if (!latestNote) {
-      setStatus("Save conflict");
-      setError("Note changed elsewhere, but the latest copy could not be loaded.");
+      recordSaveIssue(
+        noteId,
+        "conflict",
+        "Note changed elsewhere, but the latest copy could not be loaded."
+      );
       return;
     }
 
     setNotes((current) =>
-      current.map((note) =>
-        note.id === noteToSave.id
-          ? mergeDraftAfterConflict(latestNote, noteToSave)
-          : note
-      )
+      current.map((note) => {
+        if (note.id === noteId) {
+          return mergeDraftAfterConflict(latestNote, draft);
+        }
+        const queuedDraft = queuedDrafts.get(note.id);
+        return queuedDraft
+          ? mergeDraftAfterConflict(note, queuedDraft)
+          : note;
+      })
     );
-    setSelectedNoteId(noteToSave.id);
-    setStatus("Save conflict");
-    setError("Note changed elsewhere. Your draft is still open; review it before saving again.");
+    setSelectedNoteId(noteId);
+    recordSaveIssue(
+      noteId,
+      "conflict",
+      "Note changed elsewhere. Your draft is still open; review it before saving again."
+    );
   }
 
   function updateSelectedNote(
@@ -174,18 +372,21 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       return;
     }
 
-    setNotes((current) => {
-      const note = current.find(({ id }) => id === selectedNoteId);
-      if (
-        !note ||
-        ((patch.folderId === undefined || patch.folderId === note.folderId) &&
-          (patch.title === undefined || patch.title === note.title) &&
-          (patch.body === undefined || patch.body === note.body))
-      ) {
-        return current;
-      }
-      return current.map((item) => (item.id === selectedNoteId ? { ...item, ...patch } : item));
-    });
+    const note = useAppStore.getState().notes.find(({ id }) => id === selectedNoteId);
+    if (
+      !note ||
+      ((patch.folderId === undefined || patch.folderId === note.folderId) &&
+        (patch.title === undefined || patch.title === note.title) &&
+        (patch.body === undefined || patch.body === note.body))
+    ) {
+      return;
+    }
+    setNotes((current) =>
+      current.map((item) => (item.id === selectedNoteId ? { ...item, ...patch } : item))
+    );
+    if (note.role !== "viewer" && useAppStore.getState().notesView !== "trash") {
+      scheduleAutosave(note.id);
+    }
   }
 
   async function addFolder(parentFolderId: string | null = null) {
@@ -248,8 +449,13 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       return;
     }
 
-    setError(null);
     try {
+      const saveResult = await drainAutosave(selectedNote.id);
+      if (saveResult !== "saved") {
+        showSaveIssues();
+        return;
+      }
+      setError(null);
       await deleteNote(selectedNote.id);
       setNotes((current) => current.filter((note) => note.id !== selectedNote.id));
       setSelectedNoteId(notes.find((note) => note.id !== selectedNote.id)?.id ?? null);
@@ -305,17 +511,13 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     openTrash,
     removeFolder,
     restoreSelectedNote,
-    saveSelectedNote,
     updateSelectedNote
   };
 }
 
-async function waitForPendingEditorUpdates(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    window.requestAnimationFrame(() => {
-      resolve();
-    });
-  });
+function isCurrentSession(userId: string, rootKey: Uint8Array): boolean {
+  const state = useAppStore.getState();
+  return state.user?.id === userId && state.rootKey === rootKey;
 }
 
 export function mergeDraftAfterConflict(

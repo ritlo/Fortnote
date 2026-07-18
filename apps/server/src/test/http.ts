@@ -9,6 +9,7 @@ export function createTestApp() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fortnote-test-"));
   const config = {
     port: 0,
+    host: "127.0.0.1",
     databasePath: ":memory:",
     dataDir,
     cookieSecure: false,

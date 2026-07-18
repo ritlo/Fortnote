@@ -1,6 +1,18 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { createElement } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PresenceUser } from "../api";
-import { formatPresenceSummary } from "./EditorHeader";
+import type { DecryptedNote } from "../store/appStore";
+import { useAppStore } from "../store/appStore";
+import { EditorHeader, formatLastSaved, formatPresenceSummary } from "./EditorHeader";
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  useAppStore.getState().resetVaultState("reset");
+});
 
 describe("EditorHeader presence summary", () => {
   it("formats active collaborator states", () => {
@@ -17,6 +29,58 @@ describe("EditorHeader presence summary", () => {
   });
 });
 
+describe("EditorHeader last-saved feedback", () => {
+  it("formats elapsed seconds, minutes, hours, and days", () => {
+    const savedAt = "2026-07-15T00:00:00.000Z";
+    expect(formatLastSaved(savedAt, Date.parse("2026-07-15T00:00:05.000Z"))).toBe(
+      "Last saved 5 seconds ago"
+    );
+    expect(formatLastSaved(savedAt, Date.parse("2026-07-15T00:02:00.000Z"))).toBe(
+      "Last saved 2 minutes ago"
+    );
+    expect(formatLastSaved(savedAt, Date.parse("2026-07-15T03:00:00.000Z"))).toBe(
+      "Last saved 3 hours ago"
+    );
+    expect(formatLastSaved(savedAt, Date.parse("2026-07-17T00:00:00.000Z"))).toBe(
+      "Last saved 2 days ago"
+    );
+  });
+
+  it("refreshes each second and hides only the relative label for collaborators", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-07-15T00:00:05.000Z");
+    useAppStore.setState({ presenceByNote: {} });
+    renderHeader();
+    expect(screen.getByText("Last saved 5 seconds ago")).toBeTruthy();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByText("Last saved 6 seconds ago")).toBeTruthy();
+
+    act(() => {
+      useAppStore.getState().setNotePresence("note-1", [presence({ userId: "bob" })]);
+    });
+    expect(screen.queryByText(/^Last saved/)).toBeNull();
+    expect(screen.getByText("alice idle")).toBeTruthy();
+  });
+});
+
+function renderHeader() {
+  return render(
+    createElement(EditorHeader, {
+      deleteSelectedForever: vi.fn(),
+      keyMaterialVersion: 1,
+      lockVault: vi.fn(),
+      moveSelectedToTrash: vi.fn(),
+      notesView: "notes",
+      restoreSelectedNote: vi.fn(),
+      selectedNote: note(),
+      user: { id: "current-user", username: "current" }
+    })
+  );
+}
+
 function presence(overrides: Partial<PresenceUser>): PresenceUser {
   return {
     state: "idle",
@@ -24,5 +88,23 @@ function presence(overrides: Partial<PresenceUser>): PresenceUser {
     userId: "user_1",
     username: "alice",
     ...overrides
+  };
+}
+
+function note(): DecryptedNote {
+  return {
+    body: "",
+    contentLength: 0,
+    cryptoOwnerId: "current-user",
+    folderId: null,
+    id: "note-1",
+    isDeleted: false,
+    keyEpoch: 1,
+    noteKeyBase64: "key",
+    ownerUserId: "current-user",
+    role: "owner",
+    title: "Title",
+    updatedAt: "2026-07-15T00:00:00.000Z",
+    version: 1
   };
 }

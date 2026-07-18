@@ -104,6 +104,10 @@ p {
   font-weight: 700;
 }
 
+.pane-header .last-saved {
+  margin-top: 4px;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -391,22 +395,16 @@ textarea {
   border-right: 0;
 }
 
-.editor-grid {
-  min-height: calc(100vh - 60px);
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-}
-
 .editor-column {
+  min-height: calc(100vh - 60px);
   display: grid;
   align-content: start;
   gap: 12px;
   padding: 18px;
-  border-right: 1px solid var(--line);
 }
 
-.editor-column.preview {
-  border-right: 0;
+.editor-history-controls {
+  justify-content: flex-end;
 }
 
 .settings-panel {
@@ -608,8 +606,7 @@ textarea {
     border-bottom: 1px solid var(--line);
   }
 
-  .editor-grid {
+  .editor-column {
     min-height: 0;
-    grid-template-columns: 1fr;
   }
 }

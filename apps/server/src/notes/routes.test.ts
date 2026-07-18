@@ -46,7 +46,13 @@ describe("notes and folders routes", () => {
       })
       .expect(200);
 
-	    expect(updated.body).toMatchObject({ version: 2 });
+    const storedUpdate = app.locals.db.sqlite
+      .prepare("SELECT updated_at AS updatedAt FROM notes WHERE id = ?")
+      .get(note.body.id) as { updatedAt: string };
+    expect(updated.body).toMatchObject({
+      version: 2,
+      updatedAt: `${storedUpdate.updatedAt.replace(" ", "T")}Z`
+    });
     const membership = app.locals.db.sqlite
       .prepare(
         `SELECT role, status

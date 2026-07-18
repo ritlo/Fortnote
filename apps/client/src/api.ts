@@ -401,8 +401,8 @@ export function createNote(payload: CreateNotePayload): Promise<{ id: string; ve
 export function updateNote(
   noteId: string,
   payload: UpdateNotePayload
-): Promise<{ id: string; version: number }> {
-  return apiRequest<{ id: string; version: number }>(`/notes/${noteId}`, {
+): Promise<{ id: string; version: number; updatedAt: string }> {
+  return apiRequest<{ id: string; version: number; updatedAt: string }>(`/notes/${noteId}`, {
     method: "PUT",
     body: JSON.stringify(payload)
   });

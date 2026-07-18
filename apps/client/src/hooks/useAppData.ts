@@ -37,8 +37,11 @@ export async function loadDecryptedNotes(
     (left, right) => right.updatedAt.localeCompare(left.updatedAt)
   );
 
-  const { setAttachmentsByNote, setNotes, setSelectedNoteId, setTrashNotes } =
-    useAppStore.getState();
+  const state = useAppStore.getState();
+  if (state.user?.id !== currentUser.id || state.rootKey !== currentRootKey) {
+    return;
+  }
+  const { setAttachmentsByNote, setNotes, setSelectedNoteId, setTrashNotes } = state;
   if (deleted) {
     setTrashNotes(nextNotes);
   } else {

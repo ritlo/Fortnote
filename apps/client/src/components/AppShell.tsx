@@ -81,7 +81,6 @@ export function AppShell() {
         restoreSelectedNote={noteActions.restoreSelectedNote}
         rotateRecoveryKey={authActions.rotateRecoveryKey}
         rotateSharingKey={authActions.rotateSharingKey}
-        saveSelectedNote={noteActions.saveSelectedNote}
         selectedAttachments={noteView.selectedAttachments}
         selectedNote={noteView.selectedNote}
         setNewPassword={setNewPassword}

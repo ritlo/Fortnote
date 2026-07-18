@@ -1,4 +1,5 @@
 import type { PresenceUser, User } from "../api";
+import { useEffect, useState } from "react";
 import type { DecryptedNote, NotesView } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
 
@@ -11,7 +12,6 @@ interface EditorHeaderProps {
   lockVault: () => void;
   moveSelectedToTrash: () => Promise<void>;
   restoreSelectedNote: () => Promise<void>;
-  saveSelectedNote: () => Promise<void>;
 }
 
 export function EditorHeader({
@@ -22,13 +22,8 @@ export function EditorHeader({
   deleteSelectedForever,
   lockVault,
   moveSelectedToTrash,
-  restoreSelectedNote,
-  saveSelectedNote
-	}: EditorHeaderProps) {
-  const canSave =
-    selectedNote?.role !== undefined &&
-    selectedNote.role !== "viewer" &&
-    notesView !== "trash";
+  restoreSelectedNote
+}: EditorHeaderProps) {
   const canDelete = selectedNote?.role === "owner";
   const presenceByNote = useAppStore((state) => state.presenceByNote);
   const presence = selectedNote
@@ -37,6 +32,24 @@ export function EditorHeader({
       )
     : [];
   const presenceSummary = formatPresenceSummary(presence);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!selectedNote || presence.length > 0 || notesView === "settings") {
+      return;
+    }
+    setNow(Date.now());
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [notesView, presence.length, selectedNote]);
+
+  const lastSaved = selectedNote && presence.length === 0 && notesView !== "settings"
+    ? formatLastSaved(selectedNote.updatedAt, now)
+    : "";
 
   return (
     <header className="pane-header">
@@ -53,6 +66,7 @@ export function EditorHeader({
             : "root key in memory only"}
         </p>
         {presenceSummary ? <p className="presence-summary">{presenceSummary}</p> : null}
+        {lastSaved ? <p className="last-saved">{lastSaved}</p> : null}
       </div>
       {notesView === "settings" ? (
         <div className="action-row">
@@ -68,16 +82,6 @@ export function EditorHeader({
         </div>
       ) : (
         <>
-	          <button
-	            className="primary"
-	            type="button"
-	            disabled={!canSave}
-	            onClick={() => {
-	              void saveSelectedNote();
-	            }}
-          >
-            Save
-          </button>
           {notesView === "trash" ? (
             <div className="action-row">
               <button
@@ -117,6 +121,22 @@ export function EditorHeader({
       )}
     </header>
   );
+}
+
+export function formatLastSaved(updatedAt: string, now = Date.now()): string {
+  const seconds = Math.max(0, Math.floor((now - Date.parse(updatedAt)) / 1000));
+  if (seconds < 60) {
+    return `Last saved ${String(seconds)} seconds ago`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `Last saved ${String(minutes)} minutes ago`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `Last saved ${String(hours)} hours ago`;
+  }
+  return `Last saved ${String(Math.floor(hours / 24))} days ago`;
 }
 
 export function formatPresenceSummary(presence: PresenceUser[]): string {

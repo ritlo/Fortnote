@@ -13,7 +13,8 @@ import {
   openCrdtNote,
   preserveCrdtContent,
   receiveCrdtUpdate,
-  setCrdtTransport
+  setCrdtTransport,
+  updateCrdtNote
 } from "./crdt";
 
 vi.mock("../cryptoClient", () => ({
@@ -146,8 +147,14 @@ describe("CRDT collaboration", () => {
     await finishCrdtSync(note().id, 1, false);
     expect(send).toHaveBeenCalledOnce();
     send.mockClear();
+    setFragmentBody(getCrdtProvider(note().id).doc, "Live body before rotation");
+    await vi.waitFor(() => {
+      expect(send).toHaveBeenCalledOnce();
+    });
+    send.mockClear();
 
     openCrdtNote(note({ keyEpoch: 2, noteKeyBase64: "rotated-key", role: "editor" }), vi.fn());
+    expect(fragmentText(getCrdtProvider(note().id, 2).doc)).toBe("Live body before rotation");
 
     await vi.waitFor(() => {
       expect(send).toHaveBeenCalledOnce();
@@ -271,8 +278,21 @@ describe("CRDT collaboration", () => {
     openCrdtNote(current, vi.fn());
     await finishCrdtSync(current.id, 1, false);
     editCrdtNote(current.id, { title: "Live CRDT title" });
+    updateCrdtNote({ ...current, body: blockNoteBody("Live CRDT body") });
 
-    expect(preserveCrdtContent(note({ title: "Stale snapshot" })).title).toBe("Live CRDT title");
+    expect(
+      preserveCrdtContent(note({
+        body: blockNoteBody("Stale snapshot body"),
+        title: "Stale snapshot",
+        updatedAt: "2026-07-14T00:00:00.000Z",
+        version: 2
+      }))
+    ).toMatchObject({
+      body: blockNoteBody("Live CRDT body"),
+      title: "Live CRDT title",
+      updatedAt: "2026-07-14T00:00:00.000Z",
+      version: 2
+    });
   });
 
   it("preserves undecryptable envelopes instead of checkpointing over them", async () => {

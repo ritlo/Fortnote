@@ -4,6 +4,7 @@ import { useCreateBlockNote, useEditorChange } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
 import type { BlockNoteEditor, BlockSchema } from "@blocknote/core";
+import type * as Y from "yjs";
 import type { AttachmentSummary, FolderSummary } from "../api";
 import {
   attachCrdtNote,
@@ -79,6 +80,10 @@ function CollaborativeBlockNoteField({
   );
 
   useEffect(() => {
+    restoreDevelopmentUndoManager(editor);
+  }, [editor]);
+
+  useEffect(() => {
     updateCrdtNote(selectedNote);
   }, [selectedNote]);
 
@@ -108,7 +113,64 @@ function CollaborativeBlockNoteField({
 
   useEditorChange(syncEditorBody, editor);
 
-  return <BlockNoteView editor={editor} editable={canEdit} />;
+  return (
+    <>
+      {canEdit ? (
+        <div className="action-row editor-history-controls">
+          <button
+            className="text-button"
+            type="button"
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            onClick={() => {
+              editor.undo();
+            }}
+          >
+            Undo
+          </button>
+          <button
+            className="text-button"
+            type="button"
+            onMouseDown={(event) => {
+              event.preventDefault();
+            }}
+            onClick={() => {
+              editor.redo();
+            }}
+          >
+            Redo
+          </button>
+        </div>
+      ) : null}
+      <div
+        onFocusCapture={() => {
+          restoreDevelopmentUndoManager(editor);
+        }}
+      >
+        <BlockNoteView editor={editor} editable={canEdit} />
+      </div>
+    </>
+  );
+}
+
+function restoreDevelopmentUndoManager(editor: BlockNoteEditor<BlockSchema>): void {
+  if (!import.meta.env.DEV) {
+    return;
+  }
+  const state = editor.prosemirrorState;
+  const undoState = state.plugins.find(
+    (plugin) => (plugin as unknown as { key: string }).key === "y-undo$"
+  )?.getState(state) as { undoManager: Y.UndoManager } | undefined;
+  const undoManager = undoState?.undoManager;
+  const scope = undoManager?.scope[0];
+  const doc = scope && "doc" in scope ? scope.doc : scope;
+  if (!undoManager || !doc) {
+    return;
+  }
+  // BlockNote 0.51/y-prosemirror 1.3 destroys this manager during StrictMode replay.
+  undoManager.trackedOrigins.add(undoManager);
+  doc.on("afterTransaction", undoManager.afterTransactionHandler);
 }
 
 function ReadOnlyBlockNoteField({ selectedNote }: Pick<BlockNoteFieldProps, "selectedNote">) {
