@@ -2,7 +2,12 @@ import type { Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { z } from "zod";
-import { CRDT_REALTIME_CAPABILITY } from "@fortnote/shared";
+import {
+  CRDT_REALTIME_CAPABILITY,
+  CRDT_REALTIME_CAPABILITY_V2,
+  decodeCrdtBinaryFrame,
+  parseCrdtControlMessage
+} from "@fortnote/shared";
 import {
   findSession,
   readSessionToken,
@@ -63,7 +68,10 @@ export function attachRealtimeServer(
   hub.attachContext(context);
   const webSocketServer = new WebSocketServer({
     noServer: true,
-    maxPayload: MAX_REALTIME_MESSAGE_BYTES
+    maxPayload: Math.max(
+      MAX_REALTIME_MESSAGE_BYTES,
+      context.config.realtimeFrameMaxBytes * 2
+    )
   });
   const allowedOrigins = allowedOriginAliases(context.config.allowedOrigin);
 
@@ -93,9 +101,12 @@ export function attachRealtimeServer(
     const after = parsed.success ? parsed.data.after : 0;
     const crdtEnabled =
       parsed.success && parsed.data.capabilities.split(",").includes(CRDT_REALTIME_CAPABILITY);
+    const crdtV2Enabled =
+      parsed.success &&
+      parsed.data.capabilities.split(",").includes(CRDT_REALTIME_CAPABILITY_V2);
 
     webSocketServer.handleUpgrade(request, socket, head, (socket) => {
-      connectClient(context, hub, socket, session, after, crdtEnabled);
+      connectClient(context, hub, socket, session, after, crdtEnabled, crdtV2Enabled);
     });
   });
 
@@ -112,24 +123,29 @@ function connectClient(
   socket: WebSocket,
   session: SessionRecord,
   after: number,
-  crdtEnabled: boolean
+  crdtEnabled: boolean,
+  crdtV2Enabled: boolean
 ): void {
   const client = hub.addClient({
     sessionId: session.id,
     userId: session.userId,
     username: session.username,
     socket,
-    crdtEnabled
+    crdtEnabled,
+    crdtV2Enabled
   });
-  socket.on("message", (message) => {
-    handleClientMessage(hub, client, socket, message);
+  socket.on("message", (message, isBinary) => {
+    handleClientMessage(context, hub, client, socket, message, isBinary);
   });
 
   sendJson(socket, {
     type: "connected",
     userId: session.userId,
     username: session.username,
-    capabilities: [CRDT_REALTIME_CAPABILITY]
+    capabilities: [
+      ...(crdtEnabled ? [CRDT_REALTIME_CAPABILITY] : []),
+      ...(crdtV2Enabled ? [CRDT_REALTIME_CAPABILITY_V2] : [])
+    ]
   });
   sendJson(socket, {
     type: "replay",
@@ -138,17 +154,28 @@ function connectClient(
 }
 
 function handleClientMessage(
+  context: AppContext,
   hub: RealtimeHub,
   client: RealtimeClient,
   socket: WebSocket,
-  message: RawData
+  message: RawData,
+  isBinary: boolean
 ): void {
+  if (isBinary) {
+    handleBinaryMessage(context, hub, client, socket, message);
+    return;
+  }
   const raw = rawDataToString(message);
   if (raw === "ping") {
     sendJson(socket, { type: "pong" });
     return;
   }
 
+  const parsedV2 = parseV2Subscribe(raw);
+  if (parsedV2) {
+    hub.subscribeCrdtV2(client, parsedV2);
+    return;
+  }
   const parsed = parseClientMessage(raw);
   if (!parsed) {
     return;
@@ -182,6 +209,60 @@ function handleClientMessage(
   }
 }
 
+function handleBinaryMessage(
+  context: AppContext,
+  hub: RealtimeHub,
+  client: RealtimeClient,
+  socket: WebSocket,
+  message: RawData
+): void {
+  let decoded: ReturnType<typeof decodeCrdtBinaryFrame>;
+  try {
+    decoded = decodeCrdtBinaryFrame(
+      rawDataToBytes(message),
+      Math.max(context.config.jsonControlMaxBytes, context.config.realtimeFrameMaxBytes)
+    );
+  } catch {
+    return;
+  }
+  if (rawDataByteLength(message) > context.config.realtimeFrameMaxBytes) {
+    sendJson(socket, {
+      type: "crdt-reject",
+      updateId: decoded.header.updateId,
+      sectionId: decoded.header.sectionId,
+      code: "frame-too-large"
+    });
+    return;
+  }
+  const outcome = hub.publishCrdtBinary(client, decoded.header, decoded.cipher);
+  if (outcome.status === "rejected") {
+    sendJson(socket, {
+      type: "crdt-reject",
+      updateId: decoded.header.updateId,
+      sectionId: decoded.header.sectionId,
+      code: outcome.code
+    });
+    return;
+  }
+  sendJson(socket, {
+    type: "crdt-ack",
+    updateId: decoded.header.updateId,
+    sectionId: decoded.header.sectionId,
+    result: outcome.status,
+    keyEpoch: decoded.header.expectedKeyEpoch,
+    serverSequence: outcome.serverSequence
+  });
+}
+
+function parseV2Subscribe(raw: string) {
+  try {
+    const parsed = parseCrdtControlMessage(JSON.parse(raw) as unknown);
+    return parsed.type === "crdt-subscribe" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseClientMessage(raw: string): z.infer<typeof clientMessageSchema> | null {
   let parsedJson: unknown;
   try {
@@ -207,6 +288,29 @@ function rawDataToString(message: RawData): string {
     return Buffer.from(new Uint8Array(message)).toString("utf8");
   }
   return Buffer.from(message).toString("utf8");
+}
+
+function rawDataToBytes(message: RawData): Uint8Array {
+  if (message instanceof Buffer) {
+    return new Uint8Array(message);
+  }
+  if (Array.isArray(message)) {
+    return new Uint8Array(Buffer.concat(message));
+  }
+  if (message instanceof ArrayBuffer) {
+    return new Uint8Array(message);
+  }
+  return new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
+}
+
+function rawDataByteLength(message: RawData): number {
+  if (typeof message === "string") {
+    return Buffer.byteLength(message);
+  }
+  if (Array.isArray(message)) {
+    return message.reduce((total, part) => total + part.byteLength, 0);
+  }
+  return message.byteLength;
 }
 
 function rejectUpgrade(socket: Duplex, status = 401, reason = "Unauthorized"): void {

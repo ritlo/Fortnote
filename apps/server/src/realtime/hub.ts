@@ -1,12 +1,23 @@
 import { WebSocket } from "ws";
 import { and, eq, inArray, lt } from "drizzle-orm";
-import type { EncryptedCrdtMessage } from "@fortnote/shared";
+import {
+  encodeCrdtBinaryFrame,
+  type CrdtBinaryHeader,
+  type CrdtSubscribeV2,
+  type EncryptedCrdtMessage
+} from "@fortnote/shared";
 import type { AppContext } from "../http/app.js";
 import * as schema from "../db/schema.js";
 import { deleteExpiredSessions, isSessionActive } from "../auth/session.js";
 import { listVisibleEvents } from "../events/replay.js";
 import { canEditNote, canReadNote, getNoteAccess } from "../notes/access.js";
 import type { RealtimePublisher } from "./types.js";
+import {
+  listSectionHistory,
+  persistBinaryUpdate,
+  type BinaryUpdateOutcome
+} from "./history.js";
+import { ensureNoteSection } from "../notes/sections.js";
 
 export interface RealtimeClient {
   id: string;
@@ -15,7 +26,9 @@ export interface RealtimeClient {
   username: string;
   socket: WebSocket;
   crdtEnabled: boolean;
+  crdtV2Enabled: boolean;
   subscribedNoteIds: Set<string>;
+  subscribedCrdtScopes: Set<string>;
 }
 
 export type PresenceState = "idle" | "editing";
@@ -92,6 +105,7 @@ export class RealtimeHub implements RealtimePublisher {
     username: string;
     socket: WebSocket;
     crdtEnabled: boolean;
+    crdtV2Enabled?: boolean;
   }): RealtimeClient {
     const client = {
       id: crypto.randomUUID(),
@@ -100,7 +114,9 @@ export class RealtimeHub implements RealtimePublisher {
       username: input.username,
       socket: input.socket,
       crdtEnabled: input.crdtEnabled,
-      subscribedNoteIds: new Set<string>()
+      crdtV2Enabled: input.crdtV2Enabled ?? false,
+      subscribedNoteIds: new Set<string>(),
+      subscribedCrdtScopes: new Set<string>()
     };
     this.clients.add(client);
     input.socket.on("close", () => {
@@ -124,6 +140,11 @@ export class RealtimeHub implements RealtimePublisher {
         continue;
       }
       client.subscribedNoteIds.delete(noteId);
+      for (const scope of client.subscribedCrdtScopes) {
+        if (scope.startsWith(`${noteId}:`)) {
+          client.subscribedCrdtScopes.delete(scope);
+        }
+      }
       this.disconnectClient(client, "Note access revoked");
     }
   }
@@ -222,6 +243,113 @@ export class RealtimeHub implements RealtimePublisher {
       keyEpoch: access.keyEpoch,
       hasUpdates: updates.length > 0
     });
+  }
+
+  subscribeCrdtV2(client: RealtimeClient, request: CrdtSubscribeV2): void {
+    if (!this.context || !client.crdtV2Enabled || !this.ensureClientSession(client)) {
+      return;
+    }
+    const access = getNoteAccess(this.context, request.noteId, client.userId);
+    if (!canReadNote(access)) {
+      this.rejectCrdtV2(client, request.requestId, request.sectionId, "forbidden");
+      return;
+    }
+    if (access.keyEpoch !== request.expectedKeyEpoch) {
+      this.rejectCrdtV2(client, request.requestId, request.sectionId, "stale-epoch");
+      return;
+    }
+    if (
+      !ensureNoteSection(
+        this.context,
+        request.noteId,
+        request.sectionId,
+        request.expectedKeyEpoch
+      )
+    ) {
+      this.rejectCrdtV2(client, request.requestId, request.sectionId, "forbidden");
+      return;
+    }
+    const page = listSectionHistory(this.context, {
+      noteId: request.noteId,
+      sectionId: request.sectionId,
+      keyEpoch: request.expectedKeyEpoch,
+      afterSequence: request.afterSequence
+    });
+    client.subscribedCrdtScopes.add(crdtScope(request.noteId, request.sectionId));
+    for (const entry of page.entries) {
+      const header: CrdtBinaryHeader = {
+        type: "crdt-binary",
+        kind: entry.kind,
+        formatVersion: 2,
+        updateId: entry.updateId,
+        noteId: request.noteId,
+        sectionId: request.sectionId,
+        cryptoOwnerId: entry.cryptoOwnerId,
+        expectedKeyEpoch: entry.keyEpoch,
+        nonce: entry.nonce.toString("base64"),
+        cipherLength: entry.inlineCipher.length
+      };
+      client.socket.send(
+        encodeCrdtBinaryFrame(
+          header,
+          entry.inlineCipher,
+          this.context.config.realtimeFrameMaxBytes
+        )
+      );
+    }
+    sendJson(client.socket, {
+      type: "crdt-history-page",
+      noteId: request.noteId,
+      sectionId: request.sectionId,
+      keyEpoch: request.expectedKeyEpoch,
+      afterSequence: request.afterSequence,
+      nextSequence: page.nextSequence,
+      hasMore: page.hasMore,
+      entries: page.entries.map((entry) => ({
+        kind: "inline",
+        updateId: entry.updateId,
+        serverSequence: entry.serverSequence
+      }))
+    });
+  }
+
+  publishCrdtBinary(
+    client: RealtimeClient,
+    header: CrdtBinaryHeader,
+    cipher: Uint8Array
+  ): BinaryUpdateOutcome {
+    if (!this.context || !client.crdtV2Enabled || !this.ensureClientSession(client)) {
+      return { status: "rejected", code: "forbidden" };
+    }
+    const outcome = persistBinaryUpdate(this.context, {
+      sessionId: client.sessionId,
+      userId: client.userId,
+      header,
+      cipher
+    });
+    if (outcome.status !== "inserted") {
+      return outcome;
+    }
+    const frame = encodeCrdtBinaryFrame(
+      header,
+      cipher,
+      this.context.config.realtimeFrameMaxBytes
+    );
+    for (const recipient of this.clients) {
+      const access = getNoteAccess(this.context, header.noteId, recipient.userId);
+      if (
+        recipient === client ||
+        !recipient.crdtV2Enabled ||
+        !this.ensureClientSession(recipient) ||
+        !recipient.subscribedCrdtScopes.has(crdtScope(header.noteId, header.sectionId)) ||
+        !canReadNote(access) ||
+        access.keyEpoch !== header.expectedKeyEpoch
+      ) {
+        continue;
+      }
+      recipient.socket.send(frame);
+    }
+    return outcome;
   }
 
   publishCrdtUpdate(
@@ -349,6 +477,15 @@ export class RealtimeHub implements RealtimePublisher {
     }
   }
 
+  private rejectCrdtV2(
+    client: RealtimeClient,
+    updateId: string,
+    sectionId: string,
+    code: "forbidden" | "stale-epoch"
+  ): void {
+    sendJson(client.socket, { type: "crdt-reject", updateId, sectionId, code });
+  }
+
   private clearNotePresence(client: RealtimeClient, noteId: string): void {
     const notePresence = this.presenceByNote.get(noteId);
     if (!notePresence?.delete(client.id)) {
@@ -460,4 +597,8 @@ export function sendJson(socket: WebSocket, value: unknown): void {
     return;
   }
   socket.send(JSON.stringify(value));
+}
+
+function crdtScope(noteId: string, sectionId: string): string {
+  return `${noteId}:${sectionId}`;
 }

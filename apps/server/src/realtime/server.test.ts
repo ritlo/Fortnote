@@ -3,6 +3,14 @@ import type { AddressInfo } from "node:net";
 import request from "supertest";
 import WebSocket, { type RawData } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  CRDT_BINARY_FORMAT_VERSION,
+  cryptoReady,
+  decodeCrdtBinaryFrame,
+  encodeCrdtBinaryFrame,
+  toBase64,
+  type CrdtBinaryHeader
+} from "@fortnote/shared";
 import { getConfig } from "../config.js";
 import { createDb, type AppDb } from "../db/client.js";
 import { createApp } from "../http/app.js";
@@ -28,6 +36,12 @@ interface TestServerOptions {
 interface SocketClient {
   socket: WebSocket;
   next: (label: string) => Promise<Record<string, unknown>>;
+}
+
+interface BinarySocketClient {
+  socket: WebSocket;
+  nextBinary: (label: string) => Promise<Uint8Array>;
+  nextJson: (label: string) => Promise<Record<string, unknown>>;
 }
 
 const openServers: Server[] = [];
@@ -59,6 +73,163 @@ afterEach(async () => {
 });
 
 describe("realtime server", () => {
+  it("persists, deduplicates, pages, and epoch-fences binary section updates", async () => {
+    await cryptoReady();
+    const server = await createRealtimeTestServer();
+    const alice = await register(server.url, "binary_alice");
+    const noteId = crypto.randomUUID();
+    const sectionId = crypto.randomUUID();
+    await authed(server.url, alice.cookie)
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(protectedNotePayload(noteId, sectionId))
+      .expect(201);
+    const cryptoOwnerId = (
+      server.db.sqlite
+        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
+        .get(noteId) as { cryptoOwnerId: string }
+    ).cryptoOwnerId;
+    const socket = await connectBinary(server.url, alice.cookie);
+    expect(await socket.nextJson("binary connected")).toMatchObject({
+      type: "connected",
+      capabilities: expect.arrayContaining(["crdt-binary-v2"])
+    });
+    await socket.nextJson("binary replay");
+
+    socket.socket.send(JSON.stringify({
+      type: "crdt-subscribe",
+      requestId: crypto.randomUUID(),
+      noteId,
+      sectionId,
+      expectedKeyEpoch: 1,
+      afterSequence: 0
+    }));
+    expect(await socket.nextJson("empty binary history")).toMatchObject({
+      type: "crdt-history-page",
+      sectionId,
+      entries: [],
+      nextSequence: 0
+    });
+
+    const cipher = Uint8Array.from([4, 8, 15, 16, 23, 42]);
+    const header = binaryHeader({ noteId, sectionId, cryptoOwnerId });
+    const frame = encodeCrdtBinaryFrame(header, cipher, 256 * 1024);
+    socket.socket.send(frame);
+    expect(await socket.nextJson("binary inserted ack")).toEqual({
+      type: "crdt-ack",
+      updateId: header.updateId,
+      sectionId,
+      result: "inserted",
+      keyEpoch: 1,
+      serverSequence: 1
+    });
+    expect(
+      server.db.sqlite
+        .prepare(`
+          SELECT server_sequence AS serverSequence, inline_cipher AS inlineCipher
+          FROM section_updates WHERE update_id = ?
+        `)
+        .get(header.updateId)
+    ).toEqual({ serverSequence: 1, inlineCipher: Buffer.from(cipher) });
+
+    socket.socket.send(frame);
+    expect(await socket.nextJson("binary duplicate ack")).toMatchObject({
+      type: "crdt-ack",
+      updateId: header.updateId,
+      result: "already-present",
+      serverSequence: 1
+    });
+    expect(
+      server.db.sqlite
+        .prepare("SELECT COUNT(*) AS count FROM section_updates WHERE update_id = ?")
+        .get(header.updateId)
+    ).toEqual({ count: 1 });
+
+    const staleHeader = binaryHeader({
+      noteId,
+      sectionId,
+      cryptoOwnerId,
+      expectedKeyEpoch: 2
+    });
+    socket.socket.send(encodeCrdtBinaryFrame(staleHeader, cipher, 256 * 1024));
+    expect(await socket.nextJson("stale binary reject")).toEqual({
+      type: "crdt-reject",
+      updateId: staleHeader.updateId,
+      sectionId,
+      code: "stale-epoch"
+    });
+
+    server.db.sqlite
+      .prepare("UPDATE notes SET rotation_fenced = 1 WHERE id = ?")
+      .run(noteId);
+    const fencedHeader = binaryHeader({ noteId, sectionId, cryptoOwnerId });
+    socket.socket.send(encodeCrdtBinaryFrame(fencedHeader, cipher, 256 * 1024));
+    expect(await socket.nextJson("rotation fence reject")).toEqual({
+      type: "crdt-reject",
+      updateId: fencedHeader.updateId,
+      sectionId,
+      code: "rotation-pending"
+    });
+    server.db.sqlite
+      .prepare("UPDATE notes SET rotation_fenced = 0 WHERE id = ?")
+      .run(noteId);
+
+    const oversizedCipher = new Uint8Array(256 * 1024);
+    const oversizedHeader = {
+      ...binaryHeader({ noteId, sectionId, cryptoOwnerId }),
+      cipherLength: oversizedCipher.length
+    };
+    socket.socket.send(
+      encodeCrdtBinaryFrame(oversizedHeader, oversizedCipher, 1024 * 1024)
+    );
+    expect(await socket.nextJson("oversized binary reject")).toEqual({
+      type: "crdt-reject",
+      updateId: oversizedHeader.updateId,
+      sectionId,
+      code: "frame-too-large"
+    });
+
+    const invalidSectionId = crypto.randomUUID();
+    const invalidRequestId = crypto.randomUUID();
+    socket.socket.send(JSON.stringify({
+      type: "crdt-subscribe",
+      requestId: invalidRequestId,
+      noteId,
+      sectionId: invalidSectionId,
+      expectedKeyEpoch: 1,
+      afterSequence: 0
+    }));
+    expect(await socket.nextJson("invalid section reject")).toEqual({
+      type: "crdt-reject",
+      updateId: invalidRequestId,
+      sectionId: invalidSectionId,
+      code: "forbidden"
+    });
+
+    const replay = await connectBinary(server.url, alice.cookie);
+    await replay.nextJson("replay connected");
+    await replay.nextJson("replay events");
+    replay.socket.send(JSON.stringify({
+      type: "crdt-subscribe",
+      requestId: crypto.randomUUID(),
+      noteId,
+      sectionId,
+      expectedKeyEpoch: 1,
+      afterSequence: 0
+    }));
+    const replayedFrame = await replay.nextBinary("persisted binary frame");
+    expect(decodeCrdtBinaryFrame(replayedFrame, 256 * 1024)).toEqual({
+      header,
+      cipher
+    });
+    expect(await replay.nextJson("persisted history page")).toMatchObject({
+      type: "crdt-history-page",
+      sectionId,
+      nextSequence: 1,
+      entries: [{ kind: "inline", updateId: header.updateId, serverSequence: 1 }]
+    });
+  });
+
   it("rejects unauthenticated websocket connections", async () => {
     const server = await createRealtimeTestServer();
 
@@ -890,6 +1061,96 @@ function invitePayload(username: string, role: "editor" | "viewer") {
   };
 }
 
+function protectedNotePayload(noteId: string, rootSectionId: string) {
+  return {
+    id: noteId,
+    rootSectionId,
+    titleCipher: "protected_title_cipher_abcdefghijklmnopqrstuvwxyz",
+    titleNonce: "protected_title_nonce_abcdefghijklmnopqrstuvwxyz",
+    titleFormatVersion: 2,
+    encryptedNoteKey: "protected_note_key_abcdefghijklmnopqrstuvwxyz",
+    noteKeyNonce: "protected_note_nonce_abcdefghijklmnopqrstuvwxyz",
+    noteKeyFormatVersion: 2
+  };
+}
+
+function binaryHeader(input: {
+  noteId: string;
+  sectionId: string;
+  cryptoOwnerId: string;
+  expectedKeyEpoch?: number;
+}): CrdtBinaryHeader {
+  return {
+    type: "crdt-binary",
+    kind: "update",
+    formatVersion: CRDT_BINARY_FORMAT_VERSION,
+    updateId: crypto.randomUUID(),
+    noteId: input.noteId,
+    sectionId: input.sectionId,
+    cryptoOwnerId: input.cryptoOwnerId,
+    expectedKeyEpoch: input.expectedKeyEpoch ?? 1,
+    nonce: toBase64(crypto.getRandomValues(new Uint8Array(24))),
+    cipherLength: 6
+  };
+}
+
+async function connectBinary(baseUrl: string, cookie: string): Promise<BinarySocketClient> {
+  const socket = new WebSocket(
+    `${baseUrl.replace(/^http/, "ws")}/api/realtime?after=0&capabilities=crdt-binary-v2`,
+    { headers: { Cookie: cookie, Origin: TEST_ALLOWED_ORIGIN } }
+  );
+  const messages: { data: RawData; isBinary: boolean }[] = [];
+  const waiters: ((message: { data: RawData; isBinary: boolean }) => void)[] = [];
+  socket.on("message", (data, isBinary) => {
+    const message = { data, isBinary };
+    const waiter = waiters.shift();
+    if (waiter) {
+      waiter(message);
+    } else {
+      messages.push(message);
+    }
+  });
+  await new Promise<void>((resolve, reject) => {
+    socket.once("open", resolve);
+    socket.once("error", reject);
+  });
+  openSockets.push(socket);
+
+  async function nextPayload(label: string) {
+    const queued = messages.shift();
+    if (queued) {
+      return queued;
+    }
+    return new Promise<{ data: RawData; isBinary: boolean }>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error(`Timed out waiting for websocket message: ${label}`));
+      }, 2_000);
+      waiters.push((message) => {
+        clearTimeout(timeout);
+        resolve(message);
+      });
+    });
+  }
+
+  return {
+    socket,
+    nextBinary: async (label) => {
+      const payload = await nextPayload(label);
+      if (!payload.isBinary) {
+        throw new Error(`Expected binary websocket message: ${label}`);
+      }
+      return rawDataToBytes(payload.data);
+    },
+    nextJson: async (label) => {
+      const payload = await nextPayload(label);
+      if (payload.isBinary) {
+        throw new Error(`Expected JSON websocket message: ${label}`);
+      }
+      return parseSocketMessage(payload.data);
+    }
+  };
+}
+
 async function connect(
   baseUrl: string,
   cookie: string,
@@ -988,6 +1249,19 @@ function parseSocketMessage(data: RawData): Record<string, unknown> {
             ? Buffer.from(new Uint8Array(data)).toString("utf8")
             : Buffer.from(data).toString("utf8");
   return JSON.parse(raw) as Record<string, unknown>;
+}
+
+function rawDataToBytes(data: RawData): Uint8Array {
+  if (data instanceof Buffer) {
+    return new Uint8Array(data);
+  }
+  if (Array.isArray(data)) {
+    return new Uint8Array(Buffer.concat(data));
+  }
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
 }
 
 function waitForClose(socket: WebSocket): Promise<number> {
