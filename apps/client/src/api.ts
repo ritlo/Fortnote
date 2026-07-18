@@ -1,5 +1,80 @@
 import { KdfParams } from "@fortnote/shared";
 
+export const JSON_CONTROL_MAX_BYTES = 1024 * 1024;
+
+export type ContentUploadKind = "update" | "checkpoint" | "root-update";
+
+export interface ContentUploadBeginPayload {
+  uploadId: string;
+  updateId: string;
+  noteId: string;
+  sectionId: string;
+  expectedKeyEpoch: number;
+  kind: ContentUploadKind;
+  formatVersion: 2;
+  totalCipherBytes: number;
+  chunkCount: number;
+  manifestHash: string;
+  checkpointSequenceCutoff?: number;
+}
+
+export interface ContentUploadStatus {
+  uploadId: string;
+  status: "receiving" | "complete" | "committed" | "aborted" | "expired" | "invalid";
+  receivedChunkIndexes: number[];
+  reservedBytes: number;
+  expiresAt: string;
+}
+
+export interface ContentManifestCommitPayload {
+  requestId: string;
+  updateId: string;
+  expectedKeyEpoch: number;
+}
+
+export interface ContentManifestSummary {
+  manifestId: string;
+  uploadId: string;
+  updateId: string;
+  noteId: string;
+  sectionId: string;
+  keyEpoch: number;
+  kind: ContentUploadKind;
+  firstSequence: number;
+  lastSequence: number;
+  totalCipherBytes: number;
+  chunkCount: number;
+  manifestHash: string;
+}
+
+export interface LogicalNoteSectionSummary {
+  id: string;
+  noteId: string;
+  createdEpoch: number;
+  currentSequence: number;
+  initialized: boolean;
+  isDeleted: boolean;
+}
+
+export interface SectionHistoryPage {
+  sectionId: string;
+  keyEpoch: number;
+  afterSequence: number;
+  nextSequence: number;
+  hasMore: boolean;
+  entries: Array<
+    | { kind: "inline"; updateId: string; serverSequence: number; cipher: Uint8Array }
+    | { kind: "manifest"; updateId: string; serverSequence: number; manifestId: string }
+  >;
+}
+
+export interface StorageQuotaStatus {
+  usedBytes: number;
+  reservedBytes: number;
+  quotaBytes: number;
+  availableBytes: number;
+}
+
 export interface RegisterPayload {
   username: string;
   authVerifier: string;
@@ -253,7 +328,8 @@ export class ApiRequestError extends Error {
   constructor(
     public readonly status: number,
     public readonly code: string,
-    message: string
+    message: string,
+    public readonly requestId: string | null = null
   ) {
     super(message);
     this.name = "ApiRequestError";
@@ -274,11 +350,9 @@ export async function apiRequest<T>(
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
-  const headers = new Headers(init.headers);
-  if (!headers.has("content-type")) {
-    headers.set("content-type", "application/json");
-  }
-  headers.set("x-fortnote-client-id", clientInstanceId);
+  const requestId = crypto.randomUUID();
+  const headers = requestHeaders(init, requestId, true);
+  assertBoundedJsonControl(init.body, headers, requestId);
 
   const response = await fetch(`/api${path}`, {
     ...init,
@@ -287,14 +361,7 @@ export async function apiRequest<T>(
   });
 
   if (!response.ok) {
-    const error = (await response.json().catch(() => undefined)) as
-      | { code?: string; message?: string }
-      | undefined;
-    throw new ApiRequestError(
-      response.status,
-      error?.code ?? "request_failed",
-      error?.message ?? `Request failed: ${String(response.status)}`
-    );
+    throw await toApiRequestError(response, requestId);
   }
 
   if (response.status === 204) {
@@ -302,6 +369,157 @@ export async function apiRequest<T>(
   }
 
   return (await response.json()) as T;
+}
+
+async function apiBinaryRequest(path: string, init: RequestInit = {}): Promise<Uint8Array> {
+  const requestId = crypto.randomUUID();
+  const headers = requestHeaders(init, requestId, false);
+  const response = await fetch(`/api${path}`, {
+    ...init,
+    credentials: "include",
+    headers
+  });
+  if (!response.ok) {
+    throw await toApiRequestError(response, requestId);
+  }
+  if (response.status === 204) {
+    return new Uint8Array();
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+function requestHeaders(init: RequestInit, requestId: string, defaultJson: boolean): Headers {
+  const headers = new Headers(init.headers);
+  if (defaultJson && !headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  }
+  headers.set("x-fortnote-client-id", clientInstanceId);
+  headers.set("x-request-id", requestId);
+  return headers;
+}
+
+function assertBoundedJsonControl(
+  body: BodyInit | null | undefined,
+  headers: Headers,
+  requestId: string
+): void {
+  if (
+    typeof body === "string" &&
+    headers.get("content-type")?.toLowerCase().startsWith("application/json") &&
+    new TextEncoder().encode(body).length > JSON_CONTROL_MAX_BYTES
+  ) {
+    throw new ApiRequestError(
+      0,
+      "control_payload_too_large",
+      "Control payload exceeds 1 MiB; protected content must use binary chunks",
+      requestId
+    );
+  }
+}
+
+async function toApiRequestError(
+  response: Response,
+  fallbackRequestId: string
+): Promise<ApiRequestError> {
+  const payload = (await response.json().catch(() => undefined)) as unknown;
+  const parsed = parseApiErrorEnvelope(payload);
+  return new ApiRequestError(
+    response.status,
+    parsed?.code ?? "request_failed",
+    parsed?.message ?? `Request failed: ${String(response.status)}`,
+    parsed?.requestId ?? response.headers.get("x-request-id") ?? fallbackRequestId
+  );
+}
+
+function parseApiErrorEnvelope(value: unknown): {
+  code: string;
+  message: string;
+  requestId: string | null;
+} | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const outer = value as Record<string, unknown>;
+  const candidate =
+    outer.error && typeof outer.error === "object"
+      ? (outer.error as Record<string, unknown>)
+      : outer;
+  if (typeof candidate.code !== "string" || typeof candidate.message !== "string") {
+    return null;
+  }
+  return {
+    code: candidate.code,
+    message: candidate.message,
+    requestId: typeof candidate.requestId === "string" ? candidate.requestId : null
+  };
+}
+
+export function beginContentUpload(
+  payload: ContentUploadBeginPayload
+): Promise<ContentUploadStatus> {
+  return apiRequest<ContentUploadStatus>("/content/uploads", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function inspectContentUpload(uploadId: string): Promise<ContentUploadStatus> {
+  return apiRequest<ContentUploadStatus>(`/content/uploads/${uploadId}`);
+}
+
+export async function putContentChunk(
+  uploadId: string,
+  chunkIndex: number,
+  bytes: Uint8Array,
+  cipherHash: string
+): Promise<void> {
+  await apiBinaryRequest(`/content/uploads/${uploadId}/chunks/${String(chunkIndex)}`, {
+    method: "PUT",
+    headers: {
+      "content-type": "application/octet-stream",
+      "x-fortnote-cipher-hash": cipherHash
+    },
+    body: new Blob([bytes.slice()])
+  });
+}
+
+export function abortContentUpload(uploadId: string): Promise<undefined> {
+  return apiRequest<undefined>(`/content/uploads/${uploadId}`, { method: "DELETE" });
+}
+
+export function commitContentManifest(
+  uploadId: string,
+  payload: ContentManifestCommitPayload
+): Promise<ContentManifestSummary> {
+  return apiRequest<ContentManifestSummary>(`/content/uploads/${uploadId}/commit`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function downloadContentChunk(
+  manifestId: string,
+  chunkIndex: number
+): Promise<Uint8Array> {
+  return apiBinaryRequest(`/content/manifests/${manifestId}/chunks/${String(chunkIndex)}`);
+}
+
+export function listNoteSections(noteId: string): Promise<{ sections: LogicalNoteSectionSummary[] }> {
+  return apiRequest<{ sections: LogicalNoteSectionSummary[] }>(`/notes/${noteId}/sections`);
+}
+
+export function getSectionHistory(
+  noteId: string,
+  sectionId: string,
+  afterSequence: number
+): Promise<SectionHistoryPage> {
+  return apiRequest<SectionHistoryPage>(
+    `/notes/${noteId}/sections/${sectionId}/history?after=${String(afterSequence)}`
+  );
+}
+
+export function getStorageQuota(): Promise<StorageQuotaStatus> {
+  return apiRequest<StorageQuotaStatus>("/content/quota");
 }
 
 export function getMe(): Promise<User> {

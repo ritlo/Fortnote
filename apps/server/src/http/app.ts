@@ -11,8 +11,7 @@ import { createKeyMaterialRouter } from "../keyMaterial/routes.js";
 import { createNotesRouter } from "../notes/routes.js";
 import { createSharingKeysRouter } from "../sharingKeys/routes.js";
 import { csrfGuard } from "./csrf.js";
-
-const JSON_BODY_LIMIT_BYTES = 1024 * 1024;
+import { logOperationalError, sendApiError } from "./errors.js";
 
 export interface AppContext {
   config: ServerConfig;
@@ -43,7 +42,16 @@ export function createApp(context: AppContext) {
       }
     })
   );
-  app.use(express.json({ limit: JSON_BODY_LIMIT_BYTES }));
+  app.use("/api", (request, response, next) => {
+    const suppliedRequestId = request.get("x-request-id");
+    const requestId = isUuid(suppliedRequestId) ? suppliedRequestId : crypto.randomUUID();
+    response.locals.requestId = requestId;
+    response.locals.requestStartedAt = performance.now();
+    response.set("Cache-Control", "no-store");
+    response.set("X-Request-Id", requestId);
+    next();
+  });
+  app.use(express.json({ limit: context.config.jsonControlMaxBytes }));
   app.use(csrfGuard(context.config.allowedOrigin));
 
   app.get("/api/health", (_request, response) => {
@@ -64,15 +72,32 @@ export function createApp(context: AppContext) {
       return;
     }
     if (isPayloadTooLargeError(error)) {
-      response.status(413).json({ code: "payload_too_large", message: "Payload too large" });
+      sendApiError(response, "payload_too_large", "Payload too large");
       return;
     }
-    console.error(error);
-    response.status(500).json({ code: "internal_error", message: "Internal server error" });
+    logOperationalError({
+      boundary: "http",
+      code: "internal_error",
+      durationMs: performance.now() - Number(response.locals.requestStartedAt ?? performance.now()),
+      error,
+      method: _request.method,
+      requestId: response.locals.requestId as string,
+      status: 500
+    });
+    sendApiError(response, "internal_error", "Internal server error");
   };
   app.use(handleError);
 
   return app;
+}
+
+function isUuid(value: string | undefined): value is string {
+  return Boolean(
+    value &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+        value
+      )
+  );
 }
 
 function isPayloadTooLargeError(error: unknown): boolean {

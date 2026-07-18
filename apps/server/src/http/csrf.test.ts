@@ -3,6 +3,7 @@ import { csrfGuard } from "./csrf.js";
 
 function createResponse() {
   return {
+    locals: { requestId: "00000000-0000-4000-8000-000000000001" },
     statusCode: 200,
     payload: undefined as unknown,
     status(code: number) {
@@ -46,8 +47,11 @@ describe("csrfGuard", () => {
 
     expect(response.statusCode).toBe(403);
     expect(response.payload).toEqual({
-      code: "csrf_failed",
-      message: "CSRF validation failed"
+      error: {
+        code: "csrf_failed",
+        message: "CSRF validation failed",
+        requestId: "00000000-0000-4000-8000-000000000001"
+      }
     });
   });
 

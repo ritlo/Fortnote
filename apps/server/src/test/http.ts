@@ -2,12 +2,14 @@ import request from "supertest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { getConfig } from "../config.js";
 import { createDb } from "../db/client.js";
 import { createApp } from "../http/app.js";
 
 export function createTestApp() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fortnote-test-"));
   const config = {
+    ...getConfig({}),
     port: 0,
     host: "127.0.0.1",
     databasePath: ":memory:",
