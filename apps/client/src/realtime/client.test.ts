@@ -232,6 +232,111 @@ describe("realtime client", () => {
     await database.deleteDatabase();
   });
 
+  it("resumes an offline scoped update from IndexedDB after reconnect", async () => {
+    await cryptoReady();
+    const database = await openFortnoteIndexedDb({
+      factory: fakeIndexedDb,
+      name: `fortnote-client-reconnect-${crypto.randomUUID()}`
+    });
+    const userId = crypto.randomUUID();
+    const update = scopedUpdate();
+    const first = connectRealtime({
+      after: 0,
+      userId,
+      ownerId: "tab-a",
+      outboxStore: database,
+      onMessage: vi.fn()
+    });
+    first.subscribeCrdt(update.noteId, update.sectionId, update.keyEpoch);
+    const interruptedDelivery = first.sendCrdtUpdate(update);
+    await vi.waitFor(async () => {
+      expect(await database.listOutbox(userId)).toHaveLength(1);
+    });
+    first.close();
+    await expect(interruptedDelivery).rejects.toThrow("closed");
+
+    const second = connectRealtime({
+      after: 0,
+      userId,
+      ownerId: "tab-a",
+      outboxStore: database,
+      onMessage: vi.fn()
+    });
+    second.subscribeCrdt(update.noteId, update.sectionId, update.keyEpoch);
+    sockets[1]!.open();
+    sockets[1]!.receive({
+      ...connectedMessage(userId),
+      capabilities: ["crdt-binary-v2"]
+    });
+    await vi.waitFor(() => {
+      expect(sockets[1]!.binarySent).toHaveLength(1);
+    });
+    const replayed = decodeCrdtBinaryFrame(
+      new Uint8Array(sockets[1]!.binarySent[0]!),
+      256 * 1024
+    );
+    expect(replayed.header).toMatchObject({
+      updateId: update.updateId,
+      sectionId: update.sectionId,
+      expectedKeyEpoch: update.keyEpoch
+    });
+    sockets[1]!.receive({
+      type: "crdt-ack",
+      updateId: update.updateId,
+      sectionId: update.sectionId,
+      result: "already-present",
+      keyEpoch: update.keyEpoch,
+      serverSequence: 9
+    });
+    await vi.waitFor(async () => {
+      expect(await database.listOutbox(userId)).toEqual([]);
+    });
+    second.close();
+    await database.deleteDatabase();
+  });
+
+  it("keeps valid oversized scoped work queued for resumable transfer", async () => {
+    const database = await openFortnoteIndexedDb({
+      factory: fakeIndexedDb,
+      name: `fortnote-client-chunk-route-${crypto.randomUUID()}`
+    });
+    const userId = crypto.randomUUID();
+    const update = scopedUpdate();
+    const onCrdtError = vi.fn();
+    const connection = connectRealtime({
+      after: 0,
+      userId,
+      ownerId: "tab-a",
+      outboxStore: database,
+      onMessage: vi.fn(),
+      onCrdtError
+    });
+    connection.subscribeCrdt(update.noteId, update.sectionId, update.keyEpoch);
+    const delivery = connection.sendCrdtUpdate(update);
+    sockets[0]!.open();
+    sockets[0]!.receive({
+      ...connectedMessage(userId),
+      capabilities: ["crdt-binary-v2"]
+    });
+    await vi.waitFor(() => {
+      expect(sockets[0]!.binarySent).toHaveLength(1);
+    });
+
+    sockets[0]!.receive({
+      type: "crdt-reject",
+      updateId: update.updateId,
+      sectionId: update.sectionId,
+      code: "frame-too-large"
+    });
+    expect(onCrdtError).toHaveBeenCalledWith(
+      "Realtime update requires resumable encrypted chunk transfer."
+    );
+    await expect(database.listOutbox(userId)).resolves.toHaveLength(1);
+    connection.close();
+    await expect(delivery).rejects.toThrow("closed");
+    await database.deleteDatabase();
+  });
+
   it("retries encrypted CRDT updates until the server acknowledges them", async () => {
     const update = {
       type: "crdt-update" as const,
