@@ -19,6 +19,141 @@ describe("auth routes", () => {
     expect(me.body).toMatchObject({ username: "alice" });
   });
 
+  it("uses one canonical handle for registration, login, and sharing lookup", async () => {
+    const app = createTestApp();
+    const owner = request.agent(app);
+    const ownerRegistration = await owner
+      .post("/api/auth/register")
+      .set(csrfHeaders())
+      .send(registerPayload("  Alice.Example  "))
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          username: "alice.example",
+          canonicalHandle: "alice.example",
+          displayName: "Alice.Example",
+          handleState: "active"
+        });
+      });
+    await owner
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send({
+        sharingKeyVersion: 1,
+        publicKey: "public_key_abcdefghijklmnopqrstuvwxyz0123456789",
+        encryptedPrivateKey: "encrypted_private_key_abcdefghijklmnopqrstuvwxyz",
+        privateKeyNonce: "private_key_nonce_abcdefghijklmnopqrstuvwxyz",
+        formatVersion: 2
+      })
+      .expect(201);
+
+    await request(app)
+      .post("/api/auth/register")
+      .set(csrfHeaders())
+      .send(registerPayload("ALICE.EXAMPLE"))
+      .expect(409);
+
+    const collaborator = await request(app)
+      .post("/api/auth/register")
+      .set(csrfHeaders())
+      .send(registerPayload("collaborator"))
+      .expect(201);
+    const collaboratorAgent = request.agent(app);
+    await collaboratorAgent
+      .post("/api/auth/login")
+      .set(csrfHeaders())
+      .send({
+        username: " COLLABORATOR ",
+        authVerifier: registerPayload("collaborator").authVerifier
+      })
+      .expect(200);
+    await collaboratorAgent
+      .get("/api/sharing-keys/lookup")
+      .query({ username: " ALICE.EXAMPLE " })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          userId: ownerRegistration.body.id,
+          username: "alice.example"
+        });
+      });
+    const invalidLookup = await collaboratorAgent
+      .get("/api/sharing-keys/lookup")
+      .query({ username: "invalid handle" })
+      .expect(404);
+    const missingLookup = await collaboratorAgent
+      .get("/api/sharing-keys/lookup")
+      .query({ username: "missing.handle" })
+      .expect(404);
+    expect(invalidLookup.body.error).toMatchObject({
+      code: missingLookup.body.error.code,
+      message: missingLookup.body.error.message
+    });
+    expect(collaborator.body.canonicalHandle).toBe("collaborator");
+  });
+
+  it("keeps colliding legacy identities exact until handle repair", async () => {
+    const app = createTestApp();
+    const first = request.agent(app);
+    const second = request.agent(app);
+    await first
+      .post("/api/auth/register")
+      .set(csrfHeaders())
+      .send(registerPayload("legacy_one"))
+      .expect(201);
+    await second
+      .post("/api/auth/register")
+      .set(csrfHeaders())
+      .send(registerPayload("legacy_two"))
+      .expect(201);
+    app.locals.db.sqlite
+      .prepare(
+        "UPDATE users SET username = ?, display_name = ?, canonical_handle = NULL, handle_state = 'repair-required' WHERE username = ?"
+      )
+      .run(" Legacy Name ", "Legacy Name", "legacy_one");
+    app.locals.db.sqlite
+      .prepare(
+        "UPDATE users SET username = ?, display_name = ?, canonical_handle = NULL, handle_state = 'repair-required' WHERE username = ?"
+      )
+      .run("legacy name", "legacy name", "legacy_two");
+
+    await first.get("/api/auth/me").expect(200).expect(({ body }) => {
+      expect(body).toMatchObject({
+        username: " Legacy Name ",
+        canonicalHandle: null,
+        handleState: "repair-required"
+      });
+    });
+    await second
+      .put("/api/auth/handle")
+      .set(csrfHeaders())
+      .send({ handle: "repaired.handle" })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          canonicalHandle: "repaired.handle",
+          username: "repaired.handle",
+          handleState: "active"
+        });
+      });
+  });
+
+  it("uses the configured absolute session lifetime", async () => {
+    const app = createTestApp({ sessionAbsoluteTimeoutMs: 2_000 });
+    const before = Date.now();
+    await request(app)
+      .post("/api/auth/register")
+      .set(csrfHeaders())
+      .send(registerPayload("short_session"))
+      .expect(201);
+
+    const session = app.locals.db.sqlite
+      .prepare("SELECT absolute_expires_at AS absoluteExpiresAt FROM sessions")
+      .get() as { absoluteExpiresAt: string };
+    expect(Date.parse(session.absoluteExpiresAt)).toBeGreaterThanOrEqual(before + 1_900);
+    expect(Date.parse(session.absoluteExpiresAt)).toBeLessThanOrEqual(Date.now() + 2_100);
+  });
+
   it("returns KDF parameters for registered users", async () => {
     const app = createTestApp();
 

@@ -91,6 +91,9 @@ export interface RegisterPayload {
 export interface User {
   id: string;
   username: string;
+  displayName?: string;
+  canonicalHandle?: string | null;
+  handleState?: "active" | "repair-required";
 }
 
 export interface AuthKdfResponse {
@@ -526,6 +529,13 @@ export function getMe(): Promise<User> {
   return apiRequest<User>("/auth/me");
 }
 
+const HANDLE_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{1,62}[a-z0-9])$/u;
+
+export function normalizeAccountHandle(value: string): string {
+  const canonical = value.trim().toLowerCase();
+  return HANDLE_PATTERN.test(canonical) ? canonical : value;
+}
+
 export function getAuthKdfParams(username: string): Promise<AuthKdfResponse> {
   return apiRequest<AuthKdfResponse>(
     `/auth/kdf-params?username=${encodeURIComponent(username)}`
@@ -548,7 +558,10 @@ export function login(username: string, authVerifier: string): Promise<User> {
 export function register(payload: RegisterPayload): Promise<User> {
   return apiRequest<User>("/auth/register", {
     method: "POST",
-    body: JSON.stringify(payload)
+    body: JSON.stringify({
+      ...payload,
+      username: normalizeAccountHandle(payload.username)
+    })
   });
 }
 
@@ -561,6 +574,13 @@ export function recover(payload: RecoverPayload): Promise<User> {
 
 export function logout(): Promise<undefined> {
   return apiRequest<undefined>("/auth/logout", { method: "POST" });
+}
+
+export function repairAccountHandle(handle: string): Promise<User> {
+  return apiRequest<User>("/auth/handle", {
+    method: "PUT",
+    body: JSON.stringify({ handle: normalizeAccountHandle(handle) })
+  });
 }
 
 export function getKeyMaterial(): Promise<KeyMaterialResponse> {
@@ -601,7 +621,7 @@ export function cleanupRetiredSharingKeys(): Promise<{ deleted: number }> {
 
 export function lookupSharingKey(username: string): Promise<PublicSharingKey> {
   return apiRequest<PublicSharingKey>(
-    `/sharing-keys/lookup?username=${encodeURIComponent(username)}`
+    `/sharing-keys/lookup?username=${encodeURIComponent(normalizeAccountHandle(username))}`
   );
 }
 

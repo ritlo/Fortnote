@@ -5,6 +5,7 @@ import { requireSession } from "../auth/session.js";
 import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
+import { canonicalizeHandle } from "../auth/identity.js";
 
 const sharingKeySchema = z.object({
   sharingKeyVersion: z.number().int().positive(),
@@ -147,16 +148,20 @@ export function createSharingKeysRouter(context: AppContext): Router {
       return;
     }
 
-    const username = z.string().min(1).max(64).safeParse(request.query.username);
-    if (!username.success) {
-      sendApiError(response, "bad_request", "Username is required");
+    const username = z.string().min(1).max(128).safeParse(request.query.username);
+    const canonicalHandle = username.success
+      ? canonicalizeHandle(username.data)
+      : null;
+    if (!canonicalHandle) {
+      sendApiError(response, "not_found", "Sharing key not found");
       return;
     }
 
     const row = context.db.orm
       .select({
         userId: schema.users.id,
-        username: schema.users.username,
+        canonicalHandle: schema.users.canonicalHandle,
+        displayName: schema.users.displayName,
         sharingKeyVersion: schema.userSharingKeys.sharingKeyVersion,
         publicKey: schema.userSharingKeys.publicKey,
         formatVersion: schema.userSharingKeys.formatVersion,
@@ -167,7 +172,12 @@ export function createSharingKeysRouter(context: AppContext): Router {
         schema.userSharingKeys,
         eq(schema.userSharingKeys.userId, schema.users.id)
       )
-      .where(eq(schema.users.username, username.data))
+      .where(
+        and(
+          eq(schema.users.canonicalHandle, canonicalHandle),
+          eq(schema.users.handleState, "active")
+        )
+      )
       .orderBy(desc(schema.userSharingKeys.sharingKeyVersion))
       .limit(1)
       .get();
@@ -177,7 +187,11 @@ export function createSharingKeysRouter(context: AppContext): Router {
       return;
     }
 
-    response.json(row);
+    response.json({
+      ...row,
+      username: row.canonicalHandle,
+      canonicalHandle: row.canonicalHandle
+    });
   });
 
   return router;

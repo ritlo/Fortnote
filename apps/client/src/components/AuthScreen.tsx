@@ -1,5 +1,6 @@
 import { useAuthActions } from "../hooks/useAuthActions";
 import { useAppStore } from "../store/appStore";
+import { normalizeAccountHandle } from "../api";
 
 export function AuthScreen() {
   const authMode = useAppStore((state) => state.authMode);
@@ -15,7 +16,7 @@ export function AuthScreen() {
   const setPassword = useAppStore((state) => state.setPassword);
   const setRecoveryInput = useAppStore((state) => state.setRecoveryInput);
   const setRecoveryNewPassword = useAppStore((state) => state.setRecoveryNewPassword);
-  const { submitAuth } = useAuthActions();
+  const { copyRecoverySecret, submitAuth } = useAuthActions();
 
   return (
     <main className="auth-screen">
@@ -59,14 +60,24 @@ export function AuthScreen() {
         </div>
 
         <label>
-          Username
+          Account handle
           <input
+            autoCapitalize="none"
+            autoComplete="username"
             value={username}
             onChange={(event) => {
               setUsername(event.target.value);
             }}
+            onBlur={() => {
+              setUsername(normalizeAccountHandle(username));
+            }}
           />
         </label>
+        {authMode === "register" ? (
+          <p className="muted">
+            Use 3–64 lowercase letters, numbers, dots, underscores, or hyphens.
+          </p>
+        ) : null}
         {authMode === "recover" ? (
           <>
             <label>
@@ -116,9 +127,24 @@ export function AuthScreen() {
               ? "Recover and decrypt"
               : "Sign in and decrypt"}
         </button>
-        <p className="muted">{status}</p>
+        <p
+          className="muted"
+          role={status.toLowerCase().includes("handle repair") ? "alert" : undefined}
+        >
+          {status}
+        </p>
         {recoverySecret ? (
-          <p className="recovery-code">Recovery key: {recoverySecret}</p>
+          <div className="recovery-code">
+            <output aria-label="Recovery key">{recoverySecret}</output>
+            <button
+              type="button"
+              onClick={() => {
+                void copyRecoverySecret();
+              }}
+            >
+              Copy recovery key
+            </button>
+          </div>
         ) : null}
       </section>
     </main>

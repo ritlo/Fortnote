@@ -23,7 +23,12 @@ export function createDb(config: ServerConfig) {
         .map(({ fileCipherPath }) => fileCipherPath)
     )
   );
-  return { sqlite, orm };
+  return {
+    sqlite,
+    orm,
+    sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
+    sessionAbsoluteTimeoutMs: config.sessionAbsoluteTimeoutMs
+  };
 }
 
 export type AppDb = ReturnType<typeof createDb>;

@@ -8,6 +8,8 @@ import {
   getRecoveryParams,
   login,
   logout,
+  normalizeAccountHandle,
+  repairAccountHandle,
   recover,
   register,
   storeCurrentSharingKey,
@@ -34,7 +36,11 @@ export function useSessionBootstrap() {
     void getMe()
       .then((currentUser) => {
         setUsername(currentUser.username);
-        setStatus("Session active. Sign in again to decrypt");
+        setStatus(
+          currentUser.handleState === "repair-required"
+            ? "Handle repair required. Sign in again, then choose a unique handle before sharing"
+            : "Session active. Sign in again to renew and decrypt"
+        );
       })
       .catch(() => {
         setStatus("Signed out");
@@ -49,7 +55,9 @@ export function useAuthActions() {
   const newPassword = useAppStore((state) => state.newPassword);
   const recoveryInput = useAppStore((state) => state.recoveryInput);
   const recoveryNewPassword = useAppStore((state) => state.recoveryNewPassword);
+  const recoverySecret = useAppStore((state) => state.recoverySecret);
   const rootKey = useAppStore((state) => state.rootKey);
+  const setUsername = useAppStore((state) => state.setUsername);
   const setUser = useAppStore((state) => state.setUser);
   const setRootKey = useAppStore((state) => state.setRootKey);
   const setKeyMaterialVersion = useAppStore((state) => state.setKeyMaterialVersion);
@@ -68,8 +76,9 @@ export function useAuthActions() {
     setRecoverySecret(null);
     setStatus("Deriving keys");
     try {
+      const accountHandle = normalizeAccountHandle(username);
       if (authMode === "register") {
-        const registration = await createRegistrationCrypto(username, password);
+        const registration = await createRegistrationCrypto(accountHandle, password);
         const currentUser = await register(registration.payload);
         setUser(currentUser);
         setRootKey(registration.rootKey);
@@ -80,12 +89,12 @@ export function useAuthActions() {
         await loadFolders();
         await loadDecryptedNotes(currentUser, registration.rootKey);
         setPassword("");
-        setStatus("Signed in and decrypted");
+        setStatus(authenticatedStatus(currentUser, "Signed in and decrypted"));
         return;
       }
 
       if (authMode === "recover") {
-        const recoveryParams = await getRecoveryParams(username);
+        const recoveryParams = await getRecoveryParams(accountHandle);
         const recovery = await createAccountRecoveryCrypto({
           recoverySecret: recoveryInput,
           recoveryKdf: recoveryKdf(recoveryParams),
@@ -94,7 +103,7 @@ export function useAuthActions() {
           newPassword: recoveryNewPassword
         });
         const currentUser = await recover({
-          username,
+          username: accountHandle,
           recoveryAuthVerifier: recovery.recoveryAuthVerifier,
           newAuthVerifier: recovery.passwordChange.authVerifier,
           authKdf: recovery.passwordChange.authKdf,
@@ -113,13 +122,13 @@ export function useAuthActions() {
         await ensureSharingKey(recovery.rootKey);
         await loadFolders();
         await loadDecryptedNotes(currentUser, recovery.rootKey);
-        setStatus("Recovered and decrypted");
+        setStatus(authenticatedStatus(currentUser, "Recovered and decrypted"));
         return;
       }
 
-      const kdf = await getAuthKdfParams(username);
+      const kdf = await getAuthKdfParams(accountHandle);
       const authVerifier = await createLoginAuthVerifier(password, authKdf(kdf));
-      const currentUser = await login(username, authVerifier);
+      const currentUser = await login(accountHandle, authVerifier);
       const keyMaterial = await getKeyMaterial();
       const openedVault = await openVault(
         password,
@@ -136,7 +145,7 @@ export function useAuthActions() {
       await loadFolders();
       await loadDecryptedNotes(currentUser, openedVault.rootKey);
       setPassword("");
-      setStatus("Signed in and decrypted");
+      setStatus(authenticatedStatus(currentUser, "Signed in and decrypted"));
     } catch (authError) {
       setStatus("Auth failed");
       setError(authError instanceof Error ? authError.message : "Unable to sign in");
@@ -146,6 +155,34 @@ export function useAuthActions() {
   async function submitLogout() {
     await logout();
     resetVaultState("Signed out");
+  }
+
+  async function repairLegacyHandle(handle: string) {
+    setError(null);
+    setStatus("Repairing account handle");
+    try {
+      const currentUser = await repairAccountHandle(handle);
+      setUser(currentUser);
+      setUsername(currentUser.username);
+      setStatus("Account handle repaired");
+    } catch (repairError) {
+      setStatus("Handle repair failed");
+      setError(
+        repairError instanceof Error ? repairError.message : "Unable to repair account handle"
+      );
+    }
+  }
+
+  async function copyRecoverySecret() {
+    if (!recoverySecret) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(recoverySecret);
+      setStatus("Recovery key copied. Store it somewhere private and offline");
+    } catch {
+      setError("Unable to copy the recovery key. Select and copy it manually");
+    }
   }
 
   function lockVault() {
@@ -255,10 +292,18 @@ export function useAuthActions() {
   return {
     changePassword,
     cleanupSharingKeys,
+    copyRecoverySecret,
     lockVault,
+    repairLegacyHandle,
     rotateRecoveryKey,
     rotateSharingKey,
     submitAuth,
     submitLogout
   };
+}
+
+function authenticatedStatus(user: { handleState?: string }, ready: string): string {
+  return user.handleState === "repair-required"
+    ? "Handle repair required before sharing. Open settings to choose a unique handle"
+    : ready;
 }

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { canonicalizeHandle } from "../auth/identity.js";
 
 export function runMigrations(sqlite: Database.Database): void {
   sqlite.exec(`
@@ -335,15 +336,54 @@ export function runMigrations(sqlite: Database.Database): void {
 	addColumnIfMissing(sqlite, "attachments", "metadata_nonce", "TEXT");
 	addColumnIfMissing(sqlite, "attachments", "metadata_format_version", "INTEGER");
 	addColumnIfMissing(sqlite, "attachments", "key_epoch", "INTEGER NOT NULL DEFAULT 1");
-	sqlite.exec(`
-	  UPDATE users SET display_name = username WHERE display_name IS NULL;
-	  UPDATE notes SET crypto_owner_id = user_id WHERE crypto_owner_id IS NULL;
+		sqlite.exec(`
+		  UPDATE users SET display_name = username WHERE display_name IS NULL;
+		  UPDATE notes SET crypto_owner_id = user_id WHERE crypto_owner_id IS NULL;
 	  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_canonical_handle
 	    ON users (canonical_handle) WHERE canonical_handle IS NOT NULL;
-	`);
+		`);
+  backfillCanonicalHandles(sqlite);
   removeNoteEventsNoteCascade(sqlite);
   backfillOwnerMemberships(sqlite);
   createFolderIntegrityTriggers(sqlite);
+}
+
+function backfillCanonicalHandles(sqlite: Database.Database): void {
+  const rows = sqlite
+    .prepare(
+      "SELECT id, username, canonical_handle AS canonicalHandle FROM users"
+    )
+    .all() as { id: string; username: string; canonicalHandle: string | null }[];
+  const claimed = new Map<string, string[]>();
+  for (const row of rows) {
+    const candidate = row.canonicalHandle ?? canonicalizeHandle(row.username);
+    if (!candidate) {
+      continue;
+    }
+    const ids = claimed.get(candidate) ?? [];
+    ids.push(row.id);
+    claimed.set(candidate, ids);
+  }
+
+  const activate = sqlite.prepare(
+    "UPDATE users SET canonical_handle = ?, handle_state = 'active' WHERE id = ?"
+  );
+  const requireRepair = sqlite.prepare(
+    "UPDATE users SET canonical_handle = NULL, handle_state = 'repair-required' WHERE id = ?"
+  );
+  sqlite.transaction(() => {
+    for (const row of rows) {
+      if (row.canonicalHandle) {
+        continue;
+      }
+      const candidate = canonicalizeHandle(row.username);
+      if (candidate && claimed.get(candidate)?.length === 1) {
+        activate.run(candidate, row.id);
+      } else {
+        requireRepair.run(row.id);
+      }
+    }
+  })();
 }
 
 function createFolderIntegrityTriggers(sqlite: Database.Database): void {

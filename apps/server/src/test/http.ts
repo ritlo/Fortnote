@@ -5,8 +5,9 @@ import path from "node:path";
 import { getConfig } from "../config.js";
 import { createDb } from "../db/client.js";
 import { createApp } from "../http/app.js";
+import type { ServerConfig } from "../config.js";
 
-export function createTestApp() {
+export function createTestApp(overrides: Partial<ServerConfig> = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fortnote-test-"));
   const config = {
     ...getConfig({}),
@@ -15,7 +16,8 @@ export function createTestApp() {
     databasePath: ":memory:",
     dataDir,
     cookieSecure: false,
-    allowedOrigin: "http://localhost:5173"
+    allowedOrigin: "http://localhost:5173",
+    ...overrides
   };
   const db = createDb(config);
   const app = createApp({ config, db });

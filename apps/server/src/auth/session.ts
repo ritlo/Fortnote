@@ -6,13 +6,13 @@ import * as schema from "../db/schema.js";
 import { sendApiError } from "../http/errors.js";
 
 const SESSION_COOKIE = "fortnote_session";
-const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
-const ABSOLUTE_TIMEOUT_MS = 30 * 24 * 60 * 60 * 1000;
-
 export interface SessionRecord {
   id: string;
   userId: string;
   username: string;
+  displayName: string;
+  canonicalHandle: string | null;
+  handleState: string;
 }
 
 export function hashToken(token: string): string {
@@ -30,8 +30,8 @@ export function createSession(
     id: crypto.randomUUID(),
     userId,
     sessionHash: hashToken(token),
-    idleExpiresAt: new Date(now + IDLE_TIMEOUT_MS).toISOString(),
-    absoluteExpiresAt: new Date(now + ABSOLUTE_TIMEOUT_MS).toISOString()
+    idleExpiresAt: new Date(now + db.sessionIdleTimeoutMs).toISOString(),
+    absoluteExpiresAt: new Date(now + db.sessionAbsoluteTimeoutMs).toISOString()
   }).run();
   return token;
 }
@@ -75,7 +75,14 @@ export function findSession(db: AppDb, token: string | null): SessionRecord | nu
 
   const now = new Date().toISOString();
   const row = db.orm
-    .select({ id: schema.sessions.id, userId: schema.sessions.userId, username: schema.users.username })
+    .select({
+      id: schema.sessions.id,
+      userId: schema.sessions.userId,
+      username: schema.users.username,
+      displayName: schema.users.displayName,
+      canonicalHandle: schema.users.canonicalHandle,
+      handleState: schema.users.handleState
+    })
     .from(schema.sessions)
     .innerJoin(schema.users, eq(schema.users.id, schema.sessions.userId))
     .where(and(
@@ -93,12 +100,15 @@ export function findSession(db: AppDb, token: string | null): SessionRecord | nu
     .update(schema.sessions)
     .set({
       lastSeenAt: sql`CURRENT_TIMESTAMP`,
-      idleExpiresAt: new Date(Date.now() + IDLE_TIMEOUT_MS).toISOString()
+      idleExpiresAt: new Date(Date.now() + db.sessionIdleTimeoutMs).toISOString()
     })
     .where(eq(schema.sessions.id, row.id))
     .run();
 
-  return row;
+  return {
+    ...row,
+    displayName: row.displayName ?? row.username
+  };
 }
 
 export function deleteSession(db: AppDb, token: string | null): string | null {
