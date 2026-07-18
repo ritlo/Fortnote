@@ -1,14 +1,16 @@
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 3;
 
 const OUTBOX_STORE = "encryptedOutbox";
 const ACKNOWLEDGEMENT_STORE = "acknowledgements";
 const SECTION_CACHE_STORE = "sectionCache";
 const LEASE_STORE = "leases";
 const CONTENT_TRANSFER_STORE = "contentTransfers";
+const SEARCH_INDEX_STORE = "searchIndex";
 
 const OUTBOX_KEY = ["userId", "noteId", "sectionId", "keyEpoch", "updateId"];
 const CACHE_KEY = ["userId", "noteId", "sectionId", "keyEpoch", "manifestId"];
 const CONTENT_TRANSFER_KEY = ["userId", "uploadId"];
+const SEARCH_INDEX_KEY = ["userId", "noteId", "sectionId", "keyEpoch"];
 
 export interface EncryptedOutboxRecord {
   userId: string;
@@ -84,13 +86,26 @@ export interface EncryptedContentTransferRecord {
   updatedAt: number;
 }
 
+export interface ProtectedSearchIndexRecord {
+  userId: string;
+  noteId: string;
+  sectionId: string;
+  keyEpoch: number;
+  indexedSequence: number;
+  cipher: string;
+  nonce: string;
+  formatVersion: 2;
+  updatedAt: number;
+}
+
 export interface IndexedDbChange {
   store:
     | "outbox"
     | "acknowledgements"
     | "section-cache"
     | "leases"
-    | "content-transfers";
+    | "content-transfers"
+    | "search-index";
   userId: string;
 }
 
@@ -101,6 +116,10 @@ type OutboxKey = Pick<
 type CacheKey = Pick<
   SectionCacheRecord,
   "userId" | "noteId" | "sectionId" | "keyEpoch" | "manifestId"
+>;
+type SearchIndexKey = Pick<
+  ProtectedSearchIndexRecord,
+  "userId" | "noteId" | "sectionId" | "keyEpoch"
 >;
 
 export class IndexedDbCapacityError extends Error {
@@ -153,8 +172,10 @@ export interface FortnoteIndexedDb {
     uploadId: string
   ): Promise<EncryptedContentTransferRecord | null>;
   getOutbox(record: OutboxKey): Promise<EncryptedOutboxRecord | null>;
+  getSearchIndexSection(record: SearchIndexKey): Promise<ProtectedSearchIndexRecord | null>;
   listOutbox(userId: string): Promise<EncryptedOutboxRecord[]>;
   listContentTransfers(userId: string): Promise<EncryptedContentTransferRecord[]>;
+  listSearchIndex(userId: string): Promise<ProtectedSearchIndexRecord[]>;
   preserveOutboxFence(
     fence: Pick<EncryptedOutboxRecord, "userId" | "noteId" | "sectionId" | "keyEpoch">,
     reason: "forbidden" | "stale-epoch",
@@ -163,6 +184,7 @@ export interface FortnoteIndexedDb {
   listSectionCache(userId: string): Promise<SectionCacheRecord[]>;
   putOutbox(record: EncryptedOutboxRecord): Promise<void>;
   putContentTransfer(record: EncryptedContentTransferRecord): Promise<void>;
+  putSearchIndexSection(record: ProtectedSearchIndexRecord): Promise<boolean>;
   putSectionCache(record: SectionCacheRecord): Promise<void>;
   readLease(scopeKey: string): Promise<LeaseRecord | null>;
   subscribe(listener: (change: IndexedDbChange) => void): () => void;
@@ -279,7 +301,8 @@ function createDatabaseApi(
             ACKNOWLEDGEMENT_STORE,
             SECTION_CACHE_STORE,
             LEASE_STORE,
-            CONTENT_TRANSFER_STORE
+            CONTENT_TRANSFER_STORE,
+            SEARCH_INDEX_STORE
           ],
           "readwrite"
         );
@@ -289,7 +312,8 @@ function createDatabaseApi(
           ACKNOWLEDGEMENT_STORE,
           SECTION_CACHE_STORE,
           LEASE_STORE,
-          CONTENT_TRANSFER_STORE
+          CONTENT_TRANSFER_STORE,
+          SEARCH_INDEX_STORE
         ]) {
           deleteIndexEntries(transaction.objectStore(storeName).index("byUserId"), userId);
         }
@@ -298,6 +322,7 @@ function createDatabaseApi(
       notify({ store: "outbox", userId });
       notify({ store: "section-cache", userId });
       notify({ store: "content-transfers", userId });
+      notify({ store: "search-index", userId });
     },
     close,
     async deleteContentTransfer(userId, uploadId) {
@@ -350,6 +375,13 @@ function createDatabaseApi(
     async getOutbox(record) {
       return getRecord<EncryptedOutboxRecord>(database, OUTBOX_STORE, outboxKey(record));
     },
+    async getSearchIndexSection(record) {
+      return getRecord<ProtectedSearchIndexRecord>(
+        database,
+        SEARCH_INDEX_STORE,
+        searchIndexKey(record)
+      );
+    },
     async listOutbox(userId) {
       const records = await listByUser<EncryptedOutboxRecord>(database, OUTBOX_STORE, userId);
       return records.sort((left, right) => left.createdAt - right.createdAt);
@@ -361,6 +393,18 @@ function createDatabaseApi(
         userId
       );
       return records.sort((left, right) => left.createdAt - right.createdAt);
+    },
+    async listSearchIndex(userId) {
+      const records = await listByUser<ProtectedSearchIndexRecord>(
+        database,
+        SEARCH_INDEX_STORE,
+        userId
+      );
+      return records.sort((left, right) =>
+        left.noteId.localeCompare(right.noteId) ||
+        left.sectionId.localeCompare(right.sectionId) ||
+        left.keyEpoch - right.keyEpoch
+      );
     },
     async preserveOutboxFence(fence, reason, rejectedAt) {
       const retained = await safeOperation(async () => {
@@ -404,6 +448,29 @@ function createDatabaseApi(
       await putRecord(database, CONTENT_TRANSFER_STORE, record);
       notify({ store: "content-transfers", userId: record.userId });
     },
+    async putSearchIndexSection(record) {
+      const stored = await safeOperation(async () => {
+        const transaction = database.transaction(SEARCH_INDEX_STORE, "readwrite");
+        const done = transactionDone(transaction);
+        const store = transaction.objectStore(SEARCH_INDEX_STORE);
+        const current = await requestResult(
+          store.get(searchIndexKey(record)) as IDBRequest<
+            ProtectedSearchIndexRecord | undefined
+          >
+        );
+        if (current && current.indexedSequence > record.indexedSequence) {
+          await done;
+          return false;
+        }
+        store.put(record);
+        await done;
+        return true;
+      });
+      if (stored) {
+        notify({ store: "search-index", userId: record.userId });
+      }
+      return stored;
+    },
     async putSectionCache(record) {
       await putRecord(database, SECTION_CACHE_STORE, record);
       notify({ store: "section-cache", userId: record.userId });
@@ -433,6 +500,12 @@ async function openDatabase(factory: IDBFactory, name: string): Promise<IDBDatab
       request.transaction,
       CONTENT_TRANSFER_STORE,
       CONTENT_TRANSFER_KEY
+    );
+    ensureStore(
+      database,
+      request.transaction,
+      SEARCH_INDEX_STORE,
+      SEARCH_INDEX_KEY
     );
   };
   return requestResult(request);
@@ -600,6 +673,10 @@ function matchesOutboxFence(
 
 function cacheKey(record: CacheKey): IDBValidKey {
   return [record.userId, record.noteId, record.sectionId, record.keyEpoch, record.manifestId];
+}
+
+function searchIndexKey(record: SearchIndexKey): IDBValidKey {
+  return [record.userId, record.noteId, record.sectionId, record.keyEpoch];
 }
 
 function compareCacheRecords(left: SectionCacheRecord, right: SectionCacheRecord): number {

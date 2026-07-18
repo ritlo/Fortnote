@@ -6,6 +6,7 @@ import {
   openFortnoteIndexedDb,
   type EncryptedContentTransferRecord,
   type EncryptedOutboxRecord,
+  type ProtectedSearchIndexRecord,
   type SectionCacheRecord
 } from "./indexedDb";
 
@@ -89,13 +90,18 @@ describe("protected IndexedDB storage", () => {
     await database.putOutbox(second);
     await database.putSectionCache(cacheRecord({ userId: "user-a" }));
     await database.putContentTransfer(contentTransferRecord({ userId: "user-a" }));
+    const otherSearch = searchIndexRecord({ userId: "user-b" });
+    await database.putSearchIndexSection(searchIndexRecord({ userId: "user-a" }));
+    await database.putSearchIndexSection(otherSearch);
 
     await database.clearAccount("user-a");
 
     await expect(database.listOutbox("user-a")).resolves.toEqual([]);
     await expect(database.listSectionCache("user-a")).resolves.toEqual([]);
     await expect(database.listContentTransfers("user-a")).resolves.toEqual([]);
+    await expect(database.listSearchIndex("user-a")).resolves.toEqual([]);
     await expect(database.listOutbox("user-b")).resolves.toEqual([second]);
+    await expect(database.listSearchIndex("user-b")).resolves.toEqual([otherSearch]);
   });
 
   it("persists encrypted transfer progress by account and stable upload identity", async () => {
@@ -200,6 +206,23 @@ function contentTransferRecord(
     ],
     uploadedChunkIndexes: [],
     createdAt: 1,
+    updatedAt: 1,
+    ...overrides
+  };
+}
+
+function searchIndexRecord(
+  overrides: Partial<ProtectedSearchIndexRecord> = {}
+): ProtectedSearchIndexRecord {
+  return {
+    userId: "user-a",
+    noteId: "note-a",
+    sectionId: "section-a",
+    keyEpoch: 1,
+    indexedSequence: 1,
+    cipher: "cipher",
+    nonce: "nonce",
+    formatVersion: 2,
     updatedAt: 1,
     ...overrides
   };
