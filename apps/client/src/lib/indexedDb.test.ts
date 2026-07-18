@@ -116,6 +116,7 @@ function outboxRecord(
     userId: "user-a",
     noteId: "note-a",
     sectionId: "section-a",
+    cryptoOwnerId: "owner-a",
     keyEpoch: 1,
     updateId: crypto.randomUUID(),
     kind: "update",

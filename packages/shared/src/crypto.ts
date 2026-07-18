@@ -306,6 +306,38 @@ export function contentChunkAssociatedData(input: {
   return associatedDataV2("content-chunk", input);
 }
 
+export function crdtBinaryAssociatedData(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  sectionId: string;
+  keyEpoch: number;
+  updateId: string;
+  kind: ContentKind;
+  checkpointSequenceCutoff?: number;
+  formatVersion: number;
+}): Uint8Array {
+  const checkpointSequenceCutoff = input.checkpointSequenceCutoff ?? 0;
+  if (
+    input.formatVersion !== 2 ||
+    !Number.isSafeInteger(input.keyEpoch) ||
+    input.keyEpoch <= 0 ||
+    !Number.isSafeInteger(checkpointSequenceCutoff) ||
+    checkpointSequenceCutoff < 0
+  ) {
+    throw new Error("Invalid CRDT binary context");
+  }
+  return associatedDataV2("crdt-binary", {
+    cryptoOwnerId: input.cryptoOwnerId,
+    noteId: input.noteId,
+    sectionId: input.sectionId,
+    keyEpoch: input.keyEpoch,
+    updateId: input.updateId,
+    kind: input.kind,
+    checkpointSequenceCutoff,
+    formatVersion: input.formatVersion
+  });
+}
+
 export function epochLinkAssociatedData(input: {
   cryptoOwnerId: string;
   noteId: string;

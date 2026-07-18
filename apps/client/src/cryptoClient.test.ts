@@ -221,6 +221,47 @@ describe("client crypto workflows", () => {
     ).resolves.toEqual(input.update);
   });
 
+  it("round-trips section-bound v2 CRDT checkpoints", async () => {
+    const registration = await createRegistrationCrypto("alice", "password");
+    const note = await createEncryptedNoteDraft({
+      userId: "alice_user",
+      rootKey: registration.rootKey,
+      title: "Shared",
+      body: "Shared body"
+    });
+    const input = {
+      type: "crdt-checkpoint" as const,
+      formatVersion: 2 as const,
+      cryptoOwnerId: "alice_user",
+      noteId: note.id,
+      sectionId: crypto.randomUUID(),
+      noteKeyBase64: noteKeyToBase64(note.noteKey),
+      keyEpoch: 1,
+      updateId: crypto.randomUUID(),
+      kind: "checkpoint" as const,
+      checkpointSequenceCutoff: 7,
+      update: new Uint8Array([1, 2, 3])
+    };
+    const encrypted = await encryptCrdtMessage(input);
+
+    expect(encrypted.formatVersion).toBe(2);
+    await expect(
+      decryptCrdtMessage({
+        ...input,
+        cipher: encrypted.cipher,
+        nonce: encrypted.nonce
+      })
+    ).resolves.toEqual(input.update);
+    await expect(
+      decryptCrdtMessage({
+        ...input,
+        sectionId: crypto.randomUUID(),
+        cipher: encrypted.cipher,
+        nonce: encrypted.nonce
+      })
+    ).rejects.toThrow();
+  });
+
   it("binds protected display metadata to its exact v2 context", async () => {
     const rootKey = key(1);
     const noteKey = key(2);

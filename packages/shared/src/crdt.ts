@@ -23,6 +23,8 @@ export interface CrdtBinaryHeader {
   expectedKeyEpoch: number;
   nonce: string;
   cipherLength: number;
+  checkpointSequenceCutoff?: number;
+  serverSequence?: number;
 }
 
 export interface CrdtSubscribeV2 {
@@ -248,7 +250,10 @@ function validateBinaryHeader(value: unknown): CrdtBinaryHeader {
     !isUuid(record.cryptoOwnerId) ||
     !isPositiveInteger(record.expectedKeyEpoch) ||
     typeof record.nonce !== "string" ||
-    !isPositiveInteger(record.cipherLength)
+    !isPositiveInteger(record.cipherLength) ||
+    (record.checkpointSequenceCutoff !== undefined &&
+      !isNonnegativeInteger(record.checkpointSequenceCutoff)) ||
+    (record.serverSequence !== undefined && !isPositiveInteger(record.serverSequence))
   ) {
     throw new Error("Invalid CRDT binary header");
   }
@@ -259,7 +264,7 @@ function validateBinaryHeader(value: unknown): CrdtBinaryHeader {
   } catch {
     throw new Error("Invalid CRDT binary header nonce");
   }
-  return {
+  const header: CrdtBinaryHeader = {
     type: "crdt-binary",
     kind: record.kind,
     formatVersion: CRDT_BINARY_FORMAT_VERSION,
@@ -271,6 +276,13 @@ function validateBinaryHeader(value: unknown): CrdtBinaryHeader {
     nonce: record.nonce,
     cipherLength: record.cipherLength
   };
+  if (record.checkpointSequenceCutoff !== undefined) {
+    header.checkpointSequenceCutoff = record.checkpointSequenceCutoff;
+  }
+  if (record.serverSequence !== undefined) {
+    header.serverSequence = record.serverSequence;
+  }
+  return header;
 }
 
 function parseSubscribe(record: Record<string, unknown>): CrdtSubscribeV2 {

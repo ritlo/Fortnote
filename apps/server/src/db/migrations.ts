@@ -190,6 +190,7 @@ export function runMigrations(sqlite: Database.Database): void {
           kind TEXT NOT NULL CHECK (kind IN ('update', 'checkpoint', 'root-update')),
           inline_cipher BLOB,
           nonce BLOB,
+          checkpoint_sequence_cutoff INTEGER,
           manifest_id TEXT,
           created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
@@ -366,6 +367,7 @@ export function runMigrations(sqlite: Database.Database): void {
 	addColumnIfMissing(sqlite, "attachments", "metadata_nonce", "TEXT");
 	addColumnIfMissing(sqlite, "attachments", "metadata_format_version", "INTEGER");
 	addColumnIfMissing(sqlite, "attachments", "key_epoch", "INTEGER NOT NULL DEFAULT 1");
+	addColumnIfMissing(sqlite, "section_updates", "checkpoint_sequence_cutoff", "INTEGER");
 		sqlite.exec(`
 		  UPDATE users SET display_name = username WHERE display_name IS NULL;
 		  UPDATE notes SET crypto_owner_id = user_id WHERE crypto_owner_id IS NULL;

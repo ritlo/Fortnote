@@ -197,6 +197,7 @@ function outboxRecord(
     createdAt: 1,
     formatVersion: 2,
     inlineCipher: Uint8Array.from([1, 2, 3]),
+    cryptoOwnerId: "owner-a",
     keyEpoch: 1,
     kind: "update",
     nonce: Uint8Array.from({ length: 24 }, (_, index) => index),

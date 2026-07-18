@@ -151,6 +151,7 @@ export const sectionUpdates = sqliteTable(
     kind: text("kind").notNull(),
     inlineCipher: blob("inline_cipher", { mode: "buffer" }),
     nonce: blob("nonce", { mode: "buffer" }),
+    checkpointSequenceCutoff: integer("checkpoint_sequence_cutoff"),
     manifestId: text("manifest_id"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`)
   },

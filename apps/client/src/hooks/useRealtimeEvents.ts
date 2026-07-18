@@ -168,10 +168,22 @@ export function useRealtimeEvents() {
           }
           if (
             message.type === "crdt-update" ||
-            message.type === "crdt-checkpoint"
+            message.type === "crdt-checkpoint" ||
+            message.type === "crdt-binary"
           ) {
             void receiveCrdtUpdate(message).catch(() => {
               setError("A realtime update could not be decrypted; recovery is pending.");
+            });
+            return;
+          }
+          if (message.type === "crdt-history-page" && !message.hasMore) {
+            void finishCrdtSync(
+              message.noteId,
+              message.keyEpoch,
+              message.nextSequence > 0,
+              message.sectionId
+            ).catch(() => {
+              setError("Realtime synchronization could not complete.");
             });
             return;
           }
@@ -186,10 +198,11 @@ export function useRealtimeEvents() {
             return;
           }
           if (message.type === "crdt-reject") {
+            const code = "code" in message ? message.code : message.reason;
             setError(
-              message.reason === "storage-limit"
+              code === "storage-limit"
                 ? "Realtime storage limit reached; waiting for compaction."
-                : message.reason === "payload-too-large"
+                : code === "payload-too-large" || code === "frame-too-large"
                   ? "Realtime update is too large to synchronize."
                   : "Realtime write access was revoked."
             );

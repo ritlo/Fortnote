@@ -145,10 +145,10 @@ describe("CRDT collaboration", () => {
   });
 
   it("merges concurrent BlockNote edits through the encrypted transport", async () => {
-    const sent: EncryptedCrdtMessage[] = [];
+    const sent: ScopedEncryptedCrdtMessage[] = [];
     setCrdtTransport({
       discard: vi.fn(),
-      send: (message: EncryptedCrdtMessage) => {
+      send: (message: ScopedEncryptedCrdtMessage) => {
         sent.push(message);
         return Promise.resolve();
       },
@@ -331,7 +331,9 @@ describe("CRDT collaboration", () => {
   });
 
   it("compacts a solo editor's locally sent updates", async () => {
-    const send = vi.fn<(message: EncryptedCrdtMessage) => Promise<void>>().mockResolvedValue(undefined);
+    const send = vi
+      .fn<(message: ScopedEncryptedCrdtMessage) => Promise<void>>()
+      .mockResolvedValue(undefined);
     const current = note();
     setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
     openCrdtNote(current, vi.fn());

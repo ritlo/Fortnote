@@ -2,6 +2,7 @@ import {
   associatedDataV2,
   attachmentAssociatedData,
   contentChunkAssociatedData,
+  crdtBinaryAssociatedData,
   crdtCheckpointAssociatedData,
   crdtUpdateAssociatedData,
   createKdfParams,
@@ -594,7 +595,7 @@ export async function encryptExistingNoteBody(input: {
   };
 }
 
-type CrdtAadInput = {
+type LegacyCrdtAadInput = {
   cryptoOwnerId: string;
   noteId: string;
   keyEpoch: number;
@@ -605,11 +606,26 @@ type CrdtAadInput = {
   | { type: "crdt-checkpoint"; compactedUpdateIds: string[] }
 );
 
+interface BinaryCrdtAadInput {
+  type: "crdt-update" | "crdt-checkpoint";
+  formatVersion: 2;
+  cryptoOwnerId: string;
+  noteId: string;
+  sectionId: string;
+  keyEpoch: number;
+  updateId: string;
+  kind: "update" | "checkpoint" | "root-update";
+  checkpointSequenceCutoff?: number;
+}
+
+type CrdtAadInput = LegacyCrdtAadInput | BinaryCrdtAadInput;
+
 export async function encryptCrdtMessage(input: CrdtAadInput & {
   noteKeyBase64: string;
   update: Uint8Array;
 }) {
-  return encryptBytes(
+  const encrypt = input.formatVersion === 2 ? encryptBytesV2 : encryptBytes;
+  return encrypt(
     input.update,
     fromBase64(input.noteKeyBase64),
     crdtMessageAad(input)
@@ -633,6 +649,9 @@ export async function decryptCrdtMessage(input: CrdtAadInput & {
 }
 
 function crdtMessageAad(input: CrdtAadInput): Uint8Array {
+  if ("sectionId" in input) {
+    return crdtBinaryAssociatedData(input);
+  }
   return input.type === "crdt-checkpoint"
     ? crdtCheckpointAssociatedData(input)
     : crdtUpdateAssociatedData(input);

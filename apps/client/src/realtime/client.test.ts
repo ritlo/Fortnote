@@ -1,6 +1,16 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { indexedDB as fakeIndexedDb } from "fake-indexeddb";
+import {
+  CRDT_BINARY_FORMAT_VERSION,
+  cryptoReady,
+  decodeCrdtBinaryFrame,
+  encodeCrdtBinaryFrame,
+  toBase64
+} from "@fortnote/shared";
+import { openFortnoteIndexedDb } from "../lib/indexedDb";
+import type { ScopedEncryptedCrdtMessage } from "./crdt";
 import { connectRealtime, parseRealtimeMessage } from "./client";
 
 const sockets: MockWebSocket[] = [];
@@ -8,15 +18,21 @@ const sockets: MockWebSocket[] = [];
 class MockWebSocket extends EventTarget {
   static readonly OPEN = 1;
   readonly sent: string[] = [];
+  readonly binarySent: ArrayBuffer[] = [];
   readyState = 0;
+  binaryType = "blob";
 
   constructor(readonly url: string) {
     super();
     sockets.push(this);
   }
 
-  send(data: string): void {
-    this.sent.push(data);
+  send(data: string | ArrayBuffer): void {
+    if (typeof data === "string") {
+      this.sent.push(data);
+    } else {
+      this.binarySent.push(data);
+    }
   }
 
   close(): void {
@@ -30,6 +46,12 @@ class MockWebSocket extends EventTarget {
 
   receive(value: unknown): void {
     this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(value) }));
+  }
+
+  receiveBinary(value: Uint8Array): void {
+    this.dispatchEvent(
+      new MessageEvent("message", { data: Uint8Array.from(value).buffer })
+    );
   }
 }
 
@@ -125,6 +147,89 @@ describe("realtime client", () => {
     expect(
       parseRealtimeMessage(JSON.stringify({ ...update, formatVersion: 2 }))
     ).toBeNull();
+  });
+
+  it("persists scoped ciphertext before sending a binary frame and clearing on ack", async () => {
+    await cryptoReady();
+    const database = await openFortnoteIndexedDb({
+      factory: fakeIndexedDb,
+      name: `fortnote-client-binary-${crypto.randomUUID()}`
+    });
+    const onMessage = vi.fn();
+    const userId = crypto.randomUUID();
+    const update = scopedUpdate();
+    const connection = connectRealtime({
+      after: 0,
+      userId,
+      ownerId: "tab-a",
+      outboxStore: database,
+      onMessage
+    });
+    connection.subscribeCrdt(update.noteId, update.sectionId, update.keyEpoch);
+
+    const delivered = connection.sendCrdtUpdate(update);
+    let storedRecord: Awaited<ReturnType<typeof database.listOutbox>>[number] | undefined;
+    await vi.waitFor(async () => {
+      const records = await database.listOutbox(userId);
+      expect(records).toHaveLength(1);
+      storedRecord = records[0];
+    });
+    expect(storedRecord).toBeDefined();
+    expect(sockets[0]!.binarySent).toEqual([]);
+
+    sockets[0]!.open();
+    sockets[0]!.receive({
+      ...connectedMessage(userId),
+      capabilities: ["crdt-binary-v2"]
+    });
+    await vi.waitFor(async () => {
+      expect((await database.listOutbox(userId))[0]?.attempts).toBe(1);
+    });
+    await vi.waitFor(() => {
+      expect(sockets[0]!.binarySent).toHaveLength(1);
+    });
+    const decoded = decodeCrdtBinaryFrame(
+      new Uint8Array(sockets[0]!.binarySent[0]!),
+      256 * 1024
+    );
+    expect(decoded.header).toMatchObject({
+      updateId: update.updateId,
+      noteId: update.noteId,
+      sectionId: update.sectionId,
+      expectedKeyEpoch: update.keyEpoch
+    });
+    expect(decoded.cipher).toEqual(Uint8Array.from([1, 2, 3]));
+    expect(
+      sockets[0]!.sent.map((message) => JSON.parse(message) as { type: string })
+    ).toContainEqual(expect.objectContaining({ type: "crdt-subscribe" }));
+
+    sockets[0]!.receive({
+      type: "crdt-ack",
+      updateId: update.updateId,
+      sectionId: update.sectionId,
+      result: "inserted",
+      keyEpoch: update.keyEpoch,
+      serverSequence: 1
+    });
+    await expect(delivered).resolves.toBeUndefined();
+    await expect(database.getOutbox(storedRecord!)).resolves.toBeNull();
+    await expect(database.getAcknowledgement(storedRecord!)).resolves.toMatchObject({
+      serverSequence: 1
+    });
+
+    const incomingHeader = { ...decoded.header, serverSequence: 2 };
+    sockets[0]!.receiveBinary(
+      encodeCrdtBinaryFrame(incomingHeader, decoded.cipher, 256 * 1024)
+    );
+    expect(onMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: "crdt-binary",
+        updateId: update.updateId,
+        serverSequence: 2
+      })
+    );
+    connection.close();
+    await database.deleteDatabase();
   });
 
   it("retries encrypted CRDT updates until the server acknowledges them", async () => {
@@ -332,5 +437,20 @@ function crdtUpdate() {
     keyEpoch: 1,
     cipher: "cipher",
     nonce: "nonce"
+  };
+}
+
+function scopedUpdate(): ScopedEncryptedCrdtMessage {
+  return {
+    type: "crdt-update",
+    formatVersion: CRDT_BINARY_FORMAT_VERSION,
+    updateId: crypto.randomUUID(),
+    noteId: crypto.randomUUID(),
+    sectionId: crypto.randomUUID(),
+    cryptoOwnerId: crypto.randomUUID(),
+    keyEpoch: 1,
+    kind: "update",
+    cipher: toBase64(Uint8Array.from([1, 2, 3])),
+    nonce: toBase64(new Uint8Array(24))
   };
 }

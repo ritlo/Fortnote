@@ -12,12 +12,14 @@ export interface EncryptedOutboxRecord {
   userId: string;
   noteId: string;
   sectionId: string;
+  cryptoOwnerId: string;
   keyEpoch: number;
   updateId: string;
-  kind: "update" | "checkpoint" | "chunk";
+  kind: "update" | "checkpoint" | "root-update" | "chunk";
   formatVersion: number;
   inlineCipher: Uint8Array;
   nonce: Uint8Array;
+  checkpointSequenceCutoff?: number;
   state: "queued" | "sending";
   attempts: number;
   createdAt: number;

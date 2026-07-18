@@ -219,7 +219,7 @@ describe("realtime server", () => {
     }));
     const replayedFrame = await replay.nextBinary("persisted binary frame");
     expect(decodeCrdtBinaryFrame(replayedFrame, 256 * 1024)).toEqual({
-      header,
+      header: { ...header, serverSequence: 1 },
       cipher
     });
     expect(await replay.nextJson("persisted history page")).toMatchObject({

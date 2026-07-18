@@ -3,6 +3,7 @@ import {
   associatedDataV2,
   attachmentAssociatedData,
   contentChunkAssociatedData,
+  crdtBinaryAssociatedData,
   createKdfParams,
   cryptoReady,
   createSharingKeyPair,
@@ -157,6 +158,40 @@ describe("crypto helpers", () => {
           ...input,
           compactedUpdateIds: ["update_b"]
         })
+      )
+    ).rejects.toThrow();
+  });
+
+  it("binds binary CRDT ciphertext to its section and checkpoint cutoff", async () => {
+    const key = randomBytes(32);
+    const input = {
+      cryptoOwnerId: "user_a",
+      noteId: "note_a",
+      sectionId: "section_a",
+      keyEpoch: 2,
+      updateId: "checkpoint_a",
+      kind: "checkpoint" as const,
+      checkpointSequenceCutoff: 12,
+      formatVersion: 2
+    };
+    const encrypted = await encryptBytesV2(
+      utf8("section checkpoint"),
+      key,
+      crdtBinaryAssociatedData(input)
+    );
+
+    await expect(
+      decryptBytes(
+        encrypted,
+        key,
+        crdtBinaryAssociatedData({ ...input, sectionId: "section_b" })
+      )
+    ).rejects.toThrow();
+    await expect(
+      decryptBytes(
+        encrypted,
+        key,
+        crdtBinaryAssociatedData({ ...input, checkpointSequenceCutoff: 13 })
       )
     ).rejects.toThrow();
   });

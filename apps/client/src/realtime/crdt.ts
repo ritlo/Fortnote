@@ -1,7 +1,7 @@
 import {
-  CRDT_UPDATE_FORMAT_VERSION,
-  type EncryptedCrdtCheckpoint,
-  type EncryptedCrdtUpdate,
+  CRDT_BINARY_FORMAT_VERSION,
+  toBase64,
+  type CrdtBinaryHeader,
   type EncryptedCrdtMessage
 } from "@fortnote/shared";
 import { Awareness } from "y-protocols/awareness";
@@ -35,10 +35,26 @@ interface CrdtTransport {
   send: (update: ScopedEncryptedCrdtMessage) => Promise<void>;
 }
 
-export type ScopedEncryptedCrdtMessage = EncryptedCrdtMessage & {
+export interface ScopedEncryptedCrdtMessage {
+  type: "crdt-update" | "crdt-checkpoint";
+  formatVersion: typeof CRDT_BINARY_FORMAT_VERSION;
+  updateId: string;
+  noteId: string;
+  cryptoOwnerId: string;
+  keyEpoch: number;
   sectionId: string;
+  kind: "update" | "checkpoint" | "root-update";
+  cipher: string;
+  nonce: string;
+  compactedUpdateIds?: string[];
   checkpointSequenceCutoff?: number;
-};
+}
+
+export type ReceivedBinaryCrdtMessage = CrdtBinaryHeader & { cipher: Uint8Array };
+type IncomingCrdtMessage =
+  | EncryptedCrdtMessage
+  | ScopedEncryptedCrdtMessage
+  | ReceivedBinaryCrdtMessage;
 
 // BlockNote binds a ProseMirror doc to a Y.XmlFragment; awareness stays local.
 export class CrdtProvider {
@@ -85,6 +101,7 @@ interface Binding {
   failedUpdateIds: Set<string>;
   appliedUpdateCount: number;
   checkpointing: boolean;
+  observedServerSequence: number;
   pendingPatch: Partial<Pick<DecryptedNote, "title" | "body">>;
   ready: boolean;
   receiving: Promise<void>;
@@ -144,6 +161,7 @@ function getOrCreateBinding(
     failedUpdateIds: new Set(existing?.failedUpdateIds ?? []),
     appliedUpdateCount: epochAdvanced ? 0 : (existing?.appliedUpdateCount ?? 0),
     checkpointing: false,
+    observedServerSequence: epochAdvanced ? 0 : (existing?.observedServerSequence ?? 0),
     pendingPatch: {},
     ready: existing?.ready ?? false,
     receiving: Promise.resolve(),
@@ -356,26 +374,31 @@ export async function checkpointCrdtNote(note: DecryptedNote): Promise<void> {
   await Promise.all(current.map((binding) => broadcastCheckpoint(binding)));
 }
 
-export function receiveCrdtUpdate(update: EncryptedCrdtMessage): Promise<void> {
+export function receiveCrdtUpdate(
+  update: IncomingCrdtMessage
+): Promise<void> {
   const sectionId = scopedSectionId(update) ?? defaultSectionId(update.noteId);
   const binding = bindings.get(bindingKey(update.noteId, sectionId));
   if (
     binding?.note.cryptoOwnerId !== update.cryptoOwnerId ||
-    binding.note.keyEpoch !== update.keyEpoch
+    binding.note.keyEpoch !== messageKeyEpoch(update)
   ) {
     return Promise.resolve();
   }
   const received = binding.receiving.then(async () => {
     try {
-      const plaintext = await decryptCrdtMessage({
-        ...update,
-        noteKeyBase64: binding.note.noteKeyBase64
-      });
+      const plaintext = await decryptReceivedUpdate(binding, update);
       Y.applyUpdate(binding.doc, plaintext, REMOTE_UPDATE);
       binding.appliedUpdateCount += 1;
       binding.failedUpdateIds.delete(update.updateId);
       if (update.type === "crdt-checkpoint") {
-        update.compactedUpdateIds.forEach((id) => binding.pendingUpdateIds.delete(id));
+        update.compactedUpdateIds?.forEach((id) => binding.pendingUpdateIds.delete(id));
+      }
+      if (update.type === "crdt-binary" && update.serverSequence) {
+        binding.observedServerSequence = Math.max(
+          binding.observedServerSequence,
+          update.serverSequence
+        );
       }
       trackUpdate(binding, update.updateId);
     } catch (error) {
@@ -458,14 +481,17 @@ async function finishBindingSync(
 async function broadcastUpdate(binding: Binding, update: Uint8Array): Promise<void> {
   const currentTransport = await getTransport();
   const updateId = crypto.randomUUID();
+  const kind = binding.sectionId === ROOT_SECTION_ID ? "root-update" : "update";
   const envelope = {
     type: "crdt-update" as const,
-    formatVersion: CRDT_UPDATE_FORMAT_VERSION,
+    formatVersion: CRDT_BINARY_FORMAT_VERSION,
     updateId,
     noteId: binding.note.id,
     cryptoOwnerId: binding.note.cryptoOwnerId,
-    keyEpoch: binding.note.keyEpoch
-  } satisfies Omit<EncryptedCrdtUpdate, "cipher" | "nonce">;
+    keyEpoch: binding.note.keyEpoch,
+    sectionId: binding.sectionId,
+    kind
+  } satisfies Omit<ScopedEncryptedCrdtMessage, "cipher" | "nonce">;
   const encrypted = await encryptCrdtMessage({
     ...envelope,
     noteKeyBase64: binding.note.noteKeyBase64,
@@ -473,7 +499,6 @@ async function broadcastUpdate(binding: Binding, update: Uint8Array): Promise<vo
   });
   const delivered = currentTransport.send({
     ...envelope,
-    sectionId: binding.sectionId,
     cipher: encrypted.cipher,
     nonce: encrypted.nonce
   });
@@ -491,15 +516,19 @@ async function broadcastCheckpoint(
   throwIfCrdtHistoryUnreadable(binding);
   binding.checkpointing = true;
   const compactedUpdateIds = [...binding.pendingUpdateIds].slice(0, 100);
+  const checkpointSequenceCutoff = binding.observedServerSequence;
   const envelope = {
     type: "crdt-checkpoint" as const,
-    formatVersion: CRDT_UPDATE_FORMAT_VERSION,
+    formatVersion: CRDT_BINARY_FORMAT_VERSION,
     updateId,
     noteId: binding.note.id,
     cryptoOwnerId: binding.note.cryptoOwnerId,
     keyEpoch: binding.note.keyEpoch,
-    compactedUpdateIds
-  } satisfies Omit<EncryptedCrdtCheckpoint, "cipher" | "nonce">;
+    sectionId: binding.sectionId,
+    kind: "checkpoint" as const,
+    compactedUpdateIds,
+    checkpointSequenceCutoff
+  } satisfies Omit<ScopedEncryptedCrdtMessage, "cipher" | "nonce">;
   try {
     const currentTransport = await getTransport();
     const encrypted = await encryptCrdtMessage({
@@ -509,7 +538,6 @@ async function broadcastCheckpoint(
     });
     await currentTransport.send({
       ...envelope,
-      sectionId: binding.sectionId,
       cipher: encrypted.cipher,
       nonce: encrypted.nonce
     });
@@ -617,10 +645,46 @@ function bindingKey(noteId: string, sectionId: string): string {
   return JSON.stringify([noteId, sectionId]);
 }
 
-function scopedSectionId(update: EncryptedCrdtMessage): string | null {
+function scopedSectionId(
+  update: IncomingCrdtMessage
+): string | null {
   return "sectionId" in update && typeof update.sectionId === "string"
     ? update.sectionId
     : null;
+}
+
+function messageKeyEpoch(
+  update: IncomingCrdtMessage
+): number {
+  return update.type === "crdt-binary" ? update.expectedKeyEpoch : update.keyEpoch;
+}
+
+function decryptReceivedUpdate(
+  binding: Binding,
+  update: IncomingCrdtMessage
+): Promise<Uint8Array> {
+  if (update.type !== "crdt-binary") {
+    return decryptCrdtMessage({
+      ...update,
+      noteKeyBase64: binding.note.noteKeyBase64
+    });
+  }
+  return decryptCrdtMessage({
+    type: update.kind === "checkpoint" ? "crdt-checkpoint" : "crdt-update",
+    formatVersion: CRDT_BINARY_FORMAT_VERSION,
+    updateId: update.updateId,
+    noteId: update.noteId,
+    sectionId: update.sectionId,
+    cryptoOwnerId: update.cryptoOwnerId,
+    keyEpoch: update.expectedKeyEpoch,
+    kind: update.kind,
+    ...(update.checkpointSequenceCutoff === undefined
+      ? {}
+      : { checkpointSequenceCutoff: update.checkpointSequenceCutoff }),
+    cipher: toBase64(update.cipher),
+    nonce: update.nonce,
+    noteKeyBase64: binding.note.noteKeyBase64
+  });
 }
 
 function isBinding(binding: Binding | undefined): binding is Binding {

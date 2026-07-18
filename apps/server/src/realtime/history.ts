@@ -22,6 +22,7 @@ export interface SectionHistoryEntry {
   kind: "update" | "checkpoint" | "root-update";
   inlineCipher: Buffer;
   nonce: Buffer;
+  checkpointSequenceCutoff: number | null;
 }
 
 export interface SectionHistoryPage {
@@ -109,8 +110,9 @@ export function persistBinaryUpdate(
       .prepare(`
         INSERT INTO section_updates (
           update_id, note_id, section_id, server_sequence, crypto_owner_id,
-          key_epoch, format_version, kind, inline_cipher, nonce
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          key_epoch, format_version, kind, inline_cipher, nonce,
+          checkpoint_sequence_cutoff
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         input.header.updateId,
@@ -122,7 +124,8 @@ export function persistBinaryUpdate(
         input.header.formatVersion,
         input.header.kind,
         Buffer.from(input.cipher),
-        Buffer.from(fromCanonicalBase64(input.header.nonce))
+        Buffer.from(fromCanonicalBase64(input.header.nonce)),
+        input.header.checkpointSequenceCutoff ?? null
       );
     context.db.sqlite
       .prepare(`
@@ -164,7 +167,8 @@ export function listSectionHistory(
         format_version AS formatVersion,
         kind,
         inline_cipher AS inlineCipher,
-        nonce
+        nonce,
+        checkpoint_sequence_cutoff AS checkpointSequenceCutoff
       FROM section_updates
       WHERE note_id = ? AND section_id = ? AND key_epoch = ? AND server_sequence > ?
       ORDER BY server_sequence

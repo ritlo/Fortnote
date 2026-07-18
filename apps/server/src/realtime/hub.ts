@@ -287,7 +287,11 @@ export class RealtimeHub implements RealtimePublisher {
         cryptoOwnerId: entry.cryptoOwnerId,
         expectedKeyEpoch: entry.keyEpoch,
         nonce: entry.nonce.toString("base64"),
-        cipherLength: entry.inlineCipher.length
+        cipherLength: entry.inlineCipher.length,
+        ...(entry.checkpointSequenceCutoff === null
+          ? {}
+          : { checkpointSequenceCutoff: entry.checkpointSequenceCutoff }),
+        serverSequence: entry.serverSequence
       };
       client.socket.send(
         encodeCrdtBinaryFrame(
@@ -331,7 +335,7 @@ export class RealtimeHub implements RealtimePublisher {
       return outcome;
     }
     const frame = encodeCrdtBinaryFrame(
-      header,
+      { ...header, serverSequence: outcome.serverSequence },
       cipher,
       this.context.config.realtimeFrameMaxBytes
     );
