@@ -14,7 +14,8 @@ import {
   preserveCrdtContent,
   receiveCrdtUpdate,
   setCrdtTransport,
-  updateCrdtNote
+  updateCrdtNote,
+  type ScopedEncryptedCrdtMessage
 } from "./crdt";
 
 vi.mock("../cryptoClient", () => ({
@@ -61,6 +62,86 @@ describe("CRDT collaboration", () => {
     setCrdtTransport(null);
     clearCrdtNotes();
     vi.clearAllMocks();
+  });
+
+  it("keeps the encrypted root and BlockNote section in independent Y.Docs", async () => {
+    const current = note({
+      rootSectionId: "00000000-0000-4000-8000-000000000002"
+    });
+    const send = vi
+      .fn<(message: ScopedEncryptedCrdtMessage) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
+
+    openCrdtNote(current, vi.fn());
+    await finishCrdtSync(current.id, current.keyEpoch, false, "root");
+    await finishCrdtSync(
+      current.id,
+      current.keyEpoch,
+      false,
+      current.rootSectionId ?? "root"
+    );
+
+    const root = getCrdtProvider(current.id, current.keyEpoch, "root").doc;
+    const section = getCrdtProvider(
+      current.id,
+      current.keyEpoch,
+      current.rootSectionId ?? "root"
+    ).doc;
+    expect(root).not.toBe(section);
+    expect(root.getText("title").toJSON()).toBe(current.title);
+    expect(root.getArray<string>("sections").toArray()).toEqual([current.rootSectionId]);
+    expect(fragmentText(section)).toContain("Body");
+    expect(new Set(send.mock.calls.map(([message]) => message.sectionId))).toEqual(
+      new Set(["root", current.rootSectionId])
+    );
+  });
+
+  it("never assigns or reuses Yjs client IDs across root and section documents", () => {
+    const current = note({
+      rootSectionId: "00000000-0000-4000-8000-000000000002"
+    });
+
+    openCrdtNote(current, vi.fn());
+
+    const root = getCrdtProvider(current.id, current.keyEpoch, "root").doc;
+    const section = getCrdtProvider(
+      current.id,
+      current.keyEpoch,
+      current.rootSectionId ?? "root"
+    ).doc;
+    expect(root.clientID).not.toBe(section.clientID);
+    expect(root.clientID).not.toBe(Number.parseInt(current.id.slice(0, 8), 16));
+    expect(section.clientID).not.toBe(Number.parseInt(current.id.slice(0, 8), 16));
+  });
+
+  it("creates a valid first checkpoint for an empty section", async () => {
+    const current = note({
+      body: "[]",
+      rootSectionId: "00000000-0000-4000-8000-000000000002"
+    });
+    const send = vi
+      .fn<(message: ScopedEncryptedCrdtMessage) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
+    openCrdtNote(current, vi.fn());
+
+    await finishCrdtSync(
+      current.id,
+      current.keyEpoch,
+      false,
+      current.rootSectionId ?? "root"
+    );
+
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sectionId: current.rootSectionId,
+        type: "crdt-checkpoint"
+      })
+    );
+    const encrypted = vi.mocked(encryptCrdtMessage).mock.calls.at(-1)?.[0].update;
+    expect(encrypted).toBeInstanceOf(Uint8Array);
+    expect(encrypted?.byteLength).toBeGreaterThan(0);
   });
 
   it("merges concurrent BlockNote edits through the encrypted transport", async () => {

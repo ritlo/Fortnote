@@ -65,8 +65,9 @@ function CollaborativeBlockNoteField({
   uploadSelectedAttachment
 }: BlockNoteFieldProps) {
   const user = useAppStore((state) => state.user);
-  const fragment = getCrdtFragment(selectedNote.id, selectedNote.keyEpoch);
-  const provider = getCrdtProvider(selectedNote.id, selectedNote.keyEpoch);
+  const sectionId = selectedNote.rootSectionId ?? "root";
+  const fragment = getCrdtFragment(selectedNote.id, selectedNote.keyEpoch, sectionId);
+  const provider = getCrdtProvider(selectedNote.id, selectedNote.keyEpoch, sectionId);
   const editor = useCreateBlockNote({
     collaboration: {
       fragment,

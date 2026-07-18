@@ -18,6 +18,8 @@ const REMOTE_UPDATE = Symbol("remote-update");
 const SNAPSHOT_SEED = Symbol("snapshot-seed");
 const SNAPSHOT_VERSION_KEY = "snapshotVersion";
 const FRAGMENT_KEY = "document-store";
+const ROOT_SECTION_ID = "root";
+const SECTION_ORDER_KEY = "sections";
 // ponytail: fixed threshold; tune from update-size metrics if storage churn matters.
 const CHECKPOINT_UPDATE_COUNT = 64;
 const bindings = new Map<string, Binding>();
@@ -29,9 +31,14 @@ const transportWaiters: {
 
 interface CrdtTransport {
   discard: (noteId: string, beforeKeyEpoch: number) => void;
-  subscribe: (noteId: string) => void;
-  send: (update: EncryptedCrdtMessage) => Promise<void>;
+  subscribe: (noteId: string, sectionId?: string, keyEpoch?: number) => void;
+  send: (update: ScopedEncryptedCrdtMessage) => Promise<void>;
 }
+
+export type ScopedEncryptedCrdtMessage = EncryptedCrdtMessage & {
+  sectionId: string;
+  checkpointSequenceCutoff?: number;
+};
 
 // BlockNote binds a ProseMirror doc to a Y.XmlFragment; awareness stays local.
 export class CrdtProvider {
@@ -69,6 +76,8 @@ export class CrdtProvider {
 interface Binding {
   doc: Y.Doc;
   fragment: Y.XmlFragment;
+  noteId: string;
+  sectionId: string;
   provider: CrdtProvider;
   note: DecryptedNote;
   onChange: (patch: Partial<Pick<DecryptedNote, "title" | "body">>) => void;
@@ -85,16 +94,29 @@ interface Binding {
 
 // Synchronous, render-safe accessor so the editor can bind to the fragment before the
 // sync effect runs. Idempotent per note id; the binding is destroyed on note/epoch switch.
-export function getCrdtFragment(noteId: string, keyEpoch?: number): Y.XmlFragment {
-  return getOrCreateBinding(noteId, keyEpoch).fragment;
+export function getCrdtFragment(
+  noteId: string,
+  keyEpoch?: number,
+  sectionId?: string
+): Y.XmlFragment {
+  return getOrCreateBinding(noteId, sectionId ?? defaultSectionId(noteId), keyEpoch).fragment;
 }
 
-export function getCrdtProvider(noteId: string, keyEpoch?: number): CrdtProvider {
-  return getOrCreateBinding(noteId, keyEpoch).provider;
+export function getCrdtProvider(
+  noteId: string,
+  keyEpoch?: number,
+  sectionId?: string
+): CrdtProvider {
+  return getOrCreateBinding(noteId, sectionId ?? defaultSectionId(noteId), keyEpoch).provider;
 }
 
-function getOrCreateBinding(noteId: string, keyEpoch?: number): Binding {
-  const existing = bindings.get(noteId);
+function getOrCreateBinding(
+  noteId: string,
+  sectionId: string,
+  keyEpoch?: number
+): Binding {
+  const key = bindingKey(noteId, sectionId);
+  const existing = bindings.get(key);
   if (
     existing &&
     (keyEpoch === undefined || existing.keyEpoch === keyEpoch || keyEpoch < existing.keyEpoch)
@@ -104,21 +126,26 @@ function getOrCreateBinding(noteId: string, keyEpoch?: number): Binding {
   const inheritedState = existing
     ? Y.encodeStateAsUpdate(existing.doc)
     : null;
+  const epochAdvanced = Boolean(
+    existing && keyEpoch !== undefined && keyEpoch > existing.keyEpoch
+  );
   const doc = new Y.Doc();
   const fragment = doc.getXmlFragment(FRAGMENT_KEY);
   const provider = new CrdtProvider(doc);
   const created: Binding = {
     doc,
     fragment,
+    noteId,
+    sectionId,
     provider,
     note: undefined as unknown as DecryptedNote,
     onChange: () => undefined,
-    pendingUpdateIds: new Set<string>(),
-    failedUpdateIds: new Set<string>(),
-    appliedUpdateCount: 0,
+    pendingUpdateIds: new Set(epochAdvanced ? [] : (existing?.pendingUpdateIds ?? [])),
+    failedUpdateIds: new Set(existing?.failedUpdateIds ?? []),
+    appliedUpdateCount: epochAdvanced ? 0 : (existing?.appliedUpdateCount ?? 0),
     checkpointing: false,
     pendingPatch: {},
-    ready: false,
+    ready: existing?.ready ?? false,
     receiving: Promise.resolve(),
     snapshotSeeded: inheritedState !== null,
     keyEpoch: keyEpoch ?? 0
@@ -126,12 +153,14 @@ function getOrCreateBinding(noteId: string, keyEpoch?: number): Binding {
   if (inheritedState) {
     Y.applyUpdate(doc, inheritedState, SNAPSHOT_SEED);
   }
-  bindings.set(noteId, created);
-  doc.getText("title").observe((event) => {
-    if (event.transaction.origin !== SNAPSHOT_SEED) {
-      created.onChange({ title: doc.getText("title").toJSON() });
-    }
-  });
+  bindings.set(key, created);
+  if (sectionId === ROOT_SECTION_ID) {
+    doc.getText("title").observe((event) => {
+      if (event.transaction.origin !== SNAPSHOT_SEED) {
+        created.onChange({ title: doc.getText("title").toJSON() });
+      }
+    });
+  }
   doc.on("update", (update, origin) => {
     const note = created.note as DecryptedNote | undefined;
     if (
@@ -150,22 +179,24 @@ export function attachCrdtNote(
   note: DecryptedNote,
   onChange: Binding["onChange"]
 ): () => void {
-  const binding = getOrCreateBinding(note.id, note.keyEpoch);
-  binding.onChange = onChange;
-  binding.note = note;
-  transport?.subscribe(note.id);
+  const attached = noteBindings(note, true);
+  for (const binding of attached) {
+    binding.onChange = onChange;
+    binding.note = note;
+    transport?.subscribe(note.id, binding.sectionId, note.keyEpoch);
+  }
   return () => {
-    const current = bindings.get(note.id);
-    if (current) {
-      current.onChange = () => undefined;
+    for (const binding of bindingsForNote(note.id)) {
+      binding.onChange = () => undefined;
     }
   };
 }
 
 export function updateCrdtNote(note: DecryptedNote): void {
-  const binding = bindings.get(note.id);
-  if (binding?.keyEpoch === note.keyEpoch) {
-    binding.note = note;
+  for (const binding of bindingsForNote(note.id)) {
+    if (binding.keyEpoch === note.keyEpoch) {
+      binding.note = note;
+    }
   }
 }
 
@@ -173,44 +204,43 @@ export function openCrdtNote(
   note: DecryptedNote,
   onChange: Binding["onChange"]
 ): () => void {
-  const binding = bindings.get(note.id);
-  if (binding) {
-    const epochAdvanced = note.keyEpoch > binding.note.keyEpoch;
-    binding.onChange = onChange;
-    if (epochAdvanced && note.role !== "owner") {
-      // ponytail: rotation advanced the epoch; re-checkpoint so collaborators converge.
-      void checkpointCrdtNote(note).catch(() => undefined);
-    } else {
-      binding.note = note;
-    }
-    transport?.subscribe(note.id);
-    return () => {
-      const current = bindings.get(note.id);
-      if (current) {
-        current.onChange = () => undefined;
-      }
-    };
+  const currentBindings = bindingsForNote(note.id);
+  if (currentBindings.length === 0) {
+    return attachCrdtNote(note, onChange);
   }
-  return attachCrdtNote(note, onChange);
+  const epochAdvanced = currentBindings.some((binding) => note.keyEpoch > binding.keyEpoch);
+  const attached = noteBindings(note, true);
+  for (const binding of attached) {
+    binding.onChange = onChange;
+    binding.note = note;
+    transport?.subscribe(note.id, binding.sectionId, note.keyEpoch);
+  }
+  if (epochAdvanced && note.role !== "owner") {
+    void checkpointCrdtNote(note).catch(() => undefined);
+  }
+  return () => {
+    for (const binding of bindingsForNote(note.id)) {
+      binding.onChange = () => undefined;
+    }
+  };
 }
 
 export function editCrdtNote(
   noteId: string,
   patch: Partial<Pick<DecryptedNote, "title" | "body">>
 ): boolean {
-  const binding = bindings.get(noteId);
-  if (!binding) {
+  const root = bindings.get(bindingKey(noteId, ROOT_SECTION_ID));
+  if (!root) {
     return false;
   }
-  if (!binding.ready) {
-    binding.pendingPatch = { ...binding.pendingPatch, ...patch };
-    binding.onChange(patch);
+  if (!root.ready) {
+    root.pendingPatch = { ...root.pendingPatch, ...patch };
+    root.onChange(patch);
     return true;
   }
-  binding.doc.transact(() => {
-    // Body lives in the BlockNote editor / Y.XmlFragment; only title routes through Y.Text.
+  root.doc.transact(() => {
     if (patch.title !== undefined) {
-      const text = binding.doc.getText("title");
+      const text = root.doc.getText("title");
       text.delete(0, text.length);
       text.insert(0, patch.title);
     }
@@ -232,41 +262,45 @@ export function setCrdtTransport(next: CrdtTransport | null): void {
       const note = binding.note as DecryptedNote | undefined;
       if (note) {
         next.discard(note.id, note.keyEpoch);
-        next.subscribe(note.id);
+        next.subscribe(note.id, binding.sectionId, note.keyEpoch);
       }
     }
   }
 }
 
 export function preserveCrdtContent(note: DecryptedNote): DecryptedNote {
-  const binding = bindings.get(note.id);
-  if (!binding) {
+  const root = bindings.get(bindingKey(note.id, ROOT_SECTION_ID));
+  if (!root) {
     return note;
   }
-  if (binding.note.keyEpoch !== note.keyEpoch) {
+  if (root.note.keyEpoch !== note.keyEpoch) {
     return note;
   }
-  if (!binding.ready) {
-    return { ...note, ...binding.pendingPatch };
+  if (!root.ready) {
+    return { ...note, ...root.pendingPatch };
   }
   const content = {
-    title: binding.doc.getText("title").toJSON(),
-    body: binding.note.body
+    title: root.doc.getText("title").toJSON(),
+    body: root.note.body
   };
-  binding.note = { ...note, ...content };
-  return binding.note;
+  root.note = { ...note, ...content };
+  return root.note;
 }
 
 export function removeCrdtNote(noteId: string, expectedProvider?: CrdtProvider): void {
-  const binding = bindings.get(noteId);
-  if (!binding && !expectedProvider) {
+  const noteBindings = bindingsForNote(noteId);
+  if (noteBindings.length === 0 && !expectedProvider) {
     return;
   }
-  const provider = expectedProvider ?? binding!.provider;
-  provider.awareness.destroy();
-  provider.doc.destroy();
-  if (binding?.provider === provider) {
-    bindings.delete(noteId);
+  if (expectedProvider && !noteBindings.some(({ provider }) => provider === expectedProvider)) {
+    expectedProvider.awareness.destroy();
+    expectedProvider.doc.destroy();
+    return;
+  }
+  for (const binding of noteBindings) {
+    binding.provider.awareness.destroy();
+    binding.doc.destroy();
+    bindings.delete(bindingKey(binding.noteId, binding.sectionId));
   }
 }
 
@@ -281,39 +315,50 @@ export function clearCrdtNotes(): void {
   });
 }
 
-export async function ensureCrdtHistoryReadable(noteId: string): Promise<void> {
-  const binding = bindings.get(noteId);
-  if (!binding) {
+export async function ensureCrdtHistoryReadable(
+  noteId: string,
+  sectionId?: string
+): Promise<void> {
+  const candidates = sectionId
+    ? [bindings.get(bindingKey(noteId, sectionId))].filter(isBinding)
+    : bindingsForNote(noteId);
+  if (candidates.length === 0) {
     return;
   }
-  await binding.receiving;
-  throwIfCrdtHistoryUnreadable(binding);
-  if (!binding.ready) {
-    throw new Error("Realtime history is still synchronizing");
+  for (const binding of candidates) {
+    await binding.receiving;
+    throwIfCrdtHistoryUnreadable(binding);
+    if (!binding.ready) {
+      throw new Error("Realtime history is still synchronizing");
+    }
   }
 }
 
 export async function checkpointCrdtNote(note: DecryptedNote): Promise<void> {
-  let binding = bindings.get(note.id);
-  if (!binding) {
-    openCrdtNote(note, () => undefined);
-    binding = bindings.get(note.id)!;
-    Y.applyUpdate(binding.doc, snapshotUpdate(note), SNAPSHOT_SEED);
-    binding.ready = true;
-    binding.snapshotSeeded = true;
+  const existing = bindingsForNote(note.id);
+  const current = noteBindings(note, true);
+  for (const binding of current) {
+    binding.note = note;
+    if (existing.length === 0) {
+      seedBinding(binding, note);
+      binding.ready = true;
+      binding.snapshotSeeded = true;
+    }
   }
   await ensureCrdtHistoryReadable(note.id);
-  binding.note = note;
-  binding.doc.transact(() => {
-    setSnapshotVersion(binding.doc, note.version);
-  }, SNAPSHOT_SEED);
-  binding.pendingUpdateIds.clear();
+  for (const binding of current) {
+    binding.note = note;
+    binding.doc.transact(() => {
+      setSnapshotVersion(binding.doc, note.version);
+    }, SNAPSHOT_SEED);
+  }
   transport?.discard(note.id, note.keyEpoch);
-  await broadcastCheckpoint(binding);
+  await Promise.all(current.map((binding) => broadcastCheckpoint(binding)));
 }
 
 export function receiveCrdtUpdate(update: EncryptedCrdtMessage): Promise<void> {
-  const binding = bindings.get(update.noteId);
+  const sectionId = scopedSectionId(update) ?? defaultSectionId(update.noteId);
+  const binding = bindings.get(bindingKey(update.noteId, sectionId));
   if (
     binding?.note.cryptoOwnerId !== update.cryptoOwnerId ||
     binding.note.keyEpoch !== update.keyEpoch
@@ -346,19 +391,40 @@ export function receiveCrdtUpdate(update: EncryptedCrdtMessage): Promise<void> {
 export async function finishCrdtSync(
   noteId: string,
   keyEpoch: number,
-  hasUpdates: boolean
+  hasUpdates: boolean,
+  sectionId?: string
 ): Promise<void> {
-  const binding = bindings.get(noteId);
-  if (!binding) {
+  const candidates = sectionId
+    ? [bindings.get(bindingKey(noteId, sectionId))].filter(isBinding)
+    : bindingsForNote(noteId);
+  if (candidates.length === 0) {
     return;
   }
+  const primarySectionId = defaultSectionId(noteId);
+  for (const binding of candidates) {
+    await finishBindingSync(
+      binding,
+      keyEpoch,
+      sectionId !== undefined || binding.sectionId === primarySectionId
+        ? hasUpdates
+        : false
+    );
+  }
+}
+
+async function finishBindingSync(
+  binding: Binding,
+  keyEpoch: number,
+  hasUpdates: boolean
+): Promise<void> {
   await binding.receiving;
   if (binding.note.keyEpoch !== keyEpoch || binding.ready) {
     return;
   }
   throwIfCrdtHistoryUnreadable(binding);
   const snapshotIsNewer = binding.note.version > getSnapshotVersion(binding.doc);
-  const hasLegacyWholeNoteSnapshot = !binding.note.rootSectionId;
+  const hasLegacyWholeNoteSnapshot =
+    !binding.note.rootSectionId && binding.sectionId === ROOT_SECTION_ID;
   if (
     hasLegacyWholeNoteSnapshot &&
     snapshotIsNewer &&
@@ -370,9 +436,8 @@ export async function finishCrdtSync(
       await broadcastCheckpoint(binding);
     }
   }
-  if ((!hasUpdates || binding.appliedUpdateCount === 0) && !binding.snapshotSeeded) {
-    // ponytail: snapshot seeds title; the BlockNote fragment is seeded by the editor.
-    Y.applyUpdate(binding.doc, snapshotUpdate(binding.note), SNAPSHOT_SEED);
+  if (binding.appliedUpdateCount === 0 && !binding.snapshotSeeded) {
+    seedBinding(binding, binding.note);
     binding.snapshotSeeded = true;
     if (binding.note.role !== "viewer") {
       await broadcastCheckpoint(binding);
@@ -382,8 +447,11 @@ export async function finishCrdtSync(
   binding.provider.emit("synced");
   const pendingPatch = binding.pendingPatch;
   binding.pendingPatch = {};
-  if (pendingPatch.title !== undefined || pendingPatch.body !== undefined) {
-    editCrdtNote(noteId, pendingPatch);
+  if (
+    binding.sectionId === ROOT_SECTION_ID &&
+    (pendingPatch.title !== undefined || pendingPatch.body !== undefined)
+  ) {
+    editCrdtNote(binding.noteId, pendingPatch);
   }
 }
 
@@ -405,6 +473,7 @@ async function broadcastUpdate(binding: Binding, update: Uint8Array): Promise<vo
   });
   const delivered = currentTransport.send({
     ...envelope,
+    sectionId: binding.sectionId,
     cipher: encrypted.cipher,
     nonce: encrypted.nonce
   });
@@ -440,6 +509,7 @@ async function broadcastCheckpoint(
     });
     await currentTransport.send({
       ...envelope,
+      sectionId: binding.sectionId,
       cipher: encrypted.cipher,
       nonce: encrypted.nonce
     });
@@ -451,16 +521,25 @@ async function broadcastCheckpoint(
   }
 }
 
-// Seeds only the title into a fresh Y.Doc snapshot; the editor owns body content seeding.
-function snapshotUpdate(note: DecryptedNote): Uint8Array {
-  const seed = new Y.Doc();
-  seed.clientID = Number.parseInt(note.id.slice(0, 8), 16);
-  seed.transact(() => {
-    seed.getText("title").insert(0, note.title);
-    replaceBlockNoteFragment(seed.getXmlFragment(FRAGMENT_KEY), note.body);
-    setSnapshotVersion(seed, note.version);
+function seedBinding(binding: Binding, note: DecryptedNote): void {
+  binding.doc.transact(() => {
+    if (binding.sectionId === ROOT_SECTION_ID) {
+      const title = binding.doc.getText("title");
+      if (title.length === 0) {
+        title.insert(0, note.title);
+      }
+      const sections = binding.doc.getArray<string>(SECTION_ORDER_KEY);
+      if (sections.length === 0 && note.rootSectionId) {
+        sections.insert(0, [note.rootSectionId]);
+      }
+    } else if (binding.fragment.length === 0) {
+      replaceBlockNoteFragment(binding.fragment, note.body);
+    }
+    if (!note.rootSectionId && binding.sectionId === ROOT_SECTION_ID) {
+      replaceBlockNoteFragment(binding.fragment, note.body);
+    }
+    setSnapshotVersion(binding.doc, note.version);
   }, SNAPSHOT_SEED);
-  return Y.encodeStateAsUpdate(seed);
 }
 
 function getSnapshotVersion(doc: Y.Doc): number {
@@ -472,17 +551,17 @@ function setSnapshotVersion(doc: Y.Doc, version: number): void {
 }
 
 function replaceWithSnapshot(binding: Binding): void {
-  const clientId = binding.doc.clientID;
-  binding.doc.clientID =
-    (Number.parseInt(binding.note.id.slice(0, 8), 16) ^ binding.note.version) >>> 0;
   binding.doc.transact(() => {
-    const text = binding.doc.getText("title");
-    text.delete(0, text.length);
-    text.insert(0, binding.note.title);
-    replaceBlockNoteFragment(binding.fragment, binding.note.body);
+    if (binding.sectionId === ROOT_SECTION_ID) {
+      const text = binding.doc.getText("title");
+      text.delete(0, text.length);
+      text.insert(0, binding.note.title);
+    }
+    if (binding.sectionId !== ROOT_SECTION_ID || !binding.note.rootSectionId) {
+      replaceBlockNoteFragment(binding.fragment, binding.note.body);
+    }
     setSnapshotVersion(binding.doc, binding.note.version);
   }, SNAPSHOT_SEED);
-  binding.doc.clientID = clientId;
   binding.snapshotSeeded = true;
 }
 
@@ -506,6 +585,46 @@ function trackUpdate(binding: Binding, updateId: string): void {
 
 function canWrite(binding: Binding): boolean {
   return binding.note.role !== "viewer";
+}
+
+function noteBindings(note: DecryptedNote, includeRoot: boolean): Binding[] {
+  const sectionId = note.rootSectionId ?? ROOT_SECTION_ID;
+  const section = getOrCreateBinding(note.id, sectionId, note.keyEpoch);
+  if (!includeRoot || sectionId === ROOT_SECTION_ID) {
+    return [section];
+  }
+  return [
+    getOrCreateBinding(note.id, ROOT_SECTION_ID, note.keyEpoch),
+    section
+  ];
+}
+
+function bindingsForNote(noteId: string): Binding[] {
+  return [...bindings.values()].filter((binding) => binding.noteId === noteId);
+}
+
+function defaultSectionId(noteId: string): string {
+  for (const binding of bindingsForNote(noteId)) {
+    const note = binding.note as DecryptedNote | undefined;
+    if (note?.rootSectionId) {
+      return note.rootSectionId;
+    }
+  }
+  return ROOT_SECTION_ID;
+}
+
+function bindingKey(noteId: string, sectionId: string): string {
+  return JSON.stringify([noteId, sectionId]);
+}
+
+function scopedSectionId(update: EncryptedCrdtMessage): string | null {
+  return "sectionId" in update && typeof update.sectionId === "string"
+    ? update.sectionId
+    : null;
+}
+
+function isBinding(binding: Binding | undefined): binding is Binding {
+  return binding !== undefined;
 }
 
 function getTransport(): Promise<CrdtTransport> {
