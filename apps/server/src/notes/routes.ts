@@ -48,6 +48,10 @@ const protectedUpdateNoteSchema = z
     titleCipher: z.string().min(1).optional(),
     titleNonce: z.string().min(16).optional(),
     titleFormatVersion: z.literal(2).optional(),
+    encryptedNoteKey: z.string().min(16).optional(),
+    noteKeyNonce: z.string().min(16).optional(),
+    noteKeyFormatVersion: z.literal(2).optional(),
+    rootSectionId: z.uuid().optional(),
     rootVersion: z.number().int().positive(),
     keyEpoch: z.number().int().positive()
   })
@@ -59,6 +63,15 @@ const protectedUpdateNoteSchema = z
     ].filter((field) => field !== undefined).length;
     if (titleFieldCount !== 0 && titleFieldCount !== 3) {
       context.addIssue({ code: "custom", message: "Incomplete encrypted title" });
+    }
+    const keyFieldCount = [
+      value.encryptedNoteKey,
+      value.noteKeyNonce,
+      value.noteKeyFormatVersion,
+      value.rootSectionId
+    ].filter((field) => field !== undefined).length;
+    if (keyFieldCount !== 0 && keyFieldCount !== 4) {
+      context.addIssue({ code: "custom", message: "Incomplete protected note key" });
     }
   });
 const updateNoteSchema = z.union([protectedUpdateNoteSchema, legacyUpdateNoteSchema]);
@@ -1013,6 +1026,7 @@ export function createNotesRouter(context: AppContext): Router {
           .select({
             noteId: schema.notes.id,
             folderId: schema.notes.folderId,
+            rootSectionId: schema.notes.rootSectionId,
             rootVersion: schema.notes.rootVersion,
             keyEpoch: schema.notes.keyEpoch,
             isDeleted: schema.notes.isDeleted,
@@ -1046,6 +1060,14 @@ export function createNotesRouter(context: AppContext): Router {
         ) {
           return { kind: "conflict" as const };
         }
+        if (
+          protectedUpdate.encryptedNoteKey !== undefined &&
+          (current.role !== "owner" ||
+            (current.rootSectionId !== null &&
+              current.rootSectionId !== protectedUpdate.rootSectionId))
+        ) {
+          return { kind: "conflict" as const };
+        }
         const folderId = protectedUpdate.folderId ?? current.folderId;
         if (
           current.role !== "owner" &&
@@ -1074,9 +1096,14 @@ export function createNotesRouter(context: AppContext): Router {
           .update(schema.notes)
           .set({
             folderId,
+            title: protectedUpdate.titleCipher ? "" : undefined,
             titleCipher: protectedUpdate.titleCipher,
             titleNonce: protectedUpdate.titleNonce,
             titleFormatVersion: protectedUpdate.titleFormatVersion,
+            encryptedNoteKey: protectedUpdate.encryptedNoteKey,
+            noteKeyNonce: protectedUpdate.noteKeyNonce,
+            noteKeyFormatVersion: protectedUpdate.noteKeyFormatVersion,
+            rootSectionId: protectedUpdate.rootSectionId,
             rootVersion: sql`${schema.notes.rootVersion} + 1`,
             version: sql`${schema.notes.version} + 1`,
             updatedAt: sql`CURRENT_TIMESTAMP`
@@ -1092,6 +1119,16 @@ export function createNotesRouter(context: AppContext): Router {
           .run();
         if (updateResult.changes !== 1) {
           return { kind: "conflict" as const };
+        }
+        if (protectedUpdate.rootSectionId) {
+          tx.insert(schema.noteSections)
+            .values({
+              id: protectedUpdate.rootSectionId,
+              noteId: current.noteId,
+              createdEpoch: current.keyEpoch
+            })
+            .onConflictDoNothing()
+            .run();
         }
         const nextRootVersion = current.rootVersion + 1;
         const eventCursor = writeRequestEvent(

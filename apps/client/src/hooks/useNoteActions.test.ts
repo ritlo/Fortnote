@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   checkpoint: vi.fn(),
   deleteNote: vi.fn(),
   encrypt: vi.fn(),
+  encryptNoteKey: vi.fn(),
   loadNotes: vi.fn(),
   updateNote: vi.fn()
 }));
@@ -26,8 +27,10 @@ vi.mock("../api", () => ({
 }));
 
 vi.mock("../cryptoClient", () => ({
-  createEncryptedNoteDraft: vi.fn(),
-  encryptExistingNoteBody: mocks.encrypt,
+  createProtectedNoteDraftV2: vi.fn(),
+  encryptFolderNameV2: vi.fn(),
+  encryptNoteKeyEnvelopeV2: mocks.encryptNoteKey,
+  encryptNoteTitleV2: mocks.encrypt,
   noteKeyToBase64: vi.fn()
 }));
 
@@ -43,12 +46,18 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
   mocks.encrypt.mockResolvedValue({
-    contentCipher: "cipher",
-    contentLength: 7,
-    contentNonce: "nonce"
+    cipher: "cipher",
+    formatVersion: 2,
+    nonce: "nonce"
+  });
+  mocks.encryptNoteKey.mockResolvedValue({
+    cipher: "protected-note-key",
+    formatVersion: 2,
+    nonce: "protected-note-key-nonce"
   });
   mocks.updateNote.mockResolvedValue({
     id: "note_1",
+    rootVersion: 2,
     version: 2,
     updatedAt: "2026-07-02T00:00:01.000Z"
   });
@@ -89,11 +98,15 @@ describe("note autosave", () => {
 
     expect(mocks.updateNote).toHaveBeenCalledOnce();
     expect(mocks.encrypt).toHaveBeenCalledWith(
-      expect.objectContaining({ body: "Latest body", noteId: "note_1" })
+      expect.objectContaining({ title: "Latest", noteId: "note_1" })
     );
     expect(mocks.updateNote).toHaveBeenCalledWith(
       "note_1",
-      expect.objectContaining({ title: "Latest", version: 1 })
+      expect.objectContaining({
+        titleCipher: "cipher",
+        titleNonce: "nonce",
+        rootVersion: 1
+      })
     );
   });
 
@@ -153,7 +166,7 @@ describe("note autosave", () => {
 
     expect(mocks.updateNote).toHaveBeenCalledWith(
       "note_1",
-      expect.objectContaining({ title: "Pending draft" })
+      expect.objectContaining({ titleCipher: "cipher" })
     );
   });
 
@@ -173,7 +186,12 @@ describe("note autosave", () => {
   });
 
   it("serializes saves and follows an in-flight save with the latest draft", async () => {
-    let finishFirst!: (value: { id: string; version: number; updatedAt: string }) => void;
+    let finishFirst!: (value: {
+      id: string;
+      rootVersion: number;
+      version: number;
+      updatedAt: string;
+    }) => void;
     mocks.updateNote
       .mockImplementationOnce(
         () => new Promise((resolve) => {
@@ -182,6 +200,7 @@ describe("note autosave", () => {
       )
       .mockResolvedValueOnce({
         id: "note_1",
+        rootVersion: 3,
         version: 3,
         updatedAt: "2026-07-02T00:00:02.000Z"
       });
@@ -201,6 +220,7 @@ describe("note autosave", () => {
     act(() => {
       finishFirst({
         id: "note_1",
+        rootVersion: 2,
         version: 2,
         updatedAt: "2026-07-02T00:00:01.000Z"
       });
@@ -209,8 +229,8 @@ describe("note autosave", () => {
       expect(mocks.updateNote).toHaveBeenCalledTimes(2);
     });
     expect(mocks.updateNote.mock.calls[1]?.[1]).toMatchObject({
-      title: "Latest",
-      version: 2
+      rootVersion: 2,
+      titleCipher: "cipher"
     });
     expect(useAppStore.getState().notes[0]?.title).toBe("Latest");
   });
@@ -352,7 +372,9 @@ describe("note autosave", () => {
     });
 
     expect(mocks.updateNote.mock.calls[1]?.[0]).toBe("note_2");
-    expect(mocks.updateNote.mock.calls[1]?.[1]).toMatchObject({ title: "Second draft" });
+    expect(mocks.updateNote.mock.calls[1]?.[1]).toMatchObject({
+      titleCipher: "cipher"
+    });
     expect(useAppStore.getState().status).toBe("Save conflict");
     expect(useAppStore.getState().error).toContain("Your draft is still open");
   });
@@ -415,6 +437,35 @@ describe("note autosave", () => {
     await advanceAutosave();
     expect(mocks.updateNote).toHaveBeenCalledTimes(2);
   });
+
+  it("upgrades owned legacy metadata and note-key envelopes without plaintext", async () => {
+    useAppStore.setState({
+      notes: [
+        note({
+          metadataMigration: "write-v2-pending",
+          rootSectionId: null
+        })
+      ]
+    });
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "Migrated private title" });
+    });
+    await advanceAutosave();
+
+    expect(mocks.updateNote).toHaveBeenCalledWith(
+      "note_1",
+      expect.objectContaining({
+        encryptedNoteKey: "protected-note-key",
+        noteKeyFormatVersion: 2,
+        rootSectionId: expect.any(String),
+        titleCipher: "cipher"
+      })
+    );
+    expect(mocks.updateNote.mock.calls[0]?.[1]).not.toHaveProperty("title");
+    expect(useAppStore.getState().notes[0]?.metadataMigration).toBe("current");
+  });
 });
 
 describe("note save conflict handling", () => {
@@ -458,9 +509,12 @@ function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
     folderId: null,
     id: "note_1",
     isDeleted: false,
-    noteKeyBase64: "note-key",
+    metadataMigration: "current",
+    noteKeyBase64: "AQIDBA==",
     ownerUserId: "alice",
     role: "owner",
+    rootSectionId: "section_1",
+    rootVersion: 1,
     title: "Title",
     updatedAt: "2026-07-02T00:00:00.000Z",
     version: 1,

@@ -137,12 +137,18 @@ export interface NoteSummary {
   id: string;
   folderId: string | null;
   title: string;
+  titleCipher?: string | null;
+  titleNonce?: string | null;
+  titleFormatVersion?: number | null;
   encryptedNoteKey: string | null;
   noteKeyNonce: string | null;
-  contentCipher: string;
-  contentNonce: string;
+  noteKeyFormatVersion?: number | null;
+  contentCipher?: string;
+  contentNonce?: string;
   contentLength: number;
   version: number;
+  rootVersion?: number;
+  rootSectionId?: string | null;
   keyEpoch: number;
   isDeleted: boolean | 0 | 1;
   deletedAt?: string | null;
@@ -155,12 +161,24 @@ export interface NoteSummary {
 export interface FolderSummary {
   id: string;
   name: string;
+  metadataMigration?: "current" | "write-v2-pending" | "retry-required";
   parentFolderId: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface CreateNotePayload {
+export interface EncryptedFolderSummary {
+  id: string;
+  name: string;
+  nameCipher: string | null;
+  nameNonce: string | null;
+  nameFormatVersion: number | null;
+  parentFolderId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface LegacyCreateNotePayload {
   id: string;
   folderId?: string | null;
   title: string;
@@ -171,7 +189,21 @@ export interface CreateNotePayload {
   contentLength: number;
 }
 
-export interface UpdateNotePayload {
+export interface ProtectedCreateNotePayload {
+  id: string;
+  folderId?: string | null;
+  rootSectionId: string;
+  titleCipher: string;
+  titleNonce: string;
+  titleFormatVersion: 2;
+  encryptedNoteKey: string;
+  noteKeyNonce: string;
+  noteKeyFormatVersion: 2;
+}
+
+export type CreateNotePayload = LegacyCreateNotePayload | ProtectedCreateNotePayload;
+
+interface LegacyUpdateNotePayload {
   title?: string;
   folderId?: string | null;
   contentCipher: string;
@@ -179,6 +211,21 @@ export interface UpdateNotePayload {
   contentLength: number;
   version: number;
 }
+
+export interface ProtectedUpdateNotePayload {
+  folderId?: string | null;
+  titleCipher?: string;
+  titleNonce?: string;
+  titleFormatVersion?: 2;
+  encryptedNoteKey?: string;
+  noteKeyNonce?: string;
+  noteKeyFormatVersion?: 2;
+  rootSectionId?: string;
+  rootVersion: number;
+  keyEpoch: number;
+}
+
+export type UpdateNotePayload = LegacyUpdateNotePayload | ProtectedUpdateNotePayload;
 
 export interface RotateNoteKeyPayload {
   encryptedNoteKey: string;
@@ -701,8 +748,16 @@ export function listNotes(deleted = false): Promise<{ notes: NoteSummary[] }> {
   return apiRequest<{ notes: NoteSummary[] }>(`/notes?deleted=${String(deleted)}`);
 }
 
-export function createNote(payload: CreateNotePayload): Promise<{ id: string; version: number }> {
-  return apiRequest<{ id: string; version: number }>("/notes", {
+export function createNote(
+  payload: CreateNotePayload
+): Promise<{
+  id: string;
+  version: number;
+  rootVersion: number;
+  rootSectionId: string | null;
+  keyEpoch: number;
+}> {
+  return apiRequest("/notes", {
     method: "POST",
     body: JSON.stringify(payload)
   });
@@ -711,8 +766,20 @@ export function createNote(payload: CreateNotePayload): Promise<{ id: string; ve
 export function updateNote(
   noteId: string,
   payload: UpdateNotePayload
-): Promise<{ id: string; version: number; updatedAt: string }> {
-  return apiRequest<{ id: string; version: number; updatedAt: string }>(`/notes/${noteId}`, {
+): Promise<{
+  id: string;
+  version?: number;
+  rootVersion?: number;
+  keyEpoch?: number;
+  updatedAt: string;
+}> {
+  return apiRequest<{
+    id: string;
+    version?: number;
+    rootVersion?: number;
+    keyEpoch?: number;
+    updatedAt: string;
+  }>(`/notes/${noteId}`, {
     method: "PUT",
     body: JSON.stringify(payload)
   });
@@ -930,21 +997,40 @@ export function deleteAttachment(attachmentId: string): Promise<undefined> {
   return apiRequest<undefined>(`/attachments/${attachmentId}`, { method: "DELETE" });
 }
 
-export function listFolders(): Promise<{ folders: FolderSummary[] }> {
-  return apiRequest<{ folders: FolderSummary[] }>("/folders");
+export function listFolders(): Promise<{ folders: EncryptedFolderSummary[] }> {
+  return apiRequest<{ folders: EncryptedFolderSummary[] }>("/folders");
 }
 
-export function createFolder(payload: {
-  name: string;
-  parentFolderId?: string | null;
-}): Promise<{ id: string; name: string; parentFolderId: string | null }> {
-  return apiRequest<{ id: string; name: string; parentFolderId: string | null }>(
-    "/folders",
-    {
-      method: "POST",
-      body: JSON.stringify(payload)
-    }
-  );
+export function createFolder(
+  payload:
+    | { name: string; parentFolderId?: string | null }
+    | {
+        id: string;
+        nameCipher: string;
+        nameNonce: string;
+        nameFormatVersion: 2;
+        parentFolderId?: string | null;
+      }
+): Promise<EncryptedFolderSummary> {
+  return apiRequest<EncryptedFolderSummary>("/folders", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateFolder(
+  folderId: string,
+  payload: {
+    nameCipher: string;
+    nameNonce: string;
+    nameFormatVersion: 2;
+    parentFolderId?: string | null;
+  }
+): Promise<EncryptedFolderSummary> {
+  return apiRequest<EncryptedFolderSummary>(`/folders/${folderId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
 }
 
 export function deleteFolder(folderId: string): Promise<undefined> {

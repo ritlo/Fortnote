@@ -72,6 +72,18 @@ export interface EncryptedNoteDraft {
   noteKey: Uint8Array;
 }
 
+export interface ProtectedNoteDraftV2 {
+  id: string;
+  rootSectionId: string;
+  titleCipher: string;
+  titleNonce: string;
+  titleFormatVersion: 2;
+  encryptedNoteKey: string;
+  noteKeyNonce: string;
+  noteKeyFormatVersion: 2;
+  noteKey: Uint8Array;
+}
+
 export interface EncryptedAttachmentDraft {
   id: string;
   expectedKeyEpoch: number;
@@ -403,6 +415,57 @@ export async function createEncryptedNoteDraft(input: {
     contentLength: encryptedBody.cipher.length,
     noteKey
   };
+}
+
+export async function createProtectedNoteDraftV2(input: {
+  cryptoOwnerId: string;
+  rootKey: Uint8Array;
+  title: string;
+}): Promise<ProtectedNoteDraftV2> {
+  await cryptoReady();
+  const id = randomUuid();
+  const rootSectionId = randomUuid();
+  const noteKey = randomBytes(32);
+  const [title, wrappedKey] = await Promise.all([
+    encryptNoteTitleV2({
+      cryptoOwnerId: input.cryptoOwnerId,
+      noteId: id,
+      keyEpoch: 1,
+      noteKey,
+      title: input.title
+    }),
+    encryptNoteKeyEnvelopeV2({
+      cryptoOwnerId: input.cryptoOwnerId,
+      noteId: id,
+      keyEpoch: 1,
+      rootKey: input.rootKey,
+      noteKey
+    })
+  ]);
+  return {
+    id,
+    rootSectionId,
+    titleCipher: title.cipher,
+    titleNonce: title.nonce,
+    titleFormatVersion: 2,
+    encryptedNoteKey: wrappedKey.cipher,
+    noteKeyNonce: wrappedKey.nonce,
+    noteKeyFormatVersion: 2,
+    noteKey
+  };
+}
+
+export function decryptLegacyNoteKey(input: {
+  userId: string;
+  rootKey: Uint8Array;
+  noteId: string;
+  encryptedNoteKey: EncryptedPayload;
+}): Promise<Uint8Array> {
+  return decryptBytes(
+    input.encryptedNoteKey,
+    input.rootKey,
+    noteKeyAad(input.userId, input.noteId)
+  );
 }
 
 export async function decryptNote(input: {

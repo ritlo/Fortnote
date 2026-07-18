@@ -3,10 +3,14 @@ import {
   listFolders,
   listNotes,
   storeCurrentSharingKey,
+  updateFolder,
+  type FolderSummary,
   type User
 } from "../api";
 import {
   createUserSharingKey,
+  decryptFolderNameV2,
+  encryptFolderNameV2,
   openUserSharingKey,
   type OpenedSharingKey
 } from "../cryptoClient";
@@ -65,8 +69,69 @@ export async function loadDecryptedNotes(
 }
 
 export async function loadFolders() {
+  const state = useAppStore.getState();
+  if (!state.user || !state.rootKey) {
+    return;
+  }
+  const currentUser = state.user;
+  const currentRootKey = state.rootKey;
   const payload = await listFolders();
-  useAppStore.getState().setFolders(payload.folders);
+  const folders = await Promise.all(
+    payload.folders.map(async (folder): Promise<FolderSummary> => {
+      if (folder.nameFormatVersion !== 2) {
+        let metadataMigration: FolderSummary["metadataMigration"];
+        try {
+          const encryptedName = await encryptFolderNameV2({
+            userId: currentUser.id,
+            folderId: folder.id,
+            rootKey: currentRootKey,
+            name: folder.name
+          });
+          await updateFolder(folder.id, {
+            nameCipher: encryptedName.cipher,
+            nameNonce: encryptedName.nonce,
+            nameFormatVersion: 2,
+            parentFolderId: folder.parentFolderId
+          });
+          metadataMigration = "current";
+        } catch {
+          metadataMigration = "retry-required";
+        }
+        return {
+          id: folder.id,
+          name: folder.name,
+          parentFolderId: folder.parentFolderId,
+          createdAt: folder.createdAt,
+          updatedAt: folder.updatedAt,
+          metadataMigration
+        };
+      }
+      if (!folder.nameCipher || !folder.nameNonce) {
+        throw new Error("Protected folder name is incomplete");
+      }
+      return {
+        id: folder.id,
+        name: await decryptFolderNameV2({
+          userId: currentUser.id,
+          folderId: folder.id,
+          rootKey: currentRootKey,
+          envelope: {
+            cipher: folder.nameCipher,
+            nonce: folder.nameNonce,
+            formatVersion: 2
+          }
+        }),
+        parentFolderId: folder.parentFolderId,
+        createdAt: folder.createdAt,
+        updatedAt: folder.updatedAt,
+        metadataMigration: "current"
+      };
+    })
+  );
+  const latest = useAppStore.getState();
+  if (latest.user?.id === currentUser.id && latest.rootKey === currentRootKey) {
+    latest.setFolders(folders);
+  }
 }
 
 export async function ensureSharingKey(

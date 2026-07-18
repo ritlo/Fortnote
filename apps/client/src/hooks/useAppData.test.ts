@@ -1,22 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createUserSharingKey } from "../cryptoClient";
+import { createUserSharingKey, encryptFolderNameV2 } from "../cryptoClient";
 import {
   getCurrentSharingKey,
   listFolders,
   listNotes,
   storeCurrentSharingKey,
+  updateFolder,
   type NoteSummary,
   type User
 } from "../api";
 import { decryptNoteSummary } from "../lib/keyMaterial";
 import { useAppStore } from "../store/appStore";
-import { ensureSharingKey, loadDecryptedNotes } from "./useAppData";
+import { ensureSharingKey, loadDecryptedNotes, loadFolders } from "./useAppData";
 
 vi.mock("../api", () => ({
   getCurrentSharingKey: vi.fn(),
   listFolders: vi.fn(),
   listNotes: vi.fn(),
-  storeCurrentSharingKey: vi.fn()
+  storeCurrentSharingKey: vi.fn(),
+  updateFolder: vi.fn()
 }));
 
 vi.mock("../lib/keyMaterial", () => ({
@@ -133,6 +135,75 @@ describe("app data collaboration bootstrap", () => {
 
     expect(useAppStore.getState().notes).toEqual([]);
     expect(useAppStore.getState().status).toBe("Vault locked");
+  });
+
+  it("decrypts protected folder names without exposing them in list data", async () => {
+    const user = currentUser();
+    const rootKey = crypto.getRandomValues(new Uint8Array(32));
+    const folderId = crypto.randomUUID();
+    const encrypted = await encryptFolderNameV2({
+      userId: user.id,
+      folderId,
+      rootKey,
+      name: "Private folder"
+    });
+    useAppStore.setState({ rootKey, user });
+    vi.mocked(listFolders).mockResolvedValue({
+      folders: [
+        {
+          id: folderId,
+          name: "",
+          nameCipher: encrypted.cipher,
+          nameNonce: encrypted.nonce,
+          nameFormatVersion: 2,
+          parentFolderId: null,
+          createdAt: "2026-07-02T00:00:00.000Z",
+          updatedAt: "2026-07-02T00:00:00.000Z"
+        }
+      ]
+    });
+
+    await loadFolders();
+
+    expect(useAppStore.getState().folders).toEqual([
+      expect.objectContaining({
+        id: folderId,
+        name: "Private folder",
+        metadataMigration: "current"
+      })
+    ]);
+  });
+
+  it("retains a retry marker when legacy folder migration cannot be written", async () => {
+    const user = currentUser();
+    const rootKey = crypto.getRandomValues(new Uint8Array(32));
+    useAppStore.setState({ rootKey, user });
+    vi.mocked(listFolders).mockResolvedValue({
+      folders: [
+        {
+          id: crypto.randomUUID(),
+          name: "Legacy folder",
+          nameCipher: null,
+          nameNonce: null,
+          nameFormatVersion: null,
+          parentFolderId: null,
+          createdAt: "2026-07-02T00:00:00.000Z",
+          updatedAt: "2026-07-02T00:00:00.000Z"
+        }
+      ]
+    });
+    vi.mocked(updateFolder).mockRejectedValueOnce(new Error("offline"));
+
+    await loadFolders();
+
+    expect(useAppStore.getState().folders[0]).toMatchObject({
+      name: "Legacy folder",
+      metadataMigration: "retry-required"
+    });
+    expect(vi.mocked(updateFolder)).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.not.objectContaining({ name: "Legacy folder" })
+    );
   });
 });
 

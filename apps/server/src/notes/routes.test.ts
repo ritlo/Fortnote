@@ -125,6 +125,51 @@ describe("notes and folders routes", () => {
 	    });
 	  });
 
+	  it("atomically upgrades an owned legacy note to protected v2 metadata", async () => {
+	    const app = createTestApp();
+	    const owner = await registerAgent(app, "metadata_migration_owner");
+	    const legacy = notePayload();
+	    const rootSectionId = crypto.randomUUID();
+	    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
+
+	    await owner
+	      .put(`/api/notes/${legacy.id}`)
+	      .set(csrfHeaders())
+	      .send({
+	        titleCipher: "migrated_title_cipher_abcdefghijklmnopqrstuvwxyz",
+	        titleNonce: "migrated_title_nonce_abcdefghijklmnopqrstuvwxyz",
+	        titleFormatVersion: 2,
+	        encryptedNoteKey: "migrated_note_key_cipher_abcdefghijklmnopqrstuvwxyz",
+	        noteKeyNonce: "migrated_note_key_nonce_abcdefghijklmnopqrstuvwxyz",
+	        noteKeyFormatVersion: 2,
+	        rootSectionId,
+	        rootVersion: 1,
+	        keyEpoch: 1
+	      })
+	      .expect(200);
+
+	    expect(
+	      app.locals.db.sqlite
+	        .prepare(
+	          `SELECT title, title_format_version AS titleFormatVersion,
+	                  note_key_format_version AS noteKeyFormatVersion,
+	                  root_section_id AS rootSectionId
+	           FROM notes WHERE id = ?`
+	        )
+	        .get(legacy.id)
+	    ).toEqual({
+      title: "",
+	      titleFormatVersion: 2,
+	      noteKeyFormatVersion: 2,
+	      rootSectionId
+	    });
+	    expect(
+	      app.locals.db.sqlite
+	        .prepare("SELECT id FROM note_sections WHERE id = ? AND note_id = ?")
+	        .get(rootSectionId, legacy.id)
+	    ).toEqual({ id: rootSectionId });
+	  });
+
 	  it("atomically revokes a member and activates an adjacent linked epoch", async () => {
 	    const app = createTestApp();
 	    const owner = await registerAgent(app, "linked_owner");

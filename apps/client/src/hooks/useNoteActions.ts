@@ -9,10 +9,13 @@ import {
   updateNote
 } from "../api";
 import {
-  createEncryptedNoteDraft,
-  encryptExistingNoteBody,
+  createProtectedNoteDraftV2,
+  encryptFolderNameV2,
+  encryptNoteKeyEnvelopeV2,
+  encryptNoteTitleV2,
   noteKeyToBase64
 } from "../cryptoClient";
+import { fromBase64 } from "@fortnote/shared";
 import { useEffect, useRef } from "react";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
 import { checkpointCrdtNote } from "../realtime/crdt";
@@ -63,36 +66,39 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     setError(null);
     setStatus("Encrypting note");
     try {
-      const draft = await createEncryptedNoteDraft({
-        userId: user.id,
+      const draft = await createProtectedNoteDraftV2({
+        cryptoOwnerId: user.id,
         rootKey,
-        title: "Untitled note",
-        body: ""
+        title: "Untitled note"
       });
       const created = await createNote({
         id: draft.id,
         folderId: selectedFolderId,
-        title: draft.title,
+        rootSectionId: draft.rootSectionId,
+        titleCipher: draft.titleCipher,
+        titleNonce: draft.titleNonce,
+        titleFormatVersion: 2,
         encryptedNoteKey: draft.encryptedNoteKey,
         noteKeyNonce: draft.noteKeyNonce,
-        contentCipher: draft.contentCipher,
-        contentNonce: draft.contentNonce,
-        contentLength: draft.contentLength
+        noteKeyFormatVersion: 2
       });
       const note: DecryptedNote = {
         id: draft.id,
         folderId: selectedFolderId,
-        title: draft.title,
+        title: "Untitled note",
         body: "",
         noteKeyBase64: noteKeyToBase64(draft.noteKey),
-        contentLength: draft.contentLength,
+        contentLength: 0,
         version: created.version,
         keyEpoch: 1,
         isDeleted: false,
         updatedAt: new Date().toISOString(),
         ownerUserId: user.id,
         cryptoOwnerId: user.id,
-        role: "owner"
+        role: "owner",
+        rootVersion: created.rootVersion,
+        rootSectionId: created.rootSectionId,
+        metadataMigration: "current"
       };
       setNotes((current) => [note, ...current]);
       setSelectedNoteId(note.id);
@@ -185,23 +191,52 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       setStatus("Encrypting note");
     }
     try {
-      const encrypted = await encryptExistingNoteBody({
-        userId: noteToSave.cryptoOwnerId,
+      const noteKey = fromBase64(noteToSave.noteKeyBase64);
+      const encryptedTitle = await encryptNoteTitleV2({
+        cryptoOwnerId: noteToSave.cryptoOwnerId,
         noteId: noteToSave.id,
-        noteKeyBase64: noteToSave.noteKeyBase64,
-        body: noteToSave.body
+        keyEpoch: noteToSave.keyEpoch,
+        noteKey,
+        title: noteToSave.title
       });
+      const shouldMigrateOwnedKey =
+        noteToSave.role === "owner" && noteToSave.metadataMigration !== "current";
+      const rootSectionId =
+        noteToSave.rootSectionId ?? (shouldMigrateOwnedKey ? crypto.randomUUID() : null);
+      const encryptedNoteKey = shouldMigrateOwnedKey
+        ? await encryptNoteKeyEnvelopeV2({
+            cryptoOwnerId: noteToSave.cryptoOwnerId,
+            noteId: noteToSave.id,
+            keyEpoch: noteToSave.keyEpoch,
+            rootKey: state.rootKey,
+            noteKey
+          })
+        : null;
       const saved = await updateNote(noteToSave.id, {
-        title: noteToSave.title,
+        titleCipher: encryptedTitle.cipher,
+        titleNonce: encryptedTitle.nonce,
+        titleFormatVersion: 2,
         folderId: noteToSave.folderId,
-        version: noteToSave.version,
-        ...encrypted
+        rootVersion: noteToSave.rootVersion ?? noteToSave.version,
+        keyEpoch: noteToSave.keyEpoch,
+        ...(encryptedNoteKey && rootSectionId
+          ? {
+              encryptedNoteKey: encryptedNoteKey.cipher,
+              noteKeyNonce: encryptedNoteKey.nonce,
+              noteKeyFormatVersion: 2 as const,
+              rootSectionId
+            }
+          : {})
       });
+      const contentLength = new TextEncoder().encode(noteToSave.body).length;
       await checkpointCrdtNote({
         ...noteToSave,
-        contentLength: encrypted.contentLength,
+        contentLength,
         updatedAt: saved.updatedAt,
-        version: saved.version
+        version: saved.version ?? noteToSave.version,
+        rootVersion:
+          saved.rootVersion ?? noteToSave.rootVersion ?? noteToSave.version,
+        rootSectionId
       });
       if (!isCurrentSession(state.user.id, state.rootKey)) {
         return "skipped";
@@ -213,12 +248,15 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
               ? note
               : {
                 ...note,
-                contentLength:
-                  note.body === noteToSave.body
-                    ? encrypted.contentLength
-                    : new TextEncoder().encode(note.body).length,
-                version: saved.version,
-                updatedAt: saved.updatedAt
+                contentLength: new TextEncoder().encode(note.body).length,
+                version: saved.version ?? note.version,
+                rootVersion: saved.rootVersion ?? note.rootVersion ?? note.version,
+                rootSectionId: rootSectionId ?? note.rootSectionId ?? null,
+                updatedAt: saved.updatedAt,
+                metadataMigration:
+                  note.metadataMigration === "current" || shouldMigrateOwnedKey
+                    ? "current"
+                    : "retry-required"
               }
             : note
         )
@@ -390,6 +428,9 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
   }
 
   async function addFolder(parentFolderId: string | null = null) {
+    if (!user || !rootKey) {
+      return;
+    }
     const name = window.prompt("Folder name");
     if (!name?.trim()) {
       return;
@@ -397,7 +438,20 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
 
     setError(null);
     try {
-      await createFolder({ name: name.trim(), parentFolderId });
+      const id = crypto.randomUUID();
+      const encryptedName = await encryptFolderNameV2({
+        userId: user.id,
+        folderId: id,
+        rootKey,
+        name: name.trim()
+      });
+      await createFolder({
+        id,
+        nameCipher: encryptedName.cipher,
+        nameNonce: encryptedName.nonce,
+        nameFormatVersion: 2,
+        parentFolderId
+      });
       await loadFolders();
       setStatus("Folder created");
     } catch (folderError) {
