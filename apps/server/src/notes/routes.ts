@@ -1301,7 +1301,10 @@ export function createNotesRouter(context: AppContext): Router {
     }
 
     const rows = context.db.orm
-      .select({ fileCipherPath: schema.attachments.fileCipherPath })
+      .select({
+        fileCipherPath: schema.attachments.fileCipherPath,
+        size: schema.attachments.size
+      })
       .from(schema.attachments)
       .where(and(
         eq(schema.attachments.noteId, access.noteId),
@@ -1319,12 +1322,22 @@ export function createNotesRouter(context: AppContext): Router {
       .all();
 
     const cursor = context.db.orm.transaction((tx) => {
+      const attachmentBytes = rows.reduce((total, row) => total + row.size, 0);
       tx.delete(schema.notes)
         .where(and(
           eq(schema.notes.id, access.noteId),
           eq(schema.notes.userId, session.userId)
         ))
         .run();
+      if (attachmentBytes > 0) {
+        tx.update(schema.storageAccounts)
+          .set({
+            usedBytes: sql`MAX(${schema.storageAccounts.usedBytes} - ${attachmentBytes}, 0)`,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(eq(schema.storageAccounts.userId, session.userId))
+          .run();
+      }
       return writeRequestEvent(context, request, {
         noteId: access.noteId,
         actorUserId: session.userId,

@@ -1,7 +1,10 @@
 import { Buffer } from "node:buffer";
+import { once } from "node:events";
 import fs from "node:fs";
+import { createServer, request as sendHttpRequest } from "node:http";
 import { describe, expect, it } from "vitest";
 import { LIMITS } from "@fortnote/shared";
+import { createSession } from "../auth/session.js";
 import type { AppDb } from "../db/client.js";
 import {
   createTestApp,
@@ -16,6 +19,10 @@ function attachmentPayload(size = 8) {
     id: crypto.randomUUID(),
     filename: "receipt.pdf",
     mimeType: "application/pdf",
+    expectedKeyEpoch: 1,
+    metadataCipher: "encrypted_attachment_metadata_abcdefghijklmnopqrstuvwxyz",
+    metadataNonce: "attachment_metadata_nonce_abcdefghijklmnopqrstuvwxyz",
+    metadataFormatVersion: 2,
     size,
     encryptedAttachmentKey: "encrypted_attachment_key_abcdefghijklmnopqrstuvwxyz",
     attachmentKeyNonce: "attachment_key_nonce_abcdefghijklmnopqrstuvwxyz",
@@ -37,9 +44,11 @@ function attachmentHeaders(payload: ReturnType<typeof attachmentPayload>) {
   return {
     "content-type": "application/octet-stream",
     "x-fortnote-attachment-id": payload.id,
-    "x-fortnote-filename": encodeURIComponent(payload.filename),
-    "x-fortnote-mime-type": encodeURIComponent(payload.mimeType),
     "x-fortnote-size": String(payload.size),
+    "x-fortnote-expected-key-epoch": String(payload.expectedKeyEpoch),
+    "x-fortnote-metadata-cipher": payload.metadataCipher,
+    "x-fortnote-metadata-nonce": payload.metadataNonce,
+    "x-fortnote-metadata-format-version": String(payload.metadataFormatVersion),
     "x-fortnote-encrypted-attachment-key": payload.encryptedAttachmentKey,
     "x-fortnote-attachment-key-nonce": payload.attachmentKeyNonce,
     "x-fortnote-file-nonce": payload.fileNonce
@@ -58,6 +67,89 @@ function uploadAttachment(
     .send(payload.encryptedBytes);
 }
 
+async function uploadDuringMutation(
+  app: ReturnType<typeof createTestApp>,
+  username: string,
+  noteId: string,
+  payload: ReturnType<typeof attachmentPayload>,
+  mutate: (db: AppDb, userId: string) => void
+): Promise<{ body: unknown; status: number }> {
+  const db = app.locals.db as AppDb;
+  const user = db.sqlite
+    .prepare("SELECT id FROM users WHERE username = ?")
+    .get(username) as { id: string };
+  const token = createSession(db, user.id);
+  const server = createServer(app);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Test server did not bind a TCP port");
+  }
+
+  const headers = {
+    ...csrfHeaders(),
+    ...attachmentHeaders(payload),
+    cookie: `fortnote_session=${encodeURIComponent(token)}`,
+    "content-length": String(payload.size)
+  };
+  const responsePromise = new Promise<{ body: unknown; status: number }>(
+    (resolve, reject) => {
+      const upload = sendHttpRequest(
+        {
+          host: "127.0.0.1",
+          port: address.port,
+          path: `/api/notes/${noteId}/attachments`,
+          method: "POST",
+          headers
+        },
+        (response) => {
+          const chunks: Buffer[] = [];
+          response.on("data", (chunk: Buffer) => chunks.push(chunk));
+          response.on("end", () => {
+            const text = Buffer.concat(chunks).toString("utf8");
+            resolve({
+              body: text ? (JSON.parse(text) as unknown) : null,
+              status: response.statusCode ?? 0
+            });
+          });
+        }
+      );
+      upload.on("error", reject);
+      upload.write(payload.encryptedBytes.subarray(0, payload.size / 2));
+      void waitForReservation(db, payload.size)
+        .then(() => {
+          mutate(db, user.id);
+          upload.end(payload.encryptedBytes.subarray(payload.size / 2));
+        })
+        .catch(reject);
+    }
+  );
+
+  try {
+    return await responsePromise;
+  } finally {
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        resolve();
+      });
+    });
+  }
+}
+
+async function waitForReservation(db: AppDb, size: number): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const account = db.sqlite
+      .prepare("SELECT reserved_bytes AS reservedBytes FROM storage_accounts")
+      .get() as { reservedBytes: number } | undefined;
+    if (account?.reservedBytes === size) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Attachment reservation was not observed");
+}
+
 describe("attachments routes", () => {
   it("uploads, lists, downloads, and deletes encrypted attachments", async () => {
     const app = createTestApp();
@@ -67,38 +159,72 @@ describe("attachments routes", () => {
 
     await uploadAttachment(agent, noteId, payload).expect(201);
 
+    const stored = (app.locals.db as AppDb).sqlite
+      .prepare(
+        "SELECT filename, mime_type AS mimeType, metadata_cipher AS metadataCipher FROM attachments WHERE id = ?"
+      )
+      .get(payload.id);
+    expect(stored).toEqual({
+      filename: "",
+      mimeType: "",
+      metadataCipher: payload.metadataCipher
+    });
+
     const list = await agent
       .get(`/api/notes/${noteId}/attachments`)
       .expect(200);
     expect(list.body.attachments).toHaveLength(1);
     expect(list.body.attachments[0]).toMatchObject({
       id: payload.id,
-      filename: "receipt.pdf",
+      metadataCipher: payload.metadataCipher,
+      metadataNonce: payload.metadataNonce,
+      metadataFormatVersion: 2,
+      keyEpoch: 1,
       size: 8
     });
+    expect(list.body.attachments[0]).not.toHaveProperty("filename");
+    expect(list.body.attachments[0]).not.toHaveProperty("mimeType");
 
     const download = await agent.get(`/api/attachments/${payload.id}`).expect(200);
-    expect(download.body).toMatchObject({
-      id: payload.id,
-      encryptedBytes: payload.encryptedBytes.toString("base64")
-    });
+    expect(download.body).toEqual(payload.encryptedBytes);
+    expect(download.headers["content-type"]).toMatch(/^application\/octet-stream/u);
+    expect(download.headers["x-fortnote-attachment-id"]).toBe(payload.id);
 
     await agent
       .delete(`/api/attachments/${payload.id}`)
       .set(csrfHeaders())
       .expect(204);
     await agent.get(`/api/attachments/${payload.id}`).expect(404);
+    expect(
+      (app.locals.db as AppDb).sqlite
+        .prepare(
+          "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
+        )
+        .get()
+    ).toEqual({ usedBytes: 0, reservedBytes: 0 });
   });
 
-  it("rejects unsafe filenames and size mismatches", async () => {
+  it("rejects malformed legacy filenames and ciphertext size mismatches", async () => {
     const app = createTestApp();
     const agent = await registerAgent(app, "bad_attachment_user");
     const noteId = await createNote(agent);
 
-    await uploadAttachment(agent, noteId, {
-      ...attachmentPayload(),
-      filename: "../secret.txt"
-    }).expect(400);
+    const unsafe = attachmentPayload();
+    await agent
+      .post(`/api/notes/${noteId}/attachments`)
+      .set(csrfHeaders())
+      .set({
+        "content-type": "application/octet-stream",
+        "x-fortnote-attachment-id": unsafe.id,
+        "x-fortnote-filename": "../secret.txt",
+        "x-fortnote-mime-type": unsafe.mimeType,
+        "x-fortnote-size": String(unsafe.size),
+        "x-fortnote-encrypted-attachment-key": unsafe.encryptedAttachmentKey,
+        "x-fortnote-attachment-key-nonce": unsafe.attachmentKeyNonce,
+        "x-fortnote-file-nonce": unsafe.fileNonce
+      })
+      .send(unsafe.encryptedBytes)
+      .expect(400);
 
     await uploadAttachment(agent, noteId, { ...attachmentPayload(), size: 99 }).expect(
       400
@@ -119,44 +245,22 @@ describe("attachments routes", () => {
   });
 
   it("enforces per-user storage quota", async () => {
-    const app = createTestApp();
+    const app = createTestApp({ storageQuotaBytes: 8 });
     const agent = await registerAgent(app, "quota_attachment_user");
     const noteId = await createNote(agent);
     const db = app.locals.db as AppDb;
-    const user = db.sqlite
-      .prepare("SELECT id FROM users WHERE username = ?")
-      .get("quota_attachment_user") as { id: string };
-    db.sqlite
-      .prepare(
-        `INSERT INTO attachments (
-          id,
-          note_id,
-          user_id,
-          filename,
-          mime_type,
-          size,
-          encrypted_attachment_key,
-          attachment_key_nonce,
-          file_cipher_path,
-          file_nonce
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        crypto.randomUUID(),
-        noteId,
-        user.id,
-        "seed.bin",
-        "application/octet-stream",
-        LIMITS.maxUserStorageBytes,
-        "seed_attachment_key_abcdefghijklmnopqrstuvwxyz",
-        "seed_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
-        "seed-storage-id",
-        "seed_file_nonce_abcdefghijklmnopqrstuvwxyz"
-      );
-    const payload = attachmentPayload();
+    await uploadAttachment(agent, noteId, attachmentPayload()).expect(201);
+    const payload = attachmentPayload(1);
 
     await uploadAttachment(agent, noteId, payload).expect(413);
     await agent.get(`/api/attachments/${payload.id}`).expect(404);
+    expect(
+      db.sqlite
+        .prepare(
+          "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
+        )
+        .get()
+    ).toEqual({ usedBytes: 8, reservedBytes: 0 });
   });
 
   it("rejects attachments on deleted notes", async () => {
@@ -179,6 +283,78 @@ describe("attachments routes", () => {
     await uploadAttachment(alice, noteId, payload).expect(201);
 
     await bob.get(`/api/attachments/${payload.id}`).expect(404);
+  });
+
+  it("rejects a stale epoch after asynchronously receiving ciphertext", async () => {
+    const app = createTestApp();
+    const owner = await registerAgent(app, "attachment_epoch_owner");
+    const noteId = await createNote(owner);
+    const payload = attachmentPayload();
+
+    const outcome = await uploadDuringMutation(
+      app,
+      "attachment_epoch_owner",
+      noteId,
+      payload,
+      (db) => {
+        db.sqlite.prepare("UPDATE notes SET key_epoch = 2 WHERE id = ?").run(noteId);
+      }
+    );
+
+    expect(outcome).toMatchObject({
+      status: 409,
+      body: { error: { code: "stale_epoch" } }
+    });
+    expect(
+      (app.locals.db as AppDb).sqlite
+        .prepare(
+          "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
+        )
+        .get()
+    ).toEqual({ usedBytes: 0, reservedBytes: 0 });
+    expect(fs.readdirSync(String(app.locals.config.dataDir))).toHaveLength(0);
+  });
+
+  it("rechecks editor authorization after asynchronously receiving ciphertext", async () => {
+    const app = createTestApp();
+    const owner = await registerAgent(app, "attachment_auth_owner");
+    await registerAgent(app, "attachment_auth_editor");
+    const noteId = await createNote(owner);
+    const db = app.locals.db as AppDb;
+    const editor = db.sqlite
+      .prepare("SELECT id FROM users WHERE username = ?")
+      .get("attachment_auth_editor") as { id: string };
+    db.sqlite
+      .prepare(
+        "INSERT INTO note_memberships (note_id, user_id, role, status) VALUES (?, ?, 'editor', 'active')"
+      )
+      .run(noteId, editor.id);
+
+    const outcome = await uploadDuringMutation(
+      app,
+      "attachment_auth_editor",
+      noteId,
+      attachmentPayload(),
+      (liveDb, userId) => {
+        liveDb.sqlite
+          .prepare(
+            "UPDATE note_memberships SET status = 'revoked' WHERE note_id = ? AND user_id = ?"
+          )
+          .run(noteId, userId);
+      }
+    );
+
+    expect(outcome).toMatchObject({
+      status: 404,
+      body: { error: { code: "not_found" } }
+    });
+    expect(
+      db.sqlite
+        .prepare(
+          "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
+        )
+        .get()
+    ).toEqual({ usedBytes: 0, reservedBytes: 0 });
   });
 
   it("allows editors and viewers through note memberships", async () => {
@@ -257,6 +433,13 @@ describe("attachments routes", () => {
       .get(payload.id);
     expect(attachment).toBeUndefined();
     expect(fs.readdirSync(String(app.locals.config.dataDir))).toHaveLength(0);
+    expect(
+      db.sqlite
+        .prepare(
+          "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
+        )
+        .get()
+    ).toEqual({ usedBytes: 0, reservedBytes: 0 });
   });
 
   it("rolls back attachment deletes and keeps stored bytes when event writes fail", async () => {
@@ -276,7 +459,7 @@ describe("attachments routes", () => {
       .get(payload.id);
     expect(attachment).toEqual({ id: payload.id });
     const download = await agent.get(`/api/attachments/${payload.id}`).expect(200);
-    expect(download.body.encryptedBytes).toBe(payload.encryptedBytes.toString("base64"));
+    expect(download.body).toEqual(payload.encryptedBytes);
   });
 
   it("removes attachment files on permanent note delete", async () => {
@@ -293,6 +476,13 @@ describe("attachments routes", () => {
       .expect(204);
 
     await agent.get(`/api/attachments/${payload.id}`).expect(404);
+    expect(
+      (app.locals.db as AppDb).sqlite
+        .prepare(
+          "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
+        )
+        .get()
+    ).toEqual({ usedBytes: 0, reservedBytes: 0 });
   });
 });
 

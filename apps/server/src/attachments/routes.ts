@@ -1,6 +1,5 @@
-import { Buffer } from "node:buffer";
-import { desc, eq, sql } from "drizzle-orm";
-import { Router, type Request } from "express";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { LIMITS } from "@fortnote/shared";
 import { requireSession } from "../auth/session.js";
@@ -8,6 +7,7 @@ import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import {
+  AttachmentCiphertextSizeError,
   deleteEncryptedAttachment,
   readEncryptedAttachment,
   safeDisplayFilename,
@@ -16,25 +16,27 @@ import {
 import { canEditNote, canReadNote, getNoteAccess } from "../notes/access.js";
 import { writeRequestEvent } from "../notes/events.js";
 
-const uploadAttachmentSchema = z.object({
+const uploadAttachmentBaseSchema = z.object({
   id: z.uuid(),
-  filename: z.string().min(1).max(180),
-  mimeType: z.string().min(1).max(120),
   size: z.number().int().nonnegative(),
   encryptedAttachmentKey: z.string().min(16),
   attachmentKeyNonce: z.string().min(16),
   fileNonce: z.string().min(16)
 });
-
-type UploadReadResult =
-  | { ok: true; bytes: Buffer }
-  | {
-      ok: false;
-      code: "bad_request" | "payload_too_large";
-      message: string;
-    };
-
-class StorageQuotaExceededError extends Error {}
+const protectedUploadAttachmentSchema = uploadAttachmentBaseSchema.extend({
+  expectedKeyEpoch: z.number().int().positive(),
+  metadataCipher: z.string().min(1),
+  metadataNonce: z.string().min(16),
+  metadataFormatVersion: z.literal(2)
+});
+const legacyUploadAttachmentSchema = uploadAttachmentBaseSchema.extend({
+  filename: z.string().min(1).max(180),
+  mimeType: z.string().min(1).max(120)
+});
+const uploadAttachmentSchema = z.union([
+  protectedUploadAttachmentSchema,
+  legacyUploadAttachmentSchema
+]);
 
 function getAttachment(
   context: AppContext,
@@ -45,19 +47,6 @@ function getAttachment(
     .from(schema.attachments)
     .where(eq(schema.attachments.id, attachmentId))
     .get();
-}
-
-function userStorageBytes(
-  context: AppContext,
-  userId: string,
-  db: Pick<AppContext["db"]["orm"], "select"> = context.db.orm
-): number {
-  const row = db
-    .select({ total: sql<number>`COALESCE(SUM(${schema.attachments.size}), 0)`.mapWith(Number) })
-    .from(schema.attachments)
-    .where(eq(schema.attachments.userId, userId))
-    .get();
-  return row?.total ?? 0;
 }
 
 function publishEventCursor(context: AppContext, cursor: number): void {
@@ -83,6 +72,12 @@ function uploadMetadata(request: Request) {
     filename: headerValue(request, "x-fortnote-filename"),
     mimeType: headerValue(request, "x-fortnote-mime-type"),
     size: Number(headerValue(request, "x-fortnote-size")),
+    expectedKeyEpoch: Number(headerValue(request, "x-fortnote-expected-key-epoch")),
+    metadataCipher: headerValue(request, "x-fortnote-metadata-cipher"),
+    metadataNonce: headerValue(request, "x-fortnote-metadata-nonce"),
+    metadataFormatVersion: Number(
+      headerValue(request, "x-fortnote-metadata-format-version")
+    ),
     encryptedAttachmentKey: headerValue(
       request,
       "x-fortnote-encrypted-attachment-key"
@@ -102,64 +97,85 @@ function declaredContentLength(request: Request): number | null {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : Number.NaN;
 }
 
-function requestChunkToBuffer(chunk: unknown): Buffer {
-  if (Buffer.isBuffer(chunk)) {
-    return chunk;
-  }
-  if (chunk instanceof Uint8Array) {
-    return Buffer.from(chunk);
-  }
-  if (typeof chunk === "string") {
-    return Buffer.from(chunk);
-  }
-  throw new Error("Unsupported upload chunk");
+type AttachmentGateError =
+  | "conflict"
+  | "duplicate"
+  | "not-found"
+  | "quota"
+  | "rotation-pending"
+  | "stale-epoch"
+  | "unauthorized";
+
+function attachmentMutationState(
+  db: Pick<AppContext["db"]["orm"], "select">,
+  noteId: string,
+  userId: string
+) {
+  return db
+    .select({
+      noteId: schema.notes.id,
+      ownerUserId: schema.notes.userId,
+      version: schema.notes.version,
+      keyEpoch: schema.notes.keyEpoch,
+      isDeleted: schema.notes.isDeleted,
+      rotationFenced: schema.notes.rotationFenced,
+      role: schema.noteMemberships.role,
+      status: schema.noteMemberships.status
+    })
+    .from(schema.notes)
+    .innerJoin(
+      schema.noteMemberships,
+      eq(schema.noteMemberships.noteId, schema.notes.id)
+    )
+    .where(
+      and(
+        eq(schema.notes.id, noteId),
+        eq(schema.noteMemberships.userId, userId)
+      )
+    )
+    .get();
 }
 
-async function readEncryptedUpload(
-  request: Request,
-  expectedBytes: number
-): Promise<UploadReadResult> {
-  const contentLength = declaredContentLength(request);
-  if (Number.isNaN(contentLength)) {
-    return { ok: false, code: "bad_request", message: "Invalid Content-Length" };
-  }
-  if (contentLength !== null && contentLength !== expectedBytes) {
-    return {
-      ok: false,
-      code: "bad_request",
-      message: "Attachment size mismatch"
-    };
-  }
+function canMutateAttachment(
+  state: ReturnType<typeof attachmentMutationState>
+): state is NonNullable<typeof state> {
+  return (
+    state?.status === "active" &&
+    (state.role === "owner" || state.role === "editor")
+  );
+}
 
-  const chunks: Buffer[] = [];
-  let total = 0;
+function releaseAttachmentReservation(
+  context: AppContext,
+  ownerUserId: string,
+  size: number
+): void {
+  context.db.orm
+    .update(schema.storageAccounts)
+    .set({
+      reservedBytes: sql`MAX(${schema.storageAccounts.reservedBytes} - ${size}, 0)`,
+      updatedAt: sql`CURRENT_TIMESTAMP`
+    })
+    .where(eq(schema.storageAccounts.userId, ownerUserId))
+    .run();
+}
 
-  try {
-    for await (const chunk of request as AsyncIterable<unknown>) {
-      const buffer = requestChunkToBuffer(chunk);
-      total += buffer.byteLength;
-      if (total > LIMITS.maxAttachmentBytes) {
-        return {
-          ok: false,
-          code: "payload_too_large",
-          message: "Attachment too large"
-        };
-      }
-      chunks.push(buffer);
-    }
-  } catch {
-    return { ok: false, code: "bad_request", message: "Unable to read attachment" };
+function sendAttachmentGateError(response: Response, kind: AttachmentGateError): void {
+  if (kind === "not-found") {
+    sendApiError(response, "not_found", "Note not found");
+  } else if (kind === "unauthorized") {
+    sendApiError(response, "unauthorized", "Session expired during upload");
+  } else if (kind === "stale-epoch") {
+    sendApiError(response, "stale_epoch", "Note protection changed; encrypt again");
+  } else if (kind === "rotation-pending") {
+    sendApiError(response, "rotation_pending", "Note protection is changing");
+  } else if (kind === "quota") {
+    sendApiError(response, "quota_exceeded", "Storage quota exceeded");
+  } else if (kind === "duplicate") {
+    sendApiError(response, "conflict", "Attachment already exists");
+  } else {
+    sendApiError(response, "conflict", "Restore note before attaching files");
   }
-
-  if (total !== expectedBytes) {
-    return {
-      ok: false,
-      code: "bad_request",
-      message: "Attachment size mismatch"
-    };
-  }
-
-  return { ok: true, bytes: Buffer.concat(chunks, total) };
 }
 
 export function createAttachmentsRouter(context: AppContext): Router {
@@ -177,82 +193,216 @@ export function createAttachmentsRouter(context: AppContext): Router {
       return;
     }
 
-    const access = getNoteAccess(context, request.params.noteId, session.userId);
-    if (!canEditNote(access)) {
-      sendApiError(response, "not_found", "Note not found");
+    const payload = parsed.data;
+    const contentLength = declaredContentLength(request);
+    if (Number.isNaN(contentLength)) {
+      sendApiError(response, "bad_request", "Invalid Content-Length");
       return;
     }
-    if (access.isDeleted) {
-      sendApiError(response, "conflict", "Restore note before attaching files");
-      return;
-    }
-    if (!safeDisplayFilename(parsed.data.filename)) {
-      sendApiError(response, "bad_request", "Invalid attachment filename");
-      return;
-    }
-    if (parsed.data.size > LIMITS.maxAttachmentBytes) {
+    if (payload.size > LIMITS.maxAttachmentBytes) {
       sendApiError(response, "payload_too_large", "Attachment too large");
       return;
     }
-    if (
-      userStorageBytes(context, access.ownerUserId) + parsed.data.size >
-      LIMITS.maxUserStorageBytes
-    ) {
-      sendApiError(response, "quota_exceeded", "Storage quota exceeded");
+    if (contentLength !== null && contentLength !== payload.size) {
+      sendApiError(response, "bad_request", "Attachment size mismatch");
       return;
     }
+    if ("filename" in payload && !safeDisplayFilename(payload.filename)) {
+      sendApiError(response, "bad_request", "Invalid attachment filename");
+      return;
+    }
+    const reservation = context.db.orm.transaction((tx) => {
+      const current = attachmentMutationState(
+        tx,
+        request.params.noteId,
+        session.userId
+      );
+      if (!canMutateAttachment(current)) {
+        return { kind: "not-found" as const };
+      }
+      if (current.isDeleted) {
+        return { kind: "conflict" as const };
+      }
+      if (current.rotationFenced) {
+        return { kind: "rotation-pending" as const };
+      }
+      const expectedKeyEpoch =
+        "expectedKeyEpoch" in payload ? payload.expectedKeyEpoch : current.keyEpoch;
+      if (current.keyEpoch !== expectedKeyEpoch) {
+        return { kind: "stale-epoch" as const };
+      }
+      const duplicate = tx
+        .select({ id: schema.attachments.id })
+        .from(schema.attachments)
+        .where(eq(schema.attachments.id, payload.id))
+        .get();
+      if (duplicate) {
+        return { kind: "duplicate" as const };
+      }
 
-    const encryptedBytes = await readEncryptedUpload(request, parsed.data.size);
-    if (!encryptedBytes.ok) {
-      sendApiError(response, encryptedBytes.code, encryptedBytes.message);
+      tx.insert(schema.storageAccounts)
+        .values({ userId: current.ownerUserId })
+        .onConflictDoNothing()
+        .run();
+      const reserved = tx
+        .update(schema.storageAccounts)
+        .set({
+          reservedBytes: sql`${schema.storageAccounts.reservedBytes} + ${payload.size}`,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(
+          and(
+            eq(schema.storageAccounts.userId, current.ownerUserId),
+            sql`${schema.storageAccounts.usedBytes} + ${schema.storageAccounts.reservedBytes} + ${payload.size} <= ${context.config.storageQuotaBytes}`
+          )
+        )
+        .run();
+      if (reserved.changes !== 1) {
+        return { kind: "quota" as const };
+      }
+      return {
+        kind: "reserved" as const,
+        expectedKeyEpoch,
+        ownerUserId: current.ownerUserId
+      };
+    });
+    if (reservation.kind !== "reserved") {
+      sendAttachmentGateError(response, reservation.kind);
       return;
     }
 
     const storageId = crypto.randomUUID();
+    let committed = false;
     try {
-      await writeEncryptedAttachment(context.config, storageId, encryptedBytes.bytes);
-      const cursor = context.db.orm.transaction((tx) => {
-        if (
-          userStorageBytes(context, access.ownerUserId, tx) + parsed.data.size >
-          LIMITS.maxUserStorageBytes
-        ) {
-          throw new StorageQuotaExceededError();
+      await writeEncryptedAttachment(
+        context.config,
+        storageId,
+        request,
+        payload.size,
+        LIMITS.maxAttachmentBytes
+      );
+      const outcome = context.db.orm.transaction((tx) => {
+        const now = new Date().toISOString();
+        const activeSession = tx
+          .select({ id: schema.sessions.id })
+          .from(schema.sessions)
+          .where(
+            and(
+              eq(schema.sessions.id, session.id),
+              gt(schema.sessions.idleExpiresAt, now),
+              gt(schema.sessions.absoluteExpiresAt, now)
+            )
+          )
+          .get();
+        if (!activeSession) {
+          return { kind: "unauthorized" as const };
         }
+        const current = attachmentMutationState(
+          tx,
+          request.params.noteId,
+          session.userId
+        );
+        if (!canMutateAttachment(current)) {
+          return { kind: "not-found" as const };
+        }
+        if (current.isDeleted) {
+          return { kind: "conflict" as const };
+        }
+        if (current.rotationFenced) {
+          return { kind: "rotation-pending" as const };
+        }
+        if (
+          current.ownerUserId !== reservation.ownerUserId ||
+          current.keyEpoch !== reservation.expectedKeyEpoch
+        ) {
+          return { kind: "stale-epoch" as const };
+        }
+        const duplicate = tx
+          .select({ id: schema.attachments.id })
+          .from(schema.attachments)
+          .where(eq(schema.attachments.id, payload.id))
+          .get();
+        if (duplicate) {
+          return { kind: "duplicate" as const };
+        }
+        const quota = tx
+          .select({ reservedBytes: schema.storageAccounts.reservedBytes })
+          .from(schema.storageAccounts)
+          .where(eq(schema.storageAccounts.userId, reservation.ownerUserId))
+          .get();
+        if (!quota || quota.reservedBytes < payload.size) {
+          return { kind: "quota" as const };
+        }
+
         tx.insert(schema.attachments).values({
-          id: parsed.data.id,
-          noteId: access.noteId,
-          userId: access.ownerUserId,
-          filename: parsed.data.filename.trim(),
-          mimeType: parsed.data.mimeType,
-          size: parsed.data.size,
-          encryptedAttachmentKey: parsed.data.encryptedAttachmentKey,
-          attachmentKeyNonce: parsed.data.attachmentKeyNonce,
+          id: payload.id,
+          noteId: current.noteId,
+          userId: reservation.ownerUserId,
+          filename: "filename" in payload ? payload.filename.trim() : "",
+          mimeType: "mimeType" in payload ? payload.mimeType : "",
+          metadataCipher: "metadataCipher" in payload ? payload.metadataCipher : null,
+          metadataNonce: "metadataNonce" in payload ? payload.metadataNonce : null,
+          metadataFormatVersion:
+            "metadataFormatVersion" in payload ? payload.metadataFormatVersion : null,
+          keyEpoch: reservation.expectedKeyEpoch,
+          size: payload.size,
+          encryptedAttachmentKey: payload.encryptedAttachmentKey,
+          attachmentKeyNonce: payload.attachmentKeyNonce,
           fileCipherPath: storageId,
-          fileNonce: parsed.data.fileNonce
+          fileNonce: payload.fileNonce
         }).run();
-        return writeRequestEvent(context, request, {
-          noteId: access.noteId,
+        tx.update(schema.storageAccounts)
+          .set({
+            usedBytes: sql`${schema.storageAccounts.usedBytes} + ${payload.size}`,
+            reservedBytes: sql`${schema.storageAccounts.reservedBytes} - ${payload.size}`,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(eq(schema.storageAccounts.userId, reservation.ownerUserId))
+          .run();
+        const cursor = writeRequestEvent(context, request, {
+          noteId: current.noteId,
           actorUserId: session.userId,
           eventType: "attachment.created",
-          noteVersion: access.version,
+          noteVersion: current.version,
           resourceType: "attachment",
-          resourceId: parsed.data.id,
+          resourceId: payload.id,
           payloadMetadata: {
-            attachmentId: parsed.data.id
+            attachmentId: payload.id,
+            keyEpoch: reservation.expectedKeyEpoch
           }
         }, tx);
+        return { kind: "committed" as const, cursor };
       });
-      publishEventCursor(context, cursor);
+      if (outcome.kind !== "committed") {
+        sendAttachmentGateError(response, outcome.kind);
+        return;
+      }
+      committed = true;
+      publishEventCursor(context, outcome.cursor);
+      response.status(201).json({
+        id: payload.id,
+        keyEpoch: reservation.expectedKeyEpoch
+      });
     } catch (error) {
-      await deleteEncryptedAttachment(context.config, storageId);
-      if (error instanceof StorageQuotaExceededError) {
-        sendApiError(response, "quota_exceeded", "Storage quota exceeded");
+      if (error instanceof AttachmentCiphertextSizeError) {
+        sendApiError(
+          response,
+          error.kind === "too-large" ? "payload_too_large" : "bad_request",
+          error.message
+        );
         return;
       }
       throw error;
+    } finally {
+      if (!committed) {
+        releaseAttachmentReservation(
+          context,
+          reservation.ownerUserId,
+          payload.size
+        );
+        await deleteEncryptedAttachment(context.config, storageId);
+      }
     }
-
-    response.status(201).json({ id: parsed.data.id });
   });
 
   router.get("/notes/:noteId/attachments", (request, response) => {
@@ -272,6 +422,10 @@ export function createAttachmentsRouter(context: AppContext): Router {
         id: schema.attachments.id,
         filename: schema.attachments.filename,
         mimeType: schema.attachments.mimeType,
+        metadataCipher: schema.attachments.metadataCipher,
+        metadataNonce: schema.attachments.metadataNonce,
+        metadataFormatVersion: schema.attachments.metadataFormatVersion,
+        keyEpoch: schema.attachments.keyEpoch,
         size: schema.attachments.size,
         encryptedAttachmentKey: schema.attachments.encryptedAttachmentKey,
         attachmentKeyNonce: schema.attachments.attachmentKeyNonce,
@@ -283,10 +437,16 @@ export function createAttachmentsRouter(context: AppContext): Router {
       .orderBy(desc(schema.attachments.createdAt))
       .all();
 
-    response.json({ attachments: rows });
+    response.json({
+      attachments: rows.map((row) => ({
+        ...row,
+        filename: row.metadataFormatVersion === 2 ? undefined : row.filename,
+        mimeType: row.metadataFormatVersion === 2 ? undefined : row.mimeType
+      }))
+    });
   });
 
-  router.get("/attachments/:id", async (request, response) => {
+  router.get("/attachments/:id", (request, response) => {
     const session = requireSession(context.db, request, response);
     if (!session) {
       return;
@@ -303,12 +463,20 @@ export function createAttachmentsRouter(context: AppContext): Router {
       return;
     }
 
-    response.json({
-      ...attachment,
-      encryptedBytes: (
-        await readEncryptedAttachment(context.config, attachment.fileCipherPath)
-      ).toString("base64")
+    response.status(200);
+    response.set({
+      "content-type": "application/octet-stream",
+      "content-length": String(attachment.size),
+      "x-fortnote-attachment-id": attachment.id,
+      "x-fortnote-note-id": attachment.noteId,
+      "x-fortnote-key-epoch": String(attachment.keyEpoch)
     });
+    const stream = readEncryptedAttachment(
+      context.config,
+      attachment.fileCipherPath
+    );
+    stream.on("error", () => response.destroy());
+    stream.pipe(response);
   });
 
   router.delete("/attachments/:id", async (request, response) => {
@@ -331,6 +499,13 @@ export function createAttachmentsRouter(context: AppContext): Router {
     const cursor = context.db.orm.transaction((tx) => {
       tx.delete(schema.attachments)
         .where(eq(schema.attachments.id, attachment.id))
+        .run();
+      tx.update(schema.storageAccounts)
+        .set({
+          usedBytes: sql`MAX(${schema.storageAccounts.usedBytes} - ${attachment.size}, 0)`,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(eq(schema.storageAccounts.userId, attachment.userId))
         .run();
       return writeRequestEvent(context, request, {
         noteId: attachment.noteId,
