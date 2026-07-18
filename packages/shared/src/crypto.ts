@@ -29,6 +29,10 @@ export interface EncryptedPayload {
   formatVersion: number;
 }
 
+export type ProtectedContextValue = string | number | boolean;
+
+export type ContentKind = "update" | "checkpoint" | "root-update";
+
 export interface SharingKeyPair {
   publicKey: string;
   privateKey: string;
@@ -44,6 +48,22 @@ export function toBase64(bytes: Uint8Array): string {
 
 export function fromBase64(value: string): Uint8Array {
   return sodium.from_base64(value, sodium.base64_variants.ORIGINAL);
+}
+
+export function fromCanonicalBase64(value: string): Uint8Array {
+  if (!value || value.trim() !== value) {
+    throw new Error("Expected canonical Base64");
+  }
+  let decoded: Uint8Array;
+  try {
+    decoded = fromBase64(value);
+  } catch {
+    throw new Error("Expected canonical Base64");
+  }
+  if (toBase64(decoded) !== value) {
+    throw new Error("Expected canonical Base64");
+  }
+  return decoded;
 }
 
 export function utf8(value: string): Uint8Array {
@@ -121,6 +141,23 @@ export async function encryptBytes(
   key: Uint8Array,
   associatedData: Uint8Array
 ): Promise<EncryptedPayload> {
+  return encryptBytesWithFormat(plaintext, key, associatedData, 1);
+}
+
+export async function encryptBytesV2(
+  plaintext: Uint8Array,
+  key: Uint8Array,
+  associatedData: Uint8Array
+): Promise<EncryptedPayload> {
+  return encryptBytesWithFormat(plaintext, key, associatedData, 2);
+}
+
+async function encryptBytesWithFormat(
+  plaintext: Uint8Array,
+  key: Uint8Array,
+  associatedData: Uint8Array,
+  formatVersion: 1 | 2
+): Promise<EncryptedPayload> {
   await cryptoReady();
   const nonce = randomBytes(XCHACHA_NONCE_BYTES);
   const cipher = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
@@ -134,7 +171,7 @@ export async function encryptBytes(
   return {
     cipher: toBase64(cipher),
     nonce: toBase64(nonce),
-    formatVersion: 1
+    formatVersion
   };
 }
 
@@ -144,13 +181,32 @@ export async function decryptBytes(
   associatedData: Uint8Array
 ): Promise<Uint8Array> {
   await cryptoReady();
+  const validated = validateEncryptedPayload(payload);
   return sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
     null,
-    fromBase64(payload.cipher),
+    validated.cipher,
     associatedData,
-    fromBase64(payload.nonce),
+    validated.nonce,
     key
   );
+}
+
+export function validateEncryptedPayload(payload: EncryptedPayload): {
+  cipher: Uint8Array;
+  nonce: Uint8Array;
+} {
+  if (payload.formatVersion !== 1 && payload.formatVersion !== 2) {
+    throw new Error("Unsupported encrypted payload format");
+  }
+  const cipher = fromCanonicalBase64(payload.cipher);
+  if (cipher.length === 0) {
+    throw new Error("Encrypted payload cipher is empty");
+  }
+  const nonce = fromCanonicalBase64(payload.nonce);
+  if (nonce.length !== XCHACHA_NONCE_BYTES) {
+    throw new Error("Invalid XChaCha nonce length");
+  }
+  return { cipher, nonce };
 }
 
 export async function createSharingKeyPair(): Promise<SharingKeyPair> {
@@ -202,6 +258,71 @@ export function attachmentAssociatedData(input: {
   return utf8(
     `attachment:${String(input.formatVersion)}:${input.userId}:${input.noteId}:${input.attachmentId}`
   );
+}
+
+export function associatedDataV2(
+  purpose: string,
+  context: Readonly<Record<string, ProtectedContextValue>>
+): Uint8Array {
+  if (!purpose) {
+    throw new Error("Crypto purpose is required");
+  }
+  const entries = Object.entries(context)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => {
+      if (!key || (typeof value === "number" && !Number.isSafeInteger(value))) {
+        throw new Error("Invalid crypto context");
+      }
+      return [key, typeof value, value] as const;
+    });
+  return utf8(JSON.stringify(["fortnote", purpose, 2, entries]));
+}
+
+export function contentChunkAssociatedData(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  sectionId: string;
+  keyEpoch: number;
+  updateId: string;
+  uploadId: string;
+  chunkIndex: number;
+  chunkCount: number;
+  totalCipherBytes: number;
+  kind: ContentKind;
+  formatVersion: 2;
+}): Uint8Array {
+  if (
+    input.formatVersion !== 2 ||
+    !Number.isSafeInteger(input.chunkIndex) ||
+    input.chunkIndex < 0 ||
+    !Number.isSafeInteger(input.chunkCount) ||
+    input.chunkCount <= 0 ||
+    input.chunkIndex >= input.chunkCount ||
+    !Number.isSafeInteger(input.totalCipherBytes) ||
+    input.totalCipherBytes <= 0
+  ) {
+    throw new Error("Invalid content chunk context");
+  }
+  return associatedDataV2("content-chunk", input);
+}
+
+export function epochLinkAssociatedData(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  sourceEpoch: number;
+  targetEpoch: number;
+  formatVersion: 2;
+}): Uint8Array {
+  if (
+    input.formatVersion !== 2 ||
+    !Number.isSafeInteger(input.sourceEpoch) ||
+    !Number.isSafeInteger(input.targetEpoch) ||
+    input.sourceEpoch <= 0 ||
+    input.targetEpoch !== input.sourceEpoch + 1
+  ) {
+    throw new Error("Epoch link must bind adjacent source and target epochs");
+  }
+  return associatedDataV2("note-epoch-link", input);
 }
 
 export function generateRecoverySecret(): string {

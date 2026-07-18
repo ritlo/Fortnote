@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import {
+  associatedDataV2,
   attachmentAssociatedData,
+  contentChunkAssociatedData,
   createKdfParams,
   cryptoReady,
   createSharingKeyPair,
@@ -10,14 +12,18 @@ import {
   deriveRecoveryWrappingKey,
   deriveVaultWrappingKey,
   encryptBytes,
+  encryptBytesV2,
+  epochLinkAssociatedData,
   fromBase64,
+  fromCanonicalBase64,
   generateRecoverySecret,
   noteAssociatedData,
   openSealedBytes,
   randomBytes,
   sealBytes,
   toBase64,
-  utf8
+  utf8,
+  validateEncryptedPayload
 } from "./crypto.js";
 import {
   crdtCheckpointAssociatedData,
@@ -184,5 +190,130 @@ describe("crypto helpers", () => {
         privateKey: alice.privateKey
       })
     ).rejects.toThrow();
+  });
+
+  it("reads v1 payloads while new protected writes use v2", async () => {
+    const key = randomBytes(32);
+    const aad = associatedDataV2("note-title", {
+      cryptoOwnerId: "owner-a",
+      keyEpoch: 2,
+      noteId: "note-a",
+      rootVersion: 7
+    });
+    const legacy = await encryptBytes(utf8("legacy"), key, aad);
+    const current = await encryptBytesV2(utf8("current"), key, aad);
+
+    expect(legacy.formatVersion).toBe(1);
+    expect(current.formatVersion).toBe(2);
+    expect(toBase64(await decryptBytes(legacy, key, aad))).toBe(toBase64(utf8("legacy")));
+    expect(toBase64(await decryptBytes(current, key, aad))).toBe(toBase64(utf8("current")));
+  });
+
+  it("rejects protected metadata moved to another context", async () => {
+    const key = randomBytes(32);
+    const context = {
+      cryptoOwnerId: "owner-a",
+      keyEpoch: 2,
+      noteId: "note-a",
+      rootVersion: 7
+    };
+    const encrypted = await encryptBytesV2(
+      utf8("private title"),
+      key,
+      associatedDataV2("note-title", context)
+    );
+
+    await expect(
+      decryptBytes(
+        encrypted,
+        key,
+        associatedDataV2("note-title", { ...context, noteId: "note-b" })
+      )
+    ).rejects.toThrow();
+    await expect(
+      decryptBytes(
+        encrypted,
+        key,
+        associatedDataV2("attachment-metadata", context)
+      )
+    ).rejects.toThrow();
+  });
+
+  it("requires canonical Base64 and exact XChaCha nonce length", () => {
+    const canonical = toBase64(randomBytes(32));
+    expect(toBase64(fromCanonicalBase64(canonical))).toBe(canonical);
+    expect(() => fromCanonicalBase64(` ${canonical}`)).toThrow("canonical Base64");
+    expect(() => fromCanonicalBase64(canonical.replace(/=+$/, ""))).toThrow(
+      "canonical Base64"
+    );
+    expect(() =>
+      validateEncryptedPayload({
+        cipher: toBase64(randomBytes(16)),
+        nonce: toBase64(randomBytes(23)),
+        formatVersion: 2
+      })
+    ).toThrow("nonce");
+  });
+
+  it("binds every chunk coordinate and total into its AAD", async () => {
+    const key = randomBytes(32);
+    const input = {
+      cryptoOwnerId: "owner-a",
+      noteId: "note-a",
+      sectionId: "section-a",
+      keyEpoch: 3,
+      updateId: "update-a",
+      uploadId: "upload-a",
+      chunkIndex: 0,
+      chunkCount: 40,
+      totalCipherBytes: 10_485_760,
+      kind: "checkpoint" as const,
+      formatVersion: 2 as const
+    };
+    const encrypted = await encryptBytesV2(
+      utf8("chunk"),
+      key,
+      contentChunkAssociatedData(input)
+    );
+
+    await expect(
+      decryptBytes(
+        encrypted,
+        key,
+        contentChunkAssociatedData({ ...input, chunkIndex: 1 })
+      )
+    ).rejects.toThrow();
+    await expect(
+      decryptBytes(
+        encrypted,
+        key,
+        contentChunkAssociatedData({ ...input, totalCipherBytes: 10_485_761 })
+      )
+    ).rejects.toThrow();
+  });
+
+  it("binds a backward epoch link to adjacent source and target epochs", async () => {
+    const key = randomBytes(32);
+    const input = {
+      cryptoOwnerId: "owner-a",
+      noteId: "note-a",
+      sourceEpoch: 3,
+      targetEpoch: 4,
+      formatVersion: 2 as const
+    };
+    const encrypted = await encryptBytesV2(
+      randomBytes(32),
+      key,
+      epochLinkAssociatedData(input)
+    );
+
+    await expect(
+      decryptBytes(
+        encrypted,
+        key,
+        epochLinkAssociatedData({ ...input, sourceEpoch: 2, targetEpoch: 3 })
+      )
+    ).rejects.toThrow();
+    expect(() => epochLinkAssociatedData({ ...input, targetEpoch: 5 })).toThrow("adjacent");
   });
 });
