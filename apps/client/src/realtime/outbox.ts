@@ -9,12 +9,23 @@ export interface OutboxFence {
   keyEpoch: number;
 }
 
+export type TerminalOutboxReason = "forbidden" | "stale-epoch";
+
+export interface EncryptedSectionDraft extends OutboxFence {
+  userId: string;
+  reason: TerminalOutboxReason;
+  updateIds: string[];
+  createdAt: number;
+  retainedAt: number;
+}
+
 export type EncryptedOutboxStore = Pick<
   FortnoteIndexedDb,
   | "acknowledgeOutbox"
   | "acquireLease"
   | "getAcknowledgement"
   | "listOutbox"
+  | "preserveOutboxFence"
   | "putOutbox"
   | "subscribe"
 >;
@@ -38,6 +49,12 @@ export interface EncryptedOutbox {
   deactivate(fence: OutboxFence): void;
   enqueue(record: EncryptedOutboxRecord): Promise<void>;
   flush(fence: OutboxFence): Promise<number>;
+  listRecoverableDrafts(): Promise<EncryptedSectionDraft[]>;
+  preserveTerminalRejection(
+    updateId: string,
+    sectionId: string,
+    reason: TerminalOutboxReason
+  ): Promise<EncryptedSectionDraft | null>;
   setTransport(send: EncryptedOutboxTransport | null): void;
 }
 
@@ -56,6 +73,7 @@ export function createEncryptedOutbox({
   const activeFences = new Map<string, OutboxFence>();
   const flushes = new Map<string, Promise<number>>();
   const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const terminalFences = new Map<string, TerminalOutboxReason>();
   let closed = false;
   let transport = send ?? null;
 
@@ -83,6 +101,13 @@ export function createEncryptedOutbox({
 
   async function activate(fence: OutboxFence): Promise<number> {
     const key = fenceKey(fence);
+    const terminal = (await recordsFor(fence)).find(
+      (record) => record.state === "terminal-rejected" && record.terminalReason
+    );
+    if (terminal?.terminalReason) {
+      await preserveFence(fence, terminal.terminalReason);
+      return 0;
+    }
     activeFences.set(key, { ...fence });
     return flush(fence);
   }
@@ -98,6 +123,7 @@ export function createEncryptedOutbox({
     }
     retryTimers.clear();
     activeFences.clear();
+    terminalFences.clear();
     transport = null;
   }
 
@@ -113,11 +139,71 @@ export function createEncryptedOutbox({
 
   async function enqueue(record: EncryptedOutboxRecord): Promise<void> {
     assertAccount(record);
-    await database.putOutbox(record);
     const fence = fenceFor(record);
+    const terminalReason = terminalFences.get(fenceKey(fence));
+    await database.putOutbox(terminalReason
+      ? {
+          ...record,
+          state: "terminal-rejected",
+          terminalReason,
+          terminalRejectedAt: now(),
+          updatedAt: now()
+        }
+      : record);
+    if (terminalReason) {
+      return;
+    }
     if (isActive(fence) && transport) {
       await flush(fence);
     }
+  }
+
+  async function listRecoverableDrafts(): Promise<EncryptedSectionDraft[]> {
+    const records = (await database.listOutbox(userId)).filter(
+      (record) => record.state === "terminal-rejected" && record.terminalReason
+    );
+    const grouped = new Map<string, EncryptedOutboxRecord[]>();
+    for (const record of records) {
+      const key = fenceKey(record);
+      grouped.set(key, [...(grouped.get(key) ?? []), record]);
+    }
+    return [...grouped.values()].map(sectionDraftFor);
+  }
+
+  async function preserveTerminalRejection(
+    updateId: string,
+    sectionId: string,
+    reason: TerminalOutboxReason
+  ): Promise<EncryptedSectionDraft | null> {
+    const rejected = (await database.listOutbox(userId)).find(
+      (record) => record.updateId === updateId && record.sectionId === sectionId
+    );
+    return rejected ? preserveFence(fenceFor(rejected), reason) : null;
+  }
+
+  async function preserveFence(
+    fence: OutboxFence,
+    reason: TerminalOutboxReason
+  ): Promise<EncryptedSectionDraft | null> {
+    const key = fenceKey(fence);
+    terminalFences.set(key, reason);
+    deactivate(fence);
+    const rejectedAt = now();
+    const retained = await database.preserveOutboxFence(
+      { ...fence, userId },
+      reason,
+      rejectedAt
+    );
+    if (retained.length === 0) {
+      return null;
+    }
+    return sectionDraftFor(retained);
+  }
+
+  async function recordsFor(fence: OutboxFence): Promise<EncryptedOutboxRecord[]> {
+    return (await database.listOutbox(userId)).filter((record) =>
+      matchesFence(record, fence)
+    );
   }
 
   function flush(fence: OutboxFence): Promise<number> {
@@ -140,8 +226,8 @@ export function createEncryptedOutbox({
       return 0;
     }
 
-    const records = (await database.listOutbox(userId)).filter((record) =>
-      matchesFence(record, fence)
+    const records = (await recordsFor(fence)).filter(
+      (record) => record.state !== "terminal-rejected"
     );
     if (records.length === 0 || !isActive(fence)) {
       cancelRetry(fence);
@@ -262,7 +348,28 @@ export function createEncryptedOutbox({
     deactivate,
     enqueue,
     flush,
+    listRecoverableDrafts,
+    preserveTerminalRejection,
     setTransport
+  };
+}
+
+function sectionDraftFor(records: EncryptedOutboxRecord[]): EncryptedSectionDraft {
+  const first = records[0];
+  if (!first?.terminalReason) {
+    throw new Error("Recoverable encrypted draft is missing its terminal reason");
+  }
+  return {
+    userId: first.userId,
+    noteId: first.noteId,
+    sectionId: first.sectionId,
+    keyEpoch: first.keyEpoch,
+    reason: first.terminalReason,
+    updateIds: records.map((record) => record.updateId),
+    createdAt: Math.min(...records.map((record) => record.createdAt)),
+    retainedAt: Math.max(
+      ...records.map((record) => record.terminalRejectedAt ?? record.updatedAt)
+    )
   };
 }
 

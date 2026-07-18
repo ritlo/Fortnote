@@ -33,6 +33,7 @@ export function useRealtimeEvents() {
   const addCollaborationEvents = useAppStore((state) => state.addCollaborationEvents);
   const setEventCursor = useAppStore((state) => state.setEventCursor);
   const setNotePresence = useAppStore((state) => state.setNotePresence);
+  const retainRecoverableDraft = useAppStore((state) => state.retainRecoverableDraft);
   const setError = useAppStore((state) => state.setError);
   const setRealtimeStatus = useAppStore((state) => state.setRealtimeStatus);
   const connectionRef = useRef<RealtimeConnection | null>(null);
@@ -51,6 +52,8 @@ export function useRealtimeEvents() {
     }
 
     let isActive = true;
+    const currentUser = user;
+    const currentRootKey = rootKey;
     const userId = user.id;
 
     function clearReconnectTimer() {
@@ -128,6 +131,41 @@ export function useRealtimeEvents() {
         after: useAppStore.getState().eventCursor,
         userId,
         onCrdtError: setError,
+        onRecoverableCrdtDraft: (draft) => {
+          if (
+            !isActive ||
+            draft.userId !== userId ||
+            !isCurrentVaultSession(userId, currentRootKey)
+          ) {
+            return;
+          }
+          retainRecoverableDraft(draft);
+          if (draft.source === "restored") {
+            return;
+          }
+          setError(
+            draft.reason === "forbidden"
+              ? "Write access changed. Your encrypted draft was retained for recovery."
+              : "The note key changed. Your encrypted draft was retained for recovery."
+          );
+          void loadDecryptedNote(currentUser, currentRootKey, draft.noteId, {
+            beforeCommit: () => {
+              removeCrdtNote(draft.noteId);
+            },
+            preserveRealtimeContent: false
+          }).catch(() => {
+            if (!isActive || !isCurrentVaultSession(userId, currentRootKey)) {
+              return;
+            }
+            if (draft.reason === "forbidden") {
+              removeCrdtNote(draft.noteId);
+              useAppStore.getState().removeNoteAccess(draft.noteId);
+            }
+            setError(
+              "Your encrypted draft is retained, but current server state could not be reloaded."
+            );
+          });
+        },
         onOpen: () => {
           if (!isActive) {
             return;
@@ -205,7 +243,9 @@ export function useRealtimeEvents() {
                 ? "Realtime storage limit reached; waiting for compaction."
                 : code === "payload-too-large" || code === "frame-too-large"
                   ? "Realtime update is too large to synchronize."
-                  : "Realtime write access was revoked."
+                  : code === "rotation-pending"
+                    ? "Note-key rotation is pending; encrypted work remains queued."
+                    : "Realtime rejected an edit; protected recovery is being prepared."
             );
           }
         }
@@ -241,6 +281,7 @@ export function useRealtimeEvents() {
   }, [
     addCollaborationEvents,
     rootKey,
+    retainRecoverableDraft,
     setError,
     setEventCursor,
     setNotePresence,

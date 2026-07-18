@@ -2,7 +2,11 @@
 
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { RealtimeConnection, RealtimeMessage } from "../realtime/client";
+import type {
+  RealtimeConnection,
+  RealtimeMessage,
+  RecoverableCrdtDraft
+} from "../realtime/client";
 import { useAppStore } from "../store/appStore";
 
 interface ConnectionOptions {
@@ -11,6 +15,7 @@ interface ConnectionOptions {
   onError?: () => void;
   onMessage: (message: RealtimeMessage) => void;
   onOpen?: () => void;
+  onRecoverableCrdtDraft?: (draft: RecoverableCrdtDraft) => void;
 }
 
 interface MockConnection {
@@ -192,6 +197,48 @@ describe("useRealtimeEvents lifecycle", () => {
     expect(useAppStore.getState().notes).toEqual([
       expect.objectContaining({ id: "fresh-note", folderId: "folder-1" })
     ]);
+  });
+
+  it("retains rejected work before reloading durable note state", async () => {
+    mocks.getCursor.mockResolvedValue({ cursor: 3 });
+    mocks.loadNote.mockResolvedValue(null);
+    render(<RealtimeHarness />);
+    await flushEffects();
+    const connection = mocks.connections[0]!;
+    const rootKey = useAppStore.getState().rootKey!;
+
+    act(() => {
+      connection.options.onRecoverableCrdtDraft?.({
+        userId: "user-1",
+        noteId: "note-1",
+        sectionId: "section-1",
+        keyEpoch: 1,
+        reason: "stale-epoch",
+        updateIds: ["update-1"],
+        createdAt: 10,
+        retainedAt: 20,
+        source: "rejected"
+      });
+    });
+    await flushEffects();
+
+    expect(Object.values(useAppStore.getState().recoverableDrafts)).toEqual([
+      expect.objectContaining({
+        noteId: "note-1",
+        state: "retained",
+        updateIds: ["update-1"]
+      })
+    ]);
+    expect(mocks.loadNote).toHaveBeenCalledWith(
+      { id: "user-1", username: "alice" },
+      rootKey,
+      "note-1",
+      expect.objectContaining({
+        beforeCommit: expect.any(Function),
+        preserveRealtimeContent: false
+      })
+    );
+    expect(useAppStore.getState().error).toContain("encrypted draft was retained");
   });
 });
 

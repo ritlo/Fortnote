@@ -20,7 +20,9 @@ export interface EncryptedOutboxRecord {
   inlineCipher: Uint8Array;
   nonce: Uint8Array;
   checkpointSequenceCutoff?: number;
-  state: "queued" | "sending";
+  state: "queued" | "sending" | "terminal-rejected";
+  terminalReason?: "forbidden" | "stale-epoch";
+  terminalRejectedAt?: number;
   attempts: number;
   createdAt: number;
   updatedAt: number;
@@ -114,6 +116,11 @@ export interface FortnoteIndexedDb {
   getAcknowledgement(record: OutboxKey): Promise<AcknowledgementRecord | null>;
   getOutbox(record: OutboxKey): Promise<EncryptedOutboxRecord | null>;
   listOutbox(userId: string): Promise<EncryptedOutboxRecord[]>;
+  preserveOutboxFence(
+    fence: Pick<EncryptedOutboxRecord, "userId" | "noteId" | "sectionId" | "keyEpoch">,
+    reason: "forbidden" | "stale-epoch",
+    rejectedAt: number
+  ): Promise<EncryptedOutboxRecord[]>;
   listSectionCache(userId: string): Promise<SectionCacheRecord[]>;
   putOutbox(record: EncryptedOutboxRecord): Promise<void>;
   putSectionCache(record: SectionCacheRecord): Promise<void>;
@@ -187,7 +194,13 @@ function createDatabaseApi(
       await safeOperation(async () => {
         const transaction = database.transaction(OUTBOX_STORE, "readwrite");
         const done = transactionDone(transaction);
-        transaction.objectStore(OUTBOX_STORE).delete(outboxKey(record));
+        const store = transaction.objectStore(OUTBOX_STORE);
+        const current = await requestResult(
+          store.get(outboxKey(record)) as IDBRequest<EncryptedOutboxRecord | undefined>
+        );
+        if (current?.state !== "terminal-rejected") {
+          store.delete(outboxKey(record));
+        }
         await done;
       });
       notify({ store: "acknowledgements", userId: record.userId });
@@ -281,6 +294,32 @@ function createDatabaseApi(
     async listOutbox(userId) {
       const records = await listByUser<EncryptedOutboxRecord>(database, OUTBOX_STORE, userId);
       return records.sort((left, right) => left.createdAt - right.createdAt);
+    },
+    async preserveOutboxFence(fence, reason, rejectedAt) {
+      const retained = await safeOperation(async () => {
+        const transaction = database.transaction(OUTBOX_STORE, "readwrite");
+        const done = transactionDone(transaction);
+        const store = transaction.objectStore(OUTBOX_STORE);
+        const records = await requestResult(
+          store.getAll() as IDBRequest<EncryptedOutboxRecord[]>
+        );
+        const matching = records
+          .filter((record) => matchesOutboxFence(record, fence))
+          .map((record) => ({
+            ...record,
+            state: "terminal-rejected" as const,
+            terminalReason: reason,
+            terminalRejectedAt: record.terminalRejectedAt ?? rejectedAt,
+            updatedAt: rejectedAt
+          }));
+        matching.forEach((record) => store.put(record));
+        await done;
+        return matching;
+      });
+      if (retained.length > 0) {
+        notify({ store: "outbox", userId: fence.userId });
+      }
+      return retained;
     },
     async listSectionCache(userId) {
       const records = await listByUser<SectionCacheRecord>(
@@ -455,6 +494,18 @@ function outboxIdentity(record: OutboxKey): OutboxKey {
 
 function outboxKey(record: OutboxKey): IDBValidKey {
   return [record.userId, record.noteId, record.sectionId, record.keyEpoch, record.updateId];
+}
+
+function matchesOutboxFence(
+  record: Pick<EncryptedOutboxRecord, "userId" | "noteId" | "sectionId" | "keyEpoch">,
+  fence: Pick<EncryptedOutboxRecord, "userId" | "noteId" | "sectionId" | "keyEpoch">
+): boolean {
+  return (
+    record.userId === fence.userId &&
+    record.noteId === fence.noteId &&
+    record.sectionId === fence.sectionId &&
+    record.keyEpoch === fence.keyEpoch
+  );
 }
 
 function cacheKey(record: CacheKey): IDBValidKey {

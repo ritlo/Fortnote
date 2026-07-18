@@ -76,7 +76,11 @@ export async function loadDecryptedNotes(
 export async function loadDecryptedNote(
   currentUser: User,
   currentRootKey: Uint8Array,
-  noteId: string
+  noteId: string,
+  options: {
+    beforeCommit?: () => void;
+    preserveRealtimeContent?: boolean;
+  } = {}
 ): Promise<DecryptedNote | null> {
   const summary = await getNote(noteId);
   const openedSharingKey = useAppStore.getState().openedSharingKey;
@@ -86,9 +90,16 @@ export async function loadDecryptedNote(
     summary,
     openedSharingKey
   );
-  const nextNote = decrypted.isDeleted ? decrypted : preserveCrdtContent(decrypted);
+  const nextNote =
+    decrypted.isDeleted || options.preserveRealtimeContent === false
+      ? decrypted
+      : preserveCrdtContent(decrypted);
   const state = useAppStore.getState();
   if (state.user?.id !== currentUser.id || state.rootKey !== currentRootKey) {
+    return null;
+  }
+  options.beforeCommit?.();
+  if (!isCurrentVaultSession(currentUser.id, currentRootKey)) {
     return null;
   }
   if (nextNote.isDeleted) {
@@ -100,6 +111,11 @@ export async function loadDecryptedNote(
   }
   reconcileTargetSelection(noteId);
   return nextNote;
+}
+
+function isCurrentVaultSession(userId: string, rootKey: Uint8Array): boolean {
+  const state = useAppStore.getState();
+  return state.user?.id === userId && state.rootKey === rootKey;
 }
 
 export async function loadFolders() {

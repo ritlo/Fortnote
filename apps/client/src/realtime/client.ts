@@ -24,6 +24,7 @@ import { getClientInstanceId } from "../api";
 import {
   createEncryptedOutbox,
   type EncryptedOutbox,
+  type EncryptedSectionDraft,
   type EncryptedOutboxStore,
   type OutboxFence
 } from "./outbox";
@@ -53,11 +54,16 @@ const CRDT_OUTBOX_KEY_PREFIX = "fortnote:crdt-outbox:v1:";
 const volatileCrdtOutboxes = new Map<string, Map<string, EncryptedCrdtMessage>>();
 const CLIENT_REALTIME_FRAME_MAX_BYTES = 256 * 1024;
 
+export interface RecoverableCrdtDraft extends EncryptedSectionDraft {
+  source: "rejected" | "restored";
+}
+
 interface RealtimeClientOptions {
   after: number;
   userId: string;
   onMessage: (message: RealtimeMessage) => void;
   onCrdtError?: (message: string) => void;
+  onRecoverableCrdtDraft?: (draft: RecoverableCrdtDraft) => void;
   onOpen?: () => void;
   onClose?: () => void;
   onError?: () => void;
@@ -85,6 +91,7 @@ export function connectRealtime({
   userId,
   onMessage,
   onCrdtError,
+  onRecoverableCrdtDraft,
   onOpen,
   onClose,
   onError,
@@ -202,6 +209,9 @@ export function connectRealtime({
   async function resumeDurableOutbox(): Promise<void> {
     const outbox = await getDurableOutbox();
     outbox.setTransport(sendOutboxRecord);
+    for (const draft of await outbox.listRecoverableDrafts()) {
+      onRecoverableCrdtDraft?.({ ...draft, source: "restored" });
+    }
     await Promise.all(
       [...pendingSectionSubscriptions.values()].map((subscription) =>
         outbox.activate(subscription)
@@ -273,12 +283,38 @@ export function connectRealtime({
       onCrdtError?.("Note-key rotation is pending; encrypted work remains queued.");
       return;
     }
-    rejectPendingAck(
-      message.updateId,
-      message.code === "forbidden"
-        ? "Realtime write access was revoked."
-        : "Superseded by note-key rotation."
-    );
+    void preserveRejectedDraft(message);
+  }
+
+  async function preserveRejectedDraft(message: CrdtRejectV2): Promise<void> {
+    const reason = message.code === "forbidden" ? "forbidden" : "stale-epoch";
+    const rejectionMessage = message.code === "forbidden"
+      ? "Realtime write access was revoked."
+      : "Superseded by note-key rotation.";
+    try {
+      const outbox = await getDurableOutbox();
+      const draft = await outbox.preserveTerminalRejection(
+        message.updateId,
+        message.sectionId,
+        reason
+      );
+      if (!draft) {
+        rejectPendingAck(message.updateId, rejectionMessage);
+        onCrdtError?.(
+          "Realtime rejected an edit, but its recoverable encrypted draft could not be located."
+        );
+        return;
+      }
+      for (const updateId of draft.updateIds) {
+        rejectPendingAck(updateId, rejectionMessage);
+      }
+      onRecoverableCrdtDraft?.({ ...draft, source: "rejected" });
+    } catch {
+      rejectPendingAck(message.updateId, rejectionMessage);
+      onCrdtError?.(
+        "Realtime rejected an edit; keep this tab open while encrypted draft recovery is unavailable."
+      );
+    }
   }
 
   function sendSectionSubscription(

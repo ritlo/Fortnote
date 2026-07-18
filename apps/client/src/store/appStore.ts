@@ -42,6 +42,29 @@ export interface RevocationRotationFailure {
   preparation?: LinkedEpochRotationPreparation;
 }
 
+export type RecoverableDraftState =
+  | "retained"
+  | "reviewing"
+  | "reapplied"
+  | "exported"
+  | "split"
+  | "discarded";
+
+export interface RecoverableSectionDraft {
+  id: string;
+  userId: string;
+  noteId: string;
+  sectionId: string;
+  keyEpoch: number;
+  reason: "forbidden" | "stale-epoch";
+  updateIds: string[];
+  state: RecoverableDraftState;
+  createdAt: number;
+  retainedAt: number;
+}
+
+export type RetainedSectionDraft = Omit<RecoverableSectionDraft, "id" | "state">;
+
 type StateUpdate<T> = T | ((current: T) => T);
 type StoreSetter<T> = (value: StateUpdate<T>) => void;
 
@@ -71,6 +94,7 @@ export interface AppStore {
   presenceByNote: Record<string, PresenceUser[]>;
   openedSharingKey: OpenedSharingKey | null;
   revocationRotationFailures: Record<string, RevocationRotationFailure>;
+  recoverableDrafts: Record<string, RecoverableSectionDraft>;
   error: string | null;
   status: string;
   setUser: StoreSetter<User | null>;
@@ -102,6 +126,8 @@ export interface AppStore {
     noteId: string,
     failure: RevocationRotationFailure | null
   ) => void;
+  retainRecoverableDraft: (draft: RetainedSectionDraft) => void;
+  setRecoverableDraftState: (id: string, state: RecoverableDraftState) => void;
   setError: StoreSetter<string | null>;
   setStatus: StoreSetter<string>;
   resetVaultState: (nextStatus: string) => void;
@@ -137,6 +163,7 @@ export const useAppStore = create<AppStore>((set) => ({
   presenceByNote: {},
   openedSharingKey: null,
   revocationRotationFailures: {},
+  recoverableDrafts: {},
   error: null,
   status: "Checking session",
   setUser: (value) => {
@@ -287,6 +314,44 @@ export const useAppStore = create<AppStore>((set) => ({
         : omitRecordKey(state.revocationRotationFailures, noteId)
     }));
   },
+  retainRecoverableDraft: (draft) => {
+    set((state) => {
+      const id = recoverableDraftId(draft);
+      const current = state.recoverableDrafts[id];
+      const updateIds = [...new Set([
+        ...(current?.updateIds ?? []),
+        ...draft.updateIds
+      ])];
+      return {
+        recoverableDrafts: {
+          ...state.recoverableDrafts,
+          [id]: {
+            ...draft,
+            id,
+            updateIds,
+            state:
+              current?.updateIds.length === updateIds.length
+                ? current.state
+                : "retained"
+          }
+        }
+      };
+    });
+  },
+  setRecoverableDraftState: (id, nextState) => {
+    set((state) => {
+      const current = state.recoverableDrafts[id];
+      if (!current || !isRecoverableDraftTransition(current.state, nextState)) {
+        return {};
+      }
+      return {
+        recoverableDrafts: {
+          ...state.recoverableDrafts,
+          [id]: { ...current, state: nextState }
+        }
+      };
+    });
+  },
   setError: (value) => {
     set((state) => ({ error: resolveState(value, state.error) }));
   },
@@ -312,6 +377,7 @@ export const useAppStore = create<AppStore>((set) => ({
       presenceByNote: {},
       openedSharingKey: null,
       revocationRotationFailures: {},
+      recoverableDrafts: {},
       search: "",
       password: "",
       newPassword: "",
@@ -323,6 +389,32 @@ export const useAppStore = create<AppStore>((set) => ({
     });
   }
 }));
+
+export function recoverableDraftId(
+  draft: Pick<RecoverableSectionDraft, "userId" | "noteId" | "sectionId" | "keyEpoch">
+): string {
+  return JSON.stringify([
+    draft.userId,
+    draft.noteId,
+    draft.sectionId,
+    draft.keyEpoch
+  ]);
+}
+
+function isRecoverableDraftTransition(
+  current: RecoverableDraftState,
+  next: RecoverableDraftState
+): boolean {
+  return (
+    current === next ||
+    (current === "retained" && next === "reviewing") ||
+    (current === "reviewing" &&
+      (next === "reapplied" ||
+        next === "exported" ||
+        next === "split" ||
+        next === "discarded"))
+  );
+}
 
 function omitRecordKey<T>(record: Record<string, T>, keyToRemove: string): Record<string, T> {
   return Object.fromEntries(

@@ -121,6 +121,7 @@ describe("encrypted realtime outbox", () => {
       acquireLease: vi.fn(() => Promise.resolve(true)),
       getAcknowledgement: vi.fn(() => Promise.resolve(acknowledgement)),
       listOutbox: vi.fn(() => Promise.resolve([record])),
+      preserveOutboxFence: vi.fn(() => Promise.resolve([])),
       putOutbox: vi.fn(() => Promise.resolve()),
       subscribe: vi.fn(() => vi.fn())
     };
@@ -160,6 +161,75 @@ describe("encrypted realtime outbox", () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ updateId: "active" }));
+  });
+
+  it("retains a terminally rejected fence and never resends it after reopening", async () => {
+    const name = databaseName();
+    const database = await openDatabase(name);
+    const first = outboxRecord({ updateId: "rejected-a" });
+    const second = outboxRecord({ updateId: "rejected-b" });
+    const other = outboxRecord({ sectionId: "section-b", updateId: "still-sendable" });
+    await Promise.all([first, second, other].map((record) => database.putOutbox(record)));
+    const send = vi.fn<(record: EncryptedOutboxRecord) => void>();
+    const outbox = openOutbox({
+      database,
+      ownerId: "tab-a",
+      send,
+      userId: "user-a"
+    });
+
+    await outbox.activate(fenceFor(first));
+    const draft = await outbox.preserveTerminalRejection(
+      first.updateId,
+      first.sectionId,
+      "stale-epoch"
+    );
+
+    expect(draft).toMatchObject({
+      noteId: first.noteId,
+      sectionId: first.sectionId,
+      keyEpoch: first.keyEpoch,
+      reason: "stale-epoch",
+      updateIds: ["rejected-a", "rejected-b"]
+    });
+    await expect(database.listOutbox("user-a")).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ updateId: "rejected-a", state: "terminal-rejected" }),
+        expect.objectContaining({ updateId: "rejected-b", state: "terminal-rejected" }),
+        expect.objectContaining({ updateId: "still-sendable", state: "queued" })
+      ])
+    );
+    const sentBeforeRetry = send.mock.calls.length;
+    await outbox.activate(fenceFor(first));
+    await outbox.flush(fenceFor(first));
+    expect(send).toHaveBeenCalledTimes(sentBeforeRetry);
+
+    await outbox.acknowledge(first, 12);
+    await expect(database.getOutbox(first)).resolves.toMatchObject({
+      state: "terminal-rejected"
+    });
+    outbox.close();
+
+    const reopenedSend = vi.fn<(record: EncryptedOutboxRecord) => void>();
+    const reopened = openOutbox({
+      database,
+      ownerId: "tab-b",
+      send: reopenedSend,
+      userId: "user-a"
+    });
+    await reopened.activate(fenceFor(first));
+    await reopened.activate(fenceFor(other));
+
+    expect(reopenedSend).toHaveBeenCalledTimes(1);
+    expect(reopenedSend).toHaveBeenCalledWith(
+      expect.objectContaining({ updateId: "still-sendable" })
+    );
+    await expect(reopened.listRecoverableDrafts()).resolves.toEqual([
+      expect.objectContaining({
+        reason: "stale-epoch",
+        updateIds: ["rejected-a", "rejected-b"]
+      })
+    ]);
   });
 });
 

@@ -337,6 +337,91 @@ describe("realtime client", () => {
     await database.deleteDatabase();
   });
 
+  it("retains a stale-epoch section draft before disabling retries", async () => {
+    const database = await openFortnoteIndexedDb({
+      factory: fakeIndexedDb,
+      name: `fortnote-client-terminal-${crypto.randomUUID()}`
+    });
+    const userId = crypto.randomUUID();
+    const firstUpdate = scopedUpdate();
+    const secondUpdate = { ...firstUpdate, updateId: crypto.randomUUID() };
+    let recordsAtCallback: Promise<Awaited<ReturnType<typeof database.listOutbox>>> | null = null;
+    const onRecoverableCrdtDraft = vi.fn(() => {
+      recordsAtCallback = database.listOutbox(userId);
+    });
+    const first = connectRealtime({
+      after: 0,
+      userId,
+      ownerId: "tab-a",
+      outboxStore: database,
+      onMessage: vi.fn(),
+      onRecoverableCrdtDraft
+    });
+    first.subscribeCrdt(firstUpdate.noteId, firstUpdate.sectionId, firstUpdate.keyEpoch);
+    const firstDelivery = first.sendCrdtUpdate(firstUpdate);
+    const secondDelivery = first.sendCrdtUpdate(secondUpdate);
+    const firstRejected = expect(firstDelivery).rejects.toThrow("rotation");
+    const secondRejected = expect(secondDelivery).rejects.toThrow("rotation");
+    sockets[0]!.open();
+    sockets[0]!.receive({
+      ...connectedMessage(userId),
+      capabilities: ["crdt-binary-v2"]
+    });
+    await vi.waitFor(() => {
+      expect(sockets[0]!.binarySent).toHaveLength(2);
+    });
+
+    sockets[0]!.receive({
+      type: "crdt-reject",
+      updateId: firstUpdate.updateId,
+      sectionId: firstUpdate.sectionId,
+      code: "stale-epoch"
+    });
+    await Promise.all([firstRejected, secondRejected]);
+    await vi.waitFor(() => {
+      expect(onRecoverableCrdtDraft).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: "rejected",
+          reason: "stale-epoch",
+          updateIds: expect.arrayContaining([
+            firstUpdate.updateId,
+            secondUpdate.updateId
+          ])
+        })
+      );
+    });
+    await expect(recordsAtCallback).resolves.toEqual([
+      expect.objectContaining({ state: "terminal-rejected" }),
+      expect.objectContaining({ state: "terminal-rejected" })
+    ]);
+    first.close();
+
+    const restored = vi.fn();
+    const second = connectRealtime({
+      after: 0,
+      userId,
+      ownerId: "tab-b",
+      outboxStore: database,
+      onMessage: vi.fn(),
+      onRecoverableCrdtDraft: restored
+    });
+    second.subscribeCrdt(firstUpdate.noteId, firstUpdate.sectionId, firstUpdate.keyEpoch);
+    sockets[1]!.open();
+    sockets[1]!.receive({
+      ...connectedMessage(userId),
+      capabilities: ["crdt-binary-v2"]
+    });
+    await vi.waitFor(() => {
+      expect(restored).toHaveBeenCalledWith(
+        expect.objectContaining({ source: "restored", reason: "stale-epoch" })
+      );
+    });
+    expect(sockets[1]!.binarySent).toEqual([]);
+
+    second.close();
+    await database.deleteDatabase();
+  });
+
   it("retries encrypted CRDT updates until the server acknowledges them", async () => {
     const update = {
       type: "crdt-update" as const,

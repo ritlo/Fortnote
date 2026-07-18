@@ -95,6 +95,41 @@ describe("collaboration event store", () => {
 
     expect(useAppStore.getState().revocationRotationFailures).toEqual({});
   });
+
+  it("retains encrypted-draft references until an explicit recovery transition", () => {
+    const draft = {
+      userId: "user_1",
+      noteId: "note_1",
+      sectionId: "section_1",
+      keyEpoch: 2,
+      reason: "stale-epoch" as const,
+      updateIds: ["update_1"],
+      createdAt: 10,
+      retainedAt: 20
+    };
+
+    useAppStore.getState().retainRecoverableDraft(draft);
+    useAppStore.getState().retainRecoverableDraft({
+      ...draft,
+      updateIds: ["update_1", "update_2"],
+      retainedAt: 30
+    });
+    const retained = Object.values(useAppStore.getState().recoverableDrafts)[0]!;
+
+    expect(retained).toMatchObject({
+      state: "retained",
+      updateIds: ["update_1", "update_2"],
+      retainedAt: 30
+    });
+    useAppStore.getState().setRecoverableDraftState(retained.id, "discarded");
+    expect(useAppStore.getState().recoverableDrafts[retained.id]?.state).toBe("retained");
+    useAppStore.getState().setRecoverableDraftState(retained.id, "reviewing");
+    useAppStore.getState().setRecoverableDraftState(retained.id, "exported");
+    expect(useAppStore.getState().recoverableDrafts[retained.id]?.state).toBe("exported");
+
+    useAppStore.getState().resetVaultState("locked");
+    expect(useAppStore.getState().recoverableDrafts).toEqual({});
+  });
 });
 
 function collaborationEvent(
