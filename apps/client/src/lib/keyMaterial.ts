@@ -5,7 +5,11 @@ import type {
   RecoveryParamsResponse,
   User
 } from "../api";
-import { fromBase64, type KdfParams } from "@fortnote/shared";
+import {
+  fromBase64,
+  randomBytes,
+  type KdfParams
+} from "@fortnote/shared";
 import {
   decryptLegacyNoteKey,
   decryptNoteBodyWithKey,
@@ -13,20 +17,114 @@ import {
   decryptNoteKeyShare,
   decryptNoteKeyShareV2,
   decryptNoteTitleV2,
+  createEpochLinkV2,
+  encryptNoteKeyEnvelopeV2,
   encryptRootKeyEnvelopeV2,
   encryptSharingPrivateKeyEnvelopeV2,
   noteKeyToBase64,
   openUserSharingKey,
+  traverseEpochLinksBackward,
   type OpenedSharingKey
 } from "../cryptoClient";
 import {
   getNoteKeyShare,
   getSharingKeyVersion,
   updateKeyMaterial,
+  type NoteEpochLink,
   type SharingKeyEnvelope,
   type StoreSharingKeyPayload
 } from "../api";
 import type { DecryptedNote } from "../store/appStore";
+
+export interface LinkedEpochRotationPreparation {
+  noteId: string;
+  revokedUserId: string;
+  rootVersion: number;
+  sourceEpoch: number;
+  targetEpoch: number;
+  targetNoteKeyBase64: string;
+  encryptedNoteKey: string;
+  noteKeyNonce: string;
+  previousKeyCipher: string;
+  previousKeyNonce: string;
+}
+
+export async function prepareLinkedEpochRotation(input: {
+  note: DecryptedNote;
+  revokedUserId: string;
+  rootKey: Uint8Array;
+}): Promise<LinkedEpochRotationPreparation> {
+  const sourceNoteKey = fromBase64(input.note.noteKeyBase64);
+  const targetNoteKey = randomBytes(32);
+  const targetEpoch = input.note.keyEpoch + 1;
+  const [ownerEnvelope, previousKeyLink] = await Promise.all([
+    encryptNoteKeyEnvelopeV2({
+      cryptoOwnerId: input.note.cryptoOwnerId,
+      noteId: input.note.id,
+      keyEpoch: targetEpoch,
+      rootKey: input.rootKey,
+      noteKey: targetNoteKey
+    }),
+    createEpochLinkV2({
+      cryptoOwnerId: input.note.cryptoOwnerId,
+      noteId: input.note.id,
+      sourceEpoch: input.note.keyEpoch,
+      targetEpoch,
+      sourceNoteKey,
+      targetNoteKey
+    })
+  ]);
+  return {
+    noteId: input.note.id,
+    revokedUserId: input.revokedUserId,
+    rootVersion: input.note.rootVersion ?? input.note.version,
+    sourceEpoch: input.note.keyEpoch,
+    targetEpoch,
+    targetNoteKeyBase64: noteKeyToBase64(targetNoteKey),
+    encryptedNoteKey: ownerEnvelope.cipher,
+    noteKeyNonce: ownerEnvelope.nonce,
+    previousKeyCipher: previousKeyLink.cipher,
+    previousKeyNonce: previousKeyLink.nonce
+  };
+}
+
+export function linkedEpochPreparationMatches(input: {
+  preparation: LinkedEpochRotationPreparation;
+  note: DecryptedNote;
+  revokedUserId: string;
+}): boolean {
+  return (
+    input.preparation.noteId === input.note.id &&
+    input.preparation.revokedUserId === input.revokedUserId &&
+    input.preparation.rootVersion === (input.note.rootVersion ?? input.note.version) &&
+    input.preparation.sourceEpoch === input.note.keyEpoch &&
+    input.preparation.targetEpoch === input.note.keyEpoch + 1
+  );
+}
+
+export function resolveNoteKeyAtEpoch(input: {
+  note: DecryptedNote;
+  targetEpoch: number;
+  links: NoteEpochLink[];
+}): Promise<Uint8Array> {
+  if (input.targetEpoch === input.note.keyEpoch) {
+    return Promise.resolve(fromBase64(input.note.noteKeyBase64));
+  }
+  return traverseEpochLinksBackward({
+    cryptoOwnerId: input.note.cryptoOwnerId,
+    noteId: input.note.id,
+    currentEpoch: input.note.keyEpoch,
+    targetEpoch: input.targetEpoch,
+    currentNoteKey: fromBase64(input.note.noteKeyBase64),
+    links: input.links.map((link) => ({
+      sourceEpoch: link.sourceEpoch,
+      targetEpoch: link.targetEpoch,
+      cipher: link.previousKeyCipher,
+      nonce: link.nonce,
+      formatVersion: link.formatVersion as 2
+    }))
+  });
+}
 
 export async function migrateRootKeyEnvelopeV2(input: {
   userId: string;

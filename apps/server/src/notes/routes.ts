@@ -611,6 +611,32 @@ export function createNotesRouter(context: AppContext): Router {
     response.json(row);
   });
 
+  router.get("/:id/epoch-links", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+    const access = getNoteAccess(context, request.params.id, session.userId);
+    if (!canReadNote(access)) {
+      sendApiError(response, "not_found", "Note not found");
+      return;
+    }
+    const links = context.db.orm
+      .select({
+        sourceEpoch: schema.noteEpochLinks.sourceEpoch,
+        targetEpoch: schema.noteEpochLinks.targetEpoch,
+        previousKeyCipher: schema.noteEpochLinks.previousKeyCipher,
+        nonce: schema.noteEpochLinks.nonce,
+        formatVersion: schema.noteEpochLinks.formatVersion,
+        createdAt: schema.noteEpochLinks.createdAt
+      })
+      .from(schema.noteEpochLinks)
+      .where(eq(schema.noteEpochLinks.noteId, access.noteId))
+      .orderBy(desc(schema.noteEpochLinks.targetEpoch))
+      .all();
+    response.json({ links });
+  });
+
   router.post("/:id/key-rotation", (request, response) => {
     const session = requireSession(context.db, request, response);
     if (!session) {

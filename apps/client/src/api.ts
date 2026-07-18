@@ -234,7 +234,7 @@ export interface ProtectedUpdateNotePayload {
 
 export type UpdateNotePayload = LegacyUpdateNotePayload | ProtectedUpdateNotePayload;
 
-export interface RotateNoteKeyPayload {
+export interface LegacyRotateNoteKeyPayload {
   encryptedNoteKey: string;
   noteKeyNonce: string;
   contentCipher: string;
@@ -252,6 +252,39 @@ export interface RotateNoteKeyPayload {
     encryptedAttachmentKey: string;
     attachmentKeyNonce: string;
   }[];
+}
+
+export interface LinkedRotateNoteKeyPayload {
+  mode: "linked";
+  revokedUserId: string;
+  rootVersion: number;
+  sourceEpoch: number;
+  targetEpoch: number;
+  encryptedNoteKey: string;
+  noteKeyNonce: string;
+  noteKeyFormatVersion: 2;
+  previousKeyCipher: string;
+  previousKeyNonce: string;
+  linkFormatVersion: 2;
+  shares: {
+    recipientUserId: string;
+    sharingKeyVersion: number;
+    encryptedNoteKey: string;
+    formatVersion: 2;
+  }[];
+}
+
+export type RotateNoteKeyPayload =
+  | LegacyRotateNoteKeyPayload
+  | LinkedRotateNoteKeyPayload;
+
+export interface NoteEpochLink {
+  sourceEpoch: number;
+  targetEpoch: number;
+  previousKeyCipher: string;
+  nonce: string;
+  formatVersion: number;
+  createdAt: string;
 }
 
 export interface AttachmentSummary {
@@ -801,11 +834,15 @@ export function updateNote(
 export function rotateNoteKey(
   noteId: string,
   payload: RotateNoteKeyPayload
-): Promise<{ id: string; version: number; keyEpoch: number }> {
-  return apiRequest<{ id: string; version: number; keyEpoch: number }>(`/notes/${noteId}/key-rotation`, {
+): Promise<{ id: string; version: number; rootVersion?: number; keyEpoch: number }> {
+  return apiRequest<{ id: string; version: number; rootVersion?: number; keyEpoch: number }>(`/notes/${noteId}/key-rotation`, {
     method: "POST",
     body: JSON.stringify(payload)
   });
+}
+
+export function listNoteEpochLinks(noteId: string): Promise<{ links: NoteEpochLink[] }> {
+  return apiRequest<{ links: NoteEpochLink[] }>(`/notes/${noteId}/epoch-links`);
 }
 
 export function listNoteMemberships(

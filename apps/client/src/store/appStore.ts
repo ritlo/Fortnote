@@ -8,6 +8,7 @@ import type {
   PresenceUser,
   User
 } from "../api";
+import type { LinkedEpochRotationPreparation } from "../lib/keyMaterial";
 
 export type AuthMode = "login" | "register" | "recover";
 export type NotesView = "notes" | "shared" | "trash" | "settings";
@@ -38,6 +39,7 @@ export interface RevocationRotationFailure {
   revokedUsername: string;
   message: string;
   failedAt: string;
+  preparation?: LinkedEpochRotationPreparation;
 }
 
 type StateUpdate<T> = T | ((current: T) => T);

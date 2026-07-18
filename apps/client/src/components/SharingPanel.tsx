@@ -5,18 +5,14 @@ import {
   inviteNoteMember,
   listNoteMemberships,
   lookupSharingKey,
-  revokeNoteMember,
   rotateNoteKey,
   updateNoteMemberRole,
-  type AttachmentSummary,
   type NoteMembership,
   type PresenceUser,
   type PublicSharingKey
 } from "../api";
 import {
   encryptNoteKeyShareV2,
-  rewrapAttachmentKey,
-  rotateNoteKeyMaterial
 } from "../cryptoClient";
 import type { DecryptedNote } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
@@ -24,7 +20,13 @@ import {
   getSharingKeyTrustDecision,
   trustSharingKey
 } from "../lib/sharingKeyTrust";
-import { checkpointCrdtNote, ensureCrdtHistoryReadable } from "../realtime/crdt";
+import {
+  linkedEpochPreparationMatches,
+  prepareLinkedEpochRotation,
+  type LinkedEpochRotationPreparation
+} from "../lib/keyMaterial";
+import { ensureCrdtHistoryReadable } from "../realtime/crdt";
+import { loadDecryptedNotes } from "../hooks/useAppData";
 
 interface SharingPanelProps {
   selectedNote: DecryptedNote | null;
@@ -42,37 +44,6 @@ interface PendingSharingTrust {
   username: string;
 }
 
-interface RecoverCommittedRevocationInput {
-  finishRotation: (memberships: NoteMembership[]) => Promise<void>;
-  listMemberships: (noteId: string) => Promise<{ memberships: NoteMembership[] }>;
-  memberUserId: string;
-  noteId: string;
-  setMemberships: (memberships: NoteMembership[]) => void;
-}
-
-export async function recoverCommittedRevocationAfterFailure({
-  finishRotation,
-  listMemberships,
-  memberUserId,
-  noteId,
-  setMemberships
-}: RecoverCommittedRevocationInput): Promise<boolean> {
-  try {
-    const payload = await listMemberships(noteId);
-    const currentMember = payload.memberships.find(
-      (membership) => membership.userId === memberUserId
-    );
-    if (currentMember?.status !== "revoked") {
-      return false;
-    }
-    setMemberships(payload.memberships);
-    await finishRotation(payload.memberships);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   const [memberships, setMemberships] = useState<NoteMembership[]>([]);
   const [username, setUsername] = useState("");
@@ -82,7 +53,6 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   const [isTrustConfirmed, setIsTrustConfirmed] = useState(false);
   const user = useAppStore((state) => state.user);
   const rootKey = useAppStore((state) => state.rootKey);
-  const setAttachmentsByNote = useAppStore((state) => state.setAttachmentsByNote);
   const setError = useAppStore((state) => state.setError);
   const setNotes = useAppStore((state) => state.setNotes);
   const setRevocationRotationFailure = useAppStore(
@@ -270,27 +240,17 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     const note = selectedNote;
     const vaultRootKey = rootKey;
 
+    setIsSubmitting(true);
     setError(null);
     try {
-      await revokeNoteMember(note.id, member.userId);
       const payload = await listNoteMemberships(note.id);
       setMemberships(payload.memberships);
       await finishRevocationRotation(note, member, payload.memberships, vaultRootKey);
     } catch (revokeError) {
-      if (
-        await recoverCommittedRevocationAfterFailure({
-          finishRotation: (nextMemberships) =>
-            finishRevocationRotation(note, member, nextMemberships, vaultRootKey),
-          listMemberships: listNoteMemberships,
-          memberUserId: member.userId,
-          noteId: note.id,
-          setMemberships
-        })
-      ) {
-        return;
-      }
       setStatus("Revoke failed");
       setError(revokeError instanceof Error ? revokeError.message : "Unable to revoke");
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -298,12 +258,31 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     note: DecryptedNote,
     member: NoteMembership,
     nextMemberships: NoteMembership[],
-    vaultRootKey: Uint8Array
+    vaultRootKey: Uint8Array,
+    retryPreparation?: LinkedEpochRotationPreparation
   ) {
+    let preparation = retryPreparation;
     try {
-      await rotateAfterRevoke(note, nextMemberships, vaultRootKey);
+      if (
+        !preparation ||
+        !linkedEpochPreparationMatches({
+          preparation,
+          note,
+          revokedUserId: member.userId
+        })
+      ) {
+        preparation = await prepareLinkedEpochRotation({
+          note,
+          revokedUserId: member.userId,
+          rootKey: vaultRootKey
+        });
+      }
+      await rotateAfterRevoke(note, member, nextMemberships, vaultRootKey, preparation);
+      const currentMemberships = await listNoteMemberships(note.id);
+      setMemberships(currentMemberships.memberships);
       setRevocationRotationFailure(note.id, null);
       setStatus("Collaborator revoked and keys rotated");
+      return true;
     } catch (rotationError) {
       const message =
         rotationError instanceof Error ? rotationError.message : "Key rotation failed";
@@ -312,10 +291,12 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
         revokedUserId: member.userId,
         revokedUsername: member.username,
         message,
-        failedAt: new Date().toISOString()
+        failedAt: new Date().toISOString(),
+        ...(preparation ? { preparation } : {})
       });
-      setStatus("Collaborator revoked");
-      setError(`Key rotation failed: ${message}`);
+      setStatus("Revocation pending");
+      setError(`Revocation and key rotation failed: ${message}`);
+      return false;
     }
   }
 
@@ -334,7 +315,32 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     try {
       const payload = await listNoteMemberships(selectedNote.id);
       setMemberships(payload.memberships);
-      await rotateAfterRevoke(selectedNote, payload.memberships, rootKey);
+      const revokedMember = payload.memberships.find(
+        (membership) => membership.userId === selectedRotationFailure.revokedUserId
+      );
+      if (revokedMember?.status === "revoked") {
+        if (user) {
+          await loadDecryptedNotes(user, rootKey, false, { preserveSelection: true });
+        }
+      } else {
+        const succeeded = await finishRevocationRotation(
+          selectedNote,
+          revokedMember ?? {
+            createdAt: selectedRotationFailure.failedAt,
+            role: "editor",
+            status: "active",
+            updatedAt: selectedRotationFailure.failedAt,
+            userId: selectedRotationFailure.revokedUserId,
+            username: selectedRotationFailure.revokedUsername
+          },
+          payload.memberships,
+          rootKey,
+          selectedRotationFailure.preparation
+        );
+        if (!succeeded) {
+          return;
+        }
+      }
       setRevocationRotationFailure(selectedNote.id, null);
       setStatus("Keys rotated after revoke");
     } catch (rotationError) {
@@ -354,23 +360,18 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
 
   async function rotateAfterRevoke(
     note: DecryptedNote,
+    revokedMember: NoteMembership,
     nextMemberships: NoteMembership[],
-    vaultRootKey: Uint8Array
+    vaultRootKey: Uint8Array,
+    preparation: LinkedEpochRotationPreparation
   ) {
     await ensureCrdtHistoryReadable(note.id);
     const remainingMembers = nextMemberships.filter(
-      (membership) => membership.status === "active" && membership.role !== "owner"
+      (membership) =>
+        membership.status === "active" &&
+        membership.role !== "owner" &&
+        membership.userId !== revokedMember.userId
     );
-    const attachments = useAppStore.getState().attachmentsByNote[note.id];
-    if (!attachments) {
-      throw new Error("Attachments are still loading");
-    }
-    const rotatedKey = await rotateNoteKeyMaterial({
-      body: note.body,
-      cryptoOwnerId: note.cryptoOwnerId,
-      noteId: note.id,
-      rootKey: vaultRootKey
-    });
     const shares = await Promise.all(
       remainingMembers.map(async (membership) => {
         if (!user) {
@@ -397,51 +398,39 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
           encryptedNoteKey: await encryptNoteKeyShareV2({
             cryptoOwnerId: note.cryptoOwnerId,
             noteId: note.id,
-            keyEpoch: note.keyEpoch + 1,
+            keyEpoch: preparation.targetEpoch,
             recipientUserId: membership.userId,
             recipientSharingKeyVersion: publicKey.sharingKeyVersion,
             senderUserId: user.id,
-            noteKey: fromBase64(rotatedKey.noteKeyBase64),
+            noteKey: fromBase64(preparation.targetNoteKeyBase64),
             recipientPublicKey: publicKey.publicKey
           }),
-          formatVersion: 2
+          formatVersion: 2 as const
         };
       })
     );
-    const attachmentKeys = await Promise.all(
-      attachments.map((attachment) =>
-        rewrapAttachmentKey({
-          attachmentId: attachment.id,
-          attachmentKeyNonce: attachment.attachmentKeyNonce,
-          cryptoOwnerId: note.cryptoOwnerId,
-          encryptedAttachmentKey: attachment.encryptedAttachmentKey,
-          newNoteKeyBase64: rotatedKey.noteKeyBase64,
-          noteId: note.id,
-          oldNoteKeyBase64: note.noteKeyBase64
-        })
-      )
-    );
     await ensureCrdtHistoryReadable(note.id);
     const rotated = await rotateNoteKey(note.id, {
-      encryptedNoteKey: rotatedKey.encryptedNoteKey,
-      noteKeyNonce: rotatedKey.noteKeyNonce,
-      contentCipher: rotatedKey.contentCipher,
-      contentNonce: rotatedKey.contentNonce,
-      contentLength: rotatedKey.contentLength,
-      version: note.version,
-      shares,
-      attachmentKeys
+      mode: "linked",
+      revokedUserId: revokedMember.userId,
+      rootVersion: preparation.rootVersion,
+      sourceEpoch: preparation.sourceEpoch,
+      targetEpoch: preparation.targetEpoch,
+      encryptedNoteKey: preparation.encryptedNoteKey,
+      noteKeyNonce: preparation.noteKeyNonce,
+      noteKeyFormatVersion: 2,
+      previousKeyCipher: preparation.previousKeyCipher,
+      previousKeyNonce: preparation.previousKeyNonce,
+      linkFormatVersion: 2,
+      shares
     });
-    const rotatedAttachments = applyAttachmentKeyRotation(attachments, attachmentKeys);
     const rotationPatch = {
-      contentLength: rotatedKey.contentLength,
-      noteKeyBase64: rotatedKey.noteKeyBase64,
+      noteKeyBase64: preparation.targetNoteKeyBase64,
       keyEpoch: rotated.keyEpoch,
+      rootVersion: rotated.rootVersion ?? preparation.rootVersion + 1,
       updatedAt: new Date().toISOString(),
       version: rotated.version
     };
-    const rotatedNote = { ...note, ...rotationPatch };
-
     setNotes((current) =>
       current.map((currentNote) =>
         currentNote.id === note.id
@@ -449,11 +438,6 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
           : currentNote
       )
     );
-    setAttachmentsByNote((current) => ({
-      ...current,
-      [note.id]: rotatedAttachments
-    }));
-    await checkpointCrdtNote(rotatedNote);
   }
 
   const canInvite = selectedNote?.role === "owner" && !disabled;
@@ -602,7 +586,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
                 <button
                   className="text-button danger"
                   type="button"
-                  disabled={membership.status === "revoked"}
+                  disabled={membership.status === "revoked" || isSubmitting}
                   onClick={() => {
                     void revokeMember(membership);
                   }}
@@ -636,27 +620,4 @@ export function canConfirmSharingKeyTrust(isConfirmed: boolean): boolean {
 
 export function sharingKeyTrustInstruction(username: string): string {
   return `Compare this exact fingerprint with ${username} through an independent channel before trusting it.`;
-}
-
-function applyAttachmentKeyRotation(
-  attachments: AttachmentSummary[],
-  attachmentKeys: {
-    attachmentId: string;
-    encryptedAttachmentKey: string;
-    attachmentKeyNonce: string;
-  }[]
-): AttachmentSummary[] {
-  const keysByAttachmentId = new Map(
-    attachmentKeys.map((attachmentKey) => [attachmentKey.attachmentId, attachmentKey])
-  );
-  return attachments.map((attachment) => {
-    const rotatedKey = keysByAttachmentId.get(attachment.id);
-    return rotatedKey
-      ? {
-          ...attachment,
-          encryptedAttachmentKey: rotatedKey.encryptedAttachmentKey,
-          attachmentKeyNonce: rotatedKey.attachmentKeyNonce
-        }
-      : attachment;
-  });
 }

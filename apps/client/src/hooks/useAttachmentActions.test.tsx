@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   downloadAttachment: vi.fn(),
   downloadBytes: vi.fn(),
   listAttachments: vi.fn(),
+  listNoteEpochLinks: vi.fn(),
+  resolveNoteKeyAtEpoch: vi.fn(),
   revokeObjectUrl: vi.fn(),
   uploadAttachment: vi.fn()
 }));
@@ -29,6 +31,7 @@ vi.mock("../api", () => ({
   deleteAttachment: mocks.deleteAttachment,
   downloadAttachment: mocks.downloadAttachment,
   listAttachments: mocks.listAttachments,
+  listNoteEpochLinks: mocks.listNoteEpochLinks,
   uploadAttachment: mocks.uploadAttachment
 }));
 
@@ -39,6 +42,9 @@ vi.mock("../cryptoClient", () => ({
 }));
 
 vi.mock("../lib/browser", () => ({ downloadBytes: mocks.downloadBytes }));
+vi.mock("../lib/keyMaterial", () => ({
+  resolveNoteKeyAtEpoch: mocks.resolveNoteKeyAtEpoch
+}));
 
 import { useAttachmentActions } from "./useAttachmentActions";
 
@@ -56,6 +62,8 @@ beforeEach(() => {
   mocks.decryptMetadata.mockResolvedValue({ filename: "image.png", mimeType: "image/png" });
   mocks.downloadAttachment.mockResolvedValue(download());
   mocks.listAttachments.mockResolvedValue({ attachments: [attachment()] });
+  mocks.listNoteEpochLinks.mockResolvedValue({ links: [] });
+  mocks.resolveNoteKeyAtEpoch.mockResolvedValue(new Uint8Array([9, 8, 7]));
   mocks.uploadAttachment.mockResolvedValue({ id: ATTACHMENT_ID, keyEpoch: 1 });
   useAppStore.setState({
     attachmentsByNote: { "note-1": [attachment()] },
@@ -151,6 +159,28 @@ describe("attachment metadata", () => {
         attachmentId: ATTACHMENT_ID,
         keyEpoch: 1,
         noteId: "note-1"
+      })
+    );
+  });
+
+  it("traverses epoch links for historical attachment metadata", async () => {
+    useAppStore.setState({ attachmentsByNote: {} });
+    mocks.listAttachments.mockResolvedValue({
+      attachments: [encryptedAttachment({ keyEpoch: 1 })]
+    });
+    const selectedNote = note({ keyEpoch: 2, noteKeyBase64: "AQIDBA==" });
+    renderHook(() => useAttachmentActions(selectedNote));
+
+    await waitFor(() => {
+      expect(mocks.resolveNoteKeyAtEpoch).toHaveBeenCalledWith(
+        expect.objectContaining({ note: selectedNote, targetEpoch: 1 })
+      );
+    });
+    expect(mocks.listNoteEpochLinks).toHaveBeenCalledWith("note-1");
+    expect(mocks.decryptMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({
+        keyEpoch: 1,
+        noteKey: new Uint8Array([9, 8, 7])
       })
     );
   });

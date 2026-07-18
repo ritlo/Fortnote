@@ -3,6 +3,7 @@ import {
   deleteAttachment,
   downloadAttachment,
   listAttachments,
+  listNoteEpochLinks,
   uploadAttachment,
   type AttachmentSummary,
   type BinaryTransferProgress,
@@ -16,6 +17,7 @@ import {
 import { fromBase64, toBase64 } from "@fortnote/shared";
 import { parseAttachmentReference } from "../lib/attachmentMedia";
 import { downloadBytes } from "../lib/browser";
+import { resolveNoteKeyAtEpoch } from "../lib/keyMaterial";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
 
 interface AttachmentUrlCacheEntry {
@@ -37,8 +39,32 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
   const attachmentsRef = useRef(attachmentsByNote);
   const attachmentLoads = useRef(new Map<string, Promise<AttachmentSummary[]>>());
   const urlCache = useRef(new Map<string, AttachmentUrlCacheEntry>());
+  const epochKeys = useRef(new Map<string, Promise<string>>());
   noteRef.current = selectedNote;
   attachmentsRef.current = attachmentsByNote;
+
+  const noteAtEpoch = useCallback(
+    async (note: DecryptedNote, targetEpoch: number): Promise<DecryptedNote> => {
+      if (targetEpoch === note.keyEpoch) {
+        return note;
+      }
+      const cacheKey = `${note.id}:${String(note.keyEpoch)}:${String(targetEpoch)}`;
+      let pendingKey = epochKeys.current.get(cacheKey);
+      if (!pendingKey) {
+        pendingKey = listNoteEpochLinks(note.id).then(async ({ links }) =>
+          toBase64(await resolveNoteKeyAtEpoch({ note, targetEpoch, links }))
+        );
+        epochKeys.current.set(cacheKey, pendingKey);
+      }
+      try {
+        return { ...note, keyEpoch: targetEpoch, noteKeyBase64: await pendingKey };
+      } catch (error) {
+        epochKeys.current.delete(cacheKey);
+        throw error;
+      }
+    },
+    []
+  );
 
   const storeAttachments = useCallback(
     (noteId: string, attachments: AttachmentSummary[]) => {
@@ -71,8 +97,11 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
             throw new Error("Attachment metadata is no longer available");
           }
           const attachments = await Promise.all(
-            payload.attachments.map((attachment) =>
-              decryptAttachmentSummary(note, attachment)
+            payload.attachments.map(async (attachment) =>
+              decryptAttachmentSummary(
+                await noteAtEpoch(note, attachment.keyEpoch),
+                attachment
+              )
             )
           );
           if (noteRef.current?.id !== noteId) {
@@ -87,7 +116,7 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
       attachmentLoads.current.set(noteId, load);
       return load;
     },
-    [storeAttachments]
+    [noteAtEpoch, storeAttachments]
   );
 
   useEffect(() => {
@@ -127,6 +156,17 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
     }
   }, [attachmentIds, selectedNote?.id, selectedNote?.keyEpoch]);
 
+  useEffect(() => {
+    const prefix = selectedNote
+      ? `${selectedNote.id}:${String(selectedNote.keyEpoch)}:`
+      : null;
+    for (const key of epochKeys.current.keys()) {
+      if (!prefix || !key.startsWith(prefix)) {
+        epochKeys.current.delete(key);
+      }
+    }
+  }, [selectedNote?.id, selectedNote?.keyEpoch]);
+
   useEffect(
     () => () => {
       for (const [key, entry] of urlCache.current) {
@@ -143,7 +183,12 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
       throw new Error("Attachment metadata is no longer available");
     }
     const attachments = await Promise.all(
-      payload.attachments.map((attachment) => decryptAttachmentSummary(note, attachment))
+      payload.attachments.map(async (attachment) =>
+        decryptAttachmentSummary(
+          await noteAtEpoch(note, attachment.keyEpoch),
+          attachment
+        )
+      )
     );
     storeAttachments(noteId, attachments);
     return attachments;
@@ -201,7 +246,7 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
     setStatus("Decrypting attachment");
     try {
       const plaintext = await decryptAuthorizedAttachment(
-        selectedNote,
+        await noteAtEpoch(selectedNote, attachment.keyEpoch),
         attachment,
         (progress) => {
           setStatus(transferStatus("Downloading attachment", progress));
@@ -254,7 +299,8 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
         noteId: note.id,
         promise: Promise.resolve("")
       };
-      entry.promise = decryptAuthorizedAttachment(note, attachment)
+      entry.promise = noteAtEpoch(note, attachment.keyEpoch)
+        .then((epochNote) => decryptAuthorizedAttachment(epochNote, attachment))
         .then((plaintext) => {
           if (urlCache.current.get(key) !== entry) {
             throw new Error("Attachment is no longer available");
@@ -315,7 +361,8 @@ export async function decryptAuthorizedAttachment(
   if (
     encrypted.id !== attachment.id ||
     encrypted.noteId !== selectedNote.id ||
-    encrypted.keyEpoch !== attachment.keyEpoch
+    encrypted.keyEpoch !== attachment.keyEpoch ||
+    selectedNote.keyEpoch !== attachment.keyEpoch
   ) {
     throw new Error("Attachment does not belong to the selected note");
   }

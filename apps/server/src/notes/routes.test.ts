@@ -269,6 +269,23 @@ describe("notes and folders routes", () => {
 	        )
 	        .get(payload.id)
 	    ).toEqual({ sourceEpoch: 1, targetEpoch: 2 });
+	    const links = await owner
+	      .get(`/api/notes/${payload.id}/epoch-links`)
+	      .expect(200);
+	    expect(links.body.links).toEqual([
+	      expect.objectContaining({
+	        sourceEpoch: 1,
+	        targetEpoch: 2,
+	        previousKeyCipher: rotationPayload.previousKeyCipher,
+	        formatVersion: 2
+	      })
+	    ]);
+	    await remaining
+	      .get(`/api/notes/${payload.id}/epoch-links`)
+	      .expect(200);
+	    await revoked
+	      .get(`/api/notes/${payload.id}/epoch-links`)
+	      .expect(404);
 	    expect(
 	      app.locals.db.sqlite
 	        .prepare(
