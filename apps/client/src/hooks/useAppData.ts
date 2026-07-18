@@ -1,8 +1,11 @@
 import {
   getCurrentSharingKey,
+  getLegacyNoteContent,
   getNote,
+  initializeNoteSection,
   listFolders,
   listNotes,
+  reserveLegacyRootSection,
   storeCurrentSharingKey,
   updateFolder,
   type FolderSummary,
@@ -10,6 +13,7 @@ import {
 } from "../api";
 import {
   createUserSharingKey,
+  decryptNoteBodyWithKey,
   decryptFolderNameV2,
   encryptFolderNameV2,
   openUserSharingKey,
@@ -19,12 +23,223 @@ import {
   decryptNoteSummary,
   prepareSharingKeyEnvelopeMigrationV2
 } from "../lib/keyMaterial";
-import { preserveCrdtContent } from "../realtime/crdt";
+import {
+  createCrdtSectionInitializationManifest,
+  editCrdtNote,
+  openCrdtSection,
+  preserveCrdtContent,
+  replaceCrdtSectionOrder,
+  waitForCrdtSectionDurable,
+  waitForCrdtSectionReady
+} from "../realtime/crdt";
 import { useAppStore } from "../store/appStore";
 import type { DecryptedNote } from "../store/appStore";
 
 interface LoadDecryptedNotesOptions {
   preserveSelection?: boolean;
+}
+
+const legacyMigrationSectionIds = new Map<string, string>();
+
+export async function ensureLegacyNoteMigrated(
+  note: DecryptedNote,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!note.legacyContentAvailable) {
+    return;
+  }
+  const legacy = await getLegacyNoteContent(note.id);
+  throwIfAborted(signal);
+  if (legacy.keyEpoch !== note.keyEpoch) {
+    throw new Error("Note key changed during legacy migration");
+  }
+  const body = await decryptNoteBodyWithKey({
+    cryptoOwnerId: note.cryptoOwnerId,
+    noteId: note.id,
+    noteKeyBase64: note.noteKeyBase64,
+    encryptedBody: {
+      cipher: legacy.contentCipher,
+      nonce: legacy.contentNonce,
+      formatVersion: 1
+    }
+  });
+  throwIfAborted(signal);
+  if (note.isDeleted || note.role === "viewer") {
+    updateMigratingNote(note, {
+      body,
+      contentLength: legacy.contentLength,
+      legacyBodyLoaded: true,
+      rootVersion: legacy.rootVersion,
+      version: legacy.version
+    });
+    return;
+  }
+
+  const requestedSectionId =
+    legacyMigrationSectionIds.get(note.id) ?? crypto.randomUUID();
+  legacyMigrationSectionIds.set(note.id, requestedSectionId);
+  let expectedRootVersion = legacy.rootVersion;
+  for (;;) {
+    throwIfAborted(signal);
+    const reservation = await reserveLegacyRootSection(note.id, {
+      sectionId: requestedSectionId,
+      expectedKeyEpoch: note.keyEpoch,
+      expectedRootVersion
+    });
+    expectedRootVersion = reservation.rootVersion;
+    if (reservation.status === "complete") {
+      finishLegacyMigration(note, reservation);
+      legacyMigrationSectionIds.delete(note.id);
+      return;
+    }
+    if (reservation.manifestId) {
+      const initialized = await initializeCurrentSection(
+        note,
+        reservation.sectionId,
+        reservation.manifestId,
+        reservation.rootVersion
+      );
+      finishLegacyMigration(note, {
+        ...reservation,
+        rootVersion: initialized.rootVersion,
+        version: initialized.version
+      });
+      legacyMigrationSectionIds.delete(note.id);
+      return;
+    }
+    if (reservation.status === "pending") {
+      await abortableDelay(1_500, signal);
+      continue;
+    }
+
+    const migratingNote: DecryptedNote = {
+      ...note,
+      body,
+      contentLength: legacy.contentLength,
+      legacyBodyLoaded: true,
+      rootSectionId: reservation.sectionId,
+      rootVersion: reservation.rootVersion,
+      version: reservation.version
+    };
+    openCrdtSection(migratingNote, "root");
+    await waitForCrdtSectionReady(note.id, note.keyEpoch, "root", {
+      ...(signal ? { signal } : {})
+    });
+    if (!replaceCrdtSectionOrder(note.id, [reservation.sectionId])) {
+      throw new Error("Encrypted section order was not ready for migration");
+    }
+    const latestTitle = useAppStore.getState().notes.find(
+      (candidate) => candidate.id === note.id && candidate.keyEpoch === note.keyEpoch
+    )?.title;
+    if (latestTitle !== undefined) {
+      editCrdtNote(note.id, { title: latestTitle });
+    }
+    await waitForCrdtSectionDurable(note.id, note.keyEpoch, "root");
+    openCrdtSection(migratingNote, reservation.sectionId);
+    await waitForCrdtSectionReady(
+      note.id,
+      note.keyEpoch,
+      reservation.sectionId,
+      { ...(signal ? { signal } : {}) }
+    );
+    const manifest = await createCrdtSectionInitializationManifest(
+      note.id,
+      note.keyEpoch,
+      reservation.sectionId
+    );
+    const initialized = await initializeCurrentSection(
+      note,
+      reservation.sectionId,
+      manifest.manifestId,
+      reservation.rootVersion
+    );
+    finishLegacyMigration(note, {
+      ...reservation,
+      rootVersion: initialized.rootVersion,
+      version: initialized.version
+    });
+    legacyMigrationSectionIds.delete(note.id);
+    return;
+  }
+}
+
+async function initializeCurrentSection(
+  note: DecryptedNote,
+  sectionId: string,
+  manifestId: string,
+  expectedRootVersion: number
+) {
+  return initializeNoteSection(note.id, sectionId, {
+    manifestId,
+    expectedKeyEpoch: note.keyEpoch,
+    expectedRootVersion
+  });
+}
+
+function finishLegacyMigration(
+  note: DecryptedNote,
+  migrated: { sectionId: string; rootVersion: number; version: number }
+): void {
+  updateMigratingNote(note, {
+    body: "",
+    contentLength: 0,
+    legacyBodyLoaded: false,
+    legacyContentAvailable: false,
+    rootSectionId: migrated.sectionId,
+    rootVersion: migrated.rootVersion,
+    version: migrated.version
+  });
+}
+
+function updateMigratingNote(
+  note: DecryptedNote,
+  patch: Partial<DecryptedNote>
+): void {
+  const state = useAppStore.getState();
+  if (
+    state.user === null ||
+    !state.notes.some(
+      (candidate) => candidate.id === note.id && candidate.keyEpoch === note.keyEpoch
+    )
+  ) {
+    return;
+  }
+  state.setNotes((notes) =>
+    notes.map((candidate) =>
+      candidate.id === note.id && candidate.keyEpoch === note.keyEpoch
+        ? { ...candidate, ...patch }
+        : candidate
+    )
+  );
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException("Legacy migration canceled", "AbortError");
+  }
+}
+
+function abortableDelay(milliseconds: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      window.clearTimeout(timeout);
+      reject(
+        signal?.reason instanceof Error
+          ? signal.reason
+          : new DOMException("Legacy migration canceled", "AbortError")
+      );
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+    }
+  });
 }
 
 export async function loadDecryptedNotes(

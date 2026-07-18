@@ -13,19 +13,51 @@ import {
 import { decryptNoteSummary } from "../lib/keyMaterial";
 import { useAppStore } from "../store/appStore";
 import {
+  ensureLegacyNoteMigrated,
   ensureSharingKey,
   loadDecryptedNote,
   loadDecryptedNotes,
   loadFolders
 } from "./useAppData";
 
+const migrationMocks = vi.hoisted(() => ({
+  createManifest: vi.fn(),
+  decryptBody: vi.fn(),
+  editNote: vi.fn(),
+  getLegacyContent: vi.fn(),
+  initializeSection: vi.fn(),
+  openSection: vi.fn(),
+  replaceOrder: vi.fn(),
+  reserveSection: vi.fn(),
+  waitDurable: vi.fn(),
+  waitReady: vi.fn()
+}));
+
 vi.mock("../api", () => ({
   getCurrentSharingKey: vi.fn(),
+  getLegacyNoteContent: migrationMocks.getLegacyContent,
   getNote: vi.fn(),
+  initializeNoteSection: migrationMocks.initializeSection,
   listFolders: vi.fn(),
   listNotes: vi.fn(),
+  reserveLegacyRootSection: migrationMocks.reserveSection,
   storeCurrentSharingKey: vi.fn(),
   updateFolder: vi.fn()
+}));
+
+vi.mock("../cryptoClient", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../cryptoClient")>()),
+  decryptNoteBodyWithKey: migrationMocks.decryptBody
+}));
+
+vi.mock("../realtime/crdt", () => ({
+  createCrdtSectionInitializationManifest: migrationMocks.createManifest,
+  editCrdtNote: migrationMocks.editNote,
+  openCrdtSection: migrationMocks.openSection,
+  preserveCrdtContent: <T>(note: T) => note,
+  replaceCrdtSectionOrder: migrationMocks.replaceOrder,
+  waitForCrdtSectionDurable: migrationMocks.waitDurable,
+  waitForCrdtSectionReady: migrationMocks.waitReady
 }));
 
 vi.mock("../lib/keyMaterial", async (importOriginal) => ({
@@ -44,6 +76,34 @@ describe("app data collaboration bootstrap", () => {
     vi.clearAllMocks();
     mockedStoreCurrentSharingKey.mockReset();
     mockedStoreCurrentSharingKey.mockResolvedValue({ sharingKeyVersion: 1 });
+    migrationMocks.createManifest.mockResolvedValue({ manifestId: "manifest-1" });
+    migrationMocks.decryptBody.mockResolvedValue("legacy body");
+    migrationMocks.editNote.mockReturnValue(true);
+    migrationMocks.getLegacyContent.mockResolvedValue({
+      contentCipher: "legacy-cipher",
+      contentNonce: "legacy-nonce",
+      contentLength: 11,
+      version: 1,
+      rootVersion: 1,
+      keyEpoch: 1
+    });
+    migrationMocks.initializeSection.mockResolvedValue({
+      status: "installed",
+      manifestId: "manifest-1",
+      rootVersion: 2,
+      version: 2
+    });
+    migrationMocks.openSection.mockReturnValue({ provider: {}, generation: 1 });
+    migrationMocks.replaceOrder.mockReturnValue(true);
+    migrationMocks.reserveSection.mockResolvedValue({
+      status: "reserved",
+      sectionId: "section-1",
+      keyEpoch: 1,
+      rootVersion: 2,
+      version: 2
+    });
+    migrationMocks.waitDurable.mockResolvedValue(undefined);
+    migrationMocks.waitReady.mockResolvedValue(undefined);
     useAppStore.getState().resetVaultState("test reset");
   });
 
@@ -207,6 +267,126 @@ describe("app data collaboration bootstrap", () => {
     await loadDecryptedNotes(user, rootKey, false, { preserveSelection: true });
 
     expect(useAppStore.getState().selectedNoteId).toBe("deleted-note");
+  });
+
+  it("migrates one legacy body through a resumable CAS initialization", async () => {
+    const legacy = decryptedNote({
+      id: "legacy-note",
+      body: "",
+      legacyContentAvailable: true,
+      legacyBodyLoaded: false,
+      rootSectionId: null,
+      rootVersion: 1
+    });
+    useAppStore.setState({
+      rootKey: new Uint8Array([1]),
+      user: currentUser(),
+      notes: [legacy],
+      selectedNoteId: legacy.id
+    });
+
+    await ensureLegacyNoteMigrated(legacy);
+
+    expect(migrationMocks.decryptBody).toHaveBeenCalledWith(
+      expect.objectContaining({ noteId: legacy.id, noteKeyBase64: legacy.noteKeyBase64 })
+    );
+    expect(migrationMocks.openSection).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ body: "legacy body", rootSectionId: "section-1" }),
+      "root"
+    );
+    expect(migrationMocks.openSection).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ body: "legacy body", rootSectionId: "section-1" }),
+      "section-1"
+    );
+    expect(migrationMocks.replaceOrder).toHaveBeenCalledWith(
+      legacy.id,
+      ["section-1"]
+    );
+    expect(migrationMocks.initializeSection).toHaveBeenCalledWith(
+      legacy.id,
+      "section-1",
+      {
+        manifestId: "manifest-1",
+        expectedKeyEpoch: 1,
+        expectedRootVersion: 2
+      }
+    );
+    expect(useAppStore.getState().notes[0]).toMatchObject({
+      body: "",
+      contentLength: 0,
+      legacyBodyLoaded: false,
+      legacyContentAvailable: false,
+      rootSectionId: "section-1",
+      rootVersion: 2,
+      version: 2
+    });
+  });
+
+  it("finalizes another client's committed migration without reseeding content", async () => {
+    const legacy = decryptedNote({
+      id: "pending-legacy-note",
+      legacyContentAvailable: true,
+      rootSectionId: null,
+      rootVersion: 1
+    });
+    migrationMocks.reserveSection.mockResolvedValueOnce({
+      status: "pending",
+      sectionId: "winning-section",
+      keyEpoch: 1,
+      rootVersion: 2,
+      version: 2,
+      manifestId: "winning-manifest"
+    });
+    migrationMocks.initializeSection.mockResolvedValueOnce({
+      status: "installed",
+      manifestId: "winning-manifest",
+      rootVersion: 2,
+      version: 2
+    });
+    useAppStore.setState({
+      rootKey: new Uint8Array([1]),
+      user: currentUser(),
+      notes: [legacy]
+    });
+
+    await ensureLegacyNoteMigrated(legacy);
+
+    expect(migrationMocks.openSection).not.toHaveBeenCalled();
+    expect(migrationMocks.createManifest).not.toHaveBeenCalled();
+    expect(migrationMocks.initializeSection).toHaveBeenCalledWith(
+      legacy.id,
+      "winning-section",
+      expect.objectContaining({ manifestId: "winning-manifest" })
+    );
+    expect(useAppStore.getState().notes[0]).toMatchObject({
+      legacyContentAvailable: false,
+      rootSectionId: "winning-section"
+    });
+  });
+
+  it("opens legacy content read-only for viewers without reserving a section", async () => {
+    const legacy = decryptedNote({
+      id: "legacy-viewer-note",
+      legacyContentAvailable: true,
+      role: "viewer",
+      rootSectionId: null
+    });
+    useAppStore.setState({
+      rootKey: new Uint8Array([1]),
+      user: currentUser(),
+      notes: [legacy]
+    });
+
+    await ensureLegacyNoteMigrated(legacy);
+
+    expect(migrationMocks.reserveSection).not.toHaveBeenCalled();
+    expect(useAppStore.getState().notes[0]).toMatchObject({
+      body: "legacy body",
+      legacyBodyLoaded: true,
+      legacyContentAvailable: true
+    });
   });
 
   it("does not restore decrypted notes after the vault is locked", async () => {

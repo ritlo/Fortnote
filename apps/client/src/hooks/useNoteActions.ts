@@ -96,6 +96,8 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         body: "",
         noteKeyBase64: noteKeyToBase64(draft.noteKey),
         contentLength: 0,
+        legacyContentAvailable: false,
+        legacyBodyLoaded: false,
         version: created.version,
         keyEpoch: 1,
         isDeleted: false,

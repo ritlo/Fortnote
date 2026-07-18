@@ -270,6 +270,9 @@ export function NoteEditor({
       ? state.loadedSections[sectionRuntimeKey(selectedNote.id, selectedSectionId)]
       : undefined
   );
+  const sectionIndex = useAppStore((state) =>
+    selectedNote ? state.sectionIndexes[selectedNote.id] : undefined
+  );
 
   function markEditing() {
     if (canEdit) {
@@ -326,7 +329,7 @@ export function NoteEditor({
           onFocus={markEditing}
         />
       </label>
-      {selectedNote.rootSectionId ? (
+      {selectedNote.rootSectionId && !selectedNote.legacyContentAvailable ? (
         <SectionNavigator
           canEdit={canEdit}
           noteId={selectedNote.id}
@@ -334,13 +337,26 @@ export function NoteEditor({
         />
       ) : null}
       <div className="block-editor" onBlurCapture={markIdle} onFocusCapture={markEditing}>
-        {notesView === "trash" ? (
+        {selectedNote.legacyContentAvailable && !selectedNote.legacyBodyLoaded ? (
+          sectionIndex?.status === "error" ? (
+            <div role="alert" className="section-loading-status">
+              {sectionIndex.error ?? "Legacy encrypted note could not open"}
+              <button type="button" disabled={!retrySectionLoad} onClick={retrySectionLoad}>
+                Retry
+              </button>
+            </div>
+          ) : (
+            <div aria-live="polite" className="section-loading-status">
+              Migrating encrypted note…
+            </div>
+          )
+        ) : notesView === "trash" ? (
           <ReadOnlyBlockNoteField
             key={`${selectedNote.id}:${String(selectedNote.keyEpoch)}:trash`}
             resolveAttachmentUrl={resolveAttachmentUrl}
             selectedNote={selectedNote}
           />
-        ) : !selectedNote.rootSectionId ? (
+        ) : selectedNote.legacyContentAvailable || !selectedNote.rootSectionId ? (
           <CollaborativeBlockNoteField
             key={`${selectedNote.id}:root:${String(selectedNote.keyEpoch)}:${canEdit ? "edit" : "view"}`}
             canEdit={canEdit}

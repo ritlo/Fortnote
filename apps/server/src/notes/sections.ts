@@ -22,6 +22,21 @@ export interface NoteSectionAccess {
   status: "active" | "revoked";
 }
 
+export type LegacySectionReservationOutcome =
+  | {
+      status: "reserved" | "pending" | "complete";
+      sectionId: string;
+      keyEpoch: number;
+      rootVersion: number;
+      version: number;
+      manifestId?: string;
+      changed?: boolean;
+    }
+  | {
+      status: "rejected";
+      code: "forbidden" | "rotation-pending" | "stale-epoch" | "stale-version";
+    };
+
 export type SectionInitializationOutcome =
   | { status: "installed" | "already-initialized"; manifestId: string }
   | {
@@ -133,6 +148,11 @@ export function compareAndSetSectionInitialization(
       input.expectedKeyEpoch
     );
     if (existing) {
+      clearLegacyContentForInitializedRoot(
+        context,
+        input.noteId,
+        storedSectionId
+      );
       return { status: "already-initialized", manifestId: existing.manifestId };
     }
     if (access.rotationFenced) {
@@ -186,9 +206,149 @@ export function compareAndSetSectionInitialization(
     if (sectionUpdate.changes !== 1) {
       throw new Error("Section initialization invariant failed");
     }
+    clearLegacyContentForInitializedRoot(context, input.noteId, storedSectionId);
     return { status: "installed", manifestId: input.manifestId };
   });
   return commit.immediate();
+}
+
+export function reserveLegacyRootSection(
+  context: AppContext,
+  input: {
+    sessionId: string;
+    userId: string;
+    noteId: string;
+    sectionId: string;
+    expectedKeyEpoch: number;
+    expectedRootVersion: number;
+  }
+): LegacySectionReservationOutcome {
+  const reserve = context.db.sqlite.transaction((): LegacySectionReservationOutcome => {
+    if (!isSessionActive(context.db, input.sessionId)) {
+      return { status: "rejected", code: "forbidden" };
+    }
+    const current = context.db.sqlite
+      .prepare(`
+        SELECT
+          n.root_section_id AS rootSectionId,
+          n.root_version AS rootVersion,
+          n.version,
+          n.key_epoch AS keyEpoch,
+          n.rotation_fenced AS rotationFenced,
+          n.is_deleted AS isDeleted,
+          n.content_cipher AS contentCipher,
+          m.role,
+          m.status AS membershipStatus,
+          s.initialization_manifest_id AS initializationManifestId,
+          s.updated_at AS sectionUpdatedAt
+        FROM notes n
+        INNER JOIN note_memberships m ON m.note_id = n.id AND m.user_id = ?
+        LEFT JOIN note_sections s ON s.id = n.root_section_id AND s.note_id = n.id
+        WHERE n.id = ?
+      `)
+      .get(input.userId, input.noteId) as {
+        rootSectionId: string | null;
+        rootVersion: number;
+        version: number;
+        keyEpoch: number;
+        rotationFenced: number;
+        isDeleted: number;
+        contentCipher: string;
+        role: "owner" | "editor" | "viewer";
+        membershipStatus: "active" | "revoked";
+        initializationManifestId: string | null;
+        sectionUpdatedAt: string | null;
+      } | undefined;
+    if (
+      current?.membershipStatus !== "active" ||
+      current.isDeleted ||
+      (current.role !== "owner" && current.role !== "editor")
+    ) {
+      return { status: "rejected", code: "forbidden" };
+    }
+    if (current.keyEpoch !== input.expectedKeyEpoch) {
+      return { status: "rejected", code: "stale-epoch" };
+    }
+    if (current.rotationFenced) {
+      return { status: "rejected", code: "rotation-pending" };
+    }
+    if (current.rootSectionId) {
+      const manifest = latestCheckpointManifest(
+        context,
+        input.noteId,
+        current.rootSectionId,
+        current.keyEpoch
+      );
+      const outcome = {
+        sectionId: current.rootSectionId,
+        keyEpoch: current.keyEpoch,
+        rootVersion: current.rootVersion,
+        version: current.version,
+        ...(manifest ? { manifestId: manifest.id } : {})
+      };
+      if (current.contentCipher === "" || current.initializationManifestId) {
+        return { status: "complete", ...outcome };
+      }
+      if (current.rootSectionId === input.sectionId) {
+        return { status: "reserved", ...outcome };
+      }
+      if (manifest || !isStaleReservation(context, current.sectionUpdatedAt)) {
+        return { status: "pending", ...outcome };
+      }
+      if (current.rootVersion !== input.expectedRootVersion) {
+        return { status: "rejected", code: "stale-version" };
+      }
+      context.db.sqlite
+        .prepare(`
+          UPDATE note_sections
+          SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND note_id = ? AND initialization_manifest_id IS NULL
+        `)
+        .run(current.rootSectionId, input.noteId);
+    } else if (current.rootVersion !== input.expectedRootVersion) {
+      return { status: "rejected", code: "stale-version" };
+    }
+
+    const sectionIdInUse = context.db.sqlite
+      .prepare("SELECT id FROM note_sections WHERE id = ?")
+      .get(input.sectionId);
+    if (sectionIdInUse) {
+      return { status: "rejected", code: "forbidden" };
+    }
+
+    const updated = context.db.sqlite
+      .prepare(`
+        UPDATE notes
+        SET root_section_id = ?, root_version = root_version + 1,
+            version = version + 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND root_version = ? AND key_epoch = ?
+          AND rotation_fenced = 0 AND content_cipher <> ''
+      `)
+      .run(
+        input.sectionId,
+        input.noteId,
+        current.rootVersion,
+        input.expectedKeyEpoch
+      );
+    if (updated.changes !== 1) {
+      return { status: "rejected", code: "stale-version" };
+    }
+    context.db.sqlite
+      .prepare(`
+        INSERT INTO note_sections (id, note_id, created_epoch)
+        VALUES (?, ?, ?)
+      `)
+      .run(input.sectionId, input.noteId, input.expectedKeyEpoch);
+    return {
+      status: "reserved",
+      sectionId: input.sectionId,
+      keyEpoch: input.expectedKeyEpoch,
+      rootVersion: current.rootVersion + 1,
+      version: current.version + 1,
+      changed: true
+    };
+  });
+  return reserve.immediate();
 }
 
 export function listVisibleNoteSections(
@@ -224,4 +384,46 @@ function readInitialization(
       WHERE note_id = ? AND section_id = ? AND key_epoch = ?
     `)
     .get(noteId, sectionId, keyEpoch) ?? null) as { manifestId: string } | null;
+}
+
+function clearLegacyContentForInitializedRoot(
+  context: AppContext,
+  noteId: string,
+  storedSectionId: string
+): void {
+  context.db.sqlite
+    .prepare(`
+      UPDATE notes
+      SET content_cipher = '', content_nonce = '', content_length = 0,
+          content_updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND root_section_id = ? AND content_cipher <> ''
+    `)
+    .run(noteId, storedSectionId);
+}
+
+function latestCheckpointManifest(
+  context: AppContext,
+  noteId: string,
+  sectionId: string,
+  keyEpoch: number
+): { id: string } | null {
+  return (context.db.sqlite
+    .prepare(`
+      SELECT id
+      FROM content_manifests
+      WHERE note_id = ? AND section_id = ? AND key_epoch = ? AND kind = 'checkpoint'
+      ORDER BY last_sequence DESC
+      LIMIT 1
+    `)
+    .get(noteId, sectionId, keyEpoch) ?? null) as { id: string } | null;
+}
+
+function isStaleReservation(context: AppContext, updatedAt: string | null): boolean {
+  if (!updatedAt) {
+    return true;
+  }
+  const stale = context.db.sqlite
+    .prepare(`SELECT datetime(?) <= datetime('now', '-30 seconds') AS stale`)
+    .get(updatedAt) as { stale: number };
+  return Boolean(stale.stale);
 }

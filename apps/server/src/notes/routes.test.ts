@@ -158,6 +158,199 @@ describe("notes and folders routes", () => {
     });
   });
 
+  it("reserves one recoverable migration section without exposing legacy content in metadata", async () => {
+    const app = createTestApp();
+    const owner = await registerAgent(app, "legacy_section_owner");
+    const outsider = await registerAgent(app, "legacy_section_outsider");
+    const legacy = notePayload();
+    const firstSectionId = crypto.randomUUID();
+    const competingSectionId = crypto.randomUUID();
+    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
+
+    const listed = await owner.get("/api/notes").expect(200);
+    expect(listed.body.notes[0]).toMatchObject({
+      id: legacy.id,
+      legacyContentAvailable: true,
+      rootSectionId: null
+    });
+    expect(listed.body.notes[0]).not.toHaveProperty("contentCipher");
+    const content = await owner
+      .get(`/api/notes/${legacy.id}/legacy-content`)
+      .expect(200);
+    expect(content.body).toMatchObject({
+      contentCipher: legacy.contentCipher,
+      contentNonce: legacy.contentNonce,
+      contentLength: legacy.contentLength,
+      rootVersion: 1,
+      keyEpoch: 1
+    });
+    await outsider.get(`/api/notes/${legacy.id}/legacy-content`).expect(404);
+
+    const reserved = await owner
+      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
+      .set(csrfHeaders())
+      .send({
+        sectionId: firstSectionId,
+        expectedKeyEpoch: 1,
+        expectedRootVersion: 1
+      })
+      .expect(201);
+    expect(reserved.body).toMatchObject({
+      status: "reserved",
+      sectionId: firstSectionId,
+      rootVersion: 2,
+      version: 2
+    });
+    await owner
+      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
+      .set(csrfHeaders())
+      .send({
+        sectionId: firstSectionId,
+        expectedKeyEpoch: 1,
+        expectedRootVersion: 1
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          status: "reserved",
+          sectionId: firstSectionId,
+          rootVersion: 2
+        });
+      });
+    await owner
+      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
+      .set(csrfHeaders())
+      .send({
+        sectionId: competingSectionId,
+        expectedKeyEpoch: 1,
+        expectedRootVersion: 2
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          status: "pending",
+          sectionId: firstSectionId,
+          rootVersion: 2
+        });
+      });
+    expect(
+      app.locals.db.sqlite
+        .prepare(`
+          SELECT n.root_section_id AS rootSectionId, s.is_deleted AS isDeleted
+          FROM notes n INNER JOIN note_sections s ON s.id = n.root_section_id
+          WHERE n.id = ?
+        `)
+        .get(legacy.id)
+    ).toEqual({ rootSectionId: firstSectionId, isDeleted: 0 });
+  });
+
+  it("replaces only a stale empty migration reservation", async () => {
+    const app = createTestApp();
+    const owner = await registerAgent(app, "stale_legacy_section_owner");
+    const legacy = notePayload();
+    const staleSectionId = crypto.randomUUID();
+    const replacementSectionId = crypto.randomUUID();
+    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
+    await owner
+      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
+      .set(csrfHeaders())
+      .send({
+        sectionId: staleSectionId,
+        expectedKeyEpoch: 1,
+        expectedRootVersion: 1
+      })
+      .expect(201);
+    app.locals.db.sqlite
+      .prepare("UPDATE note_sections SET updated_at = datetime('now', '-1 hour') WHERE id = ?")
+      .run(staleSectionId);
+
+    await owner
+      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
+      .set(csrfHeaders())
+      .send({
+        sectionId: replacementSectionId,
+        expectedKeyEpoch: 1,
+        expectedRootVersion: 2
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          status: "reserved",
+          sectionId: replacementSectionId,
+          rootVersion: 3
+        });
+      });
+    expect(
+      app.locals.db.sqlite
+        .prepare("SELECT id, is_deleted AS isDeleted FROM note_sections WHERE note_id = ? ORDER BY id")
+        .all(legacy.id)
+    ).toEqual(expect.arrayContaining([
+      { id: staleSectionId, isDeleted: 1 },
+      { id: replacementSectionId, isDeleted: 0 }
+    ]));
+  });
+
+  it("clears legacy columns only after installing the committed initial checkpoint", async () => {
+    const app = createTestApp();
+    const owner = await registerAgent(app, "legacy_initialization_owner");
+    const legacy = notePayload();
+    const sectionId = crypto.randomUUID();
+    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
+    await owner
+      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
+      .set(csrfHeaders())
+      .send({ sectionId, expectedKeyEpoch: 1, expectedRootVersion: 1 })
+      .expect(201);
+    const cryptoOwner = app.locals.db.sqlite
+      .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
+      .get(legacy.id) as { cryptoOwnerId: string };
+    const manifestId = seedCheckpointManifest(app, {
+      noteId: legacy.id,
+      sectionId,
+      cryptoOwnerId: cryptoOwner.cryptoOwnerId
+    });
+
+    await owner
+      .post(`/api/notes/${legacy.id}/sections/${sectionId}/initialization`)
+      .set(csrfHeaders())
+      .send({ manifestId, expectedKeyEpoch: 1, expectedRootVersion: 2 })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          status: "installed",
+          manifestId,
+          rootVersion: 2,
+          version: 2
+        });
+      });
+    await owner.get(`/api/notes/${legacy.id}/legacy-content`).expect(409);
+    await owner.get(`/api/notes/${legacy.id}`).expect(200).expect(({ body }) => {
+      expect(body).toMatchObject({ legacyContentAvailable: false });
+    });
+    expect(
+      app.locals.db.sqlite
+        .prepare(`
+          SELECT content_cipher AS contentCipher, content_nonce AS contentNonce,
+                 content_length AS contentLength
+          FROM notes WHERE id = ?
+        `)
+        .get(legacy.id)
+    ).toEqual({ contentCipher: "", contentNonce: "", contentLength: 0 });
+    await owner
+      .post(`/api/notes/${legacy.id}/sections/${sectionId}/initialization`)
+      .set(csrfHeaders())
+      .send({ manifestId, expectedKeyEpoch: 1, expectedRootVersion: 2 })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({ status: "already-initialized", manifestId });
+      });
+    expect(
+      app.locals.db.sqlite
+        .prepare("SELECT COUNT(*) AS count FROM note_events WHERE note_id = ?")
+        .get(legacy.id)
+    ).toEqual({ count: 3 });
+  });
+
 	  it("atomically upgrades an owned legacy note to protected v2 metadata", async () => {
 	    const app = createTestApp();
 	    const owner = await registerAgent(app, "metadata_migration_owner");
@@ -1245,6 +1438,46 @@ describe("notes and folders routes", () => {
     });
   });
 });
+
+function seedCheckpointManifest(
+  app: ReturnType<typeof createTestApp>,
+  input: { noteId: string; sectionId: string; cryptoOwnerId: string }
+): string {
+  const sqlite = app.locals.db.sqlite;
+  const uploadId = crypto.randomUUID();
+  const updateId = crypto.randomUUID();
+  const manifestId = crypto.randomUUID();
+  sqlite.prepare(`
+    INSERT INTO content_uploads (
+      id, update_id, note_id, section_id, crypto_owner_id, key_epoch,
+      kind, format_version, total_cipher_bytes, chunk_count, manifest_hash,
+      status, expires_at
+    ) VALUES (?, ?, ?, ?, ?, 1, 'checkpoint', 2, 6, 1, ?, 'committed', ?)
+  `).run(
+    uploadId,
+    updateId,
+    input.noteId,
+    input.sectionId,
+    input.cryptoOwnerId,
+    `hash-${manifestId}`,
+    "2099-01-01T00:00:00.000Z"
+  );
+  sqlite.prepare(`
+    INSERT INTO content_manifests (
+      id, upload_id, update_id, note_id, section_id, key_epoch, kind,
+      format_version, first_sequence, last_sequence, total_cipher_bytes,
+      chunk_count, manifest_hash
+    ) VALUES (?, ?, ?, ?, ?, 1, 'checkpoint', 2, 1, 1, 6, 1, ?)
+  `).run(
+    manifestId,
+    uploadId,
+    updateId,
+    input.noteId,
+    input.sectionId,
+    `hash-${manifestId}`
+  );
+  return manifestId;
+}
 
 function failNoteEventWrites(app: ReturnType<typeof createTestApp>): void {
   app.locals.db.sqlite.exec(`

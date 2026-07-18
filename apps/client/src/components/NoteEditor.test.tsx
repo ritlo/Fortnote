@@ -7,7 +7,7 @@ import type { DecryptedNote } from "../store/appStore";
 import type { AttachmentSummary } from "../api";
 import { useAppStore } from "../store/appStore";
 import { formatAttachmentReference } from "../lib/attachmentMedia";
-import { parseBlockNoteBody } from "../lib/blockNote";
+import { blockNoteInitialContent, parseBlockNoteBody } from "../lib/blockNote";
 
 const mocks = vi.hoisted(() => ({
   createOptions: [] as unknown[],
@@ -215,6 +215,9 @@ describe("NoteEditor BlockNote lifecycle", () => {
     view.rerender(editor(note({ body: JSON.stringify([{ id: "two" }]) }), update));
 
     expect(update).not.toHaveBeenCalled();
+    expect(blockNoteInitialContent("# legacy")).toEqual([
+      { type: "paragraph", content: "# legacy" }
+    ]);
   });
 
   it("does not initialize BlockNote for an unloaded section", () => {

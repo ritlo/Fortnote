@@ -18,6 +18,7 @@ import {
   type SectionTransferProgress,
   type StorageCapacityState
 } from "../store/appStore";
+import { ensureLegacyNoteMigrated } from "./useAppData";
 
 const ROOT_SECTION_ID = "root";
 const ADJACENT_PREFETCH_COUNT = 1;
@@ -39,7 +40,54 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
   const [retryVersion, setRetryVersion] = useState(0);
 
   useEffect(() => {
-    if (!selectedNote || selectedNote.isDeleted) {
+    if (
+      !selectedNote?.legacyContentAvailable ||
+      ((selectedNote.isDeleted || selectedNote.role === "viewer") &&
+        selectedNote.legacyBodyLoaded)
+    ) {
+      return;
+    }
+    const controller = new AbortController();
+    const note = selectedNote;
+    setSectionIndex(note.id, {
+      noteId: note.id,
+      status: "loading",
+      orderedSectionIds: [],
+      sections: []
+    });
+    void ensureLegacyNoteMigrated(note, controller.signal).catch((error: unknown) => {
+      if (controller.signal.aborted || !isSelectedNote(note)) {
+        return;
+      }
+      setSectionIndex(note.id, {
+        noteId: note.id,
+        status: "error",
+        orderedSectionIds: [],
+        sections: [],
+        error: errorMessage(error, "Legacy encrypted note could not migrate")
+      });
+    });
+    return () => {
+      controller.abort();
+    };
+  }, [
+    retryVersion,
+    selectedNote?.id,
+    selectedNote?.isDeleted,
+    selectedNote?.keyEpoch,
+    selectedNote?.legacyBodyLoaded,
+    selectedNote?.legacyContentAvailable,
+    selectedNote?.role,
+    selectedNote?.rootVersion
+  ]);
+
+  useEffect(() => {
+    if (
+      !selectedNote ||
+      selectedNote.isDeleted ||
+      (selectedNote.legacyContentAvailable &&
+        (selectedNote.role !== "viewer" || !selectedNote.legacyBodyLoaded))
+    ) {
       return;
     }
     const note = selectedNote;
@@ -69,10 +117,22 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
         }
       }
     };
-  }, [selectedNote?.id, selectedNote?.isDeleted, selectedNote?.keyEpoch]);
+  }, [
+    selectedNote?.id,
+    selectedNote?.isDeleted,
+    selectedNote?.keyEpoch,
+    selectedNote?.legacyBodyLoaded,
+    selectedNote?.legacyContentAvailable,
+    selectedNote?.role
+  ]);
 
   useEffect(() => {
-    if (!selectedNote || selectedNote.isDeleted) {
+    if (
+      !selectedNote ||
+      selectedNote.isDeleted ||
+      selectedNote.legacyContentAvailable ||
+      !selectedNote.rootSectionId
+    ) {
       return;
     }
     const controller = new AbortController();
@@ -100,7 +160,14 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
     return () => {
       controller.abort();
     };
-  }, [retryVersion, selectedNote?.id, selectedNote?.isDeleted, selectedNote?.keyEpoch]);
+  }, [
+    retryVersion,
+    selectedNote?.id,
+    selectedNote?.isDeleted,
+    selectedNote?.keyEpoch,
+    selectedNote?.legacyContentAvailable,
+    selectedNote?.rootSectionId
+  ]);
 
   useEffect(() => {
     if (!selectedNote || selectedNote.isDeleted || !selectedSectionId) {

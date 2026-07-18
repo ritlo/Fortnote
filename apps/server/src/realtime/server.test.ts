@@ -103,6 +103,14 @@ describe("realtime server", () => {
       .set(csrfHeaders())
       .send(protectedNotePayload(noteId, sectionId))
       .expect(201);
+    server.db.sqlite
+      .prepare(`
+        UPDATE notes
+        SET content_cipher = 'legacy-cipher', content_nonce = 'legacy-nonce',
+            content_length = 42
+        WHERE id = ?
+      `)
+      .run(noteId);
     const cryptoOwnerId = (
       server.db.sqlite
         .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
@@ -397,6 +405,12 @@ describe("realtime server", () => {
       sectionId,
       expectedKeyEpoch: 1
     }));
+    expect(await reader.nextJson("unsubscribe confirmation")).toEqual({
+      type: "crdt-unsubscribed",
+      noteId,
+      sectionId,
+      keyEpoch: 1
+    });
 
     const cipher = Uint8Array.from([1, 3, 3, 7, 0, 0]);
     const header = binaryHeader({ noteId, sectionId, cryptoOwnerId });
@@ -601,6 +615,15 @@ describe("realtime server", () => {
       legacyRootVersion: 1,
       sectionManifestId: winnerManifestId
     });
+    expect(
+      server.db.sqlite
+        .prepare(`
+          SELECT content_cipher AS contentCipher, content_nonce AS contentNonce,
+                 content_length AS contentLength
+          FROM notes WHERE id = ?
+        `)
+        .get(noteId)
+    ).toEqual({ contentCipher: "", contentNonce: "", contentLength: 0 });
   });
 
   it("rejects unauthenticated websocket connections", async () => {
@@ -1690,10 +1713,12 @@ async function expectNoMessage(
 ): Promise<void> {
   await expect(
     new Promise<void>((resolve, reject) => {
-      const onMessage = (data: RawData) => {
+      const onMessage = (data: RawData, isBinary: boolean) => {
         clearTimeout(timeout);
-        const message = parseSocketMessage(data);
-        reject(new Error(`Unexpected websocket message: ${JSON.stringify(message)}`));
+        const message = isBinary
+          ? "binary websocket frame"
+          : JSON.stringify(parseSocketMessage(data));
+        reject(new Error(`Unexpected websocket message: ${message}`));
       };
       const timeout = setTimeout(() => {
         socket.socket.off("message", onMessage);

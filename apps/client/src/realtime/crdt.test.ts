@@ -7,18 +7,22 @@ import * as contentTransfer from "./contentTransfer";
 import {
   checkpointCrdtNote,
   clearCrdtNotes,
+  createCrdtSectionInitializationManifest,
   editCrdtNote,
   ensureCrdtHistoryReadable,
   finishCrdtSync,
   getCrdtProvider,
+  getCrdtSectionOrder,
   openCrdtSection,
   openCrdtNote,
   preserveCrdtContent,
   receiveCrdtUpdate,
   releaseCrdtSection,
+  replaceCrdtSectionOrder,
   requiresContentTransfer,
   setCrdtTransport,
   updateCrdtNote,
+  waitForCrdtSectionDurable,
   type ScopedEncryptedCrdtMessage
 } from "./crdt";
 
@@ -78,6 +82,75 @@ describe("CRDT collaboration", () => {
   it("routes only updates that cannot fit the realtime frame through content transfer", () => {
     expect(requiresContentTransfer(256 * 1024 - 4096 - 16)).toBe(false);
     expect(requiresContentTransfer(256 * 1024 - 4096 - 15)).toBe(true);
+  });
+
+  it("forces initialization checkpoints through durable chunks and protects root order", async () => {
+    const sectionId = "00000000-0000-4000-8000-000000000002";
+    const current = note({
+      noteKeyBase64: "AQIDBA==",
+      rootSectionId: sectionId
+    });
+    const sendDurably = vi.fn().mockReturnValue({
+      durable: Promise.resolve(),
+      delivered: Promise.resolve()
+    });
+    const manifest = {
+      manifestId: "manifest-1",
+      uploadId: "upload-1",
+      updateId: "update-1",
+      noteId: current.id,
+      sectionId,
+      cryptoOwnerId: current.cryptoOwnerId,
+      keyEpoch: 1,
+      kind: "checkpoint" as const,
+      firstSequence: 1,
+      lastSequence: 1,
+      totalCipherBytes: 32,
+      chunkCount: 1,
+      manifestHash: "hash",
+      checkpointSequenceCutoff: 0
+    };
+    const sendContentDurably = vi.fn().mockReturnValue({
+      durable: Promise.resolve(),
+      delivered: Promise.resolve(manifest)
+    });
+    vi.mocked(
+      (await import("../cryptoClient")).encryptContentChunksV2
+    ).mockResolvedValue({
+      cryptoOwnerId: current.cryptoOwnerId,
+      noteId: current.id,
+      sectionId,
+      keyEpoch: 1,
+      updateId: "prepared-update",
+      uploadId: "upload-1",
+      requestId: "request-1",
+      kind: "checkpoint",
+      formatVersion: 2,
+      totalCipherBytes: 32,
+      chunkCount: 1,
+      manifestHash: "hash",
+      checkpointSequenceCutoff: 0,
+      chunks: []
+    });
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      sendDurably,
+      sendContentDurably,
+      subscribe: vi.fn()
+    });
+    openCrdtSection(current, "root");
+    await finishCrdtSync(current.id, 1, false, "root");
+    expect(replaceCrdtSectionOrder(current.id, [sectionId, sectionId])).toBe(true);
+    await waitForCrdtSectionDurable(current.id, 1, "root");
+    expect(getCrdtSectionOrder(current.id)).toEqual([sectionId]);
+
+    openCrdtSection(current, sectionId);
+    await finishCrdtSync(current.id, 1, false, sectionId);
+    await expect(
+      createCrdtSectionInitializationManifest(current.id, 1, sectionId)
+    ).resolves.toEqual(manifest);
+    expect(sendContentDurably).toHaveBeenCalledOnce();
   });
 
   it("releases after pending delivery without tearing down a reopened section", async () => {

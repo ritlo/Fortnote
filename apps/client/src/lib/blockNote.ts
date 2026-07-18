@@ -26,7 +26,11 @@ export function parseBlockNoteBody(body: string | undefined): PartialBlock[] | n
 }
 
 export function blockNoteInitialContent(body: string | undefined): PartialBlock[] {
-  return parseBlockNoteBody(body) ?? emptyDocument;
+  const stored = parseBlockNoteBody(body);
+  if (stored) {
+    return stored;
+  }
+  return body ? [{ type: "paragraph", content: body }] : emptyDocument;
 }
 
 export function replaceBlockNoteFragment(fragment: Y.XmlFragment, body: string | undefined): void {

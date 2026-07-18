@@ -186,6 +186,8 @@ export async function decryptNoteSummary(
     body: decrypted.body,
     noteKeyBase64: decrypted.noteKeyBase64,
     contentLength: note.contentLength,
+    legacyContentAvailable: Boolean(note.legacyContentAvailable),
+    legacyBodyLoaded: false,
     version: note.version,
     keyEpoch: note.keyEpoch,
     isDeleted: Boolean(note.isDeleted),

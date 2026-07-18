@@ -351,6 +351,12 @@ export class RealtimeHub implements RealtimePublisher {
       return;
     }
     client.subscribedCrdtScopes.delete(crdtScope(request.noteId, request.sectionId));
+    sendJson(client.socket, {
+      type: "crdt-unsubscribed",
+      noteId: request.noteId,
+      sectionId: request.sectionId,
+      keyEpoch: request.expectedKeyEpoch
+    });
   }
 
   publishCrdtBinary(

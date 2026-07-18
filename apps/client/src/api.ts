@@ -65,6 +65,31 @@ export interface LogicalNoteSectionSummary {
   isDeleted: boolean;
 }
 
+export interface LegacyNoteContent {
+  contentCipher: string;
+  contentNonce: string;
+  contentLength: number;
+  version: number;
+  rootVersion: number;
+  keyEpoch: number;
+}
+
+export interface LegacySectionReservation {
+  status: "reserved" | "pending" | "complete";
+  sectionId: string;
+  keyEpoch: number;
+  rootVersion: number;
+  version: number;
+  manifestId?: string;
+}
+
+export interface SectionInitializationResult {
+  status: "installed" | "already-initialized";
+  manifestId: string;
+  rootVersion: number;
+  version: number;
+}
+
 export interface SectionHistoryPage {
   sectionId: string;
   keyEpoch: number;
@@ -162,6 +187,7 @@ export interface NoteSummary {
   contentCipher?: string;
   contentNonce?: string;
   contentLength: number;
+  legacyContentAvailable?: boolean;
   version: number;
   rootVersion?: number;
   rootSectionId?: string | null;
@@ -728,6 +754,39 @@ function canonicalNonce(value: string): boolean {
 
 export function listNoteSections(noteId: string): Promise<{ sections: LogicalNoteSectionSummary[] }> {
   return apiRequest<{ sections: LogicalNoteSectionSummary[] }>(`/notes/${noteId}/sections`);
+}
+
+export function getLegacyNoteContent(noteId: string): Promise<LegacyNoteContent> {
+  return apiRequest<LegacyNoteContent>(`/notes/${noteId}/legacy-content`);
+}
+
+export function reserveLegacyRootSection(
+  noteId: string,
+  payload: {
+    sectionId: string;
+    expectedKeyEpoch: number;
+    expectedRootVersion: number;
+  }
+): Promise<LegacySectionReservation> {
+  return apiRequest<LegacySectionReservation>(
+    `/notes/${noteId}/sections/legacy-reservation`,
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+}
+
+export function initializeNoteSection(
+  noteId: string,
+  sectionId: string,
+  payload: {
+    manifestId: string;
+    expectedKeyEpoch: number;
+    expectedRootVersion: number;
+  }
+): Promise<SectionInitializationResult> {
+  return apiRequest<SectionInitializationResult>(
+    `/notes/${noteId}/sections/${sectionId}/initialization`,
+    { method: "POST", body: JSON.stringify(payload) }
+  );
 }
 
 export function getSectionHistory(

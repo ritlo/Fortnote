@@ -193,6 +193,91 @@ export function getCrdtSectionOrder(noteId: string): string[] {
   )];
 }
 
+export function replaceCrdtSectionOrder(
+  noteId: string,
+  orderedSectionIds: string[]
+): boolean {
+  const root = bindings.get(bindingKey(noteId, ROOT_SECTION_ID));
+  if (!root?.ready || !canWrite(root)) {
+    return false;
+  }
+  const uniqueIds = [...new Set(orderedSectionIds)];
+  root.doc.transact(() => {
+    const sections = root.doc.getArray<string>(SECTION_ORDER_KEY);
+    sections.delete(0, sections.length);
+    if (uniqueIds.length > 0) {
+      sections.insert(0, uniqueIds);
+    }
+  });
+  return true;
+}
+
+export async function waitForCrdtSectionDurable(
+  noteId: string,
+  keyEpoch: number,
+  sectionId: string
+): Promise<void> {
+  const binding = bindings.get(bindingKey(noteId, sectionId));
+  if (binding?.keyEpoch !== keyEpoch) {
+    throw new Error("Encrypted section is not open");
+  }
+  while (binding.pendingBroadcasts.size > 0) {
+    await Promise.all([...binding.pendingBroadcasts]);
+  }
+}
+
+export async function createCrdtSectionInitializationManifest(
+  noteId: string,
+  keyEpoch: number,
+  sectionId: string
+): Promise<ContentManifestSummary> {
+  const binding = bindings.get(bindingKey(noteId, sectionId));
+  if (
+    binding?.keyEpoch !== keyEpoch ||
+    !binding.ready ||
+    !canWrite(binding) ||
+    !isActiveBinding(binding)
+  ) {
+    throw new Error("Encrypted section is not ready for initialization");
+  }
+  throwIfCrdtHistoryUnreadable(binding);
+  const note = binding.note;
+  const updateId = crypto.randomUUID();
+  const checkpointSequenceCutoff = binding.observedServerSequence;
+  const prepared = await encryptContentChunksV2({
+    cryptoOwnerId: note.cryptoOwnerId,
+    noteId: note.id,
+    sectionId,
+    keyEpoch,
+    updateId,
+    kind: "checkpoint",
+    checkpointSequenceCutoff,
+    noteKey: fromBase64(note.noteKeyBase64),
+    plaintext: Y.encodeStateAsUpdate(binding.doc)
+  });
+  const currentTransport = await getTransport();
+  if (!isActiveBindingForNote(binding, note)) {
+    throw new Error("Encrypted section changed during initialization");
+  }
+  const delivery = sendOutbound(currentTransport, {
+    storage: "content",
+    prepared
+  });
+  trackPendingBroadcast(binding, delivery.durable);
+  const manifest = await delivery.delivered;
+  if (!manifest) {
+    throw new Error("Section initialization manifest was not committed");
+  }
+  if (isActiveBindingForNote(binding, note)) {
+    binding.observedServerSequence = Math.max(
+      binding.observedServerSequence,
+      manifest.lastSequence
+    );
+    binding.pendingUpdateIds.add(updateId);
+  }
+  return manifest;
+}
+
 export function waitForCrdtSectionReady(
   noteId: string,
   keyEpoch: number,

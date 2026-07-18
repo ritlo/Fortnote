@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   getCrdtSectionOrder: vi.fn(),
   getStorageQuota: vi.fn(),
   listNoteSections: vi.fn(),
+  migrateLegacyNote: vi.fn(),
   openCrdtSection: vi.fn(),
   progressListener: undefined as ((value?: unknown) => void) | undefined,
   releaseCrdtSection: vi.fn(),
@@ -31,6 +32,10 @@ vi.mock("../realtime/crdt", () => ({
   waitForCrdtSectionReady: mocks.waitForCrdtSectionReady
 }));
 
+vi.mock("./useAppData", () => ({
+  ensureLegacyNoteMigrated: mocks.migrateLegacyNote
+}));
+
 import { useSectionData } from "./useSectionData";
 
 describe("useSectionData", () => {
@@ -39,6 +44,7 @@ describe("useSectionData", () => {
     useAppStore.getState().resetVaultState("test reset");
     mocks.getCrdtSectionOrder.mockReturnValue(sectionIds(5));
     mocks.listNoteSections.mockResolvedValue({ sections: sections(5) });
+    mocks.migrateLegacyNote.mockResolvedValue(undefined);
     mocks.getStorageQuota.mockResolvedValue({
       usedBytes: 100,
       reservedBytes: 20,
@@ -136,6 +142,28 @@ describe("useSectionData", () => {
     });
   });
 
+  it("gates section subscriptions while a legacy body is migrating", async () => {
+    const current = installNote({
+      legacyContentAvailable: true,
+      legacyBodyLoaded: false,
+      rootSectionId: null
+    });
+
+    renderHook(() => useSectionData(current));
+
+    await waitFor(() => {
+      expect(mocks.migrateLegacyNote).toHaveBeenCalledWith(
+        current,
+        expect.any(AbortSignal)
+      );
+    });
+    expect(mocks.openCrdtSection).not.toHaveBeenCalled();
+    expect(mocks.listNoteSections).not.toHaveBeenCalled();
+    expect(useAppStore.getState().sectionIndexes[current.id]).toMatchObject({
+      status: "loading"
+    });
+  });
+
   it("keeps a released section visible as releasing until pending-safe cleanup completes", async () => {
     const current = installNote();
     const release = deferred<boolean>();
@@ -227,8 +255,8 @@ describe("useSectionData", () => {
   });
 });
 
-function installNote(): DecryptedNote {
-  const current = note();
+function installNote(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
+  const current = note(overrides);
   useAppStore.setState({
     user: { id: "user-1", username: "alice" },
     rootKey: Uint8Array.of(1),
@@ -238,7 +266,7 @@ function installNote(): DecryptedNote {
   return current;
 }
 
-function note(): DecryptedNote {
+function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
     id: "note-1",
     folderId: null,
@@ -254,7 +282,8 @@ function note(): DecryptedNote {
     cryptoOwnerId: "user-1",
     role: "owner",
     rootVersion: 1,
-    rootSectionId: "section-1"
+    rootSectionId: "section-1",
+    ...overrides
   };
 }
 

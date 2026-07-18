@@ -8,7 +8,11 @@ import { requireSession } from "../auth/session.js";
 import { deleteEncryptedAttachment } from "../attachments/storage.js";
 import { canEditNote, canOwnNote, canReadNote, getNoteAccess } from "./access.js";
 import { writeRequestEvent } from "./events.js";
-import { listVisibleNoteSections } from "./sections.js";
+import {
+  compareAndSetSectionInitialization,
+  listVisibleNoteSections,
+  reserveLegacyRootSection
+} from "./sections.js";
 
 const legacyCreateNoteSchema = z.object({
   id: z.uuid(),
@@ -76,6 +80,16 @@ const protectedUpdateNoteSchema = z
     }
   });
 const updateNoteSchema = z.union([protectedUpdateNoteSchema, legacyUpdateNoteSchema]);
+const legacySectionReservationSchema = z.object({
+  sectionId: z.uuid(),
+  expectedKeyEpoch: z.number().int().positive(),
+  expectedRootVersion: z.number().int().positive()
+});
+const sectionInitializationSchema = z.object({
+  manifestId: z.string().min(1),
+  expectedKeyEpoch: z.number().int().positive(),
+  expectedRootVersion: z.number().int().positive()
+});
 const legacyRotateNoteKeySchema = z.object({
   encryptedNoteKey: z.string().min(16),
   noteKeyNonce: z.string().min(16),
@@ -182,6 +196,7 @@ const noteSelection = {
   noteKeyNonce: sql<string | null>`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyNonce} ELSE NULL END`,
   noteKeyFormatVersion: sql<number | null>`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyFormatVersion} ELSE NULL END`,
   contentLength: schema.notes.contentLength,
+  legacyContentAvailable: sql<number>`CASE WHEN ${schema.notes.contentCipher} <> '' THEN 1 ELSE 0 END`,
   version: schema.notes.version,
   rootVersion: schema.notes.rootVersion,
   rootSectionId: schema.notes.rootSectionId,
@@ -220,7 +235,12 @@ export function createNotesRouter(context: AppContext): Router {
       .orderBy(desc(schema.notes.updatedAt))
       .all();
 
-    response.json({ notes: rows });
+    response.json({
+      notes: rows.map((row) => ({
+        ...row,
+        legacyContentAvailable: Boolean(row.legacyContentAvailable)
+      }))
+    });
   });
 
   router.post("/", (request, response) => {
@@ -317,7 +337,141 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    response.json(row);
+    response.json({
+      ...row,
+      legacyContentAvailable: Boolean(row.legacyContentAvailable)
+    });
+  });
+
+  router.get("/:id/legacy-content", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+    const access = getNoteAccess(context, request.params.id, session.userId);
+    if (!canReadNote(access)) {
+      sendApiError(response, "not_found", "Note not found");
+      return;
+    }
+    const legacy = context.db.sqlite
+      .prepare(`
+        SELECT
+          content_cipher AS contentCipher,
+          content_nonce AS contentNonce,
+          content_length AS contentLength,
+          version,
+          root_version AS rootVersion,
+          key_epoch AS keyEpoch
+        FROM notes
+        WHERE id = ? AND content_cipher <> ''
+      `)
+      .get(access.noteId) as {
+        contentCipher: string;
+        contentNonce: string;
+        contentLength: number;
+        version: number;
+        rootVersion: number;
+        keyEpoch: number;
+      } | undefined;
+    if (!legacy) {
+      sendApiError(response, "conflict", "Legacy note content is already migrated");
+      return;
+    }
+    response.json(legacy);
+  });
+
+  router.post("/:id/sections/legacy-reservation", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+    const parsed = legacySectionReservationSchema.safeParse(request.body);
+    if (!parsed.success) {
+      sendApiError(response, "bad_request", "Invalid legacy migration reservation");
+      return;
+    }
+    const outcome = reserveLegacyRootSection(context, {
+      sessionId: session.id,
+      userId: session.userId,
+      noteId: request.params.id,
+      sectionId: parsed.data.sectionId,
+      expectedKeyEpoch: parsed.data.expectedKeyEpoch,
+      expectedRootVersion: parsed.data.expectedRootVersion
+    });
+    if (outcome.status === "rejected") {
+      if (outcome.code === "forbidden") {
+        sendApiError(response, "not_found", "Note not found");
+      } else {
+        sendApiError(response, "conflict", legacyMigrationConflict(outcome.code));
+      }
+      return;
+    }
+    if (outcome.changed) {
+      const eventCursor = context.db.orm.transaction((tx) =>
+        writeRequestEvent(context, request, {
+          noteId: request.params.id,
+          actorUserId: session.userId,
+          eventType: "note.updated",
+          noteVersion: outcome.version
+        }, tx)
+      );
+      publishEventCursors(context, [eventCursor]);
+    }
+    response.status(outcome.changed ? 201 : 200).json({
+      status: outcome.status,
+      sectionId: outcome.sectionId,
+      keyEpoch: outcome.keyEpoch,
+      rootVersion: outcome.rootVersion,
+      version: outcome.version,
+      ...(outcome.manifestId ? { manifestId: outcome.manifestId } : {})
+    });
+  });
+
+  router.post("/:id/sections/:sectionId/initialization", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+    const parsed = sectionInitializationSchema.safeParse(request.body);
+    if (!parsed.success) {
+      sendApiError(response, "bad_request", "Invalid section initialization");
+      return;
+    }
+    const legacyBefore = context.db.sqlite
+      .prepare("SELECT content_cipher <> '' AS available FROM notes WHERE id = ?")
+      .get(request.params.id) as { available: number } | undefined;
+    const outcome = compareAndSetSectionInitialization(context, {
+      sessionId: session.id,
+      userId: session.userId,
+      noteId: request.params.id,
+      sectionId: request.params.sectionId,
+      expectedKeyEpoch: parsed.data.expectedKeyEpoch,
+      expectedRootVersion: parsed.data.expectedRootVersion,
+      manifestId: parsed.data.manifestId
+    });
+    if (outcome.status === "rejected") {
+      if (outcome.code === "forbidden") {
+        sendApiError(response, "not_found", "Note not found");
+      } else {
+        sendApiError(response, "conflict", legacyMigrationConflict(outcome.code));
+      }
+      return;
+    }
+    const current = context.db.sqlite
+      .prepare(`SELECT root_version AS rootVersion, version FROM notes WHERE id = ?`)
+      .get(request.params.id) as { rootVersion: number; version: number };
+    if (outcome.status === "installed" || legacyBefore?.available) {
+      const eventCursor = context.db.orm.transaction((tx) =>
+        writeRequestEvent(context, request, {
+          noteId: request.params.id,
+          actorUserId: session.userId,
+          eventType: "note.updated",
+          noteVersion: current.version
+        }, tx)
+      );
+      publishEventCursors(context, [eventCursor]);
+    }
+    response.json({ ...outcome, ...current });
   });
 
   router.get("/:id/sections", (request, response) => {
@@ -1458,4 +1612,15 @@ export function createNotesRouter(context: AppContext): Router {
   });
 
   return router;
+}
+
+function legacyMigrationConflict(
+  code: "rotation-pending" | "stale-epoch" | "stale-version"
+): string {
+  if (code === "rotation-pending") {
+    return "Note-key rotation is pending";
+  }
+  return code === "stale-epoch"
+    ? "Note key epoch changed"
+    : "Note metadata changed";
 }

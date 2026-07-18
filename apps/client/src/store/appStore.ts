@@ -22,6 +22,8 @@ export interface DecryptedNote {
   body: string;
   noteKeyBase64: string;
   contentLength: number;
+  legacyContentAvailable?: boolean;
+  legacyBodyLoaded?: boolean;
   version: number;
   keyEpoch: number;
   isDeleted: boolean;
