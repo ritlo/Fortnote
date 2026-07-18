@@ -213,6 +213,43 @@ describe("CRDT collaboration", () => {
     expect(encrypted?.byteLength).toBeGreaterThan(0);
   });
 
+  it("keeps terminally rejected section work visible for encrypted draft recovery", async () => {
+    const current = note({
+      rootSectionId: "00000000-0000-4000-8000-000000000002"
+    });
+    const send = vi
+      .fn<(message: ScopedEncryptedCrdtMessage) => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("stale-epoch"));
+    setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
+    openCrdtNote(current, vi.fn());
+    await finishCrdtSync(
+      current.id,
+      current.keyEpoch,
+      false,
+      current.rootSectionId ?? "root"
+    );
+
+    const section = getCrdtProvider(
+      current.id,
+      current.keyEpoch,
+      current.rootSectionId ?? "root"
+    ).doc;
+    setFragmentBody(section, "Visible rejected work");
+    await vi.waitFor(() => {
+      expect(send).toHaveBeenCalledTimes(2);
+    });
+
+    expect(send).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: "update",
+        sectionId: current.rootSectionId,
+        type: "crdt-update"
+      })
+    );
+    expect(fragmentText(section)).toBe("Visible rejected work");
+  });
+
   it("merges concurrent BlockNote edits through the encrypted transport", async () => {
     const sent: ScopedEncryptedCrdtMessage[] = [];
     setCrdtTransport({
