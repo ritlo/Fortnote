@@ -151,6 +151,15 @@ interface Binding {
   keyEpoch: number;
 }
 
+export interface CrdtSectionChange {
+  noteId: string;
+  sectionId: string;
+  keyEpoch: number;
+  serverSequence: number;
+}
+
+const sectionChangeListeners = new Set<(change: CrdtSectionChange) => void>();
+
 // Synchronous, render-safe accessor so the editor can bind to the fragment before the
 // sync effect runs. Idempotent per note id; the binding is destroyed on note/epoch switch.
 export function getCrdtFragment(
@@ -167,6 +176,31 @@ export function getCrdtProvider(
   sectionId?: string
 ): CrdtProvider {
   return getOrCreateBinding(noteId, sectionId ?? defaultSectionId(noteId), keyEpoch).provider;
+}
+
+export function snapshotReadyCrdtSection(
+  noteId: string,
+  keyEpoch: number,
+  sectionId: string
+): BlockNoteFragmentSnapshot | null {
+  const binding = bindings.get(bindingKey(noteId, sectionId));
+  if (
+    binding?.keyEpoch !== keyEpoch ||
+    !binding.ready ||
+    !isActiveBinding(binding)
+  ) {
+    return null;
+  }
+  return snapshotBlockNoteFragment(binding.fragment);
+}
+
+export function subscribeCrdtSectionChanges(
+  listener: (change: CrdtSectionChange) => void
+): () => void {
+  sectionChangeListeners.add(listener);
+  return () => {
+    sectionChangeListeners.delete(listener);
+  };
 }
 
 export function openCrdtSection(
@@ -330,6 +364,7 @@ export async function createCrdtSectionInitializationManifest(
       manifest.lastSequence
     );
     binding.pendingUpdateIds.add(updateId);
+    notifyCrdtSectionChange(binding);
   }
   return manifest;
 }
@@ -483,6 +518,7 @@ function getOrCreateBinding(
       trackPendingBroadcast(created, delivery.durable);
       void delivery.delivered.catch(() => undefined);
     }
+    notifyCrdtSectionChange(created);
   });
   return created;
 }
@@ -724,6 +760,7 @@ export function receiveCrdtUpdate(
         clearCheckpointCoverage(binding, update);
       }
       trackUpdate(binding, update.updateId);
+      notifyCrdtSectionChange(binding);
     } catch (error) {
       if (!isActiveBinding(binding)) {
         return;
@@ -766,6 +803,7 @@ export async function finishCrdtSync(
         binding.observedServerSequence,
         serverSequence
       );
+      notifyCrdtSectionChange(binding);
     }
     await finishBindingSync(
       binding,
@@ -810,6 +848,7 @@ async function finishBindingSync(
   }
   binding.ready = true;
   binding.provider.emit("synced");
+  notifyCrdtSectionChange(binding);
   const pendingPatch = binding.pendingPatch;
   binding.pendingPatch = {};
   if (
@@ -868,6 +907,7 @@ function broadcastUpdate(binding: Binding, update: Uint8Array): DurableDelivery<
           binding.observedServerSequence,
           manifest.lastSequence
         );
+        notifyCrdtSectionChange(binding);
       }
     })
   };
@@ -922,6 +962,7 @@ async function broadcastCheckpoint(
         binding.observedServerSequence,
         manifest.lastSequence
       );
+      notifyCrdtSectionChange(binding);
     }
     compactedUpdateIds.forEach((id) => binding.pendingUpdateIds.delete(id));
     compactedUpdateIds.forEach((id) => binding.failedUpdateIds.delete(id));
@@ -1207,6 +1248,29 @@ function isActiveBindingForNote(binding: Binding, note: DecryptedNote): boolean 
     binding.keyEpoch === note.keyEpoch &&
     binding.note.cryptoOwnerId === note.cryptoOwnerId
   );
+}
+
+function notifyCrdtSectionChange(binding: Binding): void {
+  if (
+    binding.sectionId === ROOT_SECTION_ID ||
+    !binding.ready ||
+    !isActiveBinding(binding)
+  ) {
+    return;
+  }
+  const change = {
+    noteId: binding.noteId,
+    sectionId: binding.sectionId,
+    keyEpoch: binding.keyEpoch,
+    serverSequence: binding.observedServerSequence
+  };
+  sectionChangeListeners.forEach((listener) => {
+    try {
+      listener(change);
+    } catch {
+      // Search/index observers must never interrupt CRDT convergence.
+    }
+  });
 }
 
 function writableReadyBinding(noteId: string, sectionId: string): Binding {

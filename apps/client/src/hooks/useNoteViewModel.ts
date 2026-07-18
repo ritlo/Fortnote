@@ -1,11 +1,46 @@
-import { useMemo } from "react";
-import { useAppStore, type DecryptedNote, type NotesView } from "../store/appStore";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { listNoteSections } from "../api";
+import type { BlockNoteFragmentSnapshot } from "../lib/blockNote";
+import { openFortnoteIndexedDb } from "../lib/indexedDb";
+import {
+  createProtectedSearchIndex,
+  type ProtectedSearchIndex,
+  type SearchCoverage,
+  type SearchCoverageTarget,
+  type SearchIndexBlock,
+  type SearchMatch
+} from "../lib/searchIndex";
+import {
+  openCrdtSection,
+  releaseCrdtSection,
+  snapshotReadyCrdtSection,
+  subscribeCrdtSectionChanges,
+  waitForCrdtSectionReady
+} from "../realtime/crdt";
+import {
+  sectionRuntimeKey,
+  useAppStore,
+  type DecryptedNote,
+  type NotesView
+} from "../store/appStore";
 
 interface NotesForViewInput {
   notes: DecryptedNote[];
   notesView: NotesView;
   selectedFolderId: string | null;
   trashNotes: DecryptedNote[];
+}
+
+export type SearchIndexStatus = "idle" | "discovering" | "indexing" | "ready" | "error";
+
+interface SearchSession {
+  index: ProtectedSearchIndex;
+  targets: SearchCoverageTarget[];
+}
+
+interface QueryMatches {
+  query: string;
+  matches: SearchMatch[];
 }
 
 export function useNoteViewModel() {
@@ -16,6 +51,16 @@ export function useNoteViewModel() {
   const selectedNoteId = useAppStore((state) => state.selectedNoteId);
   const attachmentsByNote = useAppStore((state) => state.attachmentsByNote);
   const search = useAppStore((state) => state.search);
+  const user = useAppStore((state) => state.user);
+  const rootKey = useAppStore((state) => state.rootKey);
+  const [searchSession, setSearchSession] = useState<SearchSession | null>(null);
+  const [searchCoverage, setSearchCoverage] = useState<SearchCoverage | null>(null);
+  const [searchIndexStatus, setSearchIndexStatus] = useState<SearchIndexStatus>("idle");
+  const [searchIndexError, setSearchIndexError] = useState<string | null>(null);
+  const [searchRevision, setSearchRevision] = useState(0);
+  const [searchRetryVersion, setSearchRetryVersion] = useState(0);
+  const [queryMatches, setQueryMatches] = useState<QueryMatches>({ query: "", matches: [] });
+  const searchableNotesSignature = searchableNoteSignature(notes);
 
   const viewNotes = useMemo(
     () => notesForView({ notes, notesView, selectedFolderId, trashNotes }),
@@ -30,18 +75,195 @@ export function useNoteViewModel() {
   const selectedAttachments = selectedNoteId
     ? attachmentsByNote[selectedNoteId] ?? []
     : [];
+  const normalizedSearch = normalizeSearch(search);
+  const searchMatches = queryMatches.query === normalizedSearch
+    ? queryMatches.matches
+    : [];
 
   const filteredNotes = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    if (!query) {
+    if (!normalizedSearch) {
       return viewNotes;
     }
+    const matchingNoteIds = new Set(searchMatches.map((match) => match.noteId));
+    return viewNotes.filter(
+      (note) =>
+        normalizeSearch(note.title).includes(normalizedSearch) ||
+        matchingNoteIds.has(note.id)
+    );
+  }, [normalizedSearch, searchMatches, viewNotes]);
 
-    return viewNotes.filter((note) => note.title.toLowerCase().includes(query));
-  }, [viewNotes, search]);
+  useEffect(() => {
+    if (!user || !rootKey) {
+      setSearchSession(null);
+      setSearchCoverage(null);
+      setSearchIndexStatus("idle");
+      setSearchIndexError(null);
+      return;
+    }
+    const controller = new AbortController();
+    let database: Awaited<ReturnType<typeof openFortnoteIndexedDb>> | null = null;
+    const userId = user.id;
+    const vaultRootKey = rootKey;
+
+    void (async () => {
+      setSearchSession(null);
+      setSearchCoverage(null);
+      setSearchIndexError(null);
+      setSearchIndexStatus("discovering");
+      database = await openFortnoteIndexedDb();
+      throwIfCanceled(controller.signal);
+      const index = createProtectedSearchIndex({
+        database,
+        rootKey: vaultRootKey,
+        userId
+      });
+      const currentNotes = searchableNotes();
+      const { failedNoteCount, targets } = await discoverSearchTargets(
+        currentNotes,
+        controller.signal
+      );
+      throwIfCanceled(controller.signal);
+      const session = {
+        index,
+        targets
+      };
+      setSearchSession(session);
+      let coverage = await index.coverage(targets);
+      throwIfCanceled(controller.signal);
+      setSearchCoverage(coverage);
+
+      while (!coverage.complete) {
+        setSearchIndexStatus("indexing");
+        coverage = await index.buildNextBatch(targets, (target) =>
+          loadSearchSection(target, currentNotes, controller.signal)
+        );
+        throwIfCanceled(controller.signal);
+        setSearchCoverage(coverage);
+        setSearchRevision((revision) => revision + 1);
+      }
+      if (failedNoteCount > 0) {
+        throw new Error(
+          `Search coverage could not be determined for ${String(failedNoteCount)} note${
+            failedNoteCount === 1 ? "" : "s"
+          }.`
+        );
+      }
+      setSearchIndexStatus("ready");
+    })().catch((error: unknown) => {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setSearchRevision((revision) => revision + 1);
+      setSearchIndexStatus("error");
+      setSearchIndexError(errorMessage(error, "Protected search indexing failed."));
+    });
+
+    return () => {
+      controller.abort();
+      database?.close();
+    };
+  }, [rootKey, searchRetryVersion, searchableNotesSignature, user]);
+
+  useEffect(() => {
+    if (!searchSession) {
+      return;
+    }
+    const controller = new AbortController();
+    let pending = Promise.resolve();
+    const unsubscribe = subscribeCrdtSectionChanges((change) => {
+      const target = searchSession.targets.find(
+        (candidate) => searchTargetKey(candidate) === searchTargetKey(change)
+      );
+      if (!target) {
+        return;
+      }
+      target.serverSequence = Math.max(target.serverSequence, change.serverSequence);
+      pending = pending
+        .then(async () => {
+          if (isCanceled(controller.signal)) {
+            return;
+          }
+          const snapshot = snapshotReadyCrdtSection(
+            change.noteId,
+            change.keyEpoch,
+            change.sectionId
+          );
+          if (!snapshot) {
+            return;
+          }
+          await searchSession.index.applySection({
+            ...target,
+            blocks: searchBlocksFromSnapshot(snapshot)
+          });
+          const coverage = await searchSession.index.coverage(searchSession.targets);
+          if (isCanceled(controller.signal)) {
+            return;
+          }
+          setSearchCoverage(coverage);
+          setSearchRevision((revision) => revision + 1);
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+          setSearchIndexStatus("error");
+          setSearchIndexError(errorMessage(error, "Protected search refresh failed."));
+        });
+    });
+    return () => {
+      controller.abort();
+      unsubscribe();
+    };
+  }, [searchSession]);
+
+  useEffect(() => {
+    if (!normalizedSearch || !searchSession) {
+      setQueryMatches({ query: normalizedSearch, matches: [] });
+      return;
+    }
+    let active = true;
+    const visibleNoteIds = new Set(viewNotes.map((note) => note.id));
+    void searchSession.index
+      .query(normalizedSearch, searchSession.targets)
+      .then((result) => {
+        if (!active) {
+          return;
+        }
+        setQueryMatches({
+          query: normalizedSearch,
+          matches: result.matches.filter((match) => visibleNoteIds.has(match.noteId))
+        });
+      })
+      .catch((error: unknown) => {
+        if (!active) {
+          return;
+        }
+        setQueryMatches({ query: normalizedSearch, matches: [] });
+        setSearchIndexStatus("error");
+        setSearchIndexError(errorMessage(error, "Protected search query failed."));
+      });
+    return () => {
+      active = false;
+    };
+  }, [normalizedSearch, searchRevision, searchSession, viewNotes]);
+
+  const retrySearchIndex = useCallback(() => {
+    setSearchRetryVersion((version) => version + 1);
+  }, []);
+  const selectSearchMatch = useCallback((match: SearchMatch) => {
+    const state = useAppStore.getState();
+    state.setSelectedSection(match.noteId, match.sectionId);
+    state.setSelectedNoteId(match.noteId);
+  }, []);
 
   return {
     filteredNotes,
+    retrySearchIndex,
+    searchCoverage,
+    searchIndexError,
+    searchIndexStatus,
+    searchMatches,
+    selectSearchMatch,
     selectedAttachments,
     selectedNote
   };
@@ -67,6 +289,167 @@ export function notesForView({
   }
 }
 
+export function searchBlocksFromSnapshot(snapshot: BlockNoteFragmentSnapshot): SearchIndexBlock[] {
+  const blocks: SearchIndexBlock[] = [];
+  visitSnapshotNodes(snapshot.content[0].content, blocks);
+  return blocks;
+}
+
+async function discoverSearchTargets(
+  notes: DecryptedNote[],
+  signal: AbortSignal
+): Promise<{ failedNoteCount: number; targets: SearchCoverageTarget[] }> {
+  const targets: SearchCoverageTarget[] = [];
+  let failedNoteCount = 0;
+  for (const note of notes) {
+    throwIfCanceled(signal);
+    try {
+      const response = await listNoteSections(note.id);
+      throwIfCanceled(signal);
+      targets.push(
+        ...response.sections
+          .filter((section) => section.initialized && !section.isDeleted)
+          .map((section) => ({
+            noteId: note.id,
+            sectionId: section.id,
+            keyEpoch: note.keyEpoch,
+            serverSequence: section.currentSequence
+          }))
+      );
+    } catch (error) {
+      if (signal.aborted) {
+        throw error;
+      }
+      failedNoteCount += 1;
+    }
+  }
+  return { failedNoteCount, targets };
+}
+
+async function loadSearchSection(
+  target: SearchCoverageTarget,
+  notes: DecryptedNote[],
+  signal: AbortSignal
+) {
+  const note = notes.find(
+    (candidate) => candidate.id === target.noteId && candidate.keyEpoch === target.keyEpoch
+  );
+  if (!note) {
+    throw new Error("Search target note is unavailable.");
+  }
+  const loaded = useAppStore.getState().loadedSections[
+    sectionRuntimeKey(target.noteId, target.sectionId)
+  ];
+  const alreadyOpen =
+    loaded?.keyEpoch === target.keyEpoch &&
+    (loaded.status === "loading" || loaded.status === "ready");
+  const lease = alreadyOpen ? null : openCrdtSection(note, target.sectionId);
+  try {
+    await waitForCrdtSectionReady(target.noteId, target.keyEpoch, target.sectionId, { signal });
+    throwIfCanceled(signal);
+    const snapshot = snapshotReadyCrdtSection(
+      target.noteId,
+      target.keyEpoch,
+      target.sectionId
+    );
+    if (!snapshot) {
+      throw new Error("Verified search section is unavailable.");
+    }
+    return {
+      ...target,
+      blocks: searchBlocksFromSnapshot(snapshot)
+    };
+  } finally {
+    if (lease) {
+      await releaseCrdtSection(
+        target.noteId,
+        target.sectionId,
+        target.keyEpoch,
+        lease.generation
+      );
+    }
+  }
+}
+
+function searchableNotes(): DecryptedNote[] {
+  return useAppStore.getState().notes.filter(isSearchableNote);
+}
+
+function searchableNoteSignature(notes: DecryptedNote[]): string {
+  return notes
+    .filter(isSearchableNote)
+    .map((note) =>
+      [note.id, note.keyEpoch, note.rootVersion ?? note.version, note.rootSectionId].join(":")
+    )
+    .sort()
+    .join("|");
+}
+
+function isSearchableNote(note: DecryptedNote): boolean {
+  return !note.isDeleted && !note.legacyContentAvailable && Boolean(note.rootSectionId);
+}
+
+function visitSnapshotNodes(values: unknown[], blocks: SearchIndexBlock[]): void {
+  for (const value of values) {
+    if (!isRecord(value)) {
+      continue;
+    }
+    if (value.type === "blockContainer") {
+      const blockId = isRecord(value.attrs) && typeof value.attrs.id === "string"
+        ? value.attrs.id
+        : "";
+      if (blockId) {
+        blocks.push({ blockId, text: textWithinBlock(value, value) });
+      }
+    }
+    if (Array.isArray(value.content)) {
+      visitSnapshotNodes(value.content, blocks);
+    }
+  }
+}
+
+function textWithinBlock(value: unknown, root: Record<string, unknown>): string {
+  if (!isRecord(value)) {
+    return "";
+  }
+  if (value !== root && value.type === "blockContainer") {
+    return "";
+  }
+  const ownText = typeof value.text === "string" ? value.text : "";
+  const childText = Array.isArray(value.content)
+    ? value.content.map((child) => textWithinBlock(child, root)).join(" ")
+    : "";
+  return `${ownText} ${childText}`.replace(/\s+/g, " ").trim();
+}
+
+function searchTargetKey(target: Pick<SearchCoverageTarget, "keyEpoch" | "noteId" | "sectionId">): string {
+  return `${target.noteId}\u0000${target.sectionId}\u0000${String(target.keyEpoch)}`;
+}
+
+function normalizeSearch(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase().trim();
+}
+
 function isSharedNote(note: DecryptedNote): boolean {
   return note.role !== "owner";
+}
+
+function throwIfCanceled(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException("Search indexing canceled", "AbortError");
+  }
+}
+
+function isCanceled(signal: AbortSignal): boolean {
+  return signal.aborted;
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

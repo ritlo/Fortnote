@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import type { EncryptedCrdtMessage } from "@fortnote/shared";
 import { decryptCrdtMessage, encryptCrdtMessage } from "../cryptoClient";
+import { replaceBlockNoteFragment } from "../lib/blockNote";
 import type { DecryptedNote } from "../store/appStore";
 import * as contentTransfer from "./contentTransfer";
 import {
@@ -22,6 +23,8 @@ import {
   requiresContentTransfer,
   seedLegacyCrdtSection,
   setCrdtTransport,
+  snapshotReadyCrdtSection,
+  subscribeCrdtSectionChanges,
   waitForCrdtSectionDurable,
   type ScopedEncryptedCrdtMessage
 } from "./crdt";
@@ -355,6 +358,58 @@ describe("CRDT collaboration", () => {
     expect(new Set(send.mock.calls.map(([message]) => message.sectionId))).toEqual(
       new Set(["root", current.rootSectionId])
     );
+  });
+
+  it("publishes only ready verified section snapshots for incremental search", async () => {
+    const current = note({
+      rootSectionId: "00000000-0000-4000-8000-000000000002"
+    });
+    const changes: { noteId: string; sectionId: string; serverSequence: number }[] = [];
+    const unsubscribe = subscribeCrdtSectionChanges((change) => {
+      changes.push(change);
+    });
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      subscribe: vi.fn()
+    });
+    const section = openCrdtSection(current, current.rootSectionId ?? "root");
+
+    expect(
+      snapshotReadyCrdtSection(
+        current.id,
+        current.keyEpoch,
+        current.rootSectionId ?? "root"
+      )
+    ).toBeNull();
+    await finishCrdtSync(
+      current.id,
+      current.keyEpoch,
+      false,
+      current.rootSectionId ?? "root",
+      4
+    );
+    changes.length = 0;
+    section.provider.doc.transact(() => {
+      replaceBlockNoteFragment(
+        section.provider.doc.getXmlFragment(FRAGMENT_KEY),
+        "Fresh searchable text"
+      );
+    });
+
+    expect(changes).toEqual([expect.objectContaining({
+      noteId: current.id,
+      sectionId: current.rootSectionId,
+      serverSequence: 4
+    })]);
+    expect(
+      snapshotReadyCrdtSection(
+        current.id,
+        current.keyEpoch,
+        current.rootSectionId ?? "root"
+      )
+    ).not.toBeNull();
+    unsubscribe();
   });
 
   it("resubscribes each section after its highest reconciled server sequence", async () => {

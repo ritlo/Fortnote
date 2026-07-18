@@ -205,10 +205,15 @@ export function createProtectedSearchIndex({
     targets: SearchCoverageTarget[]
   ): Promise<SearchQueryResult> {
     const queryTerms = normalizeTerms(tokenize(text));
+    const normalizedTargets = normalizeTargets(targets);
+    const targetIdentities = new Set(normalizedTargets.map(coverageIdentity));
     const records = await readableRecords();
     const matches: SearchMatch[] = [];
     if (queryTerms.length > 0) {
       for (const { payload, record } of records) {
+        if (!targetIdentities.has(coverageIdentity(record))) {
+          continue;
+        }
         for (const block of payload.blocks) {
           if (queryTerms.every((term) => block.terms.includes(term))) {
             matches.push({
@@ -228,7 +233,7 @@ export function createProtectedSearchIndex({
       left.blockId.localeCompare(right.blockId)
     );
     return {
-      coverage: coverageFor(normalizeTargets(targets), records),
+      coverage: coverageFor(normalizedTargets, records),
       matches
     };
   }

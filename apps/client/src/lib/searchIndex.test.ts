@@ -119,6 +119,25 @@ describe("protected incremental search index", () => {
     });
   });
 
+  it("returns matches only from the requested note, section, and epoch targets", async () => {
+    const database = await openDatabase();
+    const index = createProtectedSearchIndex({
+      database,
+      rootKey: key(6),
+      userId: "user-a"
+    });
+    await index.applySection(sectionUpdate(1, [
+      { blockId: "included", text: "scoped result" }
+    ]));
+    await index.applySection({
+      ...sectionUpdate(1, [{ blockId: "excluded", text: "scoped result" }]),
+      sectionId: "section-b"
+    });
+
+    await expect(index.query("scoped", [target("section-a", 1)]))
+      .resolves.toMatchObject({ matches: [{ blockId: "included" }] });
+  });
+
   it("builds bounded coverage while repeat queries transfer no sections", async () => {
     const database = await openDatabase();
     const yieldControl = vi.fn().mockResolvedValue(undefined);

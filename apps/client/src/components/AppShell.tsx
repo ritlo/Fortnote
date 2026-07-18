@@ -62,7 +62,13 @@ export function AppShell() {
         filteredNotes={noteView.filteredNotes}
         notesView={notesView}
         recoverySecret={recoverySecret}
+        retrySearchIndex={noteView.retrySearchIndex}
         search={search}
+        searchCoverage={noteView.searchCoverage}
+        searchIndexError={noteView.searchIndexError}
+        searchIndexStatus={noteView.searchIndexStatus}
+        searchMatches={noteView.searchMatches}
+        selectSearchMatch={noteView.selectSearchMatch}
         selectedNoteId={selectedNoteId}
         setSearch={setSearch}
         setSelectedNoteId={setSelectedNoteId}
