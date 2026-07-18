@@ -134,7 +134,7 @@ async function inspectExisting(
     throw new ContentChunkConflictError();
   }
   const hash = createHash("sha256");
-  for await (const chunk of fs.createReadStream(filePath)) {
+  for await (const chunk of fs.createReadStream(filePath) as AsyncIterable<Buffer>) {
     hash.update(chunk);
   }
   if (hash.digest("hex") !== expectedHash) {

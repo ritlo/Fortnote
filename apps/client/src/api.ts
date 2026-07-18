@@ -62,10 +62,10 @@ export interface SectionHistoryPage {
   afterSequence: number;
   nextSequence: number;
   hasMore: boolean;
-  entries: Array<
+  entries: (
     | { kind: "inline"; updateId: string; serverSequence: number; cipher: Uint8Array }
     | { kind: "manifest"; updateId: string; serverSequence: number; manifestId: string }
-  >;
+  )[];
 }
 
 export interface StorageQuotaStatus {

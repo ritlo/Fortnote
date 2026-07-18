@@ -51,7 +51,7 @@ export function fromBase64(value: string): Uint8Array {
 }
 
 export function fromCanonicalBase64(value: string): Uint8Array {
-  if (!value || value.trim() !== value) {
+  if (value.length === 0 || value.trim() !== value) {
     throw new Error("Expected canonical Base64");
   }
   let decoded: Uint8Array;
@@ -289,7 +289,7 @@ export function contentChunkAssociatedData(input: {
   chunkCount: number;
   totalCipherBytes: number;
   kind: ContentKind;
-  formatVersion: 2;
+  formatVersion: number;
 }): Uint8Array {
   if (
     input.formatVersion !== 2 ||
@@ -311,7 +311,7 @@ export function epochLinkAssociatedData(input: {
   noteId: string;
   sourceEpoch: number;
   targetEpoch: number;
-  formatVersion: 2;
+  formatVersion: number;
 }): Uint8Array {
   if (
     input.formatVersion !== 2 ||

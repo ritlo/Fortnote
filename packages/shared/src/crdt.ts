@@ -29,7 +29,7 @@ export interface CrdtSubscribeV2 {
   type: "crdt-subscribe";
   requestId: string;
   noteId: string;
-  sectionId: string | "root";
+  sectionId: string;
   expectedKeyEpoch: number;
   afterSequence: number;
 }
@@ -37,7 +37,7 @@ export interface CrdtSubscribeV2 {
 export interface CrdtAckV2 {
   type: "crdt-ack";
   updateId: string;
-  sectionId: string | "root";
+  sectionId: string;
   result: "inserted" | "already-present";
   keyEpoch: number;
   serverSequence: number;
@@ -53,7 +53,7 @@ export type CrdtRejectCode =
 export interface CrdtRejectV2 {
   type: "crdt-reject";
   updateId: string;
-  sectionId: string | "root";
+  sectionId: string;
   code: CrdtRejectCode;
 }
 
@@ -73,7 +73,7 @@ export type CrdtHistoryEntry =
 export interface CrdtHistoryPageV2 {
   type: "crdt-history-page";
   noteId: string;
-  sectionId: string | "root";
+  sectionId: string;
   keyEpoch: number;
   afterSequence: number;
   nextSequence: number;
@@ -84,7 +84,7 @@ export interface CrdtHistoryPageV2 {
 export interface CrdtManifestReferenceV2 {
   type: "crdt-manifest";
   noteId: string;
-  sectionId: string | "root";
+  sectionId: string;
   keyEpoch: number;
   updateId: string;
   manifestId: string;
