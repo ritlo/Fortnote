@@ -110,6 +110,48 @@ describe("notesForView", () => {
 });
 
 describe("protected note search", () => {
+  it("discovers coverage without downloading section bodies before a search", async () => {
+    mocks.listNoteSections.mockResolvedValue({
+      sections: [{
+        id: "section-a",
+        initialized: true,
+        isDeleted: false,
+        currentSequence: 3
+      }]
+    });
+    mocks.coverage.mockResolvedValue({
+      complete: false,
+      indexedSections: 0,
+      totalSections: 1,
+      pending: [{
+        keyEpoch: 1,
+        noteId: "note_1",
+        sectionId: "section-a",
+        indexedSequence: 0,
+        targetSequence: 3
+      }]
+    });
+    useAppStore.setState({
+      notes: [note({ rootSectionId: "section-a" })],
+      notesView: "notes",
+      rootKey: new Uint8Array(32),
+      search: "",
+      user: { id: "alice", username: "alice" }
+    });
+
+    const { result } = renderHook(() => useNoteViewModel());
+
+    await waitFor(() => {
+      expect(result.current.searchCoverage).toMatchObject({
+        indexedSections: 0,
+        totalSections: 1
+      });
+    });
+    expect(result.current.searchIndexStatus).toBe("idle");
+    expect(mocks.buildNextBatch).not.toHaveBeenCalled();
+    expect(mocks.openCrdtSection).not.toHaveBeenCalled();
+  });
+
   it("builds bounded coverage without an editor and navigates to a matching section", async () => {
     const target = {
       keyEpoch: 1,

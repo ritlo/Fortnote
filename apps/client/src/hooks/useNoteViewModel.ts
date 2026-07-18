@@ -132,6 +132,11 @@ export function useNoteViewModel() {
       throwIfCanceled(controller.signal);
       setSearchCoverage(coverage);
 
+      if (!normalizedSearch) {
+        setSearchIndexStatus("idle");
+        return;
+      }
+
       while (!coverage.complete) {
         setSearchIndexStatus("indexing");
         coverage = await index.buildNextBatch(targets, (target) =>
@@ -162,7 +167,7 @@ export function useNoteViewModel() {
       controller.abort();
       database?.close();
     };
-  }, [rootKey, searchRetryVersion, searchableNotesSignature, user]);
+  }, [normalizedSearch, rootKey, searchRetryVersion, searchableNotesSignature, user]);
 
   useEffect(() => {
     if (!searchSession) {
