@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fromBase64 } from "@fortnote/shared";
 import {
+  decryptNoteTitleV2,
   decryptNoteKeyEnvelopeV2,
   decryptRootKeyEnvelopeV2,
   noteKeyToBase64
@@ -53,6 +54,19 @@ describe("linked epoch preparation", () => {
       }
     });
     expect(targetNoteKey).toEqual(fromBase64(preparation.targetNoteKeyBase64));
+    await expect(
+      decryptNoteTitleV2({
+        cryptoOwnerId: note.cryptoOwnerId,
+        noteId: note.id,
+        keyEpoch: 2,
+        noteKey: targetNoteKey,
+        envelope: {
+          cipher: preparation.titleCipher,
+          nonce: preparation.titleNonce,
+          formatVersion: 2
+        }
+      })
+    ).resolves.toBe(note.title);
     await expect(
       resolveNoteKeyAtEpoch({
         note: {

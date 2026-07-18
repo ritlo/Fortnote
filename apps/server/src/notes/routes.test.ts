@@ -212,6 +212,9 @@ describe("notes and folders routes", () => {
 	      encryptedNoteKey: "new_owner_note_key_abcdefghijklmnopqrstuvwxyz",
 	      noteKeyNonce: "new_owner_note_nonce_abcdefghijklmnopqrstuvwxyz",
 	      noteKeyFormatVersion: 2,
+	      titleCipher: "new_title_cipher_abcdefghijklmnopqrstuvwxyz",
+	      titleNonce: "new_title_nonce_abcdefghijklmnopqrstuvwxyz",
+	      titleFormatVersion: 2,
 	      previousKeyCipher: "linked_previous_key_cipher_abcdefghijklmnopqrstuvwxyz",
 	      previousKeyNonce: "linked_previous_key_nonce_abcdefghijklmnopqrstuvwxyz",
 	      linkFormatVersion: 2,
@@ -257,11 +260,16 @@ describe("notes and folders routes", () => {
 	    const note = app.locals.db.sqlite
 	      .prepare(
 	        `SELECT key_epoch AS keyEpoch, root_version AS rootVersion,
-	                rotation_fenced AS rotationFenced
+	                rotation_fenced AS rotationFenced, title_cipher AS titleCipher
 	         FROM notes WHERE id = ?`
 	      )
 	      .get(payload.id);
-	    expect(note).toEqual({ keyEpoch: 2, rootVersion: 2, rotationFenced: 0 });
+	    expect(note).toEqual({
+	      keyEpoch: 2,
+	      rootVersion: 2,
+	      rotationFenced: 0,
+	      titleCipher: rotationPayload.titleCipher
+	    });
 	    expect(
 	      app.locals.db.sqlite
 	        .prepare(

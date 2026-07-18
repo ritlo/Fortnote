@@ -263,6 +263,9 @@ export interface LinkedRotateNoteKeyPayload {
   encryptedNoteKey: string;
   noteKeyNonce: string;
   noteKeyFormatVersion: 2;
+  titleCipher: string;
+  titleNonce: string;
+  titleFormatVersion: 2;
   previousKeyCipher: string;
   previousKeyNonce: string;
   linkFormatVersion: 2;

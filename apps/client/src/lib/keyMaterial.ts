@@ -19,6 +19,7 @@ import {
   decryptNoteTitleV2,
   createEpochLinkV2,
   encryptNoteKeyEnvelopeV2,
+  encryptNoteTitleV2,
   encryptRootKeyEnvelopeV2,
   encryptSharingPrivateKeyEnvelopeV2,
   noteKeyToBase64,
@@ -45,6 +46,8 @@ export interface LinkedEpochRotationPreparation {
   targetNoteKeyBase64: string;
   encryptedNoteKey: string;
   noteKeyNonce: string;
+  titleCipher: string;
+  titleNonce: string;
   previousKeyCipher: string;
   previousKeyNonce: string;
 }
@@ -57,13 +60,20 @@ export async function prepareLinkedEpochRotation(input: {
   const sourceNoteKey = fromBase64(input.note.noteKeyBase64);
   const targetNoteKey = randomBytes(32);
   const targetEpoch = input.note.keyEpoch + 1;
-  const [ownerEnvelope, previousKeyLink] = await Promise.all([
+  const [ownerEnvelope, titleEnvelope, previousKeyLink] = await Promise.all([
     encryptNoteKeyEnvelopeV2({
       cryptoOwnerId: input.note.cryptoOwnerId,
       noteId: input.note.id,
       keyEpoch: targetEpoch,
       rootKey: input.rootKey,
       noteKey: targetNoteKey
+    }),
+    encryptNoteTitleV2({
+      cryptoOwnerId: input.note.cryptoOwnerId,
+      noteId: input.note.id,
+      keyEpoch: targetEpoch,
+      noteKey: targetNoteKey,
+      title: input.note.title
     }),
     createEpochLinkV2({
       cryptoOwnerId: input.note.cryptoOwnerId,
@@ -83,6 +93,8 @@ export async function prepareLinkedEpochRotation(input: {
     targetNoteKeyBase64: noteKeyToBase64(targetNoteKey),
     encryptedNoteKey: ownerEnvelope.cipher,
     noteKeyNonce: ownerEnvelope.nonce,
+    titleCipher: titleEnvelope.cipher,
+    titleNonce: titleEnvelope.nonce,
     previousKeyCipher: previousKeyLink.cipher,
     previousKeyNonce: previousKeyLink.nonce
   };
