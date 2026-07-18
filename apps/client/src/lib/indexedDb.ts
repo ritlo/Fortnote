@@ -173,16 +173,18 @@ function createDatabaseApi(
     name,
     async acknowledgeOutbox(record, serverSequence) {
       await safeOperation(async () => {
-        const transaction = database.transaction(
-          [OUTBOX_STORE, ACKNOWLEDGEMENT_STORE],
-          "readwrite"
-        );
+        const transaction = database.transaction(ACKNOWLEDGEMENT_STORE, "readwrite");
         const done = transactionDone(transaction);
         transaction.objectStore(ACKNOWLEDGEMENT_STORE).put({
           ...outboxIdentity(record),
           serverSequence,
           acknowledgedAt: Date.now()
         } satisfies AcknowledgementRecord);
+        await done;
+      });
+      await safeOperation(async () => {
+        const transaction = database.transaction(OUTBOX_STORE, "readwrite");
+        const done = transactionDone(transaction);
         transaction.objectStore(OUTBOX_STORE).delete(outboxKey(record));
         await done;
       });
