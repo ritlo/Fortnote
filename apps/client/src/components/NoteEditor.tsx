@@ -1,6 +1,16 @@
 import { FileText } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
-import { useCreateBlockNote, useEditorChange } from "@blocknote/react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  EmbedTab,
+  FilePanelController,
+  type FilePanelProps,
+  UploadTab,
+  useBlockNoteEditor,
+  useComponentsContext,
+  useCreateBlockNote,
+  useDictionary,
+  useEditorChange
+} from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
 import type { BlockNoteEditor, BlockSchema } from "@blocknote/core";
@@ -15,6 +25,10 @@ import {
   updateCrdtNote
 } from "../realtime/crdt";
 import { blockNoteInitialContent } from "../lib/blockNote";
+import {
+  formatAttachmentReference,
+  isAttachmentMimeCompatible
+} from "../lib/attachmentMedia";
 import type { DecryptedNote, NotesView } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
 import { AttachmentPanel } from "./AttachmentPanel";
@@ -28,22 +42,27 @@ interface NoteEditorProps {
   selectedNote: DecryptedNote | null;
   downloadSelectedAttachment: (attachment: AttachmentSummary) => Promise<void>;
   removeSelectedAttachment: (attachmentId: string) => Promise<void>;
+  resolveAttachmentUrl: (url: string) => Promise<string>;
   updateSelectedNote: (
     patch: Partial<Pick<DecryptedNote, "folderId" | "title" | "body">>
   ) => void;
-  uploadSelectedAttachment: (file: File | undefined) => Promise<void>;
+  uploadSelectedAttachment: (file: File | undefined) => Promise<AttachmentSummary | null>;
 }
 
 interface BlockNoteFieldProps {
   canEdit: boolean;
+  resolveAttachmentUrl: NoteEditorProps["resolveAttachmentUrl"];
   selectedNote: DecryptedNote;
   updateSelectedNote: NoteEditorProps["updateSelectedNote"];
+  uploadSelectedAttachment: NoteEditorProps["uploadSelectedAttachment"];
 }
 
 function CollaborativeBlockNoteField({
   canEdit,
+  resolveAttachmentUrl,
   selectedNote,
-  updateSelectedNote
+  updateSelectedNote,
+  uploadSelectedAttachment
 }: BlockNoteFieldProps) {
   const user = useAppStore((state) => state.user);
   const fragment = getCrdtFragment(selectedNote.id, selectedNote.keyEpoch);
@@ -54,7 +73,24 @@ function CollaborativeBlockNoteField({
       user: { name: user?.username ?? "User", color: "#30bced" },
       provider: { awareness: provider.awareness },
       showCursorLabels: "activity"
-    }
+    },
+    resolveFileUrl: resolveAttachmentUrl,
+    ...(canEdit
+      ? {
+          uploadFile: async (file: File) => {
+          const attachment = await uploadSelectedAttachment(file);
+          if (!attachment) {
+            throw new Error("Attachment upload failed");
+          }
+          return {
+            props: {
+              name: attachment.filename,
+              url: formatAttachmentReference(attachment.id)
+            }
+          };
+          }
+        }
+      : {})
   }) as unknown as BlockNoteEditor<BlockSchema>;
   const updateRef = useRef(updateSelectedNote);
   const lifecycleRef = useRef(0);
@@ -148,7 +184,9 @@ function CollaborativeBlockNoteField({
           restoreDevelopmentUndoManager(editor);
         }}
       >
-        <BlockNoteView editor={editor} editable={canEdit} />
+        <BlockNoteView editor={editor} editable={canEdit} filePanel={false}>
+          {canEdit ? <FilePanelController filePanel={FortnoteFilePanel} /> : null}
+        </BlockNoteView>
       </div>
     </>
   );
@@ -173,12 +211,86 @@ function restoreDevelopmentUndoManager(editor: BlockNoteEditor<BlockSchema>): vo
   doc.on("afterTransaction", undoManager.afterTransactionHandler);
 }
 
-function ReadOnlyBlockNoteField({ selectedNote }: Pick<BlockNoteFieldProps, "selectedNote">) {
+function ReadOnlyBlockNoteField({
+  resolveAttachmentUrl,
+  selectedNote
+}: Pick<BlockNoteFieldProps, "resolveAttachmentUrl" | "selectedNote">) {
   const editor = useCreateBlockNote({
-    initialContent: blockNoteInitialContent(selectedNote.body)
+    initialContent: blockNoteInitialContent(selectedNote.body),
+    resolveFileUrl: resolveAttachmentUrl
   }) as unknown as BlockNoteEditor<BlockSchema>;
 
-  return <BlockNoteView editor={editor} editable={false} />;
+  return <BlockNoteView editor={editor} editable={false} filePanel={false} />;
+}
+
+export function FortnoteFilePanel({ blockId }: FilePanelProps) {
+  const Components = useComponentsContext()!;
+  const dict = useDictionary();
+  const editor = useBlockNoteEditor();
+  const selectedNoteId = useAppStore((state) => state.selectedNoteId);
+  const attachmentsByNote = useAppStore((state) => state.attachmentsByNote);
+  const [loading, setLoading] = useState(false);
+  const uploadTab = dict.file_panel.upload.title;
+  const embedTab = dict.file_panel.embed.title;
+  const [openTab, setOpenTab] = useState(uploadTab);
+  const block = editor.getBlock(blockId)!;
+  const acceptedMimeTypes =
+    editor.schema.blockSpecs[block.type]?.implementation.meta?.fileBlockAccept ?? [];
+  const attachments = (selectedNoteId ? attachmentsByNote[selectedNoteId] : undefined) ?? [];
+  const compatibleAttachments = attachments.filter(({ mimeType }) =>
+    isAttachmentMimeCompatible(mimeType, acceptedMimeTypes)
+  );
+  const tabs = [
+    {
+      name: uploadTab,
+      tabPanel: <UploadTab blockId={blockId} setLoading={setLoading} />
+    },
+    {
+      name: "Attachments",
+      tabPanel: (
+        <Components.FilePanel.TabPanel className="bn-tab-panel fortnote-attachment-tab">
+          {compatibleAttachments.length === 0 ? (
+            <p className="muted">No compatible attachments.</p>
+          ) : (
+            compatibleAttachments.map((attachment) => (
+              <Components.FilePanel.Button
+                key={attachment.id}
+                className="bn-button"
+                onClick={() => {
+                  editor.updateBlock(
+                    blockId,
+                    {
+                      props: {
+                        name: attachment.filename,
+                        url: formatAttachmentReference(attachment.id)
+                      }
+                    } as unknown as Parameters<typeof editor.updateBlock>[1]
+                  );
+                }}
+              >
+                {attachment.filename}
+              </Components.FilePanel.Button>
+            ))
+          )}
+        </Components.FilePanel.TabPanel>
+      )
+    },
+    {
+      name: embedTab,
+      tabPanel: <EmbedTab blockId={blockId} />
+    }
+  ];
+
+  return (
+    <Components.FilePanel.Root
+      className="bn-panel"
+      defaultOpenTab={uploadTab}
+      loading={loading}
+      openTab={openTab}
+      setOpenTab={setOpenTab}
+      tabs={tabs}
+    />
+  );
 }
 
 export function NoteEditor({
@@ -189,6 +301,7 @@ export function NoteEditor({
   selectedNote,
   downloadSelectedAttachment,
   removeSelectedAttachment,
+  resolveAttachmentUrl,
   updateSelectedNote,
   uploadSelectedAttachment
 }: NoteEditorProps) {
@@ -258,14 +371,17 @@ export function NoteEditor({
         {notesView === "trash" ? (
           <ReadOnlyBlockNoteField
             key={`${selectedNote.id}:${String(selectedNote.keyEpoch)}:trash`}
+            resolveAttachmentUrl={resolveAttachmentUrl}
             selectedNote={selectedNote}
           />
         ) : (
           <CollaborativeBlockNoteField
-            key={`${selectedNote.id}:${String(selectedNote.keyEpoch)}`}
+            key={`${selectedNote.id}:${String(selectedNote.keyEpoch)}:${canEdit ? "edit" : "view"}`}
             canEdit={canEdit}
+            resolveAttachmentUrl={resolveAttachmentUrl}
             selectedNote={selectedNote}
             updateSelectedNote={updateSelectedNote}
+            uploadSelectedAttachment={uploadSelectedAttachment}
           />
         )}
       </div>

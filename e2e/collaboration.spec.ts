@@ -1,6 +1,15 @@
 import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
-import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import {
+  expect,
+  test,
+  type Browser,
+  type BrowserContext,
+  type Page,
+  type Response
+} from "@playwright/test";
 
 test("syncs a shared note for an online editor and offline viewer", async ({
   baseURL,
@@ -185,6 +194,140 @@ test("syncs and persists collaborative undo and redo", async ({ baseURL, browser
       await signIn(reloadedBobPage, bob.username, bob.password);
       await openNote(reloadedBobPage, noteTitle);
       await expect(blockEditor(reloadedBobPage)).toContainText(suffix);
+    });
+  } finally {
+    await Promise.all(contexts.splice(0).map((context) => context.close()));
+  }
+});
+
+test("embeds encrypted media for reloads and shared viewers", async ({
+  baseURL,
+  browser
+}) => {
+  test.setTimeout(90_000);
+  const contexts: BrowserContext[] = [];
+  const alice = uniqueAccount("media-alice");
+  const bob = uniqueAccount("media-bob");
+  const noteTitle = `Media note ${alice.suffix}`;
+  const filename = `encrypted-${alice.suffix}.svg`;
+  const marker = `media-plaintext-${alice.suffix}`;
+  const image = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><metadata>${marker}</metadata><rect width="2" height="2" fill="green"/></svg>`
+  );
+  const realtimeFrames: string[] = [];
+  let storedFilePath = "";
+
+  try {
+    const bobPage = await newUserPage(browser, baseURL, contexts);
+    await register(bobPage, bob.username, bob.password);
+    await waitForSharingKey(bobPage);
+
+    const alicePage = await newUserPage(browser, baseURL, contexts);
+    await register(alicePage, alice.username, alice.password);
+    await createNote(alicePage, noteTitle, "Encrypted media body");
+    const traffic = captureApiTraffic(alicePage);
+    captureRealtimeFrames(alicePage, realtimeFrames);
+
+    await test.step("upload and render encrypted block media", async () => {
+      await insertImageBlock(alicePage);
+      const uploaded = waitForAttachmentUpload(alicePage);
+      const saved = waitForNoteSave(alicePage);
+      await alicePage.locator('input[type="file"][accept="image/*"]').setInputFiles({
+        name: filename,
+        mimeType: "image/svg+xml",
+        buffer: image
+      });
+      await uploaded;
+      await saved;
+
+      await expect(alicePage.getByRole("img", { name: filename })).toHaveAttribute(
+        "src",
+        /^blob:/
+      );
+      await expect(alicePage.locator(".attachment-list li", { hasText: filename })).toBeVisible();
+      expect(traffic.attachmentUploads).toBe(1);
+    });
+
+    await test.step("reuse the attachment without another upload", async () => {
+      await insertImageBlock(alicePage);
+      await alicePage.locator('[data-test="attachments-tab"]').click();
+      const saved = waitForNoteSave(alicePage);
+      await alicePage.getByRole("button", { name: filename, exact: true }).click();
+      await saved;
+
+      await expect(alicePage.getByRole("img", { name: filename })).toHaveCount(2);
+      const imageSources = await alicePage
+        .getByRole("img", { name: filename })
+        .evaluateAll((images) => images.map((item) => item.getAttribute("src")));
+      expect(imageSources.every((source) => source?.startsWith("blob:"))).toBe(true);
+      expect(new Set(imageSources).size).toBe(1);
+      expect(traffic.attachmentUploads).toBe(1);
+    });
+
+    await test.step("reload and render for a read-only collaborator", async () => {
+      await reloadAndUnlock(alicePage, alice.password);
+      await expect(alicePage.getByRole("img", { name: filename })).toHaveCount(2);
+      await expect(alicePage.getByRole("img", { name: filename }).first()).toHaveAttribute(
+        "src",
+        /^blob:/
+      );
+
+      await shareNote(alicePage, bob.username, "viewer");
+      await openNote(bobPage, noteTitle);
+      const viewerImages = bobPage.getByRole("img", { name: filename });
+      await expect(viewerImages).toHaveCount(2);
+      await expect(viewerImages.first()).toHaveAttribute("src", /^blob:/);
+      await viewerImages.first().click();
+      await expect(blockEditor(bobPage)).toHaveAttribute("contenteditable", "false");
+      await expect(bobPage.getByRole("button", { name: "Replace image" })).toHaveCount(0);
+      await expect(bobPage.getByRole("button", { name: "Delete image" })).toHaveCount(0);
+      await expect(bobPage.locator('[data-test="upload-tab"]')).toHaveCount(0);
+      await expect(bobPage.locator('[data-test="attachments-tab"]')).toHaveCount(0);
+    });
+
+    await test.step("keep plaintext and object URLs client-only", async () => {
+      const stored = readStoredMedia(filename);
+      storedFilePath = stored.filePath;
+      const storedBytes = await readFile(stored.filePath);
+      const responseBodies = await Promise.all(traffic.responseBodies);
+      const browserTraffic = Buffer.concat([...traffic.requestBodies, ...responseBodies]);
+
+      expect(browserTraffic.includes(image)).toBe(false);
+      expect(browserTraffic.toString("utf8")).not.toContain(marker);
+      expect(browserTraffic.toString("utf8")).not.toContain("blob:");
+      expect(realtimeFrames.join("\n")).not.toContain(marker);
+      expect(realtimeFrames.join("\n")).not.toContain("blob:");
+      expect(stored.databasePayload).not.toContain(marker);
+      expect(stored.databasePayload).not.toContain("blob:");
+      expect(storedBytes.includes(image)).toBe(false);
+      expect(storedBytes.toString("utf8")).not.toContain(marker);
+    });
+
+    await test.step("leave deleted embeds unavailable without corrupting the document", async () => {
+      const deleted = alicePage.waitForResponse(
+        (response) =>
+          response.request().method() === "DELETE" &&
+          response.url().includes("/api/attachments/") &&
+          response.ok()
+      );
+      await alicePage
+        .locator(".attachment-list li", { hasText: filename })
+        .getByRole("button", { name: "Delete" })
+        .click();
+      await deleted;
+      await expect(alicePage.getByText("No attachments.")).toBeVisible();
+
+      await reloadAndUnlock(alicePage, alice.password);
+      const unavailableImages = alicePage.getByRole("img", { name: filename });
+      await expect(unavailableImages).toHaveCount(2);
+      await expect
+        .poll(() =>
+          unavailableImages.evaluateAll((images) =>
+            images.map((item) => item.getAttribute("src"))
+          )
+        )
+        .toEqual([null, null]);
+      await expect(readFile(storedFilePath)).rejects.toThrow();
     });
   } finally {
     await Promise.all(contexts.splice(0).map((context) => context.close()));
@@ -617,6 +760,120 @@ function captureRealtimeFrames(page: Page, frames: string[]): void {
     socket.on("framesent", ({ payload }) => frames.push(String(payload)));
     socket.on("framereceived", ({ payload }) => frames.push(String(payload)));
   });
+}
+
+interface ApiTraffic {
+  attachmentUploads: number;
+  requestBodies: Buffer[];
+  responseBodies: Promise<Buffer>[];
+}
+
+function captureApiTraffic(page: Page): ApiTraffic {
+  const traffic: ApiTraffic = {
+    attachmentUploads: 0,
+    requestBodies: [],
+    responseBodies: []
+  };
+  page.on("request", (request) => {
+    if (!isMediaApiUrl(request.url())) {
+      return;
+    }
+    const body = request.postDataBuffer();
+    if (body) {
+      traffic.requestBodies.push(body);
+    }
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/api/notes/") &&
+      request.url().includes("/attachments")
+    ) {
+      traffic.attachmentUploads += 1;
+    }
+  });
+  page.on("response", (response) => {
+    if (isMediaApiUrl(response.url())) {
+      traffic.responseBodies.push(readResponseBody(response));
+    }
+  });
+  return traffic;
+}
+
+async function readResponseBody(response: Response): Promise<Buffer> {
+  try {
+    return Buffer.from(await response.body());
+  } catch {
+    return Buffer.alloc(0);
+  }
+}
+
+function isMediaApiUrl(url: string): boolean {
+  return url.includes("/api/notes/") || url.includes("/api/attachments/");
+}
+
+async function insertImageBlock(page: Page): Promise<void> {
+  const editor = blockEditor(page);
+  await editor.focus();
+  await editor.press("ControlOrMeta+End");
+  await editor.press("Enter");
+  await editor.pressSequentially("/image");
+  await page.getByRole("option", { name: /^Image/ }).click();
+  await expect(page.locator('[data-test="upload-tab"]')).toBeVisible();
+  await expect(page.locator('[data-test="attachments-tab"]')).toBeVisible();
+}
+
+async function reloadAndUnlock(page: Page, password: string): Promise<void> {
+  await page.reload();
+  await page.getByLabel("Account password").fill(password);
+  await page.getByRole("button", { name: "Sign in and decrypt" }).click();
+  await expect(page.getByText("Signed in and decrypted")).toBeVisible();
+}
+
+function waitForAttachmentUpload(page: Page) {
+  return page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes("/api/notes/") &&
+      response.url().includes("/attachments") &&
+      response.ok()
+  );
+}
+
+function readStoredMedia(filename: string): {
+  databasePayload: string;
+  filePath: string;
+} {
+  const database = new DatabaseSync(resolve("apps/server/data/e2e.sqlite"), {
+    readOnly: true
+  });
+  try {
+    const row = database
+      .prepare(
+        `SELECT a.note_id AS noteId,
+                a.file_cipher_path AS fileCipherPath,
+                n.content_cipher AS contentCipher
+         FROM attachments a
+         JOIN notes n ON n.id = a.note_id
+         WHERE a.filename = ?`
+      )
+      .get(filename) as
+      | { contentCipher: string; fileCipherPath: string; noteId: string }
+      | undefined;
+    if (!row) {
+      throw new Error(`Stored media not found: ${filename}`);
+    }
+    const updates = database
+      .prepare("SELECT cipher FROM note_updates WHERE note_id = ?")
+      .all(row.noteId) as { cipher: string }[];
+    return {
+      databasePayload: JSON.stringify([
+        row.contentCipher,
+        ...updates.map((update) => update.cipher)
+      ]),
+      filePath: resolve("apps/server/data/e2e-attachments", row.fileCipherPath)
+    };
+  } finally {
+    database.close();
+  }
 }
 
 async function uploadAttachment(

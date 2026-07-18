@@ -20,6 +20,7 @@ interface EditorPaneProps {
   lockVault: () => void;
   moveSelectedToTrash: () => Promise<void>;
   removeSelectedAttachment: (attachmentId: string) => Promise<void>;
+  resolveAttachmentUrl: (url: string) => Promise<string>;
   restoreSelectedNote: () => Promise<void>;
   rotateRecoveryKey: () => Promise<void>;
   rotateSharingKey: () => Promise<void>;
@@ -27,7 +28,7 @@ interface EditorPaneProps {
   updateSelectedNote: (
     patch: Partial<Pick<DecryptedNote, "folderId" | "title" | "body">>
   ) => void;
-  uploadSelectedAttachment: (file: File | undefined) => Promise<void>;
+  uploadSelectedAttachment: (file: File | undefined) => Promise<AttachmentSummary | null>;
 }
 
 export function EditorPane({
@@ -46,6 +47,7 @@ export function EditorPane({
   lockVault,
   moveSelectedToTrash,
   removeSelectedAttachment,
+  resolveAttachmentUrl,
   restoreSelectedNote,
   rotateRecoveryKey,
   rotateSharingKey,
@@ -87,6 +89,7 @@ export function EditorPane({
           folders={folders}
           notesView={notesView}
           removeSelectedAttachment={removeSelectedAttachment}
+          resolveAttachmentUrl={resolveAttachmentUrl}
           selectedAttachments={selectedAttachments}
           selectedNote={selectedNote}
           updateSelectedNote={updateSelectedNote}
