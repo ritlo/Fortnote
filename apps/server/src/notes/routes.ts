@@ -573,6 +573,7 @@ export function createNotesRouter(context: AppContext): Router {
       sendApiError(response, "not_found", "Membership not found");
       return;
     }
+    context.realtime?.closeNoteAccess(access.noteId, request.params.userId);
     publishEventCursors(context, [revokeCursor]);
 
     response.status(204).send();
@@ -871,6 +872,10 @@ export function createNotesRouter(context: AppContext): Router {
         sendApiError(response, "conflict", "Note rotation state changed");
         return;
       }
+      context.realtime?.closeNoteAccess(
+        request.params.id,
+        linkedRotation.revokedUserId
+      );
       publishEventCursors(context, [outcome.eventCursor]);
       response.json({
         id: request.params.id,

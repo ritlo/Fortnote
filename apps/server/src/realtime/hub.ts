@@ -118,6 +118,16 @@ export class RealtimeHub implements RealtimePublisher {
     }
   }
 
+  closeNoteAccess(noteId: string, userId: string): void {
+    for (const client of this.clients) {
+      if (client.userId !== userId) {
+        continue;
+      }
+      client.subscribedNoteIds.delete(noteId);
+      this.disconnectClient(client, "Note access revoked");
+    }
+  }
+
   publishEvents(cursors: number[]): void {
     if (!this.context || cursors.length === 0) {
       return;

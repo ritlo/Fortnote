@@ -197,6 +197,189 @@ describe("realtime server", () => {
     carolSocket.socket.close();
   });
 
+  it("closes revoked sockets before activating a linked epoch", async () => {
+    const server = await createRealtimeTestServer();
+    const alice = await register(server.url, "linked_ws_alice");
+    const bob = await register(server.url, "linked_ws_bob");
+    const carol = await register(server.url, "linked_ws_carol");
+    const carolUser = await authed(server.url, carol.cookie)
+      .get("/api/auth/me")
+      .expect(200);
+
+    for (const [account, username] of [
+      [bob, "linked_ws_bob"],
+      [carol, "linked_ws_carol"]
+    ] as const) {
+      await authed(server.url, account.cookie)
+        .put("/api/sharing-keys/current")
+        .set(csrfHeaders())
+        .send({
+          ...sharingKeyPayload(username),
+          sharingKeyVersion: 2,
+          formatVersion: 2
+        })
+        .expect(201);
+    }
+
+    const created = await authed(server.url, alice.cookie)
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(created.body.id);
+    const bobMembership = await authed(server.url, alice.cookie)
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send({
+        ...invitePayload("linked_ws_bob", "editor"),
+        sharingKeyVersion: 2,
+        formatVersion: 2
+      })
+      .expect(201);
+    await authed(server.url, alice.cookie)
+      .post(`/api/notes/${noteId}/memberships`)
+      .set(csrfHeaders())
+      .send({
+        ...invitePayload("linked_ws_carol", "editor"),
+        sharingKeyVersion: 2,
+        formatVersion: 2
+      })
+      .expect(201);
+
+    const currentCursor = (
+      server.db.sqlite
+        .prepare("SELECT MAX(cursor) AS cursor FROM note_events")
+        .get() as { cursor: number }
+    ).cursor;
+    const cryptoOwnerId = (
+      server.db.sqlite
+        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
+        .get(noteId) as { cryptoOwnerId: string }
+    ).cryptoOwnerId;
+    const aliceSocket = await connect(server.url, alice.cookie, currentCursor);
+    const bobSocket = await connect(server.url, bob.cookie, currentCursor);
+    const bobSecondSocket = await connect(server.url, bob.cookie, currentCursor);
+    for (const [socket, label] of [
+      [aliceSocket, "alice"],
+      [bobSocket, "bob"],
+      [bobSecondSocket, "bob second"]
+    ] as const) {
+      await socket.next(`${label} connected`);
+      await socket.next(`${label} replay`);
+    }
+
+    bobSocket.socket.send(
+      JSON.stringify({ type: "presence", noteId, state: "editing" })
+    );
+    await aliceSocket.next("alice sees bob presence");
+    await bobSocket.next("bob sees own presence");
+    await bobSecondSocket.next("bob second sees presence");
+
+    const bobMessagesAfterActivation: Record<string, unknown>[] = [];
+    const recordBobMessage = (data: RawData) => {
+      bobMessagesAfterActivation.push(parseSocketMessage(data));
+    };
+    bobSocket.socket.on("message", recordBobMessage);
+    bobSecondSocket.socket.on("message", recordBobMessage);
+    const bobClosed = waitForClose(bobSocket.socket);
+    const bobSecondClosed = waitForClose(bobSecondSocket.socket);
+
+    await authed(server.url, alice.cookie)
+      .post(`/api/notes/${noteId}/key-rotation`)
+      .set(csrfHeaders())
+      .send({
+        mode: "linked",
+        revokedUserId: bobMembership.body.userId,
+        rootVersion: 1,
+        sourceEpoch: 1,
+        targetEpoch: 2,
+        encryptedNoteKey: "linked_ws_owner_note_key_abcdefghijklmnopqrstuvwxyz",
+        noteKeyNonce: "linked_ws_owner_note_nonce_abcdefghijklmnopqrstuvwxyz",
+        noteKeyFormatVersion: 2,
+        previousKeyCipher: "linked_ws_previous_key_cipher_abcdefghijklmnopqrstuvwxyz",
+        previousKeyNonce: "linked_ws_previous_key_nonce_abcdefghijklmnopqrstuvwxyz",
+        linkFormatVersion: 2,
+        shares: [
+          {
+            recipientUserId: carolUser.body.id,
+            sharingKeyVersion: 2,
+            encryptedNoteKey: "linked_ws_carol_note_share_abcdefghijklmnopqrstuvwxyz",
+            formatVersion: 2
+          }
+        ]
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({ keyEpoch: 2, rootVersion: 2 });
+      });
+
+    await expect(bobClosed).resolves.toBe(1008);
+    await expect(bobSecondClosed).resolves.toBe(1008);
+    expect(bobMessagesAfterActivation).toEqual([]);
+    expect(await aliceSocket.next("revoked presence removed")).toMatchObject({
+      type: "presence",
+      noteId,
+      users: []
+    });
+    expect(await aliceSocket.next("linked epoch event")).toMatchObject({
+      type: "event",
+      event: {
+        noteId,
+        type: "membership.revoked",
+        metadata: { targetEpoch: 2 }
+      }
+    });
+
+    await authed(server.url, bob.cookie)
+      .get(`/api/notes/${noteId}/key-share`)
+      .expect(404);
+    await authed(server.url, bob.cookie)
+      .get(`/api/notes/${noteId}/epoch-links`)
+      .expect(404);
+
+    const reconnectedBob = await connect(server.url, bob.cookie, currentCursor);
+    await reconnectedBob.next("reconnected bob connected");
+    await reconnectedBob.next("reconnected bob replay");
+    reconnectedBob.socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
+    await expectNoMessage(reconnectedBob, "revoked target-epoch subscription");
+    reconnectedBob.socket.send(
+      JSON.stringify({ type: "presence", noteId, state: "editing" })
+    );
+    await expectNoMessage(reconnectedBob, "revoked target-epoch presence");
+
+    aliceSocket.socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
+    expect(await aliceSocket.next("alice target-epoch sync")).toMatchObject({
+      type: "crdt-sync",
+      noteId,
+      keyEpoch: 2
+    });
+    const targetEpochUpdate = {
+      type: "crdt-update",
+      formatVersion: 1,
+      updateId: crypto.randomUUID(),
+      noteId,
+      cryptoOwnerId,
+      keyEpoch: 2,
+      cipher: "linked_ws_target_epoch_cipher_abcdefghijklmnopqrstuvwxyz",
+      nonce: "linked_ws_target_epoch_nonce_abcdefghijklmnopqrstuvwxyz"
+    };
+    aliceSocket.socket.send(JSON.stringify(targetEpochUpdate));
+    expect(await aliceSocket.next("alice target-epoch ack")).toEqual({
+      type: "crdt-ack",
+      updateId: targetEpochUpdate.updateId
+    });
+    await expectNoMessage(reconnectedBob, "revoked target-epoch update");
+
+    const forbiddenUpdate = { ...targetEpochUpdate, updateId: crypto.randomUUID() };
+    reconnectedBob.socket.send(JSON.stringify(forbiddenUpdate));
+    expect(await reconnectedBob.next("revoked target-epoch rejection")).toEqual({
+      type: "crdt-reject",
+      noteId,
+      updateId: forbiddenUpdate.updateId,
+      reason: "forbidden"
+    });
+  });
+
   it("stores encrypted CRDT updates and enforces realtime access", async () => {
     const server = await createRealtimeTestServer();
     const alice = await register(server.url, "crdt_alice");
@@ -403,12 +586,15 @@ describe("realtime server", () => {
         .get(noteId)
     ).toEqual({ count: 128 });
 
+    const bobClosed = waitForClose(bobSocket.socket);
+    const legacyBobClosed = waitForClose(legacyBobSocket.socket);
     await authed(server.url, alice.cookie)
       .delete(`/api/notes/${noteId}/memberships/${bobUserId}`)
       .set(csrfHeaders())
       .expect(204);
     await aliceSocket.next("alice revoke event");
-    await bobSocket.next("bob revoke event");
+    await expect(bobClosed).resolves.toBe(1008);
+    await expect(legacyBobClosed).resolves.toBe(1008);
     server.db.sqlite
       .prepare("UPDATE notes SET key_epoch = 2 WHERE id = ?")
       .run(noteId);
@@ -429,23 +615,11 @@ describe("realtime server", () => {
       type: "crdt-ack",
       updateId: postRevokeCheckpoint.updateId
     });
-    await expectNoMessage(bobSocket, "revoked collaborator CRDT broadcast");
     expect(
       server.db.sqlite
         .prepare("SELECT key_epoch AS keyEpoch FROM note_updates WHERE note_id = ?")
         .all(noteId)
     ).toEqual([{ keyEpoch: 2 }]);
-
-    bobSocket.socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
-    await expectNoMessage(bobSocket, "revoked collaborator CRDT replay");
-    const forbiddenUpdate = { ...update, updateId: crypto.randomUUID() };
-    bobSocket.socket.send(JSON.stringify(forbiddenUpdate));
-    expect(await bobSocket.next("revoked collaborator CRDT rejection")).toEqual({
-      type: "crdt-reject",
-      noteId,
-      updateId: forbiddenUpdate.updateId,
-      reason: "forbidden"
-    });
   });
 
   it("pushes actor-scoped folder events only to the actor", async () => {
