@@ -6,8 +6,12 @@ import { getConfig } from "../config.js";
 import { createDb } from "../db/client.js";
 import { createApp } from "../http/app.js";
 import type { ServerConfig } from "../config.js";
+import type { RealtimePublisher } from "../realtime/types.js";
 
-export function createTestApp(overrides: Partial<ServerConfig> = {}) {
+export function createTestApp(
+  overrides: Partial<ServerConfig> = {},
+  realtime?: RealtimePublisher
+) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fortnote-test-"));
   const config = {
     ...getConfig({}),
@@ -20,7 +24,7 @@ export function createTestApp(overrides: Partial<ServerConfig> = {}) {
     ...overrides
   };
   const db = createDb(config);
-  const app = createApp({ config, db });
+  const app = createApp({ config, db, ...(realtime ? { realtime } : {}) });
   app.locals.db = db;
   app.locals.config = config;
   return app;

@@ -3,6 +3,7 @@ import * as Y from "yjs";
 import type { EncryptedCrdtMessage } from "@fortnote/shared";
 import { decryptCrdtMessage, encryptCrdtMessage } from "../cryptoClient";
 import type { DecryptedNote } from "../store/appStore";
+import * as contentTransfer from "./contentTransfer";
 import {
   checkpointCrdtNote,
   clearCrdtNotes,
@@ -13,14 +14,21 @@ import {
   openCrdtNote,
   preserveCrdtContent,
   receiveCrdtUpdate,
+  requiresContentTransfer,
   setCrdtTransport,
   updateCrdtNote,
   type ScopedEncryptedCrdtMessage
 } from "./crdt";
 
 vi.mock("../cryptoClient", () => ({
+  CONTENT_CHUNK_AUTH_BYTES: 16,
   decryptCrdtMessage: vi.fn(),
+  encryptContentChunksV2: vi.fn(),
   encryptCrdtMessage: vi.fn().mockResolvedValue({ cipher: "cipher", nonce: "nonce" })
+}));
+
+vi.mock("./contentTransfer", () => ({
+  downloadVerifiedContent: vi.fn()
 }));
 
 const FRAGMENT_KEY = "document-store";
@@ -62,6 +70,125 @@ describe("CRDT collaboration", () => {
     setCrdtTransport(null);
     clearCrdtNotes();
     vi.clearAllMocks();
+    vi.restoreAllMocks();
+  });
+
+  it("routes only updates that cannot fit the realtime frame through content transfer", () => {
+    expect(requiresContentTransfer(256 * 1024 - 4096 - 16)).toBe(false);
+    expect(requiresContentTransfer(256 * 1024 - 4096 - 15)).toBe(true);
+  });
+
+  it("applies manifest-backed updates only after verified download completes", async () => {
+    const sectionId = "00000000-0000-4000-8000-000000000002";
+    const current = note({
+      rootSectionId: sectionId,
+      noteKeyBase64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    });
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      subscribe: vi.fn()
+    });
+    openCrdtNote(current, vi.fn());
+    await finishCrdtSync(current.id, current.keyEpoch, false, sectionId);
+    const provider = getCrdtProvider(current.id, current.keyEpoch, sectionId);
+    const remote = new Y.Doc();
+    setFragmentBody(remote, "Verified remote content");
+    let finishDownload!: (bytes: Uint8Array) => void;
+    vi.mocked(contentTransfer.downloadVerifiedContent).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishDownload = resolve;
+        })
+    );
+
+    const receiving = receiveCrdtUpdate({
+      type: "crdt-manifest",
+      formatVersion: 2,
+      noteId: current.id,
+      sectionId,
+      keyEpoch: current.keyEpoch,
+      updateId: crypto.randomUUID(),
+      manifestId: crypto.randomUUID(),
+      uploadId: crypto.randomUUID(),
+      cryptoOwnerId: current.cryptoOwnerId,
+      kind: "update",
+      totalCipherBytes: 1024,
+      chunkCount: 1,
+      manifestHash: "a".repeat(64),
+      serverSequence: 1
+    });
+    await vi.waitFor(() => {
+      expect(finishDownload).toBeTypeOf("function");
+    });
+    expect(fragmentText(provider.doc)).not.toContain("Verified remote content");
+
+    finishDownload(Y.encodeStateAsUpdate(remote));
+    await receiving;
+    expect(fragmentText(provider.doc)).toContain("Verified remote content");
+  });
+
+  it("recovers from corrupt covered history after a verified manifest checkpoint", async () => {
+    const sectionId = "00000000-0000-4000-8000-000000000002";
+    const current = note({
+      rootSectionId: sectionId,
+      noteKeyBase64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    });
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      subscribe: vi.fn()
+    });
+    openCrdtNote(current, vi.fn());
+    vi.mocked(decryptCrdtMessage).mockRejectedValueOnce(new Error("bad cipher"));
+
+    await expect(
+      receiveCrdtUpdate({
+        type: "crdt-binary",
+        formatVersion: 2,
+        kind: "update",
+        updateId: crypto.randomUUID(),
+        noteId: current.id,
+        sectionId,
+        cryptoOwnerId: current.cryptoOwnerId,
+        expectedKeyEpoch: current.keyEpoch,
+        nonce: "nonce",
+        cipherLength: 1,
+        serverSequence: 1,
+        cipher: Uint8Array.of(1)
+      })
+    ).rejects.toThrow("bad cipher");
+    await expect(ensureCrdtHistoryReadable(current.id, sectionId)).rejects.toThrow(
+      "could not be decrypted"
+    );
+
+    const checkpoint = new Y.Doc();
+    setFragmentBody(checkpoint, "Recovered checkpoint");
+    vi.mocked(contentTransfer.downloadVerifiedContent).mockResolvedValueOnce(
+      Y.encodeStateAsUpdate(checkpoint)
+    );
+    await receiveCrdtUpdate({
+      type: "crdt-manifest",
+      formatVersion: 2,
+      noteId: current.id,
+      sectionId,
+      keyEpoch: current.keyEpoch,
+      updateId: crypto.randomUUID(),
+      manifestId: crypto.randomUUID(),
+      uploadId: crypto.randomUUID(),
+      cryptoOwnerId: current.cryptoOwnerId,
+      kind: "checkpoint",
+      checkpointSequenceCutoff: 1,
+      totalCipherBytes: 1024,
+      chunkCount: 1,
+      manifestHash: "a".repeat(64),
+      serverSequence: 2
+    });
+    await finishCrdtSync(current.id, current.keyEpoch, true, sectionId);
+
+    await expect(ensureCrdtHistoryReadable(current.id, sectionId)).resolves.toBeUndefined();
+    expect(fragmentText(getCrdtProvider(current.id, current.keyEpoch, sectionId).doc))
+      .toContain("Recovered checkpoint");
   });
 
   it("keeps the encrypted root and BlockNote section in independent Y.Docs", async () => {

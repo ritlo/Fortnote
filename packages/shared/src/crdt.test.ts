@@ -121,11 +121,18 @@ describe("bounded CRDT v2 protocol", () => {
     expect(
       parseCrdtControlMessage({
         type: "crdt-manifest",
+        formatVersion: CRDT_BINARY_FORMAT_VERSION,
         noteId,
         sectionId,
         keyEpoch: 4,
         updateId: crypto.randomUUID(),
         manifestId: crypto.randomUUID(),
+        uploadId: crypto.randomUUID(),
+        cryptoOwnerId: crypto.randomUUID(),
+        kind: "update",
+        totalCipherBytes: 1024,
+        chunkCount: 4,
+        manifestHash: "a".repeat(64),
         serverSequence: 21
       })
     ).toMatchObject({ type: "crdt-manifest", serverSequence: 21 });

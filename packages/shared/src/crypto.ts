@@ -289,8 +289,10 @@ export function contentChunkAssociatedData(input: {
   chunkCount: number;
   totalCipherBytes: number;
   kind: ContentKind;
+  checkpointSequenceCutoff?: number;
   formatVersion: number;
 }): Uint8Array {
+  const checkpointSequenceCutoff = input.checkpointSequenceCutoff ?? 0;
   if (
     input.formatVersion !== 2 ||
     !Number.isSafeInteger(input.chunkIndex) ||
@@ -299,11 +301,18 @@ export function contentChunkAssociatedData(input: {
     input.chunkCount <= 0 ||
     input.chunkIndex >= input.chunkCount ||
     !Number.isSafeInteger(input.totalCipherBytes) ||
-    input.totalCipherBytes <= 0
+    input.totalCipherBytes <= 0 ||
+    !Number.isSafeInteger(checkpointSequenceCutoff) ||
+    checkpointSequenceCutoff < 0 ||
+    (input.kind === "checkpoint") !==
+      (input.checkpointSequenceCutoff !== undefined)
   ) {
     throw new Error("Invalid content chunk context");
   }
-  return associatedDataV2("content-chunk", input);
+  return associatedDataV2("content-chunk", {
+    ...input,
+    checkpointSequenceCutoff
+  });
 }
 
 export function crdtBinaryAssociatedData(input: {

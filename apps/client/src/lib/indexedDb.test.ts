@@ -4,6 +4,7 @@ import {
   IndexedDbCapacityError,
   normalizeIndexedDbError,
   openFortnoteIndexedDb,
+  type EncryptedContentTransferRecord,
   type EncryptedOutboxRecord,
   type SectionCacheRecord
 } from "./indexedDb";
@@ -87,12 +88,38 @@ describe("protected IndexedDB storage", () => {
     await database.putOutbox(first);
     await database.putOutbox(second);
     await database.putSectionCache(cacheRecord({ userId: "user-a" }));
+    await database.putContentTransfer(contentTransferRecord({ userId: "user-a" }));
 
     await database.clearAccount("user-a");
 
     await expect(database.listOutbox("user-a")).resolves.toEqual([]);
     await expect(database.listSectionCache("user-a")).resolves.toEqual([]);
+    await expect(database.listContentTransfers("user-a")).resolves.toEqual([]);
     await expect(database.listOutbox("user-b")).resolves.toEqual([second]);
+  });
+
+  it("persists encrypted transfer progress by account and stable upload identity", async () => {
+    const database = await openDatabase();
+    const uploadId = crypto.randomUUID();
+    const first = contentTransferRecord({ userId: "user-a", uploadId });
+    const second = contentTransferRecord({ userId: "user-b", uploadId });
+    await database.putContentTransfer(first);
+    await database.putContentTransfer(second);
+    await database.putContentTransfer({
+      ...first,
+      uploadedChunkIndexes: [0],
+      updatedAt: 2
+    });
+
+    await expect(database.getContentTransfer("user-a", uploadId)).resolves.toMatchObject({
+      updateId: first.updateId,
+      uploadedChunkIndexes: [0],
+      updatedAt: 2
+    });
+    await expect(database.listContentTransfers("user-b")).resolves.toEqual([second]);
+    await database.deleteContentTransfer("user-a", uploadId);
+    await expect(database.getContentTransfer("user-a", uploadId)).resolves.toBeNull();
+    await expect(database.getContentTransfer("user-b", uploadId)).resolves.toEqual(second);
   });
 });
 
@@ -141,6 +168,39 @@ function cacheRecord(overrides: Partial<SectionCacheRecord> = {}): SectionCacheR
     encryptedBytes: Uint8Array.from([4, 5, 6]),
     lastAccessedAt: 1,
     pending: false,
+    ...overrides
+  };
+}
+
+function contentTransferRecord(
+  overrides: Partial<EncryptedContentTransferRecord> = {}
+): EncryptedContentTransferRecord {
+  const bytes = Uint8Array.from([7, 8, 9]);
+  return {
+    userId: "user-a",
+    cryptoOwnerId: "owner-a",
+    noteId: "note-a",
+    sectionId: "section-a",
+    keyEpoch: 1,
+    updateId: crypto.randomUUID(),
+    uploadId: crypto.randomUUID(),
+    requestId: crypto.randomUUID(),
+    kind: "update",
+    formatVersion: 2,
+    totalCipherBytes: bytes.byteLength,
+    chunkCount: 1,
+    manifestHash: "a".repeat(64),
+    chunks: [
+      {
+        chunkIndex: 0,
+        cipherBytes: bytes,
+        cipherHash: "b".repeat(64),
+        nonce: "c".repeat(32)
+      }
+    ],
+    uploadedChunkIndexes: [],
+    createdAt: 1,
+    updatedAt: 1,
     ...overrides
   };
 }

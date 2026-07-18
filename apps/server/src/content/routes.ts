@@ -133,9 +133,37 @@ export function createContentRouter(context: AppContext): Router {
         .get(payload.uploadId, payload.updateId) as { id: string } | undefined;
       if (existing) {
         const upload = getUpload(context, existing.id);
-        return upload && sameUpload(upload, payload, section.id)
-          ? { kind: "existing" as const, upload }
-          : { kind: "conflict" as const };
+        if (!upload || !sameUpload(upload, payload, section.id)) {
+          return { kind: "conflict" as const };
+        }
+        if (upload.status === "expired" || upload.status === "aborted") {
+          if (!reserveStorageBytes(
+            context.db,
+            access.ownerUserId,
+            upload.totalCipherBytes,
+            context.config.storageQuotaBytes
+          )) {
+            return { kind: "storage-limit" as const };
+          }
+          context.db.sqlite
+            .prepare("DELETE FROM content_chunks WHERE upload_id = ?")
+            .run(upload.id);
+          const expiresAt = new Date(
+            Date.now() + context.config.contentUploadExpiryMs
+          ).toISOString();
+          context.db.sqlite
+            .prepare(`
+              UPDATE content_uploads
+              SET status = 'receiving', expires_at = ?, updated_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `)
+            .run(expiresAt, upload.id);
+          return {
+            kind: "existing" as const,
+            upload: getUpload(context, upload.id)!
+          };
+        }
+        return { kind: "existing" as const, upload };
       }
       if (!reserveStorageBytes(
         context.db,
@@ -363,6 +391,9 @@ export function createContentRouter(context: AppContext): Router {
       if (reservesStorage(current.status)) {
         releaseStorageBytes(context.db, current.ownerUserId, current.totalCipherBytes);
         context.db.sqlite
+          .prepare("DELETE FROM content_chunks WHERE upload_id = ?")
+          .run(current.id);
+        context.db.sqlite
           .prepare(`
             UPDATE content_uploads
             SET status = 'aborted', updated_at = CURRENT_TIMESTAMP
@@ -397,6 +428,28 @@ export function createContentRouter(context: AppContext): Router {
       ...parsed.data
     });
     if (outcome.kind === "committed") {
+      context.realtime?.publishContentManifest({
+        type: "crdt-manifest",
+        formatVersion: 2,
+        noteId: outcome.manifest.noteId,
+        sectionId: outcome.manifest.sectionId,
+        keyEpoch: outcome.manifest.keyEpoch,
+        updateId: outcome.manifest.updateId,
+        manifestId: outcome.manifest.manifestId,
+        uploadId: outcome.manifest.uploadId,
+        cryptoOwnerId: outcome.manifest.cryptoOwnerId,
+        kind: outcome.manifest.kind,
+        totalCipherBytes: outcome.manifest.totalCipherBytes,
+        chunkCount: outcome.manifest.chunkCount,
+        manifestHash: outcome.manifest.manifestHash,
+        ...(outcome.manifest.checkpointSequenceCutoff === undefined
+          ? {}
+          : {
+              checkpointSequenceCutoff:
+                outcome.manifest.checkpointSequenceCutoff
+            }),
+        serverSequence: outcome.manifest.firstSequence
+      });
       response.status(201).json(outcome.manifest);
       return;
     }
@@ -581,6 +634,9 @@ function expireUploadIfNeeded(context: AppContext, upload: UploadRow): void {
       return;
     }
     releaseStorageBytes(context.db, current.ownerUserId, current.totalCipherBytes);
+    context.db.sqlite
+      .prepare("DELETE FROM content_chunks WHERE upload_id = ?")
+      .run(current.id);
     context.db.sqlite
       .prepare("UPDATE content_uploads SET status = 'expired' WHERE id = ?")
       .run(current.id);

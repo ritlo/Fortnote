@@ -79,20 +79,57 @@ describe("apiRequest", () => {
   it("uses binary bodies and responses without JSON/Base64 conversion", async () => {
     const uploadId = crypto.randomUUID();
     const bytes = Uint8Array.from([0, 1, 2, 253, 254, 255]);
+    const nonce = btoa(String.fromCharCode(...Uint8Array.from({ length: 24 }, (_, index) => index)));
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValueOnce(new Response(bytes, { status: 200 }));
+      .mockResolvedValueOnce(
+        new Response(bytes, {
+          status: 200,
+          headers: {
+            "content-length": String(bytes.byteLength),
+            "x-fortnote-cipher-hash": "a".repeat(64),
+            "x-fortnote-nonce": nonce
+          }
+        })
+      );
     vi.stubGlobal("fetch", fetchMock);
 
-    await putContentChunk(uploadId, 7, bytes, "a".repeat(64));
-    expect(await downloadContentChunk(crypto.randomUUID(), 7)).toEqual(bytes);
+    await putContentChunk(uploadId, 7, bytes, "a".repeat(64), nonce);
+    await expect(downloadContentChunk(crypto.randomUUID(), 7)).resolves.toEqual({
+      bytes,
+      cipherHash: "a".repeat(64),
+      cipherLength: bytes.byteLength,
+      nonce
+    });
 
     const uploadInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const uploadHeaders = new Headers(uploadInit.headers);
     expect(uploadHeaders.get("content-type")).toBe("application/octet-stream");
     expect(uploadHeaders.get("x-fortnote-cipher-hash")).toBe("a".repeat(64));
+    expect(uploadHeaders.get("x-fortnote-nonce")).toBe(nonce);
     expect(uploadInit.body).toBeInstanceOf(Blob);
+  });
+
+  it("rejects binary responses without exact integrity metadata", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(Uint8Array.from([1, 2, 3]), {
+          status: 200,
+          headers: {
+            "content-length": "4",
+            "x-fortnote-cipher-hash": "not-a-hash",
+            "x-fortnote-nonce": "not-a-nonce"
+          }
+        })
+      )
+    );
+
+    await expect(downloadContentChunk(crypto.randomUUID(), 0)).rejects.toMatchObject({
+      code: "invalid_binary_response",
+      status: 0
+    });
   });
 
   it("begins and inspects resumable uploads through bounded control JSON", async () => {

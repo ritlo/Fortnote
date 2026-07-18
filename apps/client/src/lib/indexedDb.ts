@@ -1,12 +1,14 @@
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 
 const OUTBOX_STORE = "encryptedOutbox";
 const ACKNOWLEDGEMENT_STORE = "acknowledgements";
 const SECTION_CACHE_STORE = "sectionCache";
 const LEASE_STORE = "leases";
+const CONTENT_TRANSFER_STORE = "contentTransfers";
 
 const OUTBOX_KEY = ["userId", "noteId", "sectionId", "keyEpoch", "updateId"];
 const CACHE_KEY = ["userId", "noteId", "sectionId", "keyEpoch", "manifestId"];
+const CONTENT_TRANSFER_KEY = ["userId", "uploadId"];
 
 export interface EncryptedOutboxRecord {
   userId: string;
@@ -56,8 +58,39 @@ export interface LeaseRecord {
   expiresAt: number;
 }
 
+export interface EncryptedContentTransferRecord {
+  userId: string;
+  cryptoOwnerId: string;
+  noteId: string;
+  sectionId: string;
+  keyEpoch: number;
+  updateId: string;
+  uploadId: string;
+  requestId: string;
+  kind: "update" | "checkpoint" | "root-update";
+  formatVersion: 2;
+  totalCipherBytes: number;
+  chunkCount: number;
+  manifestHash: string;
+  checkpointSequenceCutoff?: number;
+  chunks: {
+    chunkIndex: number;
+    cipherBytes: Uint8Array;
+    cipherHash: string;
+    nonce: string;
+  }[];
+  uploadedChunkIndexes: number[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface IndexedDbChange {
-  store: "outbox" | "acknowledgements" | "section-cache" | "leases";
+  store:
+    | "outbox"
+    | "acknowledgements"
+    | "section-cache"
+    | "leases"
+    | "content-transfers";
   userId: string;
 }
 
@@ -111,11 +144,17 @@ export interface FortnoteIndexedDb {
   ): Promise<boolean>;
   clearAccount(userId: string): Promise<void>;
   close(): void;
+  deleteContentTransfer(userId: string, uploadId: string): Promise<void>;
   deleteDatabase(): Promise<void>;
   evictSectionCache(userId: string, maxEntries: number): Promise<string[]>;
   getAcknowledgement(record: OutboxKey): Promise<AcknowledgementRecord | null>;
+  getContentTransfer(
+    userId: string,
+    uploadId: string
+  ): Promise<EncryptedContentTransferRecord | null>;
   getOutbox(record: OutboxKey): Promise<EncryptedOutboxRecord | null>;
   listOutbox(userId: string): Promise<EncryptedOutboxRecord[]>;
+  listContentTransfers(userId: string): Promise<EncryptedContentTransferRecord[]>;
   preserveOutboxFence(
     fence: Pick<EncryptedOutboxRecord, "userId" | "noteId" | "sectionId" | "keyEpoch">,
     reason: "forbidden" | "stale-epoch",
@@ -123,6 +162,7 @@ export interface FortnoteIndexedDb {
   ): Promise<EncryptedOutboxRecord[]>;
   listSectionCache(userId: string): Promise<SectionCacheRecord[]>;
   putOutbox(record: EncryptedOutboxRecord): Promise<void>;
+  putContentTransfer(record: EncryptedContentTransferRecord): Promise<void>;
   putSectionCache(record: SectionCacheRecord): Promise<void>;
   readLease(scopeKey: string): Promise<LeaseRecord | null>;
   subscribe(listener: (change: IndexedDbChange) => void): () => void;
@@ -234,7 +274,13 @@ function createDatabaseApi(
     async clearAccount(userId) {
       await safeOperation(async () => {
         const transaction = database.transaction(
-          [OUTBOX_STORE, ACKNOWLEDGEMENT_STORE, SECTION_CACHE_STORE, LEASE_STORE],
+          [
+            OUTBOX_STORE,
+            ACKNOWLEDGEMENT_STORE,
+            SECTION_CACHE_STORE,
+            LEASE_STORE,
+            CONTENT_TRANSFER_STORE
+          ],
           "readwrite"
         );
         const done = transactionDone(transaction);
@@ -242,7 +288,8 @@ function createDatabaseApi(
           OUTBOX_STORE,
           ACKNOWLEDGEMENT_STORE,
           SECTION_CACHE_STORE,
-          LEASE_STORE
+          LEASE_STORE,
+          CONTENT_TRANSFER_STORE
         ]) {
           deleteIndexEntries(transaction.objectStore(storeName).index("byUserId"), userId);
         }
@@ -250,8 +297,13 @@ function createDatabaseApi(
       });
       notify({ store: "outbox", userId });
       notify({ store: "section-cache", userId });
+      notify({ store: "content-transfers", userId });
     },
     close,
+    async deleteContentTransfer(userId, uploadId) {
+      await deleteRecord(database, CONTENT_TRANSFER_STORE, [userId, uploadId]);
+      notify({ store: "content-transfers", userId });
+    },
     async deleteDatabase() {
       close();
       await safeOperation(() => deleteDatabase(factory, name));
@@ -288,11 +340,26 @@ function createDatabaseApi(
         outboxKey(record)
       );
     },
+    async getContentTransfer(userId, uploadId) {
+      return getRecord<EncryptedContentTransferRecord>(
+        database,
+        CONTENT_TRANSFER_STORE,
+        [userId, uploadId]
+      );
+    },
     async getOutbox(record) {
       return getRecord<EncryptedOutboxRecord>(database, OUTBOX_STORE, outboxKey(record));
     },
     async listOutbox(userId) {
       const records = await listByUser<EncryptedOutboxRecord>(database, OUTBOX_STORE, userId);
+      return records.sort((left, right) => left.createdAt - right.createdAt);
+    },
+    async listContentTransfers(userId) {
+      const records = await listByUser<EncryptedContentTransferRecord>(
+        database,
+        CONTENT_TRANSFER_STORE,
+        userId
+      );
       return records.sort((left, right) => left.createdAt - right.createdAt);
     },
     async preserveOutboxFence(fence, reason, rejectedAt) {
@@ -333,6 +400,10 @@ function createDatabaseApi(
       await putRecord(database, OUTBOX_STORE, record);
       notify({ store: "outbox", userId: record.userId });
     },
+    async putContentTransfer(record) {
+      await putRecord(database, CONTENT_TRANSFER_STORE, record);
+      notify({ store: "content-transfers", userId: record.userId });
+    },
     async putSectionCache(record) {
       await putRecord(database, SECTION_CACHE_STORE, record);
       notify({ store: "section-cache", userId: record.userId });
@@ -357,6 +428,12 @@ async function openDatabase(factory: IDBFactory, name: string): Promise<IDBDatab
     ensureStore(database, request.transaction, ACKNOWLEDGEMENT_STORE, OUTBOX_KEY);
     ensureStore(database, request.transaction, SECTION_CACHE_STORE, CACHE_KEY);
     ensureStore(database, request.transaction, LEASE_STORE, "scopeKey");
+    ensureStore(
+      database,
+      request.transaction,
+      CONTENT_TRANSFER_STORE,
+      CONTENT_TRANSFER_KEY
+    );
   };
   return requestResult(request);
 }
@@ -414,6 +491,19 @@ async function putRecord(
     const transaction = database.transaction(storeName, "readwrite");
     const done = transactionDone(transaction);
     transaction.objectStore(storeName).put(record);
+    await done;
+  });
+}
+
+async function deleteRecord(
+  database: IDBDatabase,
+  storeName: string,
+  key: IDBValidKey
+): Promise<void> {
+  await safeOperation(async () => {
+    const transaction = database.transaction(storeName, "readwrite");
+    const done = transactionDone(transaction);
+    transaction.objectStore(storeName).delete(key);
     await done;
   });
 }

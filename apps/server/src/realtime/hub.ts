@@ -3,6 +3,7 @@ import { and, eq, inArray, lt } from "drizzle-orm";
 import {
   encodeCrdtBinaryFrame,
   type CrdtBinaryHeader,
+  type CrdtManifestReferenceV2,
   type CrdtSubscribeV2,
   type EncryptedCrdtMessage
 } from "@fortnote/shared";
@@ -15,7 +16,8 @@ import type { RealtimePublisher } from "./types.js";
 import {
   listSectionHistory,
   persistBinaryUpdate,
-  type BinaryUpdateOutcome
+  type BinaryUpdateOutcome,
+  type ManifestSectionHistoryEntry
 } from "./history.js";
 import { ensureNoteSection } from "../notes/sections.js";
 
@@ -167,6 +169,27 @@ export class RealtimeHub implements RealtimePublisher {
     }
   }
 
+  publishContentManifest(reference: CrdtManifestReferenceV2): void {
+    if (!this.context) {
+      return;
+    }
+    for (const client of this.clients) {
+      const access = getNoteAccess(this.context, reference.noteId, client.userId);
+      if (
+        !client.crdtV2Enabled ||
+        !this.ensureClientSession(client) ||
+        !client.subscribedCrdtScopes.has(
+          crdtScope(reference.noteId, reference.sectionId)
+        ) ||
+        !canReadNote(access) ||
+        access.keyEpoch !== reference.keyEpoch
+      ) {
+        continue;
+      }
+      sendJson(client.socket, reference);
+    }
+  }
+
   updatePresence(client: RealtimeClient, noteId: string, state: ClientPresenceState): void {
     if (!this.context) {
       return;
@@ -277,6 +300,10 @@ export class RealtimeHub implements RealtimePublisher {
     });
     client.subscribedCrdtScopes.add(crdtScope(request.noteId, request.sectionId));
     for (const entry of page.entries) {
+      if (entry.storage === "manifest") {
+        sendJson(client.socket, manifestReference(request, entry));
+        continue;
+      }
       const header: CrdtBinaryHeader = {
         type: "crdt-binary",
         kind: entry.kind,
@@ -310,9 +337,10 @@ export class RealtimeHub implements RealtimePublisher {
       nextSequence: page.nextSequence,
       hasMore: page.hasMore,
       entries: page.entries.map((entry) => ({
-        kind: "inline",
+        kind: entry.storage,
         updateId: entry.updateId,
-        serverSequence: entry.serverSequence
+        serverSequence: entry.serverSequence,
+        ...(entry.storage === "manifest" ? { manifestId: entry.manifestId } : {})
       }))
     });
   }
@@ -605,4 +633,29 @@ export function sendJson(socket: WebSocket, value: unknown): void {
 
 function crdtScope(noteId: string, sectionId: string): string {
   return `${noteId}:${sectionId}`;
+}
+
+function manifestReference(
+  request: CrdtSubscribeV2,
+  entry: ManifestSectionHistoryEntry
+): CrdtManifestReferenceV2 {
+  return {
+    type: "crdt-manifest",
+    formatVersion: 2,
+    noteId: request.noteId,
+    sectionId: request.sectionId,
+    keyEpoch: entry.keyEpoch,
+    updateId: entry.updateId,
+    manifestId: entry.manifestId,
+    uploadId: entry.uploadId,
+    cryptoOwnerId: entry.cryptoOwnerId,
+    kind: entry.kind,
+    totalCipherBytes: entry.totalCipherBytes,
+    chunkCount: entry.chunkCount,
+    manifestHash: entry.manifestHash,
+    ...(entry.checkpointSequenceCutoff === null
+      ? {}
+      : { checkpointSequenceCutoff: entry.checkpointSequenceCutoff }),
+    serverSequence: entry.serverSequence
+  };
 }

@@ -10,6 +10,7 @@ export interface ContentManifestSummary {
   updateId: string;
   noteId: string;
   sectionId: string;
+  cryptoOwnerId: string;
   keyEpoch: number;
   kind: ContentKind;
   firstSequence: number;
@@ -17,6 +18,7 @@ export interface ContentManifestSummary {
   totalCipherBytes: number;
   chunkCount: number;
   manifestHash: string;
+  checkpointSequenceCutoff?: number;
 }
 
 export type ManifestCommitOutcome =
@@ -67,6 +69,11 @@ interface UploadRow {
   checkpointSequenceCutoff: number | null;
   status: string;
 }
+
+type StoredContentManifestSummary = Omit<
+  ContentManifestSummary,
+  "checkpointSequenceCutoff"
+> & { checkpointSequenceCutoff: number | null };
 
 export interface ContentChunkDescriptor {
   chunkIndex: number;
@@ -300,27 +307,34 @@ function existingManifest(
   const row = context.db.sqlite
     .prepare(`
       SELECT
-        id AS manifestId,
-        upload_id AS uploadId,
-        update_id AS updateId,
-        note_id AS noteId,
-        section_id AS sectionId,
-        key_epoch AS keyEpoch,
-        kind,
-        first_sequence AS firstSequence,
-        last_sequence AS lastSequence,
-        total_cipher_bytes AS totalCipherBytes,
-        chunk_count AS chunkCount,
-        manifest_hash AS manifestHash
-      FROM content_manifests
-      WHERE upload_id = ?
+        m.id AS manifestId,
+        m.upload_id AS uploadId,
+        m.update_id AS updateId,
+        m.note_id AS noteId,
+        m.section_id AS sectionId,
+        u.crypto_owner_id AS cryptoOwnerId,
+        m.key_epoch AS keyEpoch,
+        m.kind,
+        m.first_sequence AS firstSequence,
+        m.last_sequence AS lastSequence,
+        m.total_cipher_bytes AS totalCipherBytes,
+        m.chunk_count AS chunkCount,
+        m.manifest_hash AS manifestHash,
+        m.checkpoint_sequence_cutoff AS checkpointSequenceCutoff
+      FROM content_manifests m
+      JOIN content_uploads u ON u.id = m.upload_id
+      WHERE m.upload_id = ?
     `)
-    .get(uploadId) as ContentManifestSummary | undefined;
+    .get(uploadId) as StoredContentManifestSummary | undefined;
   if (!row) {
     return null;
   }
+  const { checkpointSequenceCutoff, ...manifest } = row;
   return {
-    ...row,
+    ...manifest,
+    ...(checkpointSequenceCutoff === null
+      ? {}
+      : { checkpointSequenceCutoff }),
     sectionId: row.sectionId === row.noteId ? "root" : row.sectionId
   };
 }

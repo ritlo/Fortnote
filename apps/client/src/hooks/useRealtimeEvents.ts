@@ -207,7 +207,8 @@ export function useRealtimeEvents() {
           if (
             message.type === "crdt-update" ||
             message.type === "crdt-checkpoint" ||
-            message.type === "crdt-binary"
+            message.type === "crdt-binary" ||
+            message.type === "crdt-manifest"
           ) {
             void receiveCrdtUpdate(message).catch(() => {
               setError("A realtime update could not be decrypted; recovery is pending.");
@@ -254,7 +255,8 @@ export function useRealtimeEvents() {
       setCrdtTransport({
         discard: connection.discardCrdtUpdates,
         subscribe: connection.subscribeCrdt,
-        send: connection.sendCrdtUpdate
+        send: connection.sendCrdtUpdate,
+        sendContent: connection.sendCrdtContent
       });
     }
 

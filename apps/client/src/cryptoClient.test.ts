@@ -13,6 +13,7 @@ import {
   decryptCrdtMessage,
   decryptAttachmentMetadataV2,
   decryptContentChunkV2,
+  decryptContentChunksV2,
   decryptFolderNameV2,
   decryptNoteKeyEnvelopeV2,
   decryptNoteKeyShareV2,
@@ -21,6 +22,7 @@ import {
   decryptSharingPrivateKeyEnvelopeV2,
   encryptAttachmentMetadataV2,
   encryptContentChunkV2,
+  encryptContentChunksV2,
   encryptCrdtMessage,
   encryptFolderNameV2,
   encryptNoteKeyEnvelopeV2,
@@ -460,6 +462,91 @@ describe("client crypto workflows", () => {
     await expect(
       decryptContentChunkV2({ ...context, chunkIndex: 1, envelope })
     ).rejects.toThrow();
+    for (const changed of [
+      { cryptoOwnerId: "owner-b" },
+      { noteId: "note-b" },
+      { sectionId: "section-b" },
+      { keyEpoch: 3 },
+      { updateId: crypto.randomUUID() },
+      { uploadId: crypto.randomUUID() },
+      { chunkCount: 3 },
+      { totalCipherBytes: 129 },
+      { kind: "root-update" as const }
+    ]) {
+      await expect(
+        decryptContentChunkV2({ ...context, ...changed, envelope })
+      ).rejects.toThrow();
+    }
+
+    const checkpointContext = {
+      ...context,
+      kind: "checkpoint" as const,
+      checkpointSequenceCutoff: 7
+    };
+    const checkpoint = await encryptContentChunkV2({
+      ...checkpointContext,
+      plaintext: new Uint8Array([4, 5, 6])
+    });
+    await expect(
+      decryptContentChunkV2({
+        ...checkpointContext,
+        checkpointSequenceCutoff: 8,
+        envelope: checkpoint
+      })
+    ).rejects.toThrow();
+  });
+
+  it("encrypts bounded chunks and verifies the complete set before decryption", async () => {
+    const plaintext = Uint8Array.from({ length: 37 }, (_, index) => index);
+    const prepared = await encryptContentChunksV2({
+      cryptoOwnerId: "owner-a",
+      noteId: "note-a",
+      sectionId: "section-a",
+      keyEpoch: 2,
+      updateId: crypto.randomUUID(),
+      uploadId: crypto.randomUUID(),
+      requestId: crypto.randomUUID(),
+      kind: "update",
+      noteKey: key(10),
+      plaintext,
+      maxCipherChunkBytes: 32
+    });
+
+    expect(prepared.chunkCount).toBe(3);
+    expect(prepared.totalCipherBytes).toBe(plaintext.byteLength + 3 * 16);
+    expect(prepared.chunks.every((chunk) => chunk.cipherBytes.byteLength <= 32)).toBe(true);
+    expect(new Set(prepared.chunks.map((chunk) => chunk.nonce)).size).toBe(3);
+    await expect(
+      decryptContentChunksV2({
+        ...prepared,
+        noteKey: key(10),
+        chunks: [...prepared.chunks].reverse()
+      })
+    ).resolves.toEqual(plaintext);
+
+    await expect(
+      decryptContentChunksV2({
+        ...prepared,
+        noteKey: key(10),
+        chunks: prepared.chunks.slice(1)
+      })
+    ).rejects.toThrow("incomplete");
+    const corrupted = prepared.chunks.map((chunk) => ({
+      ...chunk,
+      cipherBytes: chunk.cipherBytes.slice()
+    }));
+    const corruptedByte = corrupted[1]?.cipherBytes[0];
+    if (corruptedByte === undefined) {
+      throw new Error("Expected a second encrypted chunk");
+    }
+    corrupted[1]!.cipherBytes[0] = corruptedByte ^ 1;
+    await expect(
+      decryptContentChunksV2({
+        ...prepared,
+        noteKey: key(10),
+        chunks: corrupted
+      })
+    ).rejects.toThrow("hash mismatch");
   });
 
   it("traverses only adjacent authenticated epoch links backward", async () => {

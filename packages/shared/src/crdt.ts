@@ -85,11 +85,19 @@ export interface CrdtHistoryPageV2 {
 
 export interface CrdtManifestReferenceV2 {
   type: "crdt-manifest";
+  formatVersion: typeof CRDT_BINARY_FORMAT_VERSION;
   noteId: string;
   sectionId: string;
   keyEpoch: number;
   updateId: string;
   manifestId: string;
+  uploadId: string;
+  cryptoOwnerId: string;
+  kind: CrdtBinaryKind;
+  totalCipherBytes: number;
+  chunkCount: number;
+  manifestHash: string;
+  checkpointSequenceCutoff?: number;
   serverSequence: number;
 }
 
@@ -400,23 +408,47 @@ function parseHistoryEntry(value: unknown): CrdtHistoryEntry {
 }
 
 function parseManifestReference(record: Record<string, unknown>): CrdtManifestReferenceV2 {
+  const checkpointSequenceCutoff = record.checkpointSequenceCutoff;
   if (
+    record.formatVersion !== CRDT_BINARY_FORMAT_VERSION ||
     !isUuid(record.noteId) ||
     !isSectionId(record.sectionId) ||
     !isPositiveInteger(record.keyEpoch) ||
     !isUuid(record.updateId) ||
     !isUuid(record.manifestId) ||
+    !isUuid(record.uploadId) ||
+    !isUuid(record.cryptoOwnerId) ||
+    (record.kind !== "update" &&
+      record.kind !== "checkpoint" &&
+      record.kind !== "root-update") ||
+    !isPositiveInteger(record.totalCipherBytes) ||
+    !isPositiveInteger(record.chunkCount) ||
+    typeof record.manifestHash !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(record.manifestHash) ||
+    (checkpointSequenceCutoff !== undefined &&
+      !isNonnegativeInteger(checkpointSequenceCutoff)) ||
+    (record.kind === "checkpoint") !== (checkpointSequenceCutoff !== undefined) ||
     !isPositiveInteger(record.serverSequence)
   ) {
     throw new Error("Invalid CRDT control message");
   }
   return {
     type: "crdt-manifest",
+    formatVersion: CRDT_BINARY_FORMAT_VERSION,
     noteId: record.noteId,
     sectionId: record.sectionId,
     keyEpoch: record.keyEpoch,
     updateId: record.updateId,
     manifestId: record.manifestId,
+    uploadId: record.uploadId,
+    cryptoOwnerId: record.cryptoOwnerId,
+    kind: record.kind,
+    totalCipherBytes: record.totalCipherBytes,
+    chunkCount: record.chunkCount,
+    manifestHash: record.manifestHash,
+    ...(checkpointSequenceCutoff === undefined
+      ? {}
+      : { checkpointSequenceCutoff }),
     serverSequence: record.serverSequence
   };
 }

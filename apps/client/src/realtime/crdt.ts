@@ -1,15 +1,23 @@
 import {
   CRDT_BINARY_FORMAT_VERSION,
+  CRDT_BINARY_HEADER_MAX_BYTES,
+  fromBase64,
   toBase64,
   type CrdtBinaryHeader,
+  type CrdtManifestReferenceV2,
   type EncryptedCrdtMessage
 } from "@fortnote/shared";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import {
+  CONTENT_CHUNK_AUTH_BYTES,
   decryptCrdtMessage,
-  encryptCrdtMessage
+  encryptContentChunksV2,
+  encryptCrdtMessage,
+  type PreparedEncryptedContentV2
 } from "../cryptoClient";
+import type { ContentManifestSummary } from "../api";
+import { downloadVerifiedContent } from "./contentTransfer";
 import { replaceBlockNoteFragment } from "../lib/blockNote";
 import type { DecryptedNote } from "../store/appStore";
 
@@ -22,6 +30,7 @@ const ROOT_SECTION_ID = "root";
 const SECTION_ORDER_KEY = "sections";
 // ponytail: fixed threshold; tune from update-size metrics if storage churn matters.
 const CHECKPOINT_UPDATE_COUNT = 64;
+const REALTIME_FRAME_MAX_BYTES = 256 * 1024;
 const bindings = new Map<string, Binding>();
 let nextBindingGeneration = 1;
 let transport: CrdtTransport | null = null;
@@ -39,6 +48,9 @@ interface CrdtTransport {
     afterSequence?: number
   ) => void;
   send: (update: ScopedEncryptedCrdtMessage) => Promise<void>;
+  sendContent?: (
+    prepared: PreparedEncryptedContentV2
+  ) => Promise<ContentManifestSummary>;
 }
 
 export interface ScopedEncryptedCrdtMessage {
@@ -60,7 +72,8 @@ export type ReceivedBinaryCrdtMessage = CrdtBinaryHeader & { cipher: Uint8Array 
 type IncomingCrdtMessage =
   | EncryptedCrdtMessage
   | ScopedEncryptedCrdtMessage
-  | ReceivedBinaryCrdtMessage;
+  | ReceivedBinaryCrdtMessage
+  | CrdtManifestReferenceV2;
 
 // BlockNote binds a ProseMirror doc to a Y.XmlFragment; awareness stays local.
 export class CrdtProvider {
@@ -105,6 +118,7 @@ interface Binding {
   onChange: (patch: Partial<Pick<DecryptedNote, "title" | "body">>) => void;
   pendingUpdateIds: Set<string>;
   failedUpdateIds: Set<string>;
+  receivedServerSequences: Map<string, number>;
   generation: number;
   appliedUpdateCount: number;
   checkpointing: boolean;
@@ -166,6 +180,9 @@ function getOrCreateBinding(
     onChange: () => undefined,
     pendingUpdateIds: new Set(epochAdvanced ? [] : (existing?.pendingUpdateIds ?? [])),
     failedUpdateIds: new Set(existing?.failedUpdateIds ?? []),
+    receivedServerSequences: new Map(
+      epochAdvanced ? [] : (existing?.receivedServerSequences ?? [])
+    ),
     generation: nextBindingGeneration,
     appliedUpdateCount: epochAdvanced ? 0 : (existing?.appliedUpdateCount ?? 0),
     checkpointing: false,
@@ -428,13 +445,22 @@ export function receiveCrdtUpdate(
       binding.appliedUpdateCount += 1;
       binding.failedUpdateIds.delete(update.updateId);
       if (update.type === "crdt-checkpoint") {
-        update.compactedUpdateIds?.forEach((id) => binding.pendingUpdateIds.delete(id));
+        update.compactedUpdateIds?.forEach((id) => {
+          binding.pendingUpdateIds.delete(id);
+          binding.failedUpdateIds.delete(id);
+          binding.receivedServerSequences.delete(id);
+        });
       }
-      if (update.type === "crdt-binary" && update.serverSequence) {
+      if (
+        (update.type === "crdt-binary" || update.type === "crdt-manifest") &&
+        update.serverSequence
+      ) {
         binding.observedServerSequence = Math.max(
           binding.observedServerSequence,
           update.serverSequence
         );
+        binding.receivedServerSequences.set(update.updateId, update.serverSequence);
+        clearCheckpointCoverage(binding, update);
       }
       trackUpdate(binding, update.updateId);
     } catch (error) {
@@ -443,6 +469,12 @@ export function receiveCrdtUpdate(
       }
       binding.failedUpdateIds.add(update.updateId);
       binding.pendingUpdateIds.add(update.updateId);
+      if (
+        (update.type === "crdt-binary" || update.type === "crdt-manifest") &&
+        update.serverSequence
+      ) {
+        binding.receivedServerSequences.set(update.updateId, update.serverSequence);
+      }
       throw error;
     }
   });
@@ -548,21 +580,23 @@ async function broadcastUpdate(binding: Binding, update: Uint8Array): Promise<vo
     sectionId: binding.sectionId,
     kind
   } satisfies Omit<ScopedEncryptedCrdtMessage, "cipher" | "nonce">;
-  const encrypted = await encryptCrdtMessage({
-    ...envelope,
-    noteKeyBase64: note.noteKeyBase64,
+  const outbound = await prepareOutbound(
+    envelope,
+    note.noteKeyBase64,
     update
-  });
+  );
   if (!isActiveBindingForNote(binding, note)) {
     return;
   }
-  const delivered = currentTransport.send({
-    ...envelope,
-    cipher: encrypted.cipher,
-    nonce: encrypted.nonce
-  });
+  const delivered = sendOutbound(currentTransport, outbound);
   trackUpdate(binding, updateId);
-  await delivered;
+  const manifest = await delivered;
+  if (manifest && isActiveBindingForNote(binding, note)) {
+    binding.observedServerSequence = Math.max(
+      binding.observedServerSequence,
+      manifest.lastSequence
+    );
+  }
 }
 
 async function broadcastCheckpoint(
@@ -597,28 +631,108 @@ async function broadcastCheckpoint(
     if (!isActiveBindingForNote(binding, note)) {
       return;
     }
-    const encrypted = await encryptCrdtMessage({
-      ...envelope,
-      noteKeyBase64: note.noteKeyBase64,
-      update: Y.encodeStateAsUpdate(binding.doc)
-    });
+    const outbound = await prepareOutbound(
+      envelope,
+      note.noteKeyBase64,
+      Y.encodeStateAsUpdate(binding.doc)
+    );
     if (!isActiveBindingForNote(binding, note)) {
       return;
     }
-    await currentTransport.send({
-      ...envelope,
-      cipher: encrypted.cipher,
-      nonce: encrypted.nonce
-    });
+    const manifest = await sendOutbound(currentTransport, outbound);
     if (!isActiveBindingForNote(binding, note)) {
       return;
+    }
+    if (manifest) {
+      binding.observedServerSequence = Math.max(
+        binding.observedServerSequence,
+        manifest.lastSequence
+      );
     }
     compactedUpdateIds.forEach((id) => binding.pendingUpdateIds.delete(id));
     compactedUpdateIds.forEach((id) => binding.failedUpdateIds.delete(id));
+    compactedUpdateIds.forEach((id) => binding.receivedServerSequences.delete(id));
     binding.pendingUpdateIds.add(updateId);
   } finally {
     binding.checkpointing = false;
   }
+}
+
+function clearCheckpointCoverage(
+  binding: Binding,
+  update: ReceivedBinaryCrdtMessage | CrdtManifestReferenceV2
+): void {
+  if (update.kind !== "checkpoint" || update.checkpointSequenceCutoff === undefined) {
+    return;
+  }
+  for (const [updateId, serverSequence] of binding.receivedServerSequences) {
+    if (serverSequence <= update.checkpointSequenceCutoff) {
+      binding.pendingUpdateIds.delete(updateId);
+      binding.failedUpdateIds.delete(updateId);
+      binding.receivedServerSequences.delete(updateId);
+    }
+  }
+}
+
+type PreparedOutbound =
+  | { storage: "content"; prepared: PreparedEncryptedContentV2 }
+  | { storage: "inline"; update: ScopedEncryptedCrdtMessage };
+
+async function prepareOutbound(
+  envelope: Omit<ScopedEncryptedCrdtMessage, "cipher" | "nonce">,
+  noteKeyBase64: string,
+  update: Uint8Array
+): Promise<PreparedOutbound> {
+  if (requiresContentTransfer(update.byteLength)) {
+    const prepared = await encryptContentChunksV2({
+      cryptoOwnerId: envelope.cryptoOwnerId,
+      noteId: envelope.noteId,
+      sectionId: envelope.sectionId,
+      keyEpoch: envelope.keyEpoch,
+      updateId: envelope.updateId,
+      kind: envelope.kind,
+      ...(envelope.checkpointSequenceCutoff === undefined
+        ? {}
+        : { checkpointSequenceCutoff: envelope.checkpointSequenceCutoff }),
+      noteKey: fromBase64(noteKeyBase64),
+      plaintext: update
+    });
+    return { storage: "content", prepared };
+  }
+  const encrypted = await encryptCrdtMessage({
+    ...envelope,
+    noteKeyBase64,
+    update
+  });
+  return {
+    storage: "inline",
+    update: {
+      ...envelope,
+      cipher: encrypted.cipher,
+      nonce: encrypted.nonce
+    }
+  };
+}
+
+async function sendOutbound(
+  currentTransport: CrdtTransport,
+  outbound: PreparedOutbound
+): Promise<ContentManifestSummary | null> {
+  if (outbound.storage === "inline") {
+    await currentTransport.send(outbound.update);
+    return null;
+  }
+  if (!currentTransport.sendContent) {
+    throw new Error("Resumable encrypted content transport is unavailable");
+  }
+  return currentTransport.sendContent(outbound.prepared);
+}
+
+export function requiresContentTransfer(plaintextBytes: number): boolean {
+  return (
+    plaintextBytes + CONTENT_CHUNK_AUTH_BYTES + CRDT_BINARY_HEADER_MAX_BYTES >
+    REALTIME_FRAME_MAX_BYTES
+  );
 }
 
 function seedBinding(binding: Binding, note: DecryptedNote): void {
@@ -735,6 +849,31 @@ function decryptReceivedUpdate(
   binding: Binding,
   update: IncomingCrdtMessage
 ): Promise<Uint8Array> {
+  if (update.type === "crdt-manifest") {
+    const manifest: ContentManifestSummary = {
+      manifestId: update.manifestId,
+      uploadId: update.uploadId,
+      updateId: update.updateId,
+      noteId: update.noteId,
+      sectionId: update.sectionId,
+      cryptoOwnerId: update.cryptoOwnerId,
+      keyEpoch: update.keyEpoch,
+      kind: update.kind,
+      firstSequence: update.serverSequence,
+      lastSequence: update.serverSequence,
+      totalCipherBytes: update.totalCipherBytes,
+      chunkCount: update.chunkCount,
+      manifestHash: update.manifestHash,
+      ...(update.checkpointSequenceCutoff === undefined
+        ? {}
+        : { checkpointSequenceCutoff: update.checkpointSequenceCutoff })
+    };
+    return downloadVerifiedContent({
+      manifest,
+      cryptoOwnerId: update.cryptoOwnerId,
+      noteKey: fromBase64(binding.note.noteKeyBase64)
+    });
+  }
   if (update.type !== "crdt-binary") {
     return decryptCrdtMessage({
       ...update,

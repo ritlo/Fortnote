@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { indexedDB as fakeIndexedDb } from "fake-indexeddb";
+import { IDBFactory, indexedDB as fakeIndexedDb } from "fake-indexeddb";
 import {
   CRDT_BINARY_FORMAT_VERSION,
   cryptoReady,
@@ -293,6 +293,40 @@ describe("realtime client", () => {
     });
     second.close();
     await database.deleteDatabase();
+  });
+
+  it("closes an owned database that finishes opening after the connection closes", async () => {
+    const factory = new IDBFactory();
+    vi.stubGlobal("indexedDB", factory);
+    const blocker = await openRawDatabase(factory, "fortnote-protected", 1);
+    const onCrdtError = vi.fn();
+    const userId = crypto.randomUUID();
+    const connection = connectRealtime({
+      after: 0,
+      userId,
+      ownerId: "tab-a",
+      onMessage: vi.fn(),
+      onCrdtError
+    });
+    const update = scopedUpdate();
+    connection.subscribeCrdt(update.noteId, update.sectionId, update.keyEpoch);
+    sockets[0]!.open();
+    sockets[0]!.receive({
+      ...connectedMessage(userId),
+      capabilities: ["crdt-binary-v2"]
+    });
+
+    connection.close();
+    blocker.close();
+    await vi.waitFor(() => {
+      expect(onCrdtError).toHaveBeenCalledWith(
+        "Encrypted offline work could not resume; it remains queued."
+      );
+    });
+
+    await expect(upgradeDatabase(factory, "fortnote-protected", 3)).resolves.toBe(
+      "opened"
+    );
   });
 
   it("keeps valid oversized scoped work queued for resumable transfer", async () => {
@@ -603,6 +637,42 @@ describe("realtime client", () => {
       .not.toContainEqual(update);
   });
 });
+
+function openRawDatabase(
+  factory: IDBFactory,
+  name: string,
+  version: number
+): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = factory.open(name, version);
+    request.addEventListener("success", () => {
+      resolve(request.result);
+    });
+    request.addEventListener("error", () => {
+      reject(request.error ?? new Error("IndexedDB open failed"));
+    });
+  });
+}
+
+function upgradeDatabase(
+  factory: IDBFactory,
+  name: string,
+  version: number
+): Promise<"blocked" | "opened"> {
+  return new Promise((resolve, reject) => {
+    const request = factory.open(name, version);
+    request.addEventListener("blocked", () => {
+      resolve("blocked");
+    });
+    request.addEventListener("success", () => {
+      request.result.close();
+      resolve("opened");
+    });
+    request.addEventListener("error", () => {
+      reject(request.error ?? new Error("IndexedDB upgrade failed"));
+    });
+  });
+}
 
 function connectedMessage(userId = "user_1") {
   return {

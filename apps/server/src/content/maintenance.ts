@@ -65,6 +65,9 @@ export async function expireContentUploadsPage(
         `)
         .run(candidate.uploadId, cutoff);
       if (updated.changes === 1) {
+        context.db.sqlite
+          .prepare("DELETE FROM content_chunks WHERE upload_id = ?")
+          .run(candidate.uploadId);
         releaseStorageBytes(
           context.db,
           candidate.ownerUserId,

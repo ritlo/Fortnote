@@ -3,9 +3,11 @@ import { once } from "node:events";
 import fs from "node:fs";
 import { createServer, request as sendHttpRequest } from "node:http";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSession } from "../auth/session.js";
 import type { AppDb } from "../db/client.js";
+import type { RealtimePublisher } from "../realtime/types.js";
+import { listSectionHistory } from "../realtime/history.js";
 import {
   createTestApp,
   csrfHeaders,
@@ -71,10 +73,28 @@ describe("resumable encrypted content routes", () => {
     expect(
       fs.existsSync(path.join(String(app.locals.config.dataDir), "content", payload.uploadId))
     ).toBe(false);
+
+    const restarted = await begin(agent, payload).expect(200);
+    expect(restarted.body).toMatchObject({
+      status: "receiving",
+      receivedChunkIndexes: [],
+      reservedBytes: chunk.bytes.length
+    });
+    await agent
+      .delete(`/api/content/uploads/${payload.uploadId}`)
+      .set(csrfHeaders())
+      .expect(204);
   });
 
   it("accepts reordered and identical chunks, rejects conflicts, and publishes atomically", async () => {
-    const { app, agent, noteId } = await setup();
+    const publishContentManifest = vi.fn();
+    const realtime = {
+      closeNoteAccess: vi.fn(),
+      closeSession: vi.fn(),
+      publishEvents: vi.fn(),
+      publishContentManifest
+    } satisfies RealtimePublisher;
+    const { app, agent, noteId } = await setup({}, realtime);
     const chunks = [testChunk("first encrypted chunk"), testChunk("second encrypted chunk")];
     const payload = beginPayload(noteId, chunks);
     await begin(agent, payload).expect(201);
@@ -97,6 +117,27 @@ describe("resumable encrypted content routes", () => {
       totalCipherBytes: chunks.reduce((total, chunk) => total + chunk.bytes.length, 0)
     });
     expect(manifestCount(app)).toBe(1);
+    expect(publishContentManifest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "crdt-manifest",
+        manifestId: requestId,
+        uploadId: payload.uploadId,
+        updateId: payload.updateId,
+        serverSequence: 1
+      })
+    );
+    const history = listSectionHistory(
+      { config: app.locals.config, db: app.locals.db },
+      { noteId, sectionId: "root", keyEpoch: 1, afterSequence: 0 }
+    );
+    expect(history.entries).toEqual([
+      expect.objectContaining({
+        storage: "manifest",
+        manifestId: requestId,
+        uploadId: payload.uploadId,
+        serverSequence: 1
+      })
+    ]);
 
     const retried = await commit(agent, payload, crypto.randomUUID()).expect(201);
     expect(retried.body.manifestId).toBe(requestId);
@@ -246,8 +287,11 @@ describe("resumable encrypted content routes", () => {
   });
 });
 
-async function setup(overrides: Parameters<typeof createTestApp>[0] = {}) {
-  const app = createTestApp(overrides);
+async function setup(
+  overrides: Parameters<typeof createTestApp>[0] = {},
+  realtime?: RealtimePublisher
+) {
+  const app = createTestApp(overrides, realtime);
   apps.push(app);
   const agent = await registerAgent(app, "content-owner");
   const note = await agent

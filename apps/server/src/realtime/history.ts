@@ -14,16 +14,43 @@ export type BinaryUpdateOutcome =
       code: "forbidden" | "rotation-pending" | "stale-epoch" | "storage-limit";
     };
 
-export interface SectionHistoryEntry {
+interface SectionHistoryEntryBase {
   updateId: string;
   serverSequence: number;
   cryptoOwnerId: string;
   keyEpoch: number;
   formatVersion: number;
   kind: "update" | "checkpoint" | "root-update";
+  checkpointSequenceCutoff: number | null;
+}
+
+export interface InlineSectionHistoryEntry extends SectionHistoryEntryBase {
+  storage: "inline";
   inlineCipher: Buffer;
   nonce: Buffer;
-  checkpointSequenceCutoff: number | null;
+}
+
+export interface ManifestSectionHistoryEntry extends SectionHistoryEntryBase {
+  storage: "manifest";
+  manifestId: string;
+  uploadId: string;
+  totalCipherBytes: number;
+  chunkCount: number;
+  manifestHash: string;
+}
+
+export type SectionHistoryEntry =
+  | InlineSectionHistoryEntry
+  | ManifestSectionHistoryEntry;
+
+interface SectionHistoryRow extends SectionHistoryEntryBase {
+  inlineCipher: Buffer | null;
+  nonce: Buffer | null;
+  manifestId: string | null;
+  uploadId: string | null;
+  totalCipherBytes: number | null;
+  chunkCount: number | null;
+  manifestHash: string | null;
 }
 
 export interface SectionHistoryPage {
@@ -177,18 +204,25 @@ export function listSectionHistory(
   const rows = context.db.sqlite
     .prepare(`
       SELECT
-        update_id AS updateId,
-        server_sequence AS serverSequence,
-        crypto_owner_id AS cryptoOwnerId,
-        key_epoch AS keyEpoch,
-        format_version AS formatVersion,
-        kind,
-        inline_cipher AS inlineCipher,
-        nonce,
-        checkpoint_sequence_cutoff AS checkpointSequenceCutoff
-      FROM section_updates
-      WHERE note_id = ? AND section_id = ? AND key_epoch = ? AND server_sequence > ?
-      ORDER BY server_sequence
+        s.update_id AS updateId,
+        s.server_sequence AS serverSequence,
+        s.crypto_owner_id AS cryptoOwnerId,
+        s.key_epoch AS keyEpoch,
+        s.format_version AS formatVersion,
+        s.kind,
+        s.inline_cipher AS inlineCipher,
+        s.nonce,
+        s.checkpoint_sequence_cutoff AS checkpointSequenceCutoff,
+        s.manifest_id AS manifestId,
+        m.upload_id AS uploadId,
+        m.total_cipher_bytes AS totalCipherBytes,
+        m.chunk_count AS chunkCount,
+        m.manifest_hash AS manifestHash
+      FROM section_updates s
+      LEFT JOIN content_manifests m ON m.id = s.manifest_id
+      WHERE s.note_id = ? AND s.section_id = ? AND s.key_epoch = ?
+        AND s.server_sequence > ?
+      ORDER BY s.server_sequence
       LIMIT ?
     `)
     .all(
@@ -197,13 +231,15 @@ export function listSectionHistory(
       input.keyEpoch,
       input.afterSequence,
       context.config.historyPageMaxItems + 1
-    ) as SectionHistoryEntry[];
+    ) as SectionHistoryRow[];
   const hasMoreItems = rows.length > context.config.historyPageMaxItems;
-  const candidates = rows.slice(0, context.config.historyPageMaxItems);
+  const candidates = rows
+    .slice(0, context.config.historyPageMaxItems)
+    .map(historyEntry);
   const entries: SectionHistoryEntry[] = [];
   let bytes = 0;
   for (const row of candidates) {
-    const nextBytes = bytes + row.inlineCipher.length;
+    const nextBytes = bytes + (row.storage === "inline" ? row.inlineCipher.length : 0);
     if (entries.length > 0 && nextBytes > context.config.historyPageMaxBytes) {
       break;
     }
@@ -214,5 +250,45 @@ export function listSectionHistory(
     entries,
     hasMore: hasMoreItems || entries.length < candidates.length,
     nextSequence: entries.at(-1)?.serverSequence ?? input.afterSequence
+  };
+}
+
+function historyEntry(row: SectionHistoryRow): SectionHistoryEntry {
+  const base = {
+    updateId: row.updateId,
+    serverSequence: row.serverSequence,
+    cryptoOwnerId: row.cryptoOwnerId,
+    keyEpoch: row.keyEpoch,
+    formatVersion: row.formatVersion,
+    kind: row.kind,
+    checkpointSequenceCutoff: row.checkpointSequenceCutoff
+  };
+  if (row.manifestId) {
+    if (
+      !row.uploadId ||
+      row.totalCipherBytes === null ||
+      row.chunkCount === null ||
+      !row.manifestHash
+    ) {
+      throw new Error("Content manifest history is incomplete");
+    }
+    return {
+      ...base,
+      storage: "manifest",
+      manifestId: row.manifestId,
+      uploadId: row.uploadId,
+      totalCipherBytes: row.totalCipherBytes,
+      chunkCount: row.chunkCount,
+      manifestHash: row.manifestHash
+    };
+  }
+  if (!row.inlineCipher || !row.nonce) {
+    throw new Error("Inline content history is incomplete");
+  }
+  return {
+    ...base,
+    storage: "inline",
+    inlineCipher: row.inlineCipher,
+    nonce: row.nonce
   };
 }

@@ -303,6 +303,7 @@ describe("crypto helpers", () => {
       chunkCount: 40,
       totalCipherBytes: 10_485_760,
       kind: "checkpoint" as const,
+      checkpointSequenceCutoff: 17,
       formatVersion: 2 as const
     };
     const encrypted = await encryptBytesV2(
@@ -323,6 +324,13 @@ describe("crypto helpers", () => {
         encrypted,
         key,
         contentChunkAssociatedData({ ...input, totalCipherBytes: 10_485_761 })
+      )
+    ).rejects.toThrow();
+    await expect(
+      decryptBytes(
+        encrypted,
+        key,
+        contentChunkAssociatedData({ ...input, checkpointSequenceCutoff: 18 })
       )
     ).rejects.toThrow();
   });

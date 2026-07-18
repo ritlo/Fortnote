@@ -38,6 +38,7 @@ export interface ContentManifestSummary {
   updateId: string;
   noteId: string;
   sectionId: string;
+  cryptoOwnerId: string;
   keyEpoch: number;
   kind: ContentUploadKind;
   firstSequence: number;
@@ -45,6 +46,14 @@ export interface ContentManifestSummary {
   totalCipherBytes: number;
   chunkCount: number;
   manifestHash: string;
+  checkpointSequenceCutoff?: number;
+}
+
+export interface DownloadedContentChunk {
+  bytes: Uint8Array;
+  cipherHash: string;
+  cipherLength: number;
+  nonce: string;
 }
 
 export interface LogicalNoteSectionSummary {
@@ -495,7 +504,15 @@ export async function apiRequest<T>(
   return (await response.json()) as T;
 }
 
-async function apiBinaryRequest(path: string, init: RequestInit = {}): Promise<Uint8Array> {
+interface BinaryApiResponse {
+  bytes: Uint8Array;
+  headers: Headers;
+}
+
+async function apiBinaryRequest(
+  path: string,
+  init: RequestInit = {}
+): Promise<BinaryApiResponse> {
   const requestId = crypto.randomUUID();
   const headers = requestHeaders(init, requestId, false);
   const response = await fetch(`/api${path}`, {
@@ -507,9 +524,12 @@ async function apiBinaryRequest(path: string, init: RequestInit = {}): Promise<U
     throw await toApiRequestError(response, requestId);
   }
   if (response.status === 204) {
-    return new Uint8Array();
+    return { bytes: new Uint8Array(), headers: response.headers };
   }
-  return new Uint8Array(await response.arrayBuffer());
+  return {
+    bytes: new Uint8Array(await response.arrayBuffer()),
+    headers: response.headers
+  };
 }
 
 function requestHeaders(init: RequestInit, requestId: string, defaultJson: boolean): Headers {
@@ -642,13 +662,15 @@ export async function putContentChunk(
   uploadId: string,
   chunkIndex: number,
   bytes: Uint8Array,
-  cipherHash: string
+  cipherHash: string,
+  nonce: string
 ): Promise<void> {
   await apiBinaryRequest(`/content/uploads/${uploadId}/chunks/${String(chunkIndex)}`, {
     method: "PUT",
     headers: {
       "content-type": "application/octet-stream",
-      "x-fortnote-cipher-hash": cipherHash
+      "x-fortnote-cipher-hash": cipherHash,
+      "x-fortnote-nonce": nonce
     },
     body: new Blob([bytes.slice()])
   });
@@ -671,8 +693,37 @@ export function commitContentManifest(
 export function downloadContentChunk(
   manifestId: string,
   chunkIndex: number
-): Promise<Uint8Array> {
-  return apiBinaryRequest(`/content/manifests/${manifestId}/chunks/${String(chunkIndex)}`);
+): Promise<DownloadedContentChunk> {
+  return apiBinaryRequest(
+    `/content/manifests/${manifestId}/chunks/${String(chunkIndex)}`
+  ).then(({ bytes, headers }) => {
+    const cipherHash = headers.get("x-fortnote-cipher-hash") ?? "";
+    const nonce = headers.get("x-fortnote-nonce") ?? "";
+    const cipherLength = Number(headers.get("content-length"));
+    if (
+      !/^[0-9a-f]{64}$/u.test(cipherHash) ||
+      !canonicalNonce(nonce) ||
+      !Number.isSafeInteger(cipherLength) ||
+      cipherLength <= 0 ||
+      cipherLength !== bytes.byteLength
+    ) {
+      throw new ApiRequestError(
+        0,
+        "invalid_binary_response",
+        "Encrypted content response metadata is invalid"
+      );
+    }
+    return { bytes, cipherHash, cipherLength, nonce };
+  });
+}
+
+function canonicalNonce(value: string): boolean {
+  try {
+    const bytes = Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+    return bytes.byteLength === 24 && btoa(String.fromCharCode(...bytes)) === value;
+  } catch {
+    return false;
+  }
 }
 
 export function listNoteSections(noteId: string): Promise<{ sections: LogicalNoteSectionSummary[] }> {

@@ -1,4 +1,9 @@
-import type { CollaborationEvent, PresenceState, PresenceUser } from "../api";
+import type {
+  CollaborationEvent,
+  ContentManifestSummary,
+  PresenceState,
+  PresenceUser
+} from "../api";
 import {
   CRDT_BINARY_FORMAT_VERSION,
   CRDT_REALTIME_CAPABILITY,
@@ -11,6 +16,7 @@ import {
   type CrdtAck,
   type CrdtAckV2,
   type CrdtHistoryPageV2,
+  type CrdtManifestReferenceV2,
   type CrdtReject,
   type CrdtRejectV2,
   type EncryptedCrdtMessage
@@ -21,6 +27,7 @@ import {
   type FortnoteIndexedDb
 } from "../lib/indexedDb";
 import { getClientInstanceId } from "../api";
+import type { PreparedEncryptedContentV2 } from "../cryptoClient";
 import {
   createEncryptedOutbox,
   type EncryptedOutbox,
@@ -28,6 +35,7 @@ import {
   type EncryptedOutboxStore,
   type OutboxFence
 } from "./outbox";
+import { resumeContentUpload, uploadPreparedContent } from "./contentTransfer";
 import type {
   ReceivedBinaryCrdtMessage,
   ScopedEncryptedCrdtMessage
@@ -48,6 +56,7 @@ export type RealtimeMessage =
   | CrdtReject
   | CrdtRejectV2
   | CrdtHistoryPageV2
+  | CrdtManifestReferenceV2
   | { type: "pong" };
 
 const CRDT_OUTBOX_KEY_PREFIX = "fortnote:crdt-outbox:v1:";
@@ -68,6 +77,7 @@ interface RealtimeClientOptions {
   onClose?: () => void;
   onError?: () => void;
   outboxStore?: EncryptedOutboxStore;
+  contentStore?: FortnoteIndexedDb;
   ownerId?: string;
 }
 
@@ -84,6 +94,9 @@ export interface RealtimeConnection {
   sendCrdtUpdate: (
     update: EncryptedCrdtMessage | ScopedEncryptedCrdtMessage
   ) => Promise<void>;
+  sendCrdtContent: (
+    prepared: PreparedEncryptedContentV2
+  ) => Promise<ContentManifestSummary>;
 }
 
 export function connectRealtime({
@@ -96,6 +109,7 @@ export function connectRealtime({
   onClose,
   onError,
   outboxStore,
+  contentStore,
   ownerId = getClientInstanceId()
 }: RealtimeClientOptions): RealtimeConnection {
   const socket = new WebSocket(realtimeUrl(after));
@@ -109,6 +123,9 @@ export function connectRealtime({
   let crdtEnabled = false;
   let crdtV2Enabled = false;
   let ownedDatabase: FortnoteIndexedDb | null = null;
+  let ownedDatabasePromise: Promise<FortnoteIndexedDb> | null = null;
+  const activeContentTransfers = new Set<Promise<unknown>>();
+  let durableStorageClosing = false;
   let durableOutbox: EncryptedOutbox | null = null;
   let durableOutboxPromise: Promise<EncryptedOutbox> | null = null;
   socket.addEventListener("open", () => {
@@ -136,7 +153,11 @@ export function connectRealtime({
           flushCrdtOutbox(socket, userId);
         }
         if (crdtV2Enabled) {
-          void resumeDurableOutbox();
+          void resumeDurableOutbox().catch(() => {
+            onCrdtError?.(
+              "Encrypted offline work could not resume; it remains queued."
+            );
+          });
           for (const subscription of pendingSectionSubscriptions.values()) {
             sendSectionSubscription(subscription);
           }
@@ -192,10 +213,7 @@ export function connectRealtime({
 
   async function getDurableOutbox(): Promise<EncryptedOutbox> {
     durableOutboxPromise ??= (async () => {
-      const database = outboxStore ?? await openFortnoteIndexedDb();
-      if (!outboxStore) {
-        ownedDatabase = database as FortnoteIndexedDb;
-      }
+      const database = outboxStore ?? await getOwnedDatabase();
       durableOutbox = createEncryptedOutbox({
         database,
         ownerId,
@@ -217,6 +235,62 @@ export function connectRealtime({
         outbox.activate(subscription)
       )
     );
+    await resumePersistedContent();
+  }
+
+  async function getOwnedDatabase(): Promise<FortnoteIndexedDb> {
+    if (durableStorageClosing) {
+      throw new Error("Realtime connection closed.");
+    }
+    ownedDatabasePromise ??= openFortnoteIndexedDb()
+      .then((database) => {
+        if (durableStorageClosing && activeContentTransfers.size === 0) {
+          database.close();
+          throw new Error("Realtime connection closed.");
+        }
+        ownedDatabase = database;
+        return database;
+      })
+      .catch((error: unknown) => {
+        ownedDatabasePromise = null;
+        throw error;
+      });
+    return ownedDatabasePromise;
+  }
+
+  function getContentDatabase(): Promise<FortnoteIndexedDb> {
+    return contentStore ? Promise.resolve(contentStore) : getOwnedDatabase();
+  }
+
+  async function resumePersistedContent(): Promise<void> {
+    if (!contentStore && outboxStore) {
+      return;
+    }
+    const database = await getContentDatabase();
+    for (const record of await database.listContentTransfers(userId)) {
+      const outcome = await trackContentTransfer(
+        resumeContentUpload({ database, record })
+      );
+      if (outcome.kind === "local-capacity") {
+        onCrdtError?.(
+          "Protected browser storage is full; encrypted work remains queued."
+        );
+      } else if (outcome.kind === "server-capacity") {
+        onCrdtError?.("Server storage is full; encrypted work remains queued.");
+      }
+    }
+  }
+
+  function trackContentTransfer<T>(transfer: Promise<T>): Promise<T> {
+    activeContentTransfers.add(transfer);
+    const finish = () => {
+      activeContentTransfers.delete(transfer);
+      if (durableStorageClosing && activeContentTransfers.size === 0) {
+        closeOwnedDatabase();
+      }
+    };
+    void transfer.then(finish, finish);
+    return transfer;
   }
 
   function sendOutboxRecord(record: EncryptedOutboxRecord): void {
@@ -406,6 +480,7 @@ export function connectRealtime({
       flushCrdtOutbox(socket, userId, crdtEnabled);
       return delivered;
     },
+    sendCrdtContent: (prepared) => trackContentTransfer(sendPreparedContent(prepared)),
     close: () => {
       for (const pending of pendingCrdtAcks.values()) {
         pending.reject(new Error("Realtime connection closed."));
@@ -415,6 +490,24 @@ export function connectRealtime({
       socket.close();
     }
   };
+
+  async function sendPreparedContent(
+    prepared: PreparedEncryptedContentV2
+  ): Promise<ContentManifestSummary> {
+    const database = await getContentDatabase();
+    const outcome = await uploadPreparedContent({
+      userId,
+      database,
+      prepared
+    });
+    if (outcome.kind === "local-capacity") {
+      throw new Error("Protected browser storage is full");
+    }
+    if (outcome.kind === "server-capacity") {
+      throw new Error("Server storage is full");
+    }
+    return outcome.manifest;
+  }
 
   async function enqueueDurableUpdate(update: ScopedEncryptedCrdtMessage): Promise<void> {
     const outbox = await getDurableOutbox();
@@ -447,11 +540,22 @@ export function connectRealtime({
   }
 
   function closeDurableStorage(): void {
+    durableStorageClosing = true;
     durableOutbox?.setTransport(null);
     durableOutbox?.close();
     durableOutbox = null;
+    if (activeContentTransfers.size === 0) {
+      closeOwnedDatabase();
+    }
+  }
+
+  function closeOwnedDatabase(): void {
+    const wasOpen = ownedDatabase !== null;
     ownedDatabase?.close();
     ownedDatabase = null;
+    if (wasOpen) {
+      ownedDatabasePromise = null;
+    }
   }
 }
 
@@ -480,7 +584,8 @@ export function parseRealtimeMessage(data: unknown): RealtimeMessage | null {
     if (
       control.type === "crdt-ack" ||
       control.type === "crdt-reject" ||
-      control.type === "crdt-history-page"
+      control.type === "crdt-history-page" ||
+      control.type === "crdt-manifest"
     ) {
       return control;
     }
