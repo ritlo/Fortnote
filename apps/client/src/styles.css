@@ -407,6 +407,72 @@ textarea {
   justify-content: flex-end;
 }
 
+.section-navigator {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 10px;
+  background: #f9faf8;
+}
+
+.section-navigator ol {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 4px;
+  overflow-x: auto;
+  list-style: none;
+}
+
+.section-navigator li {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 3px;
+}
+
+.section-navigator li button {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 10px;
+  background: white;
+}
+
+.section-navigator li button[aria-current="page"] {
+  border-color: #88bdb5;
+  background: #e8f4f2;
+  color: var(--brand-strong);
+  font-weight: 800;
+}
+
+.section-position {
+  font-weight: 800;
+}
+
+.section-navigator progress {
+  width: 100%;
+  accent-color: var(--brand);
+}
+
+.section-boundary-status {
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.section-actions {
+  flex-wrap: wrap;
+}
+
+.section-loading-status {
+  min-height: 240px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+}
+
 .settings-panel {
   display: grid;
   align-content: start;

@@ -171,9 +171,13 @@ function handleClientMessage(
     return;
   }
 
-  const parsedV2 = parseV2Subscribe(raw);
+  const parsedV2 = parseV2Control(raw);
   if (parsedV2) {
-    hub.subscribeCrdtV2(client, parsedV2);
+    if (parsedV2.type === "crdt-subscribe") {
+      hub.subscribeCrdtV2(client, parsedV2);
+    } else {
+      hub.unsubscribeCrdtV2(client, parsedV2);
+    }
     return;
   }
   const parsed = parseClientMessage(raw);
@@ -254,10 +258,12 @@ function handleBinaryMessage(
   });
 }
 
-function parseV2Subscribe(raw: string) {
+function parseV2Control(raw: string) {
   try {
     const parsed = parseCrdtControlMessage(JSON.parse(raw) as unknown);
-    return parsed.type === "crdt-subscribe" ? parsed : null;
+    return parsed.type === "crdt-subscribe" || parsed.type === "crdt-unsubscribe"
+      ? parsed
+      : null;
   } catch {
     return null;
   }

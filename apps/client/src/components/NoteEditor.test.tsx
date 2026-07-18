@@ -10,7 +10,6 @@ import { formatAttachmentReference } from "../lib/attachmentMedia";
 import { parseBlockNoteBody } from "../lib/blockNote";
 
 const mocks = vi.hoisted(() => ({
-  attach: vi.fn(() => vi.fn()),
   createOptions: [] as unknown[],
   edit: vi.fn(() => true),
   editor: {
@@ -37,16 +36,16 @@ const mocks = vi.hoisted(() => ({
     updateBlock: vi.fn(),
     undo: vi.fn()
   },
-  editorChange: undefined as ((editor: { document: unknown[] }) => void) | undefined,
-  editorChanges: [] as ((editor: { document: unknown[] }) => void)[],
-  fragment: {},
+  getFragment: vi.fn((_noteId: string, _keyEpoch: number, sectionId: string) => ({
+    sectionId
+  })),
+  getProvider: vi.fn(),
   provider: {
     awareness: {},
     isSynced: false,
     off: vi.fn(),
     on: vi.fn()
   },
-  remove: vi.fn(),
   updateBinding: vi.fn()
 }));
 
@@ -88,11 +87,7 @@ vi.mock("@blocknote/react", () => ({
       embed: { title: "Embed" },
       upload: { title: "Upload" }
     }
-  }),
-  useEditorChange: (callback: (editor: { document: unknown[] }) => void) => {
-    mocks.editorChange = callback;
-    mocks.editorChanges.push(callback);
-  }
+  })
 }));
 
 vi.mock("@blocknote/mantine", () => ({
@@ -112,11 +107,9 @@ vi.mock("@blocknote/mantine", () => ({
 }));
 
 vi.mock("../realtime/crdt", () => ({
-  attachCrdtNote: mocks.attach,
   editCrdtNote: mocks.edit,
-  getCrdtFragment: () => mocks.fragment,
-  getCrdtProvider: () => mocks.provider,
-  removeCrdtNote: mocks.remove,
+  getCrdtFragment: mocks.getFragment,
+  getCrdtProvider: mocks.getProvider,
   updateCrdtNote: mocks.updateBinding
 }));
 
@@ -163,22 +156,22 @@ vi.mock("./SharingPanel", () => ({ SharingPanel: () => null }));
 import { NoteEditor } from "./NoteEditor";
 
 type UpdateSelectedNote = (
-  patch: Partial<Pick<DecryptedNote, "folderId" | "title" | "body">>
+  patch: Partial<Pick<DecryptedNote, "folderId" | "title">>
 ) => void;
 
 describe("NoteEditor BlockNote lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.createOptions.length = 0;
-    mocks.editorChange = undefined;
-    mocks.editorChanges.length = 0;
     mocks.provider.isSynced = false;
+    mocks.getProvider.mockReturnValue(mocks.provider);
     mocks.editor.getBlock.mockReturnValue({ id: "media-block", type: "image", props: {} });
     useAppStore.setState({
       attachmentsByNote: { "note-1": [] },
       selectedNoteId: "note-1",
       user: { id: "alice", username: "alice" }
     });
+    installSection("section-1", "ready");
   });
 
   afterEach(() => {
@@ -186,48 +179,50 @@ describe("NoteEditor BlockNote lifecycle", () => {
     useAppStore.getState().resetVaultState("reset");
   });
 
-  it("keeps one binding through body updates and cleans up on epoch changes", async () => {
+  it("mounts only the selected ready section and remounts on navigation", () => {
     const update = vi.fn();
     const view = renderEditor(note(), update);
 
-    act(() => mocks.editorChange?.({ document: [{ id: "one" }] }));
-    view.rerender(editor(note({ body: JSON.stringify([{ id: "one" }]) }), update));
-    act(() => mocks.editorChange?.({ document: [{ id: "two" }] }));
-    view.rerender(editor(note({ body: JSON.stringify([{ id: "two" }]) }), update));
+    expect(mocks.getFragment).toHaveBeenLastCalledWith("note-1", 1, "section-1");
+    expect(mocks.createOptions).toHaveLength(1);
 
-    expect(mocks.attach).toHaveBeenCalledOnce();
-    expect(mocks.remove).not.toHaveBeenCalled();
+    act(() => {
+      installSection("section-2", "ready");
+    });
+    view.rerender(editor(note(), update));
 
-    view.rerender(editor(note({ keyEpoch: 2, noteKeyBase64: "rotated" }), update));
-    await flushCleanup();
-    expect(mocks.remove).toHaveBeenCalledOnce();
-    expect(mocks.attach).toHaveBeenCalledTimes(2);
-
-    view.unmount();
-    await flushCleanup();
-    expect(mocks.remove).toHaveBeenCalledTimes(2);
+    expect(mocks.getFragment).toHaveBeenLastCalledWith("note-1", 1, "section-2");
+    expect(mocks.getProvider).toHaveBeenLastCalledWith("note-1", 1, "section-2");
+    expect(mocks.createOptions).toHaveLength(3);
   });
 
-  it("keeps the live binding through the StrictMode effect replay", async () => {
+  it("keeps StrictMode replay scoped to the selected section", async () => {
     const view = render(<StrictMode>{editor(note(), vi.fn())}</StrictMode>);
 
     await flushCleanup();
-    expect(mocks.attach).toHaveBeenCalledTimes(2);
-    expect(mocks.remove).not.toHaveBeenCalled();
+    expect(mocks.getFragment).toHaveBeenCalled();
+    expect(mocks.getFragment.mock.calls.every((call) => call[2] === "section-1")).toBe(true);
 
     view.unmount();
     await flushCleanup();
-    expect(mocks.remove).toHaveBeenCalledOnce();
   });
 
-  it("keeps the editor change subscription stable through body updates", () => {
+  it("does not serialize editor frames into the monolithic note body", () => {
     const update = vi.fn();
     const view = renderEditor(note(), update);
 
     view.rerender(editor(note({ body: JSON.stringify([{ id: "one" }]) }), update));
     view.rerender(editor(note({ body: JSON.stringify([{ id: "two" }]) }), update));
 
-    expect(new Set(mocks.editorChanges)).toHaveLength(1);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("does not initialize BlockNote for an unloaded section", () => {
+    installSection("section-1", "loading");
+    renderEditor(note(), vi.fn());
+
+    expect(mocks.createOptions).toHaveLength(0);
+    expect(screen.queryByText("Loading section…")).not.toBeNull();
   });
 
   it("routes title edits through the collaborative title path", () => {
@@ -240,20 +235,18 @@ describe("NoteEditor BlockNote lifecycle", () => {
     expect(update).not.toHaveBeenCalledWith({ title: "Shared title" });
   });
 
-  it("renders viewer and trash documents read-only without attaching trash", () => {
+  it("renders viewer and trash documents read-only", () => {
     const viewer = renderEditor(note({ role: "viewer" }), vi.fn(), "shared");
     expect(screen.getByTestId("block-note").getAttribute("data-editable")).toBe("false");
     expect(screen.getByTestId("block-note").getAttribute("data-file-panel")).toBe("false");
     expect(screen.queryByTestId("file-panel-controller")).toBeNull();
     expect(mocks.createOptions.at(-1)).not.toHaveProperty("uploadFile");
     expect(mocks.createOptions.at(-1)).toHaveProperty("resolveFileUrl");
-    expect(mocks.attach).toHaveBeenCalledOnce();
     viewer.unmount();
 
     vi.clearAllMocks();
     renderEditor(note({ isDeleted: true }), vi.fn(), "trash");
     expect(screen.getByTestId("block-note").getAttribute("data-editable")).toBe("false");
-    expect(mocks.attach).not.toHaveBeenCalled();
     expect(mocks.createOptions.at(-1)).toMatchObject({
       initialContent: expect.arrayContaining([expect.objectContaining({ type: "paragraph" })]),
       resolveFileUrl: expect.any(Function)
@@ -356,12 +349,12 @@ describe("NoteEditor BlockNote lifecycle", () => {
     expect(remove).toHaveBeenCalledWith(image.id);
   });
 
-  it("canonicalizes legacy content after sync and rejects malformed arrays", () => {
+  it("does not autosave legacy bodies and rejects malformed BlockNote arrays", () => {
     const update = vi.fn();
     mocks.provider.isSynced = true;
-    renderEditor(note({ body: "# legacy" }), update);
+    renderEditor(note({ body: "# legacy", rootSectionId: null }), update);
 
-    expect(update).toHaveBeenCalledWith({ body: JSON.stringify(mocks.editor.document) });
+    expect(update).not.toHaveBeenCalled();
     expect(parseBlockNoteBody(JSON.stringify([{}]))).toBeNull();
     expect(parseBlockNoteBody(validBody())).not.toBeNull();
   });
@@ -428,6 +421,44 @@ function validBody() {
   ]);
 }
 
+function installSection(
+  sectionId: "section-1" | "section-2",
+  status: "loading" | "ready"
+): void {
+  useAppStore.getState().setSectionIndex("note-1", {
+    noteId: "note-1",
+    status: "ready",
+    orderedSectionIds: ["section-1", "section-2"],
+    sections: [
+      {
+        id: "section-1",
+        noteId: "note-1",
+        createdEpoch: 1,
+        currentSequence: 1,
+        initialized: true,
+        isDeleted: false
+      },
+      {
+        id: "section-2",
+        noteId: "note-1",
+        createdEpoch: 1,
+        currentSequence: 2,
+        initialized: true,
+        isDeleted: false
+      }
+    ]
+  });
+  useAppStore.getState().setSelectedSection("note-1", sectionId);
+  useAppStore.getState().setLoadedSection({
+    noteId: "note-1",
+    sectionId,
+    keyEpoch: 1,
+    status,
+    currentSequence: sectionId === "section-1" ? 1 : 2,
+    prefetched: false
+  });
+}
+
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
     body: validBody(),
@@ -440,6 +471,7 @@ function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
     noteKeyBase64: "note-key",
     ownerUserId: "alice",
     role: "owner",
+    rootSectionId: "section-1",
     title: "Title",
     updatedAt: "2026-07-15T00:00:00.000Z",
     version: 1,

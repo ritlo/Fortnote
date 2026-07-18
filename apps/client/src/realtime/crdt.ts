@@ -47,10 +47,22 @@ interface CrdtTransport {
     keyEpoch?: number,
     afterSequence?: number
   ) => void;
+  unsubscribe?: (noteId: string, sectionId: string, keyEpoch: number) => void;
   send: (update: ScopedEncryptedCrdtMessage) => Promise<void>;
+  sendDurably?: (
+    update: ScopedEncryptedCrdtMessage
+  ) => DurableDelivery<void>;
   sendContent?: (
     prepared: PreparedEncryptedContentV2
   ) => Promise<ContentManifestSummary>;
+  sendContentDurably?: (
+    prepared: PreparedEncryptedContentV2
+  ) => DurableDelivery<ContentManifestSummary>;
+}
+
+interface DurableDelivery<T> {
+  durable: Promise<void>;
+  delivered: Promise<T>;
 }
 
 export interface ScopedEncryptedCrdtMessage {
@@ -124,6 +136,8 @@ interface Binding {
   checkpointing: boolean;
   observedServerSequence: number;
   pendingPatch: Partial<Pick<DecryptedNote, "title" | "body">>;
+  pendingBroadcasts: Set<Promise<void>>;
+  openGeneration: number;
   ready: boolean;
   receiving: Promise<void>;
   snapshotSeeded: boolean;
@@ -146,6 +160,109 @@ export function getCrdtProvider(
   sectionId?: string
 ): CrdtProvider {
   return getOrCreateBinding(noteId, sectionId ?? defaultSectionId(noteId), keyEpoch).provider;
+}
+
+export function openCrdtSection(
+  note: DecryptedNote,
+  sectionId: string,
+  onChange: Binding["onChange"] = () => undefined
+): { provider: CrdtProvider; generation: number } {
+  const binding = getOrCreateBinding(note.id, sectionId, note.keyEpoch);
+  binding.openGeneration += 1;
+  binding.note = note;
+  binding.onChange = onChange;
+  transport?.subscribe(
+    note.id,
+    sectionId,
+    note.keyEpoch,
+    binding.observedServerSequence
+  );
+  return { provider: binding.provider, generation: binding.openGeneration };
+}
+
+export function getCrdtSectionOrder(noteId: string): string[] {
+  const root = bindings.get(bindingKey(noteId, ROOT_SECTION_ID));
+  if (!root?.ready) {
+    return [];
+  }
+  return [...new Set(
+    root.doc
+      .getArray<unknown>(SECTION_ORDER_KEY)
+      .toArray()
+      .filter((sectionId): sectionId is string => typeof sectionId === "string")
+  )];
+}
+
+export function waitForCrdtSectionReady(
+  noteId: string,
+  keyEpoch: number,
+  sectionId: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<void> {
+  const provider = getCrdtProvider(noteId, keyEpoch, sectionId);
+  if (provider.isSynced) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timeout);
+      provider.off("synced", onSynced);
+      options.signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(
+        options.signal?.reason instanceof Error
+          ? options.signal.reason
+          : new DOMException("Section load canceled", "AbortError")
+      );
+    };
+    const onSynced = () => {
+      cleanup();
+      resolve();
+    };
+    provider.on("synced", onSynced);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Encrypted section synchronization timed out"));
+    }, options.timeoutMs ?? 15_000);
+    if (options.signal?.aborted) {
+      onAbort();
+    }
+  });
+}
+
+export async function releaseCrdtSection(
+  noteId: string,
+  sectionId: string,
+  keyEpoch: number,
+  expectedGeneration?: number
+): Promise<boolean> {
+  const binding = bindings.get(bindingKey(noteId, sectionId));
+  if (binding?.keyEpoch !== keyEpoch) {
+    return true;
+  }
+  try {
+    await Promise.all(binding.pendingBroadcasts);
+  } catch {
+    return false;
+  }
+  if (
+    expectedGeneration !== undefined &&
+    binding.openGeneration !== expectedGeneration
+  ) {
+    return true;
+  }
+  if (!isActiveBinding(binding) || binding.pendingBroadcasts.size > 0) {
+    return false;
+  }
+  binding.onChange = () => undefined;
+  transport?.unsubscribe?.(noteId, sectionId, keyEpoch);
+  binding.provider.awareness.destroy();
+  binding.doc.destroy();
+  bindings.delete(bindingKey(noteId, sectionId));
+  return true;
 }
 
 function getOrCreateBinding(
@@ -188,6 +305,8 @@ function getOrCreateBinding(
     checkpointing: false,
     observedServerSequence: epochAdvanced ? 0 : (existing?.observedServerSequence ?? 0),
     pendingPatch: {},
+    pendingBroadcasts: new Set(),
+    openGeneration: 0,
     ready: existing?.ready ?? false,
     receiving: Promise.resolve(),
     snapshotSeeded: inheritedState !== null,
@@ -219,7 +338,9 @@ function getOrCreateBinding(
       note &&
       note.role !== "viewer"
     ) {
-      void broadcastUpdate(created, update).catch(() => undefined);
+      const delivery = broadcastUpdate(created, update);
+      trackPendingBroadcast(created, delivery.durable);
+      void delivery.delivered.catch(() => undefined);
     }
   });
   return created;
@@ -559,44 +680,57 @@ async function finishBindingSync(
   }
 }
 
-async function broadcastUpdate(binding: Binding, update: Uint8Array): Promise<void> {
-  const note = binding.note;
-  if (!isActiveBindingForNote(binding, note)) {
-    return;
-  }
-  const currentTransport = await getTransport();
-  if (!isActiveBindingForNote(binding, note)) {
-    return;
-  }
-  const updateId = crypto.randomUUID();
-  const kind = binding.sectionId === ROOT_SECTION_ID ? "root-update" : "update";
-  const envelope = {
-    type: "crdt-update" as const,
-    formatVersion: CRDT_BINARY_FORMAT_VERSION,
-    updateId,
-    noteId: note.id,
-    cryptoOwnerId: note.cryptoOwnerId,
-    keyEpoch: note.keyEpoch,
-    sectionId: binding.sectionId,
-    kind
-  } satisfies Omit<ScopedEncryptedCrdtMessage, "cipher" | "nonce">;
-  const outbound = await prepareOutbound(
-    envelope,
-    note.noteKeyBase64,
-    update
-  );
-  if (!isActiveBindingForNote(binding, note)) {
-    return;
-  }
-  const delivered = sendOutbound(currentTransport, outbound);
-  trackUpdate(binding, updateId);
-  const manifest = await delivered;
-  if (manifest && isActiveBindingForNote(binding, note)) {
-    binding.observedServerSequence = Math.max(
-      binding.observedServerSequence,
-      manifest.lastSequence
+function broadcastUpdate(binding: Binding, update: Uint8Array): DurableDelivery<void> {
+  const pending = (async () => {
+    const note = binding.note;
+    if (!isActiveBindingForNote(binding, note)) {
+      return null;
+    }
+    const currentTransport = await getTransport();
+    if (!isActiveBindingForNote(binding, note)) {
+      return null;
+    }
+    const updateId = crypto.randomUUID();
+    const kind = binding.sectionId === ROOT_SECTION_ID ? "root-update" : "update";
+    const envelope = {
+      type: "crdt-update" as const,
+      formatVersion: CRDT_BINARY_FORMAT_VERSION,
+      updateId,
+      noteId: note.id,
+      cryptoOwnerId: note.cryptoOwnerId,
+      keyEpoch: note.keyEpoch,
+      sectionId: binding.sectionId,
+      kind
+    } satisfies Omit<ScopedEncryptedCrdtMessage, "cipher" | "nonce">;
+    const outbound = await prepareOutbound(
+      envelope,
+      note.noteKeyBase64,
+      update
     );
-  }
+    if (!isActiveBindingForNote(binding, note)) {
+      return null;
+    }
+    const delivery = sendOutbound(currentTransport, outbound);
+    trackUpdate(binding, updateId);
+    return { delivery, note };
+  })();
+  return {
+    durable: pending.then(async (result) => {
+      await result?.delivery.durable;
+    }),
+    delivered: pending.then(async (result) => {
+      if (!result) {
+        return;
+      }
+      const manifest = await result.delivery.delivered;
+      if (manifest && isActiveBindingForNote(binding, result.note)) {
+        binding.observedServerSequence = Math.max(
+          binding.observedServerSequence,
+          manifest.lastSequence
+        );
+      }
+    })
+  };
 }
 
 async function broadcastCheckpoint(
@@ -639,7 +773,7 @@ async function broadcastCheckpoint(
     if (!isActiveBindingForNote(binding, note)) {
       return;
     }
-    const manifest = await sendOutbound(currentTransport, outbound);
+    const manifest = await sendOutbound(currentTransport, outbound).delivered;
     if (!isActiveBindingForNote(binding, note)) {
       return;
     }
@@ -714,18 +848,29 @@ async function prepareOutbound(
   };
 }
 
-async function sendOutbound(
+function sendOutbound(
   currentTransport: CrdtTransport,
   outbound: PreparedOutbound
-): Promise<ContentManifestSummary | null> {
+): DurableDelivery<ContentManifestSummary | null> {
   if (outbound.storage === "inline") {
-    await currentTransport.send(outbound.update);
-    return null;
+    const delivery = currentTransport.sendDurably?.(outbound.update) ?? (() => {
+      const delivered = Promise.resolve(currentTransport.send(outbound.update));
+      return { durable: delivered, delivered };
+    })();
+    return {
+      durable: delivery.durable,
+      delivered: delivery.delivered.then(() => null)
+    };
+  }
+  const durableDelivery = currentTransport.sendContentDurably?.(outbound.prepared);
+  if (durableDelivery) {
+    return durableDelivery;
   }
   if (!currentTransport.sendContent) {
     throw new Error("Resumable encrypted content transport is unavailable");
   }
-  return currentTransport.sendContent(outbound.prepared);
+  const delivered = Promise.resolve(currentTransport.sendContent(outbound.prepared));
+  return { durable: delivered.then(() => undefined), delivered };
 }
 
 export function requiresContentTransfer(plaintextBytes: number): boolean {
@@ -795,6 +940,14 @@ function trackUpdate(binding: Binding, updateId: string): void {
   ) {
     void broadcastCheckpoint(binding).catch(() => undefined);
   }
+}
+
+function trackPendingBroadcast(binding: Binding, pending: Promise<void>): void {
+  binding.pendingBroadcasts.add(pending);
+  const finish = () => {
+    binding.pendingBroadcasts.delete(pending);
+  };
+  void pending.then(finish, finish);
 }
 
 function canWrite(binding: Binding): boolean {
@@ -871,7 +1024,10 @@ function decryptReceivedUpdate(
     return downloadVerifiedContent({
       manifest,
       cryptoOwnerId: update.cryptoOwnerId,
-      noteKey: fromBase64(binding.note.noteKeyBase64)
+      noteKey: fromBase64(binding.note.noteKeyBase64),
+      onProgress: (progress) => {
+        binding.provider.emit("progress", progress);
+      }
     });
   }
   if (update.type !== "crdt-binary") {

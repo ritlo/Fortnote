@@ -4,6 +4,7 @@ import type {
   AttachmentSummary,
   CollaborationEvent,
   FolderSummary,
+  LogicalNoteSectionSummary,
   PresenceState,
   PresenceUser,
   User
@@ -31,6 +32,48 @@ export interface DecryptedNote {
   rootVersion?: number;
   rootSectionId?: string | null;
   metadataMigration?: "current" | "write-v2-pending" | "retry-required";
+}
+
+export type SectionIndexStatus = "idle" | "loading" | "ready" | "error";
+export type SectionLoadStatus =
+  | "unloaded"
+  | "loading"
+  | "ready"
+  | "releasing"
+  | "error";
+
+export interface NoteSectionIndexState {
+  noteId: string;
+  status: SectionIndexStatus;
+  orderedSectionIds: string[];
+  sections: LogicalNoteSectionSummary[];
+  error?: string;
+}
+
+export interface LoadedSectionState {
+  noteId: string;
+  sectionId: string;
+  keyEpoch: number;
+  status: SectionLoadStatus;
+  currentSequence: number;
+  prefetched: boolean;
+  transferProgress?: SectionTransferProgress;
+  error?: string;
+}
+
+export interface SectionTransferProgress {
+  phase: "uploading" | "downloading" | "verifying";
+  completedChunks: number;
+  totalChunks: number;
+  transferredBytes: number;
+  totalBytes: number;
+}
+
+export interface StorageCapacityState {
+  status: "unknown" | "available" | "full" | "error";
+  usedBytes: number;
+  availableBytes: number;
+  quotaBytes: number;
 }
 
 export interface RevocationRotationFailure {
@@ -95,6 +138,11 @@ export interface AppStore {
   openedSharingKey: OpenedSharingKey | null;
   revocationRotationFailures: Record<string, RevocationRotationFailure>;
   recoverableDrafts: Record<string, RecoverableSectionDraft>;
+  sectionIndexes: Record<string, NoteSectionIndexState>;
+  loadedSections: Record<string, LoadedSectionState>;
+  selectedSectionByNote: Record<string, string>;
+  localStorageCapacity: StorageCapacityState;
+  serverStorageCapacity: StorageCapacityState;
   error: string | null;
   status: string;
   setUser: StoreSetter<User | null>;
@@ -128,6 +176,11 @@ export interface AppStore {
   ) => void;
   retainRecoverableDraft: (draft: RetainedSectionDraft) => void;
   setRecoverableDraftState: (id: string, state: RecoverableDraftState) => void;
+  setSectionIndex: (noteId: string, value: NoteSectionIndexState | null) => void;
+  setLoadedSection: (value: LoadedSectionState | null, sectionId?: string) => void;
+  setSelectedSection: (noteId: string, sectionId: string | null) => void;
+  setLocalStorageCapacity: StoreSetter<StorageCapacityState>;
+  setServerStorageCapacity: StoreSetter<StorageCapacityState>;
   setError: StoreSetter<string | null>;
   setStatus: StoreSetter<string>;
   resetVaultState: (nextStatus: string) => void;
@@ -164,6 +217,11 @@ export const useAppStore = create<AppStore>((set) => ({
   openedSharingKey: null,
   revocationRotationFailures: {},
   recoverableDrafts: {},
+  sectionIndexes: {},
+  loadedSections: {},
+  selectedSectionByNote: {},
+  localStorageCapacity: emptyCapacityState(),
+  serverStorageCapacity: emptyCapacityState(),
   error: null,
   status: "Checking session",
   setUser: (value) => {
@@ -285,6 +343,13 @@ export const useAppStore = create<AppStore>((set) => ({
           state.revocationRotationFailures,
           noteId
         ),
+        sectionIndexes: omitRecordKey(state.sectionIndexes, noteId),
+        loadedSections: Object.fromEntries(
+          Object.entries(state.loadedSections).filter(
+            ([, section]) => section.noteId !== noteId
+          )
+        ),
+        selectedSectionByNote: omitRecordKey(state.selectedSectionByNote, noteId),
         selectedNoteId:
           state.selectedNoteId === noteId ? nextSelectedNoteId : state.selectedNoteId,
         trashNotes
@@ -352,6 +417,45 @@ export const useAppStore = create<AppStore>((set) => ({
       };
     });
   },
+  setSectionIndex: (noteId, value) => {
+    set((state) => ({
+      sectionIndexes: value
+        ? { ...state.sectionIndexes, [noteId]: value }
+        : omitRecordKey(state.sectionIndexes, noteId)
+    }));
+  },
+  setLoadedSection: (value, sectionId) => {
+    set((state) => {
+      const key = value
+        ? sectionRuntimeKey(value.noteId, value.sectionId)
+        : sectionId;
+      if (!key) {
+        return {};
+      }
+      return {
+        loadedSections: value
+          ? { ...state.loadedSections, [key]: value }
+          : omitRecordKey(state.loadedSections, key)
+      };
+    });
+  },
+  setSelectedSection: (noteId, sectionId) => {
+    set((state) => ({
+      selectedSectionByNote: sectionId
+        ? { ...state.selectedSectionByNote, [noteId]: sectionId }
+        : omitRecordKey(state.selectedSectionByNote, noteId)
+    }));
+  },
+  setLocalStorageCapacity: (value) => {
+    set((state) => ({
+      localStorageCapacity: resolveState(value, state.localStorageCapacity)
+    }));
+  },
+  setServerStorageCapacity: (value) => {
+    set((state) => ({
+      serverStorageCapacity: resolveState(value, state.serverStorageCapacity)
+    }));
+  },
   setError: (value) => {
     set((state) => ({ error: resolveState(value, state.error) }));
   },
@@ -378,6 +482,11 @@ export const useAppStore = create<AppStore>((set) => ({
       openedSharingKey: null,
       revocationRotationFailures: {},
       recoverableDrafts: {},
+      sectionIndexes: {},
+      loadedSections: {},
+      selectedSectionByNote: {},
+      localStorageCapacity: emptyCapacityState(),
+      serverStorageCapacity: emptyCapacityState(),
       search: "",
       password: "",
       newPassword: "",
@@ -389,6 +498,10 @@ export const useAppStore = create<AppStore>((set) => ({
     });
   }
 }));
+
+export function sectionRuntimeKey(noteId: string, sectionId: string): string {
+  return JSON.stringify([noteId, sectionId]);
+}
 
 export function recoverableDraftId(
   draft: Pick<RecoverableSectionDraft, "userId" | "noteId" | "sectionId" | "keyEpoch">
@@ -420,4 +533,13 @@ function omitRecordKey<T>(record: Record<string, T>, keyToRemove: string): Recor
   return Object.fromEntries(
     Object.entries(record).filter(([key]) => key !== keyToRemove)
   );
+}
+
+function emptyCapacityState(): StorageCapacityState {
+  return {
+    status: "unknown",
+    usedBytes: 0,
+    availableBytes: 0,
+    quotaBytes: 0
+  };
 }

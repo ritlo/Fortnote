@@ -167,7 +167,7 @@ describe("realtime client", () => {
     });
     connection.subscribeCrdt(update.noteId, update.sectionId, update.keyEpoch);
 
-    const delivered = connection.sendCrdtUpdate(update);
+    const delivery = connection.sendCrdtUpdateDurably(update);
     let storedRecord: Awaited<ReturnType<typeof database.listOutbox>>[number] | undefined;
     await vi.waitFor(async () => {
       const records = await database.listOutbox(userId);
@@ -175,6 +175,7 @@ describe("realtime client", () => {
       storedRecord = records[0];
     });
     expect(storedRecord).toBeDefined();
+    await expect(delivery.durable).resolves.toBeUndefined();
     expect(sockets[0]!.binarySent).toEqual([]);
 
     sockets[0]!.open();
@@ -211,7 +212,7 @@ describe("realtime client", () => {
       keyEpoch: update.keyEpoch,
       serverSequence: 1
     });
-    await expect(delivered).resolves.toBeUndefined();
+    await expect(delivery.delivered).resolves.toBeUndefined();
     await expect(database.getOutbox(storedRecord!)).resolves.toBeNull();
     await expect(database.getAcknowledgement(storedRecord!)).resolves.toMatchObject({
       serverSequence: 1
@@ -228,8 +229,51 @@ describe("realtime client", () => {
         serverSequence: 2
       })
     );
+    await vi.waitFor(async () => {
+      await expect(database.listOutbox(userId)).resolves.toEqual([]);
+    });
     connection.close();
     await database.deleteDatabase();
+  });
+
+  it("removes pending section subscriptions and unsubscribes active scopes", async () => {
+    const database = await openFortnoteIndexedDb({
+      factory: fakeIndexedDb,
+      name: `fortnote-client-unsubscribe-${crypto.randomUUID()}`
+    });
+    const userId = crypto.randomUUID();
+    const noteId = crypto.randomUUID();
+    const sectionId = crypto.randomUUID();
+    const connection = connectRealtime({
+      after: 0,
+      userId,
+      ownerId: "tab-unsubscribe",
+      outboxStore: database,
+      onMessage: vi.fn()
+    });
+
+    connection.subscribeCrdt(noteId, sectionId, 1);
+    connection.unsubscribeCrdt(noteId, sectionId, 1);
+    sockets[0]!.open();
+    sockets[0]!.receive({
+      ...connectedMessage(userId),
+      capabilities: ["crdt-binary-v2"]
+    });
+    expect(
+      sockets[0]!.sent.map((message) => JSON.parse(message) as { type: string })
+    ).not.toContainEqual(expect.objectContaining({ type: "crdt-subscribe" }));
+
+    connection.subscribeCrdt(noteId, sectionId, 1);
+    connection.unsubscribeCrdt(noteId, sectionId, 1);
+    expect(
+      sockets[0]!.sent.map((message) => JSON.parse(message) as { type: string })
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "crdt-subscribe", noteId, sectionId }),
+      expect.objectContaining({ type: "crdt-unsubscribe", noteId, sectionId })
+    ]));
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    connection.close();
   });
 
   it("resumes an offline scoped update from IndexedDB after reconnect", async () => {

@@ -5,6 +5,7 @@ import {
   type CrdtBinaryHeader,
   type CrdtManifestReferenceV2,
   type CrdtSubscribeV2,
+  type CrdtUnsubscribeV2,
   type EncryptedCrdtMessage
 } from "@fortnote/shared";
 import type { AppContext } from "../http/app.js";
@@ -343,6 +344,13 @@ export class RealtimeHub implements RealtimePublisher {
         ...(entry.storage === "manifest" ? { manifestId: entry.manifestId } : {})
       }))
     });
+  }
+
+  unsubscribeCrdtV2(client: RealtimeClient, request: CrdtUnsubscribeV2): void {
+    if (!client.crdtV2Enabled) {
+      return;
+    }
+    client.subscribedCrdtScopes.delete(crdtScope(request.noteId, request.sectionId));
   }
 
   publishCrdtBinary(

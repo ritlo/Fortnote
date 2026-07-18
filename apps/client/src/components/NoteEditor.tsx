@@ -1,5 +1,5 @@
 import { FileText } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   EmbedTab,
   FilePanelController,
@@ -8,8 +8,7 @@ import {
   useBlockNoteEditor,
   useComponentsContext,
   useCreateBlockNote,
-  useDictionary,
-  useEditorChange
+  useDictionary
 } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
@@ -17,11 +16,9 @@ import type { BlockNoteEditor, BlockSchema } from "@blocknote/core";
 import type * as Y from "yjs";
 import type { AttachmentSummary, FolderSummary } from "../api";
 import {
-  attachCrdtNote,
   editCrdtNote,
   getCrdtFragment,
   getCrdtProvider,
-  removeCrdtNote,
   updateCrdtNote
 } from "../realtime/crdt";
 import { blockNoteInitialContent } from "../lib/blockNote";
@@ -30,9 +27,10 @@ import {
   isAttachmentMimeCompatible
 } from "../lib/attachmentMedia";
 import type { DecryptedNote, NotesView } from "../store/appStore";
-import { useAppStore } from "../store/appStore";
+import { sectionRuntimeKey, useAppStore } from "../store/appStore";
 import { AttachmentPanel } from "./AttachmentPanel";
 import { SharingPanel } from "./SharingPanel";
+import { SectionNavigator } from "./SectionNavigator";
 
 interface NoteEditorProps {
   canDeleteAttachments: boolean;
@@ -43,8 +41,9 @@ interface NoteEditorProps {
   downloadSelectedAttachment: (attachment: AttachmentSummary) => Promise<void>;
   removeSelectedAttachment: (attachmentId: string) => Promise<void>;
   resolveAttachmentUrl: (url: string) => Promise<string>;
+  retrySectionLoad?: (() => void) | undefined;
   updateSelectedNote: (
-    patch: Partial<Pick<DecryptedNote, "folderId" | "title" | "body">>
+    patch: Partial<Pick<DecryptedNote, "folderId" | "title">>
   ) => void;
   uploadSelectedAttachment: (file: File | undefined) => Promise<AttachmentSummary | null>;
 }
@@ -53,7 +52,7 @@ interface BlockNoteFieldProps {
   canEdit: boolean;
   resolveAttachmentUrl: NoteEditorProps["resolveAttachmentUrl"];
   selectedNote: DecryptedNote;
-  updateSelectedNote: NoteEditorProps["updateSelectedNote"];
+  sectionId: string;
   uploadSelectedAttachment: NoteEditorProps["uploadSelectedAttachment"];
 }
 
@@ -61,11 +60,10 @@ function CollaborativeBlockNoteField({
   canEdit,
   resolveAttachmentUrl,
   selectedNote,
-  updateSelectedNote,
+  sectionId,
   uploadSelectedAttachment
 }: BlockNoteFieldProps) {
   const user = useAppStore((state) => state.user);
-  const sectionId = selectedNote.rootSectionId ?? "root";
   const fragment = getCrdtFragment(selectedNote.id, selectedNote.keyEpoch, sectionId);
   const provider = getCrdtProvider(selectedNote.id, selectedNote.keyEpoch, sectionId);
   const editor = useCreateBlockNote({
@@ -79,43 +77,20 @@ function CollaborativeBlockNoteField({
     ...(canEdit
       ? {
           uploadFile: async (file: File) => {
-          const attachment = await uploadSelectedAttachment(file);
-          if (!attachment) {
-            throw new Error("Attachment upload failed");
-          }
-          return {
-            props: {
-              name: attachment.filename,
-              url: formatAttachmentReference(attachment.id)
+            const attachment = await uploadSelectedAttachment(file);
+            if (!attachment) {
+              throw new Error("Attachment upload failed");
             }
-          };
+            return {
+              props: {
+                name: attachment.filename,
+                url: formatAttachmentReference(attachment.id)
+              }
+            };
           }
         }
       : {})
   }) as unknown as BlockNoteEditor<BlockSchema>;
-  const updateRef = useRef(updateSelectedNote);
-  const lifecycleRef = useRef(0);
-  const syncFrameRef = useRef<number | null>(null);
-  updateRef.current = updateSelectedNote;
-  const syncEditorBody = useCallback((currentEditor: BlockNoteEditor<BlockSchema>) => {
-    if (syncFrameRef.current !== null) {
-      return;
-    }
-    syncFrameRef.current = requestAnimationFrame(() => {
-      syncFrameRef.current = null;
-      updateRef.current({ body: JSON.stringify(currentEditor.document) });
-    });
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (syncFrameRef.current !== null) {
-        cancelAnimationFrame(syncFrameRef.current);
-      }
-    },
-    []
-  );
-
   useEffect(() => {
     restoreDevelopmentUndoManager(editor);
   }, [editor]);
@@ -123,32 +98,6 @@ function CollaborativeBlockNoteField({
   useEffect(() => {
     updateCrdtNote(selectedNote);
   }, [selectedNote]);
-
-  useEffect(() => {
-    const lifecycle = ++lifecycleRef.current;
-    const detach = attachCrdtNote(selectedNote, (patch) => {
-      updateRef.current(patch);
-    });
-    const syncBody = () => {
-      updateRef.current({ body: JSON.stringify(editor.document) });
-    };
-    if (provider.isSynced) {
-      syncBody();
-    } else {
-      provider.on("synced", syncBody);
-    }
-    return () => {
-      detach();
-      provider.off("synced", syncBody);
-      queueMicrotask(() => {
-        if (lifecycleRef.current === lifecycle) {
-          removeCrdtNote(selectedNote.id, provider);
-        }
-      });
-    };
-  }, [editor, provider, selectedNote.id]);
-
-  useEditorChange(syncEditorBody, editor);
 
   return (
     <>
@@ -303,6 +252,7 @@ export function NoteEditor({
   downloadSelectedAttachment,
   removeSelectedAttachment,
   resolveAttachmentUrl,
+  retrySectionLoad,
   updateSelectedNote,
   uploadSelectedAttachment
 }: NoteEditorProps) {
@@ -312,6 +262,14 @@ export function NoteEditor({
     notesView !== "trash";
   const canMove = selectedNote?.role === "owner" && notesView !== "trash";
   const setLocalPresenceState = useAppStore((state) => state.setLocalPresenceState);
+  const selectedSectionId = useAppStore((state) =>
+    state.selectedSectionByNote[selectedNote?.id ?? ""] ?? null
+  );
+  const selectedSection = useAppStore((state) =>
+    selectedNote && selectedSectionId
+      ? state.loadedSections[sectionRuntimeKey(selectedNote.id, selectedSectionId)]
+      : undefined
+  );
 
   function markEditing() {
     if (canEdit) {
@@ -368,6 +326,13 @@ export function NoteEditor({
           onFocus={markEditing}
         />
       </label>
+      {selectedNote.rootSectionId ? (
+        <SectionNavigator
+          canEdit={canEdit}
+          noteId={selectedNote.id}
+          onRetry={retrySectionLoad}
+        />
+      ) : null}
       <div className="block-editor" onBlurCapture={markIdle} onFocusCapture={markEditing}>
         {notesView === "trash" ? (
           <ReadOnlyBlockNoteField
@@ -375,15 +340,36 @@ export function NoteEditor({
             resolveAttachmentUrl={resolveAttachmentUrl}
             selectedNote={selectedNote}
           />
-        ) : (
+        ) : !selectedNote.rootSectionId ? (
           <CollaborativeBlockNoteField
-            key={`${selectedNote.id}:${String(selectedNote.keyEpoch)}:${canEdit ? "edit" : "view"}`}
+            key={`${selectedNote.id}:root:${String(selectedNote.keyEpoch)}:${canEdit ? "edit" : "view"}`}
             canEdit={canEdit}
             resolveAttachmentUrl={resolveAttachmentUrl}
             selectedNote={selectedNote}
-            updateSelectedNote={updateSelectedNote}
+            sectionId="root"
             uploadSelectedAttachment={uploadSelectedAttachment}
           />
+        ) : !selectedSectionId || selectedSection?.status === "loading" ? (
+          <div aria-live="polite" className="section-loading-status">
+            Loading section…
+          </div>
+        ) : selectedSection?.status === "error" ? (
+          <div role="alert" className="section-loading-status">
+            {selectedSection.error ?? "Encrypted section could not load"}
+          </div>
+        ) : selectedSection?.status === "ready" ? (
+          <CollaborativeBlockNoteField
+            key={`${selectedNote.id}:${selectedSectionId}:${String(selectedNote.keyEpoch)}:${canEdit ? "edit" : "view"}`}
+            canEdit={canEdit}
+            resolveAttachmentUrl={resolveAttachmentUrl}
+            selectedNote={selectedNote}
+            sectionId={selectedSectionId}
+            uploadSelectedAttachment={uploadSelectedAttachment}
+          />
+        ) : (
+          <div aria-live="polite" className="section-loading-status">
+            Opening encrypted note…
+          </div>
         )}
       </div>
       <label>

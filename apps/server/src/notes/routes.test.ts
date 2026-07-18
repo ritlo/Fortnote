@@ -125,6 +125,39 @@ describe("notes and folders routes", () => {
 	    });
 	  });
 
+  it("lists only opaque section metadata for authorized readers", async () => {
+    const app = createTestApp();
+    const owner = await registerAgent(app, "section_metadata_owner");
+    const outsider = await registerAgent(app, "section_metadata_outsider");
+    const payload = protectedNotePayload();
+    await owner.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
+
+    const listed = await owner.get(`/api/notes/${payload.id}/sections`).expect(200);
+    expect(listed.body.sections).toEqual([
+      {
+        id: payload.rootSectionId,
+        noteId: payload.id,
+        createdEpoch: 1,
+        currentSequence: 0,
+        initialized: false,
+        isDeleted: false
+      }
+    ]);
+    expect(JSON.stringify(listed.body)).not.toContain("cipher");
+    expect(JSON.stringify(listed.body)).not.toContain("nonce");
+
+    const denied = await outsider
+      .get(`/api/notes/${payload.id}/sections`)
+      .expect(404);
+    const absent = await outsider
+      .get(`/api/notes/${crypto.randomUUID()}/sections`)
+      .expect(404);
+    expect(denied.body.error).toMatchObject({
+      code: absent.body.error.code,
+      message: absent.body.error.message
+    });
+  });
+
 	  it("atomically upgrades an owned legacy note to protected v2 metadata", async () => {
 	    const app = createTestApp();
 	    const owner = await registerAgent(app, "metadata_migration_owner");

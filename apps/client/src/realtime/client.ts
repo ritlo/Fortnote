@@ -35,7 +35,10 @@ import {
   type EncryptedOutboxStore,
   type OutboxFence
 } from "./outbox";
-import { resumeContentUpload, uploadPreparedContent } from "./contentTransfer";
+import {
+  persistPreparedTransfer,
+  resumeContentUpload
+} from "./contentTransfer";
 import type {
   ReceivedBinaryCrdtMessage,
   ScopedEncryptedCrdtMessage
@@ -91,12 +94,24 @@ export interface RealtimeConnection {
     keyEpoch?: number,
     afterSequence?: number
   ) => void;
+  unsubscribeCrdt: (noteId: string, sectionId: string, keyEpoch: number) => void;
   sendCrdtUpdate: (
     update: EncryptedCrdtMessage | ScopedEncryptedCrdtMessage
   ) => Promise<void>;
+  sendCrdtUpdateDurably: (
+    update: ScopedEncryptedCrdtMessage
+  ) => DurableRealtimeDelivery<void>;
   sendCrdtContent: (
     prepared: PreparedEncryptedContentV2
   ) => Promise<ContentManifestSummary>;
+  sendCrdtContentDurably: (
+    prepared: PreparedEncryptedContentV2
+  ) => DurableRealtimeDelivery<ContentManifestSummary>;
+}
+
+export interface DurableRealtimeDelivery<T> {
+  durable: Promise<void>;
+  delivered: Promise<T>;
 }
 
 export function connectRealtime({
@@ -451,24 +466,28 @@ export function connectRealtime({
         }
       }
     },
+    unsubscribeCrdt: (noteId, sectionId, keyEpoch) => {
+      pendingSectionSubscriptions.delete(
+        sectionSubscriptionKey(noteId, sectionId, keyEpoch)
+      );
+      if (socket.readyState === WebSocket.OPEN && crdtV2Enabled) {
+        socket.send(JSON.stringify({
+          type: "crdt-unsubscribe",
+          noteId,
+          sectionId,
+          expectedKeyEpoch: keyEpoch
+        }));
+      }
+    },
     sendCrdtUpdate: (update) => {
+      if (isScopedCrdtUpdate(update)) {
+        const delivery = startScopedCrdtDelivery(update);
+        void delivery.durable.catch(() => undefined);
+        return delivery.delivered;
+      }
       const delivered = new Promise<void>((resolve, reject) => {
         pendingCrdtAcks.set(update.updateId, { reject, resolve });
       });
-      if (isScopedCrdtUpdate(update)) {
-        void enqueueDurableUpdate(update).catch((error: unknown) => {
-          rejectPendingAck(
-            update.updateId,
-            error instanceof Error
-              ? error.message
-              : "Encrypted realtime update could not be queued."
-          );
-          onCrdtError?.(
-            "Offline edits could not be saved durably; keep this tab open until storage is available."
-          );
-        });
-        return delivered;
-      }
       try {
         readCrdtOutbox(userId).set(update.updateId, update);
         persistCrdtOutbox(userId, true);
@@ -480,7 +499,13 @@ export function connectRealtime({
       flushCrdtOutbox(socket, userId, crdtEnabled);
       return delivered;
     },
-    sendCrdtContent: (prepared) => trackContentTransfer(sendPreparedContent(prepared)),
+    sendCrdtUpdateDurably: startScopedCrdtDelivery,
+    sendCrdtContent: (prepared) => {
+      const delivery = startContentDelivery(prepared);
+      void delivery.durable.catch(() => undefined);
+      return delivery.delivered;
+    },
+    sendCrdtContentDurably: startContentDelivery,
     close: () => {
       for (const pending of pendingCrdtAcks.values()) {
         pending.reject(new Error("Realtime connection closed."));
@@ -491,22 +516,57 @@ export function connectRealtime({
     }
   };
 
-  async function sendPreparedContent(
-    prepared: PreparedEncryptedContentV2
-  ): Promise<ContentManifestSummary> {
-    const database = await getContentDatabase();
-    const outcome = await uploadPreparedContent({
-      userId,
-      database,
-      prepared
+  function startScopedCrdtDelivery(
+    update: ScopedEncryptedCrdtMessage
+  ): DurableRealtimeDelivery<void> {
+    const delivered = new Promise<void>((resolve, reject) => {
+      pendingCrdtAcks.set(update.updateId, { reject, resolve });
     });
-    if (outcome.kind === "local-capacity") {
-      throw new Error("Protected browser storage is full");
-    }
-    if (outcome.kind === "server-capacity") {
-      throw new Error("Server storage is full");
-    }
-    return outcome.manifest;
+    const durable = enqueueDurableUpdate(update).catch((error: unknown) => {
+      rejectPendingAck(
+        update.updateId,
+        error instanceof Error
+          ? error.message
+          : "Encrypted realtime update could not be queued."
+      );
+      onCrdtError?.(
+        "Offline edits could not be saved durably; keep this tab open until storage is available."
+      );
+      throw error;
+    });
+    return { durable, delivered };
+  }
+
+  function startContentDelivery(
+    prepared: PreparedEncryptedContentV2
+  ): DurableRealtimeDelivery<ContentManifestSummary> {
+    let resolveDurable!: () => void;
+    let rejectDurable!: (error: unknown) => void;
+    const durable = new Promise<void>((resolve, reject) => {
+      resolveDurable = resolve;
+      rejectDurable = reject;
+    });
+    const outcome = trackContentTransfer((async () => {
+      try {
+        const database = await getContentDatabase();
+        const record = await persistPreparedTransfer(database, userId, prepared);
+        resolveDurable();
+        return await resumeContentUpload({ database, record });
+      } catch (error) {
+        rejectDurable(error);
+        throw error;
+      }
+    })());
+    const delivered = outcome.then((result) => {
+      if (result.kind === "local-capacity") {
+        throw new Error("Protected browser storage is full");
+      }
+      if (result.kind === "server-capacity") {
+        throw new Error("Server storage is full");
+      }
+      return result.manifest;
+    });
+    return { durable, delivered };
   }
 
   async function enqueueDurableUpdate(update: ScopedEncryptedCrdtMessage): Promise<void> {

@@ -44,8 +44,11 @@ vi.mock("../realtime/client", () => ({
       discardCrdtUpdates: vi.fn(),
       sendPresence: vi.fn(),
       subscribeCrdt: vi.fn(),
+      unsubscribeCrdt: vi.fn(),
       sendCrdtUpdate: vi.fn(),
-      sendCrdtContent: vi.fn()
+      sendCrdtUpdateDurably: vi.fn(),
+      sendCrdtContent: vi.fn(),
+      sendCrdtContentDurably: vi.fn()
     };
     mocks.connections.push({ connection, options });
     return connection;

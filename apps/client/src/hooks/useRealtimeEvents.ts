@@ -255,8 +255,11 @@ export function useRealtimeEvents() {
       setCrdtTransport({
         discard: connection.discardCrdtUpdates,
         subscribe: connection.subscribeCrdt,
+        unsubscribe: connection.unsubscribeCrdt,
         send: connection.sendCrdtUpdate,
-        sendContent: connection.sendCrdtContent
+        sendDurably: connection.sendCrdtUpdateDurably,
+        sendContent: connection.sendCrdtContent,
+        sendContentDurably: connection.sendCrdtContentDurably
       });
     }
 

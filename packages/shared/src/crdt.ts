@@ -36,6 +36,13 @@ export interface CrdtSubscribeV2 {
   afterSequence: number;
 }
 
+export interface CrdtUnsubscribeV2 {
+  type: "crdt-unsubscribe";
+  noteId: string;
+  sectionId: string;
+  expectedKeyEpoch: number;
+}
+
 export interface CrdtAckV2 {
   type: "crdt-ack";
   updateId: string;
@@ -103,6 +110,7 @@ export interface CrdtManifestReferenceV2 {
 
 export type CrdtControlMessageV2 =
   | CrdtSubscribeV2
+  | CrdtUnsubscribeV2
   | CrdtAckV2
   | CrdtRejectV2
   | CrdtHistoryPageV2
@@ -233,6 +241,8 @@ export function parseCrdtControlMessage(value: unknown): CrdtControlMessageV2 {
   switch (record.type) {
     case "crdt-subscribe":
       return parseSubscribe(record);
+    case "crdt-unsubscribe":
+      return parseUnsubscribe(record);
     case "crdt-ack":
       return parseAck(record);
     case "crdt-reject":
@@ -310,6 +320,22 @@ function parseSubscribe(record: Record<string, unknown>): CrdtSubscribeV2 {
     sectionId: record.sectionId,
     expectedKeyEpoch: record.expectedKeyEpoch,
     afterSequence: record.afterSequence
+  };
+}
+
+function parseUnsubscribe(record: Record<string, unknown>): CrdtUnsubscribeV2 {
+  if (
+    !isUuid(record.noteId) ||
+    !isSectionId(record.sectionId) ||
+    !isPositiveInteger(record.expectedKeyEpoch)
+  ) {
+    throw new Error("Invalid CRDT control message");
+  }
+  return {
+    type: "crdt-unsubscribe",
+    noteId: record.noteId,
+    sectionId: record.sectionId,
+    expectedKeyEpoch: record.expectedKeyEpoch
   };
 }
 

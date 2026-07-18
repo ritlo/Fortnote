@@ -2,6 +2,7 @@ import { useAttachmentActions } from "../hooks/useAttachmentActions";
 import { useAuthActions } from "../hooks/useAuthActions";
 import { useNoteActions } from "../hooks/useNoteActions";
 import { useNoteViewModel } from "../hooks/useNoteViewModel";
+import { useSectionData } from "../hooks/useSectionData";
 import { useAppStore } from "../store/appStore";
 import { EditorPane } from "./EditorPane";
 import { NotesPane } from "./NotesPane";
@@ -26,6 +27,7 @@ export function AppShell() {
   const setSelectedNoteId = useAppStore((state) => state.setSelectedNoteId);
   const setSearch = useAppStore((state) => state.setSearch);
   const noteView = useNoteViewModel();
+  const sectionData = useSectionData(noteView.selectedNote);
   const authActions = useAuthActions();
   const noteActions = useNoteActions(noteView.selectedNote);
   const attachmentActions = useAttachmentActions(noteView.selectedNote);
@@ -79,6 +81,7 @@ export function AppShell() {
         recoverySecret={recoverySecret}
         removeSelectedAttachment={attachmentActions.removeSelectedAttachment}
         resolveAttachmentUrl={attachmentActions.resolveAttachmentUrl}
+        retrySectionLoad={sectionData.retry}
         restoreSelectedNote={noteActions.restoreSelectedNote}
         rotateRecoveryKey={authActions.rotateRecoveryKey}
         rotateSharingKey={authActions.rotateSharingKey}

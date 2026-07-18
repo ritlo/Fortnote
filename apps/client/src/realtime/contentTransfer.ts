@@ -184,7 +184,7 @@ export async function downloadVerifiedContent(input: {
   });
 }
 
-async function persistPreparedTransfer(
+export async function persistPreparedTransfer(
   database: FortnoteIndexedDb,
   userId: string,
   prepared: PreparedEncryptedContentV2

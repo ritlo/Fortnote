@@ -11,9 +11,11 @@ import {
   ensureCrdtHistoryReadable,
   finishCrdtSync,
   getCrdtProvider,
+  openCrdtSection,
   openCrdtNote,
   preserveCrdtContent,
   receiveCrdtUpdate,
+  releaseCrdtSection,
   requiresContentTransfer,
   setCrdtTransport,
   updateCrdtNote,
@@ -76,6 +78,63 @@ describe("CRDT collaboration", () => {
   it("routes only updates that cannot fit the realtime frame through content transfer", () => {
     expect(requiresContentTransfer(256 * 1024 - 4096 - 16)).toBe(false);
     expect(requiresContentTransfer(256 * 1024 - 4096 - 15)).toBe(true);
+  });
+
+  it("releases after pending delivery without tearing down a reopened section", async () => {
+    const sectionId = "00000000-0000-4000-8000-000000000002";
+    const current = note({ rootSectionId: sectionId });
+    let finishDelivery!: () => void;
+    const delivery = new Promise<void>((resolve) => {
+      finishDelivery = resolve;
+    });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const sendDurably = vi.fn()
+      .mockReturnValueOnce({
+        durable: Promise.resolve(),
+        delivered: Promise.resolve()
+      })
+      .mockReturnValue({
+        durable: Promise.resolve(),
+        delivered: delivery
+      });
+    const unsubscribe = vi.fn();
+    setCrdtTransport({
+      discard: vi.fn(),
+      send,
+      sendDurably,
+      subscribe: vi.fn(),
+      unsubscribe
+    });
+    const first = openCrdtSection(current, sectionId);
+    await finishCrdtSync(current.id, current.keyEpoch, false, sectionId);
+    sendDurably.mockClear();
+
+    appendFragment(first.provider.doc, "pending edit");
+    await vi.waitFor(() => {
+      expect(sendDurably).toHaveBeenCalledOnce();
+    });
+    const releasing = releaseCrdtSection(
+      current.id,
+      sectionId,
+      current.keyEpoch,
+      first.generation
+    );
+    const reopened = openCrdtSection(current, sectionId);
+
+    await expect(releasing).resolves.toBe(true);
+    expect(unsubscribe).not.toHaveBeenCalled();
+    expect(reopened.provider).toBe(first.provider);
+    finishDelivery();
+    await delivery;
+    await expect(
+      releaseCrdtSection(
+        current.id,
+        sectionId,
+        current.keyEpoch,
+        reopened.generation
+      )
+    ).resolves.toBe(true);
+    expect(unsubscribe).toHaveBeenCalledWith(current.id, sectionId, current.keyEpoch);
   });
 
   it("applies manifest-backed updates only after verified download completes", async () => {

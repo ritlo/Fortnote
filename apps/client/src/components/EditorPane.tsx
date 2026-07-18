@@ -10,6 +10,7 @@ interface EditorPaneProps {
   newPassword: string;
   notesView: NotesView;
   recoverySecret: string | null;
+  retrySectionLoad?: (() => void) | undefined;
   selectedAttachments: AttachmentSummary[];
   selectedNote: DecryptedNote | null;
   user: User;
@@ -37,6 +38,7 @@ export function EditorPane({
   newPassword,
   notesView,
   recoverySecret,
+  retrySectionLoad,
   selectedAttachments,
   selectedNote,
   user,
@@ -90,6 +92,7 @@ export function EditorPane({
           notesView={notesView}
           removeSelectedAttachment={removeSelectedAttachment}
           resolveAttachmentUrl={resolveAttachmentUrl}
+          retrySectionLoad={retrySectionLoad}
           selectedAttachments={selectedAttachments}
           selectedNote={selectedNote}
           updateSelectedNote={updateSelectedNote}

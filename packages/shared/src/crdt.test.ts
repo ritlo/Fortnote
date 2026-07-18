@@ -42,16 +42,30 @@ describe("bounded CRDT v2 protocol", () => {
   });
 
   it("parses a bounded root or section subscription", () => {
+    const noteId = crypto.randomUUID();
     expect(
       parseCrdtControlMessage({
         type: "crdt-subscribe",
         requestId: crypto.randomUUID(),
-        noteId: crypto.randomUUID(),
+        noteId,
         sectionId: "root",
         expectedKeyEpoch: 3,
         afterSequence: 812
       })
     ).toMatchObject({ type: "crdt-subscribe", sectionId: "root", afterSequence: 812 });
+    expect(
+      parseCrdtControlMessage({
+        type: "crdt-unsubscribe",
+        noteId,
+        sectionId: "root",
+        expectedKeyEpoch: 3
+      })
+    ).toEqual({
+      type: "crdt-unsubscribe",
+      noteId,
+      sectionId: "root",
+      expectedKeyEpoch: 3
+    });
     expect(() =>
       parseCrdtControlMessage({
         type: "crdt-subscribe",

@@ -8,6 +8,7 @@ import { requireSession } from "../auth/session.js";
 import { deleteEncryptedAttachment } from "../attachments/storage.js";
 import { canEditNote, canOwnNote, canReadNote, getNoteAccess } from "./access.js";
 import { writeRequestEvent } from "./events.js";
+import { listVisibleNoteSections } from "./sections.js";
 
 const legacyCreateNoteSchema = z.object({
   id: z.uuid(),
@@ -317,6 +318,28 @@ export function createNotesRouter(context: AppContext): Router {
     }
 
     response.json(row);
+  });
+
+  router.get("/:id/sections", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+    const access = getNoteAccess(context, request.params.id, session.userId);
+    if (!canReadNote(access)) {
+      sendApiError(response, "not_found", "Note not found");
+      return;
+    }
+    response.json({
+      sections: listVisibleNoteSections(context, access.noteId).map((section) => ({
+        id: section.id,
+        noteId: section.noteId,
+        createdEpoch: section.createdEpoch,
+        currentSequence: section.currentSequence,
+        initialized: section.initializationManifestId !== null,
+        isDeleted: Boolean(section.isDeleted)
+      }))
+    });
   });
 
   router.get("/:id/memberships", (request, response) => {

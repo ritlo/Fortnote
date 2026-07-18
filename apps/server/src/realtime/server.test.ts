@@ -359,6 +359,71 @@ describe("realtime server", () => {
     });
   });
 
+  it("stops section broadcasts after unsubscribe and permits a fresh resubscribe", async () => {
+    await cryptoReady();
+    const server = await createRealtimeTestServer();
+    const alice = await register(server.url, "unsubscribe_alice");
+    const noteId = crypto.randomUUID();
+    const sectionId = crypto.randomUUID();
+    await authed(server.url, alice.cookie)
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(protectedNotePayload(noteId, sectionId))
+      .expect(201);
+    const cryptoOwnerId = (
+      server.db.sqlite
+        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
+        .get(noteId) as { cryptoOwnerId: string }
+    ).cryptoOwnerId;
+    const writer = await connectBinary(server.url, alice.cookie);
+    const reader = await connectBinary(server.url, alice.cookie);
+    await writer.nextJson("unsubscribe writer connected");
+    await writer.nextJson("unsubscribe writer replay");
+    await reader.nextJson("unsubscribe reader connected");
+    await reader.nextJson("unsubscribe reader replay");
+
+    reader.socket.send(JSON.stringify({
+      type: "crdt-subscribe",
+      requestId: crypto.randomUUID(),
+      noteId,
+      sectionId,
+      expectedKeyEpoch: 1,
+      afterSequence: 0
+    }));
+    await reader.nextJson("unsubscribe initial history");
+    reader.socket.send(JSON.stringify({
+      type: "crdt-unsubscribe",
+      noteId,
+      sectionId,
+      expectedKeyEpoch: 1
+    }));
+
+    const cipher = Uint8Array.from([1, 3, 3, 7, 0, 0]);
+    const header = binaryHeader({ noteId, sectionId, cryptoOwnerId });
+    writer.socket.send(encodeCrdtBinaryFrame(header, cipher, 256 * 1024));
+    await writer.nextJson("unsubscribe writer ack");
+    await expectNoMessage(reader, "unsubscribed section broadcast");
+
+    reader.socket.send(JSON.stringify({
+      type: "crdt-subscribe",
+      requestId: crypto.randomUUID(),
+      noteId,
+      sectionId,
+      expectedKeyEpoch: 1,
+      afterSequence: 0
+    }));
+    expect(
+      decodeCrdtBinaryFrame(
+        await reader.nextBinary("resubscribed section update"),
+        256 * 1024
+      )
+    ).toEqual({ header: { ...header, serverSequence: 1 }, cipher });
+    expect(await reader.nextJson("resubscribed section history")).toMatchObject({
+      type: "crdt-history-page",
+      nextSequence: 1
+    });
+  });
+
   it("commits checkpoints before compacting only through their observed cutoff", async () => {
     await cryptoReady();
     const server = await createRealtimeTestServer();
@@ -1619,15 +1684,22 @@ async function nextMessage(
   });
 }
 
-async function expectNoMessage(socket: SocketClient, label: string): Promise<void> {
+async function expectNoMessage(
+  socket: Pick<SocketClient, "socket">,
+  label: string
+): Promise<void> {
   await expect(
     new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(resolve, 100);
-      socket.socket.once("message", (data) => {
+      const onMessage = (data: RawData) => {
         clearTimeout(timeout);
         const message = parseSocketMessage(data);
         reject(new Error(`Unexpected websocket message: ${JSON.stringify(message)}`));
-      });
+      };
+      const timeout = setTimeout(() => {
+        socket.socket.off("message", onMessage);
+        resolve();
+      }, 100);
+      socket.socket.once("message", onMessage);
     }).catch((error: unknown) => {
       throw error instanceof Error
         ? new Error(`${label}: ${error.message}`)
