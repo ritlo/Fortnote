@@ -166,6 +166,7 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
     selectedNote?.isDeleted,
     selectedNote?.keyEpoch,
     selectedNote?.legacyContentAvailable,
+    selectedNote?.rootVersion,
     selectedNote?.rootSectionId
   ]);
 

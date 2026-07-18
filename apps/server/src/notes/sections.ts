@@ -15,6 +15,7 @@ export interface NoteSectionRecord {
 export interface NoteSectionAccess {
   cryptoOwnerId: string;
   keyEpoch: number;
+  version: number;
   rootVersion: number;
   rotationFenced: number;
   isDeleted: number;
@@ -42,6 +43,22 @@ export type SectionInitializationOutcome =
   | {
       status: "rejected";
       code: "forbidden" | "rotation-pending" | "stale-epoch" | "stale-version";
+    };
+
+export type SectionMutationOutcome =
+  | {
+      status: "created" | "already-created" | "deleted" | "already-deleted";
+      rootVersion: number;
+      version: number;
+    }
+  | {
+      status: "rejected";
+      code:
+        | "forbidden"
+        | "last-section"
+        | "rotation-pending"
+        | "stale-epoch"
+        | "stale-version";
     };
 
 export function storageSectionId(noteId: string, sectionId: string): string {
@@ -92,6 +109,7 @@ export function readNoteSectionAccess(
       SELECT
         n.crypto_owner_id AS cryptoOwnerId,
         n.key_epoch AS keyEpoch,
+        n.version,
         n.root_version AS rootVersion,
         n.rotation_fenced AS rotationFenced,
         n.is_deleted AS isDeleted,
@@ -351,6 +369,150 @@ export function reserveLegacyRootSection(
   return reserve.immediate();
 }
 
+export function createNoteSection(
+  context: AppContext,
+  input: {
+    sessionId: string;
+    userId: string;
+    noteId: string;
+    sectionId: string;
+    expectedKeyEpoch: number;
+    expectedRootVersion: number;
+  }
+): SectionMutationOutcome {
+  const create = context.db.sqlite.transaction((): SectionMutationOutcome => {
+    const access = writableSectionAccess(context, input);
+    if ("code" in access) {
+      return access;
+    }
+    const existing = context.db.sqlite
+      .prepare("SELECT note_id AS noteId, is_deleted AS isDeleted FROM note_sections WHERE id = ?")
+      .get(input.sectionId) as { noteId: string; isDeleted: number } | undefined;
+    if (existing) {
+      return existing.noteId === input.noteId && !existing.isDeleted
+        ? {
+            status: "already-created",
+            rootVersion: access.rootVersion,
+            version: access.version
+          }
+        : { status: "rejected", code: "forbidden" };
+    }
+    if (access.rootVersion !== input.expectedRootVersion) {
+      return { status: "rejected", code: "stale-version" };
+    }
+    const advanced = context.db.sqlite
+      .prepare(`
+        UPDATE notes
+        SET root_version = root_version + 1, version = version + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND root_version = ? AND key_epoch = ? AND rotation_fenced = 0
+      `)
+      .run(
+        input.noteId,
+        input.expectedRootVersion,
+        input.expectedKeyEpoch
+      );
+    if (advanced.changes !== 1) {
+      return { status: "rejected", code: "stale-version" };
+    }
+    context.db.sqlite
+      .prepare(`
+        INSERT INTO note_sections (id, note_id, created_epoch)
+        VALUES (?, ?, ?)
+      `)
+      .run(input.sectionId, input.noteId, input.expectedKeyEpoch);
+    return {
+      status: "created",
+      rootVersion: access.rootVersion + 1,
+      version: access.version + 1
+    };
+  });
+  return create.immediate();
+}
+
+export function tombstoneNoteSection(
+  context: AppContext,
+  input: {
+    sessionId: string;
+    userId: string;
+    noteId: string;
+    sectionId: string;
+    expectedKeyEpoch: number;
+    expectedRootVersion: number;
+  }
+): SectionMutationOutcome {
+  const tombstone = context.db.sqlite.transaction((): SectionMutationOutcome => {
+    const access = writableSectionAccess(context, input);
+    if ("code" in access) {
+      return access;
+    }
+    const section = context.db.sqlite
+      .prepare(`
+        SELECT is_deleted AS isDeleted
+        FROM note_sections
+        WHERE id = ? AND note_id = ? AND id <> note_id
+      `)
+      .get(input.sectionId, input.noteId) as { isDeleted: number } | undefined;
+    if (!section) {
+      return { status: "rejected", code: "forbidden" };
+    }
+    if (section.isDeleted) {
+      return {
+        status: "already-deleted",
+        rootVersion: access.rootVersion,
+        version: access.version
+      };
+    }
+    if (access.rootVersion !== input.expectedRootVersion) {
+      return { status: "rejected", code: "stale-version" };
+    }
+    const visible = context.db.sqlite
+      .prepare(`
+        SELECT COUNT(*) AS count
+        FROM note_sections
+        WHERE note_id = ? AND id <> note_id AND is_deleted = 0
+      `)
+      .get(input.noteId) as { count: number };
+    if (visible.count <= 1) {
+      return { status: "rejected", code: "last-section" };
+    }
+    const advanced = context.db.sqlite
+      .prepare(`
+        UPDATE notes
+        SET root_version = root_version + 1, version = version + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND root_version = ? AND key_epoch = ? AND rotation_fenced = 0
+      `)
+      .run(
+        input.noteId,
+        input.expectedRootVersion,
+        input.expectedKeyEpoch
+      );
+    if (advanced.changes !== 1) {
+      return { status: "rejected", code: "stale-version" };
+    }
+    const result = context.db.sqlite
+      .prepare(`
+        UPDATE note_sections
+        SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND note_id = ? AND is_deleted = 0
+      `)
+      .run(input.sectionId, input.noteId);
+    return result.changes === 1
+      ? {
+          status: "deleted",
+          rootVersion: access.rootVersion + 1,
+          version: access.version + 1
+        }
+      : {
+          status: "already-deleted",
+          rootVersion: access.rootVersion + 1,
+          version: access.version + 1
+        };
+  });
+  return tombstone.immediate();
+}
+
 export function listVisibleNoteSections(
   context: AppContext,
   noteId: string
@@ -426,4 +588,35 @@ function isStaleReservation(context: AppContext, updatedAt: string | null): bool
     .prepare(`SELECT datetime(?) <= datetime('now', '-30 seconds') AS stale`)
     .get(updatedAt) as { stale: number };
   return Boolean(stale.stale);
+}
+
+function writableSectionAccess(
+  context: AppContext,
+  input: {
+    sessionId: string;
+    userId: string;
+    noteId: string;
+    expectedKeyEpoch: number;
+  }
+):
+  | NoteSectionAccess
+  | Extract<SectionMutationOutcome, { status: "rejected" }> {
+  if (!isSessionActive(context.db, input.sessionId)) {
+    return { status: "rejected", code: "forbidden" };
+  }
+  const access = readNoteSectionAccess(context, input.noteId, input.userId);
+  if (
+    access?.status !== "active" ||
+    access.isDeleted ||
+    (access.role !== "owner" && access.role !== "editor")
+  ) {
+    return { status: "rejected", code: "forbidden" };
+  }
+  if (access.keyEpoch !== input.expectedKeyEpoch) {
+    return { status: "rejected", code: "stale-epoch" };
+  }
+  if (access.rotationFenced) {
+    return { status: "rejected", code: "rotation-pending" };
+  }
+  return access;
 }

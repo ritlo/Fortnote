@@ -480,7 +480,8 @@ export function eventsRequireTrashReload(events: CollaborationEvent[]): boolean 
 export function shouldReloadNotes(event: CollaborationEvent): boolean {
   return (
     event.resourceType === "note" ||
-    event.resourceType === "membership"
+    event.resourceType === "membership" ||
+    event.resourceType === "section"
   );
 }
 

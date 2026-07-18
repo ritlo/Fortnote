@@ -1,5 +1,6 @@
 import type { AttachmentSummary, FolderSummary, User } from "../api";
 import type { DecryptedNote, NotesView } from "../store/appStore";
+import type { SectionActions } from "../hooks/useSectionActions";
 import { EditorHeader } from "./EditorHeader";
 import { NoteEditor } from "./NoteEditor";
 import { SettingsPanel } from "./SettingsPanel";
@@ -13,6 +14,7 @@ interface EditorPaneProps {
   retrySectionLoad?: (() => void) | undefined;
   selectedAttachments: AttachmentSummary[];
   selectedNote: DecryptedNote | null;
+  sectionActions: SectionActions;
   user: User;
   changePassword: () => Promise<void>;
   cleanupSharingKeys: () => Promise<void>;
@@ -27,7 +29,7 @@ interface EditorPaneProps {
   rotateSharingKey: () => Promise<void>;
   setNewPassword: (value: string) => void;
   updateSelectedNote: (
-    patch: Partial<Pick<DecryptedNote, "folderId" | "title" | "body">>
+    patch: Partial<Pick<DecryptedNote, "folderId" | "title">>
   ) => void;
   uploadSelectedAttachment: (file: File | undefined) => Promise<AttachmentSummary | null>;
 }
@@ -41,6 +43,7 @@ export function EditorPane({
   retrySectionLoad,
   selectedAttachments,
   selectedNote,
+  sectionActions,
   user,
   changePassword,
   cleanupSharingKeys,
@@ -95,6 +98,7 @@ export function EditorPane({
           retrySectionLoad={retrySectionLoad}
           selectedAttachments={selectedAttachments}
           selectedNote={selectedNote}
+          sectionActions={sectionActions}
           updateSelectedNote={updateSelectedNote}
           uploadSelectedAttachment={uploadSelectedAttachment}
         />

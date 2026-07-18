@@ -10,8 +10,10 @@ import { canEditNote, canOwnNote, canReadNote, getNoteAccess } from "./access.js
 import { writeRequestEvent } from "./events.js";
 import {
   compareAndSetSectionInitialization,
+  createNoteSection,
   listVisibleNoteSections,
-  reserveLegacyRootSection
+  reserveLegacyRootSection,
+  tombstoneNoteSection
 } from "./sections.js";
 
 const legacyCreateNoteSchema = z.object({
@@ -90,6 +92,11 @@ const sectionInitializationSchema = z.object({
   expectedKeyEpoch: z.number().int().positive(),
   expectedRootVersion: z.number().int().positive()
 });
+const sectionMutationSchema = z.object({
+  expectedKeyEpoch: z.number().int().positive(),
+  expectedRootVersion: z.number().int().positive()
+});
+const sectionCreateSchema = sectionMutationSchema.extend({ sectionId: z.uuid() });
 const legacyRotateNoteKeySchema = z.object({
   encryptedNoteKey: z.string().min(16),
   noteKeyNonce: z.string().min(16),
@@ -424,6 +431,98 @@ export function createNotesRouter(context: AppContext): Router {
       rootVersion: outcome.rootVersion,
       version: outcome.version,
       ...(outcome.manifestId ? { manifestId: outcome.manifestId } : {})
+    });
+  });
+
+  router.post("/:id/sections", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+    const parsed = sectionCreateSchema.safeParse(request.body);
+    if (!parsed.success) {
+      sendApiError(response, "bad_request", "Invalid section creation");
+      return;
+    }
+    const outcome = createNoteSection(context, {
+      sessionId: session.id,
+      userId: session.userId,
+      noteId: request.params.id,
+      sectionId: parsed.data.sectionId,
+      expectedKeyEpoch: parsed.data.expectedKeyEpoch,
+      expectedRootVersion: parsed.data.expectedRootVersion
+    });
+    if (outcome.status === "rejected") {
+      sendSectionMutationError(response, outcome.code);
+      return;
+    }
+    if (outcome.status === "created") {
+      const eventCursor = context.db.orm.transaction((tx) =>
+        writeRequestEvent(context, request, {
+          noteId: request.params.id,
+          actorUserId: session.userId,
+          eventType: "section.created",
+          noteVersion: outcome.version,
+          resourceType: "section",
+          resourceId: parsed.data.sectionId
+        }, tx)
+      );
+      publishEventCursors(context, [eventCursor]);
+    }
+    response.status(outcome.status === "created" ? 201 : 200).json({
+      status: outcome.status,
+      rootVersion: outcome.rootVersion,
+      version: outcome.version,
+      section: {
+        id: parsed.data.sectionId,
+        noteId: request.params.id,
+        createdEpoch: parsed.data.expectedKeyEpoch,
+        currentSequence: 0,
+        initialized: false,
+        isDeleted: false
+      }
+    });
+  });
+
+  router.delete("/:id/sections/:sectionId", (request, response) => {
+    const session = requireSession(context.db, request, response);
+    if (!session) {
+      return;
+    }
+    const parsed = sectionMutationSchema.safeParse(request.body);
+    if (!parsed.success || !z.uuid().safeParse(request.params.sectionId).success) {
+      sendApiError(response, "bad_request", "Invalid section deletion");
+      return;
+    }
+    const outcome = tombstoneNoteSection(context, {
+      sessionId: session.id,
+      userId: session.userId,
+      noteId: request.params.id,
+      sectionId: request.params.sectionId,
+      expectedKeyEpoch: parsed.data.expectedKeyEpoch,
+      expectedRootVersion: parsed.data.expectedRootVersion
+    });
+    if (outcome.status === "rejected") {
+      sendSectionMutationError(response, outcome.code);
+      return;
+    }
+    if (outcome.status === "deleted") {
+      const eventCursor = context.db.orm.transaction((tx) =>
+        writeRequestEvent(context, request, {
+          noteId: request.params.id,
+          actorUserId: session.userId,
+          eventType: "section.deleted",
+          noteVersion: outcome.version,
+          resourceType: "section",
+          resourceId: request.params.sectionId
+        }, tx)
+      );
+      publishEventCursors(context, [eventCursor]);
+    }
+    response.json({
+      status: outcome.status,
+      rootVersion: outcome.rootVersion,
+      version: outcome.version
     });
   });
 
@@ -1623,4 +1722,24 @@ function legacyMigrationConflict(
   return code === "stale-epoch"
     ? "Note key epoch changed"
     : "Note metadata changed";
+}
+
+function sendSectionMutationError(
+  response: Parameters<typeof sendApiError>[0],
+  code:
+    | "forbidden"
+    | "last-section"
+    | "rotation-pending"
+    | "stale-epoch"
+    | "stale-version"
+): void {
+  if (code === "forbidden") {
+    sendApiError(response, "not_found", "Note not found");
+    return;
+  }
+  if (code === "last-section") {
+    sendApiError(response, "conflict", "A note must keep at least one section");
+    return;
+  }
+  sendApiError(response, "conflict", legacyMigrationConflict(code));
 }

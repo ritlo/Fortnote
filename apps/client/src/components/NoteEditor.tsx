@@ -31,6 +31,7 @@ import { sectionRuntimeKey, useAppStore } from "../store/appStore";
 import { AttachmentPanel } from "./AttachmentPanel";
 import { SharingPanel } from "./SharingPanel";
 import { SectionNavigator } from "./SectionNavigator";
+import type { SectionActions } from "../hooks/useSectionActions";
 
 interface NoteEditorProps {
   canDeleteAttachments: boolean;
@@ -38,6 +39,7 @@ interface NoteEditorProps {
   notesView: NotesView;
   selectedAttachments: AttachmentSummary[];
   selectedNote: DecryptedNote | null;
+  sectionActions?: SectionActions;
   downloadSelectedAttachment: (attachment: AttachmentSummary) => Promise<void>;
   removeSelectedAttachment: (attachmentId: string) => Promise<void>;
   resolveAttachmentUrl: (url: string) => Promise<string>;
@@ -249,6 +251,7 @@ export function NoteEditor({
   notesView,
   selectedAttachments,
   selectedNote,
+  sectionActions,
   downloadSelectedAttachment,
   removeSelectedAttachment,
   resolveAttachmentUrl,
@@ -333,6 +336,28 @@ export function NoteEditor({
         <SectionNavigator
           canEdit={canEdit}
           noteId={selectedNote.id}
+          {...(sectionActions
+            ? {
+                onCopy: (sectionId: string) => {
+                  void sectionActions.copySectionToNext(sectionId);
+                },
+                onCreate: () => {
+                  void sectionActions.createSection();
+                },
+                onDelete: (sectionId: string) => {
+                  void sectionActions.deleteSection(sectionId);
+                },
+                onMerge: (sectionId: string) => {
+                  void sectionActions.mergeSectionWithNext(sectionId);
+                },
+                onMove: (sectionId: string, direction: -1 | 1) => {
+                  void sectionActions.moveSection(sectionId, direction);
+                },
+                onSplit: (sectionId: string) => {
+                  void sectionActions.splitSection(sectionId);
+                }
+              }
+            : {})}
           onRetry={retrySectionLoad}
         />
       ) : null}

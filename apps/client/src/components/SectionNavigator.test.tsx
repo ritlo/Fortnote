@@ -77,7 +77,7 @@ describe("SectionNavigator", () => {
     expect(screen.queryByText("section-3 secret body")).toBeNull();
   });
 
-  it("exposes create, reorder, split, and delete controls for writable notes", () => {
+  it("exposes all section operations for writable notes", () => {
     installReadyIndex();
     useAppStore.getState().setLoadedSection({
       noteId: "note-1",
@@ -87,16 +87,20 @@ describe("SectionNavigator", () => {
       currentSequence: 4,
       prefetched: false
     });
+    const onCopy = vi.fn();
     const onCreate = vi.fn();
     const onDelete = vi.fn();
+    const onMerge = vi.fn();
     const onMove = vi.fn();
     const onSplit = vi.fn();
     render(
       <SectionNavigator
         noteId="note-1"
         canEdit
+        onCopy={onCopy}
         onCreate={onCreate}
         onDelete={onDelete}
+        onMerge={onMerge}
         onMove={onMove}
         onSplit={onSplit}
       />
@@ -105,9 +109,13 @@ describe("SectionNavigator", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add section" }));
     fireEvent.click(screen.getByRole("button", { name: "Move down" }));
     fireEvent.click(screen.getByRole("button", { name: "Split section" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy into next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Merge with next" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete section" }));
+    expect(onCopy).toHaveBeenCalledWith("section-2");
     expect(onCreate).toHaveBeenCalledOnce();
     expect(onMove).toHaveBeenCalledWith("section-2", 1);
+    expect(onMerge).toHaveBeenCalledWith("section-2");
     expect(onSplit).toHaveBeenCalledWith("section-2");
     expect(onDelete).toHaveBeenCalledWith("section-2");
     expect(

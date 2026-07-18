@@ -90,6 +90,19 @@ export interface SectionInitializationResult {
   version: number;
 }
 
+export interface SectionCreationResult {
+  status: "created" | "already-created";
+  section: LogicalNoteSectionSummary;
+  rootVersion: number;
+  version: number;
+}
+
+export interface SectionDeletionResult {
+  status: "deleted" | "already-deleted";
+  rootVersion: number;
+  version: number;
+}
+
 export interface SectionHistoryPage {
   sectionId: string;
   keyEpoch: number;
@@ -787,6 +800,31 @@ export function initializeNoteSection(
     `/notes/${noteId}/sections/${sectionId}/initialization`,
     { method: "POST", body: JSON.stringify(payload) }
   );
+}
+
+export function createNoteSection(
+  noteId: string,
+  payload: {
+    sectionId: string;
+    expectedKeyEpoch: number;
+    expectedRootVersion: number;
+  }
+): Promise<SectionCreationResult> {
+  return apiRequest<SectionCreationResult>(`/notes/${noteId}/sections`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteNoteSection(
+  noteId: string,
+  sectionId: string,
+  payload: { expectedKeyEpoch: number; expectedRootVersion: number }
+): Promise<SectionDeletionResult> {
+  return apiRequest<SectionDeletionResult>(`/notes/${noteId}/sections/${sectionId}`, {
+    method: "DELETE",
+    body: JSON.stringify(payload)
+  });
 }
 
 export function getSectionHistory(

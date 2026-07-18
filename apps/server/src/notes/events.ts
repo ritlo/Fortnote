@@ -17,6 +17,8 @@ export type NoteEventType =
   | "membership.revoked"
   | "attachment.created"
   | "attachment.deleted"
+  | "section.created"
+  | "section.deleted"
   | "folder.created"
   | "folder.updated"
   | "folder.deleted";
@@ -26,7 +28,7 @@ export interface WriteNoteEventInput {
   actorUserId: string;
   eventType: NoteEventType;
   noteVersion: number | null;
-  resourceType?: "note" | "membership" | "attachment" | "folder";
+  resourceType?: "note" | "membership" | "attachment" | "folder" | "section";
   resourceId?: string;
   payloadMetadata?: Record<string, unknown>;
   clientInstanceId?: string;

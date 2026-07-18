@@ -229,6 +229,7 @@ describe("realtime event processing", () => {
     ).toBe(false);
     expect(shouldReloadNotes(event({ resourceType: "attachment" }))).toBe(false);
     expect(shouldReloadNotes(event({ resourceType: "folder" }))).toBe(false);
+    expect(shouldReloadNotes(event({ resourceType: "section" }))).toBe(true);
     expect(shouldReloadFolders(event({ resourceType: "folder" }))).toBe(true);
     expect(shouldReloadFolders(event({ resourceType: "note" }))).toBe(false);
     expect(shouldReloadNotes(event({ resourceType: "presence" }))).toBe(false);
@@ -261,6 +262,7 @@ describe("realtime event processing", () => {
       otherTabEvent,
       event({ noteId: "note_2", resourceType: "membership" }),
       event({ noteId: "note_2", resourceType: "membership" }),
+      event({ noteId: "section_note", resourceType: "section" }),
       event({ noteId: "attachment_note", resourceType: "attachment" }),
       event({
         noteId: "revoked_note",
@@ -269,7 +271,7 @@ describe("realtime event processing", () => {
         metadata: { membershipUserId: "user_bob" }
       }),
       event({ noteId: "deleted_note", type: "note.permanently_deleted" })
-    ], "user_bob")).toEqual(["note_1", "note_2"]);
+    ], "user_bob")).toEqual(["note_1", "note_2", "section_note"]);
   });
 
   it("does not regress the bootstrapped cursor", () => {

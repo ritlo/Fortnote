@@ -158,6 +158,101 @@ describe("notes and folders routes", () => {
     });
   });
 
+  it("creates and tombstones sections idempotently with fresh fences", async () => {
+    const app = createTestApp();
+    const owner = await registerAgent(app, "section_mutation_owner");
+    const outsider = await registerAgent(app, "section_mutation_outsider");
+    const payload = protectedNotePayload();
+    const createdSectionId = crypto.randomUUID();
+    await owner.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
+
+    await owner
+      .post(`/api/notes/${payload.id}/sections`)
+      .set(csrfHeaders())
+      .send({
+        sectionId: createdSectionId,
+        expectedKeyEpoch: 1,
+        expectedRootVersion: 1
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          status: "created",
+          rootVersion: 2,
+          version: 2,
+          section: { id: createdSectionId, initialized: false }
+        });
+      });
+    await owner
+      .post(`/api/notes/${payload.id}/sections`)
+      .set(csrfHeaders())
+      .send({
+        sectionId: createdSectionId,
+        expectedKeyEpoch: 1,
+        expectedRootVersion: 99
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          status: "already-created",
+          rootVersion: 2,
+          version: 2
+        });
+      });
+    await owner
+      .post(`/api/notes/${payload.id}/sections`)
+      .set(csrfHeaders())
+      .send({
+        sectionId: crypto.randomUUID(),
+        expectedKeyEpoch: 1,
+        expectedRootVersion: 99
+      })
+      .expect(409);
+    await outsider
+      .post(`/api/notes/${payload.id}/sections`)
+      .set(csrfHeaders())
+      .send({
+        sectionId: crypto.randomUUID(),
+        expectedKeyEpoch: 1,
+        expectedRootVersion: 1
+      })
+      .expect(404);
+
+    await owner
+      .delete(`/api/notes/${payload.id}/sections/${createdSectionId}`)
+      .set(csrfHeaders())
+      .send({ expectedKeyEpoch: 1, expectedRootVersion: 2 })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          status: "deleted",
+          rootVersion: 3,
+          version: 3
+        });
+      });
+    await owner
+      .delete(`/api/notes/${payload.id}/sections/${createdSectionId}`)
+      .set(csrfHeaders())
+      .send({ expectedKeyEpoch: 1, expectedRootVersion: 99 })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          status: "already-deleted",
+          rootVersion: 3,
+          version: 3
+        });
+      });
+    await owner
+      .delete(`/api/notes/${payload.id}/sections/${payload.rootSectionId}`)
+      .set(csrfHeaders())
+      .send({ expectedKeyEpoch: 1, expectedRootVersion: 3 })
+      .expect(409);
+    const listed = await owner.get(`/api/notes/${payload.id}/sections`).expect(200);
+    expect(listed.body.sections.map((section: { id: string }) => section.id)).toEqual([
+      payload.rootSectionId
+    ]);
+  });
+
   it("reserves one recoverable migration section without exposing legacy content in metadata", async () => {
     const app = createTestApp();
     const owner = await registerAgent(app, "legacy_section_owner");

@@ -18,7 +18,14 @@ import {
 } from "../cryptoClient";
 import type { ContentManifestSummary } from "../api";
 import { downloadVerifiedContent } from "./contentTransfer";
-import { replaceBlockNoteFragment } from "../lib/blockNote";
+import {
+  appendBlockNoteFragmentSnapshot,
+  replaceBlockNoteFragment,
+  replaceBlockNoteFragmentSnapshot,
+  snapshotBlockNoteFragment,
+  splitBlockNoteFragmentSnapshot,
+  type BlockNoteFragmentSnapshot
+} from "../lib/blockNote";
 import type { DecryptedNote } from "../store/appStore";
 
 // Yjs provides battle-tested character/structure-level merging; the server only sees ciphertext.
@@ -210,6 +217,39 @@ export function replaceCrdtSectionOrder(
     }
   });
   return true;
+}
+
+export function snapshotCrdtSection(
+  noteId: string,
+  sectionId: string
+): BlockNoteFragmentSnapshot {
+  const binding = writableReadyBinding(noteId, sectionId);
+  return snapshotBlockNoteFragment(binding.fragment);
+}
+
+export function replaceCrdtSectionContent(
+  noteId: string,
+  sectionId: string,
+  snapshot: BlockNoteFragmentSnapshot
+): void {
+  const binding = writableReadyBinding(noteId, sectionId);
+  replaceBlockNoteFragmentSnapshot(binding.fragment, snapshot);
+}
+
+export function appendCrdtSectionContent(
+  noteId: string,
+  sectionId: string,
+  snapshot: BlockNoteFragmentSnapshot
+): void {
+  const binding = writableReadyBinding(noteId, sectionId);
+  appendBlockNoteFragmentSnapshot(binding.fragment, snapshot);
+}
+
+export function splitCrdtSectionContent(
+  noteId: string,
+  sectionId: string
+): { before: BlockNoteFragmentSnapshot; after: BlockNoteFragmentSnapshot } | null {
+  return splitBlockNoteFragmentSnapshot(snapshotCrdtSection(noteId, sectionId));
 }
 
 export async function waitForCrdtSectionDurable(
@@ -1155,6 +1195,14 @@ function isActiveBindingForNote(binding: Binding, note: DecryptedNote): boolean 
     binding.keyEpoch === note.keyEpoch &&
     binding.note.cryptoOwnerId === note.cryptoOwnerId
   );
+}
+
+function writableReadyBinding(noteId: string, sectionId: string): Binding {
+  const binding = bindings.get(bindingKey(noteId, sectionId));
+  if (!binding?.ready || !canWrite(binding) || !isActiveBinding(binding)) {
+    throw new Error("Encrypted section is not ready for this operation");
+  }
+  return binding;
 }
 
 function getTransport(): Promise<CrdtTransport> {

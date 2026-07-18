@@ -4,7 +4,9 @@ interface SectionNavigatorProps {
   noteId: string;
   canEdit: boolean;
   onCreate?: () => void;
+  onCopy?: (sectionId: string) => void;
   onDelete?: (sectionId: string) => void;
+  onMerge?: (sectionId: string) => void;
   onMove?: (sectionId: string, direction: -1 | 1) => void;
   onRetry?: (() => void) | undefined;
   onSplit?: (sectionId: string) => void;
@@ -14,7 +16,9 @@ export function SectionNavigator({
   noteId,
   canEdit,
   onCreate,
+  onCopy,
   onDelete,
+  onMerge,
   onMove,
   onRetry,
   onSplit
@@ -146,6 +150,40 @@ export function SectionNavigator({
             }}
           >
             Split section
+          </button>
+          <button
+            type="button"
+            disabled={
+              !onCopy ||
+              !selectedSectionId ||
+              currentIndex < 0 ||
+              currentIndex >= ordered.length - 1 ||
+              current?.status !== "ready"
+            }
+            onClick={() => {
+              if (selectedSectionId) {
+                onCopy?.(selectedSectionId);
+              }
+            }}
+          >
+            Copy into next
+          </button>
+          <button
+            type="button"
+            disabled={
+              !onMerge ||
+              !selectedSectionId ||
+              currentIndex < 0 ||
+              currentIndex >= ordered.length - 1 ||
+              current?.status !== "ready"
+            }
+            onClick={() => {
+              if (selectedSectionId) {
+                onMerge?.(selectedSectionId);
+              }
+            }}
+          >
+            Merge with next
           </button>
           <button
             type="button"
