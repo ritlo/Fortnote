@@ -74,8 +74,10 @@ export interface EncryptedNoteDraft {
 
 export interface EncryptedAttachmentDraft {
   id: string;
-  filename: string;
-  mimeType: string;
+  expectedKeyEpoch: number;
+  metadataCipher: string;
+  metadataNonce: string;
+  metadataFormatVersion: 2;
   size: number;
   encryptedAttachmentKey: string;
   attachmentKeyNonce: string;
@@ -571,6 +573,7 @@ export async function rewrapAttachmentKey(input: {
 export async function createEncryptedAttachmentDraft(input: {
   userId: string;
   noteId: string;
+  keyEpoch: number;
   noteKeyBase64: string;
   file: File;
 }): Promise<EncryptedAttachmentDraft> {
@@ -593,11 +596,22 @@ export async function createEncryptedAttachmentDraft(input: {
       formatVersion: 1
     })
   );
+  const encryptedMetadata = await encryptAttachmentMetadataV2({
+    cryptoOwnerId: input.userId,
+    noteId: input.noteId,
+    attachmentId: id,
+    keyEpoch: input.keyEpoch,
+    noteKey,
+    filename: input.file.name,
+    mimeType: input.file.type || "application/octet-stream"
+  });
 
   return {
     id,
-    filename: input.file.name,
-    mimeType: input.file.type || "application/octet-stream",
+    expectedKeyEpoch: input.keyEpoch,
+    metadataCipher: encryptedMetadata.cipher,
+    metadataNonce: encryptedMetadata.nonce,
+    metadataFormatVersion: 2,
     size: fromBase64(encryptedFile.cipher).byteLength,
     encryptedAttachmentKey: encryptedAttachmentKey.cipher,
     attachmentKeyNonce: encryptedAttachmentKey.nonce,

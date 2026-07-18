@@ -25,7 +25,9 @@ export function AttachmentPanel({
             <li key={attachment.id}>
               <span>
                 <strong>{attachment.filename}</strong>
-                <small>{formatBytes(attachment.size)}</small>
+                <small>
+                  {attachment.mimeType} · {formatBytes(attachment.size)}
+                </small>
               </span>
               <button
                 className="text-button"

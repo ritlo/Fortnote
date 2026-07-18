@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AttachmentDownload, AttachmentSummary } from "../api";
+import type {
+  AttachmentDownload,
+  AttachmentSummary,
+  BinaryTransferProgress,
+  EncryptedAttachmentSummary
+} from "../api";
 import type { DecryptedNote } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
 import { formatAttachmentReference } from "../lib/attachmentMedia";
@@ -11,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   createDraft: vi.fn(),
   createObjectUrl: vi.fn(),
   decrypt: vi.fn(),
+  decryptMetadata: vi.fn(),
   deleteAttachment: vi.fn(),
   downloadAttachment: vi.fn(),
   downloadBytes: vi.fn(),
@@ -28,7 +34,8 @@ vi.mock("../api", () => ({
 
 vi.mock("../cryptoClient", () => ({
   createEncryptedAttachmentDraft: mocks.createDraft,
-  decryptAttachmentBytes: mocks.decrypt
+  decryptAttachmentBytes: mocks.decrypt,
+  decryptAttachmentMetadataV2: mocks.decryptMetadata
 }));
 
 vi.mock("../lib/browser", () => ({ downloadBytes: mocks.downloadBytes }));
@@ -46,9 +53,10 @@ beforeEach(() => {
   });
   mocks.createObjectUrl.mockReturnValue("blob:fortnote-media");
   mocks.decrypt.mockResolvedValue(new Uint8Array([1, 2, 3]));
+  mocks.decryptMetadata.mockResolvedValue({ filename: "image.png", mimeType: "image/png" });
   mocks.downloadAttachment.mockResolvedValue(download());
   mocks.listAttachments.mockResolvedValue({ attachments: [attachment()] });
-  mocks.uploadAttachment.mockResolvedValue({ id: ATTACHMENT_ID });
+  mocks.uploadAttachment.mockResolvedValue({ id: ATTACHMENT_ID, keyEpoch: 1 });
   useAppStore.setState({
     attachmentsByNote: { "note-1": [attachment()] },
     error: null,
@@ -77,6 +85,9 @@ describe("attachment upload", () => {
     });
 
     expect(uploaded).toEqual(attachment());
+    expect(mocks.createDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ keyEpoch: 1 })
+    );
     expect(useAppStore.getState().status).toBe("Attachment encrypted and saved");
     expect(useAppStore.getState().error).toBeNull();
   });
@@ -95,6 +106,53 @@ describe("attachment upload", () => {
     expect(uploaded).toBeNull();
     expect(useAppStore.getState().status).toBe("Attachment failed");
     expect(useAppStore.getState().error).toBe("encryption failed");
+  });
+
+  it("reports binary upload progress without placing the filename in status", async () => {
+    let progressStatus = "";
+    mocks.createDraft.mockResolvedValue({ id: ATTACHMENT_ID });
+    mocks.uploadAttachment.mockImplementationOnce(
+      (
+        _noteId: string,
+        _payload: unknown,
+        onProgress: (progress: BinaryTransferProgress) => void
+      ) => {
+        onProgress({ loadedBytes: 4, totalBytes: 8 });
+        progressStatus = useAppStore.getState().status;
+        return Promise.resolve({ id: ATTACHMENT_ID, keyEpoch: 1 });
+      }
+    );
+    const { result } = renderHook(() => useAttachmentActions(note()));
+
+    await act(async () => {
+      await result.current.uploadSelectedAttachment(
+        new File(["image"], "private-name.png", { type: "image/png" })
+      );
+    });
+
+    expect(progressStatus).toBe("Uploading attachment 50%");
+    expect(progressStatus).not.toContain("private-name.png");
+  });
+});
+
+describe("attachment metadata", () => {
+  it("decrypts protected filename and MIME envelopes before storing them", async () => {
+    useAppStore.setState({ attachmentsByNote: {} });
+    mocks.listAttachments.mockResolvedValue({ attachments: [encryptedAttachment()] });
+    renderHook(() => useAttachmentActions(note({ noteKeyBase64: "AQIDBA==" })));
+
+    await waitFor(() => {
+      expect(useAppStore.getState().attachmentsByNote["note-1"]).toEqual([
+        attachment()
+      ]);
+    });
+    expect(mocks.decryptMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachmentId: ATTACHMENT_ID,
+        keyEpoch: 1,
+        noteId: "note-1"
+      })
+    );
   });
 });
 
@@ -208,7 +266,26 @@ function attachment(overrides: Partial<AttachmentSummary> = {}): AttachmentSumma
     fileNonce: "file-nonce",
     filename: "image.png",
     id: ATTACHMENT_ID,
+    keyEpoch: 1,
     mimeType: "image/png",
+    size: 3,
+    ...overrides
+  };
+}
+
+function encryptedAttachment(
+  overrides: Partial<EncryptedAttachmentSummary> = {}
+): EncryptedAttachmentSummary {
+  return {
+    attachmentKeyNonce: "attachment-key-nonce",
+    createdAt: "2026-07-18T00:00:00.000Z",
+    encryptedAttachmentKey: "encrypted-key",
+    fileNonce: "file-nonce",
+    id: ATTACHMENT_ID,
+    keyEpoch: 1,
+    metadataCipher: "metadata-cipher",
+    metadataFormatVersion: 2,
+    metadataNonce: "metadata-nonce",
     size: 3,
     ...overrides
   };
@@ -217,7 +294,7 @@ function attachment(overrides: Partial<AttachmentSummary> = {}): AttachmentSumma
 function download(overrides: Partial<AttachmentDownload> = {}): AttachmentDownload {
   return {
     ...attachment(),
-    encryptedBytes: "encrypted-bytes",
+    encryptedBytes: new Uint8Array([4, 5, 6]),
     noteId: "note-1",
     ...overrides
   };

@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Share2, UserPlus } from "lucide-react";
 import {
   inviteNoteMember,
-  listAttachments,
   listNoteMemberships,
   lookupSharingKey,
   revokeNoteMember,
@@ -347,7 +346,10 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     const remainingMembers = nextMemberships.filter(
       (membership) => membership.status === "active" && membership.role !== "owner"
     );
-    const attachments = await listAttachments(note.id).then((payload) => payload.attachments);
+    const attachments = useAppStore.getState().attachmentsByNote[note.id];
+    if (!attachments) {
+      throw new Error("Attachments are still loading");
+    }
     const rotatedKey = await rotateNoteKeyMaterial({
       body: note.body,
       cryptoOwnerId: note.cryptoOwnerId,

@@ -455,6 +455,7 @@ function attachment(overrides: Partial<AttachmentSummary> = {}): AttachmentSumma
     fileNonce: "file-nonce",
     filename: "image.png",
     id: "00000000-0000-4000-8000-000000000001",
+    keyEpoch: 1,
     mimeType: "image/png",
     size: 3,
     ...overrides

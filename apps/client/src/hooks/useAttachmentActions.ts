@@ -4,12 +4,16 @@ import {
   downloadAttachment,
   listAttachments,
   uploadAttachment,
-  type AttachmentSummary
+  type AttachmentSummary,
+  type BinaryTransferProgress,
+  type EncryptedAttachmentSummary
 } from "../api";
 import {
   createEncryptedAttachmentDraft,
-  decryptAttachmentBytes
+  decryptAttachmentBytes,
+  decryptAttachmentMetadataV2
 } from "../cryptoClient";
+import { fromBase64, toBase64 } from "@fortnote/shared";
 import { parseAttachmentReference } from "../lib/attachmentMedia";
 import { downloadBytes } from "../lib/browser";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
@@ -61,9 +65,21 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
         return inFlight;
       }
       const load = listAttachments(noteId)
-        .then((payload) => {
-          storeAttachments(noteId, payload.attachments);
-          return payload.attachments;
+        .then(async (payload) => {
+          const note = noteRef.current;
+          if (note?.id !== noteId) {
+            throw new Error("Attachment metadata is no longer available");
+          }
+          const attachments = await Promise.all(
+            payload.attachments.map((attachment) =>
+              decryptAttachmentSummary(note, attachment)
+            )
+          );
+          if (noteRef.current?.id !== noteId) {
+            throw new Error("Attachment metadata is no longer available");
+          }
+          storeAttachments(noteId, attachments);
+          return attachments;
         })
         .finally(() => {
           attachmentLoads.current.delete(noteId);
@@ -122,8 +138,15 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
 
   async function refreshAttachments(noteId: string): Promise<AttachmentSummary[]> {
     const payload = await listAttachments(noteId);
-    storeAttachments(noteId, payload.attachments);
-    return payload.attachments;
+    const note = noteRef.current;
+    if (note?.id !== noteId) {
+      throw new Error("Attachment metadata is no longer available");
+    }
+    const attachments = await Promise.all(
+      payload.attachments.map((attachment) => decryptAttachmentSummary(note, attachment))
+    );
+    storeAttachments(noteId, attachments);
+    return attachments;
   }
 
   async function uploadSelectedAttachment(
@@ -139,10 +162,20 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
       const encrypted = await createEncryptedAttachmentDraft({
         userId: selectedNote.cryptoOwnerId,
         noteId: selectedNote.id,
+        keyEpoch: selectedNote.keyEpoch,
         noteKeyBase64: selectedNote.noteKeyBase64,
         file
       });
-      const uploaded = await uploadAttachment(selectedNote.id, encrypted);
+      const uploaded = await uploadAttachment(
+        selectedNote.id,
+        encrypted,
+        (progress) => {
+          setStatus(transferStatus("Uploading attachment", progress));
+        }
+      );
+      if (uploaded.keyEpoch !== selectedNote.keyEpoch) {
+        throw new Error("Attachment protection changed during upload");
+      }
       const attachments = await refreshAttachments(selectedNote.id);
       const attachment = attachments.find(({ id }) => id === uploaded.id);
       if (!attachment) {
@@ -167,7 +200,13 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
     setError(null);
     setStatus("Decrypting attachment");
     try {
-      const plaintext = await decryptAuthorizedAttachment(selectedNote, attachment);
+      const plaintext = await decryptAuthorizedAttachment(
+        selectedNote,
+        attachment,
+        (progress) => {
+          setStatus(transferStatus("Downloading attachment", progress));
+        }
+      );
       downloadBytes(plaintext, attachment.filename, attachment.mimeType);
       setStatus("Attachment decrypted");
     } catch (downloadError) {
@@ -267,10 +306,17 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
 
 export async function decryptAuthorizedAttachment(
   selectedNote: DecryptedNote,
-  attachment: AttachmentSummary
+  attachment: AttachmentSummary,
+  onProgress?: (progress: BinaryTransferProgress) => void
 ): Promise<Uint8Array> {
-  const encrypted = await downloadAttachment(attachment.id);
-  if (encrypted.id !== attachment.id || encrypted.noteId !== selectedNote.id) {
+  const encrypted = onProgress
+    ? await downloadAttachment(attachment.id, onProgress)
+    : await downloadAttachment(attachment.id);
+  if (
+    encrypted.id !== attachment.id ||
+    encrypted.noteId !== selectedNote.id ||
+    encrypted.keyEpoch !== attachment.keyEpoch
+  ) {
     throw new Error("Attachment does not belong to the selected note");
   }
   return decryptAttachmentBytes({
@@ -279,16 +325,70 @@ export async function decryptAuthorizedAttachment(
     noteKeyBase64: selectedNote.noteKeyBase64,
     attachmentId: attachment.id,
     encryptedAttachmentKey: {
-      cipher: encrypted.encryptedAttachmentKey,
-      nonce: encrypted.attachmentKeyNonce,
+      cipher: attachment.encryptedAttachmentKey,
+      nonce: attachment.attachmentKeyNonce,
       formatVersion: 1
     },
     encryptedBytes: {
-      cipher: encrypted.encryptedBytes,
-      nonce: encrypted.fileNonce,
+      cipher: toBase64(encrypted.encryptedBytes),
+      nonce: attachment.fileNonce,
       formatVersion: 1
     }
   });
+}
+
+export async function decryptAttachmentSummary(
+  selectedNote: DecryptedNote,
+  attachment: EncryptedAttachmentSummary
+): Promise<AttachmentSummary> {
+  let metadata: { filename: string; mimeType: string };
+  if (attachment.metadataFormatVersion === 2) {
+    if (!attachment.metadataCipher || !attachment.metadataNonce) {
+      throw new Error("Attachment metadata is incomplete");
+    }
+    if (attachment.keyEpoch !== selectedNote.keyEpoch) {
+      throw new Error("Historical attachment key is not loaded");
+    }
+    metadata = await decryptAttachmentMetadataV2({
+      cryptoOwnerId: selectedNote.cryptoOwnerId,
+      noteId: selectedNote.id,
+      attachmentId: attachment.id,
+      keyEpoch: attachment.keyEpoch,
+      noteKey: fromBase64(selectedNote.noteKeyBase64),
+      envelope: {
+        cipher: attachment.metadataCipher,
+        nonce: attachment.metadataNonce,
+        formatVersion: 2
+      }
+    });
+  } else if (attachment.filename && attachment.mimeType) {
+    metadata = { filename: attachment.filename, mimeType: attachment.mimeType };
+  } else {
+    throw new Error("Attachment metadata is unavailable");
+  }
+
+  return {
+    id: attachment.id,
+    filename: metadata.filename,
+    mimeType: metadata.mimeType,
+    keyEpoch: attachment.keyEpoch,
+    size: attachment.size,
+    encryptedAttachmentKey: attachment.encryptedAttachmentKey,
+    attachmentKeyNonce: attachment.attachmentKeyNonce,
+    fileNonce: attachment.fileNonce,
+    createdAt: attachment.createdAt
+  };
+}
+
+function transferStatus(label: string, progress: BinaryTransferProgress): string {
+  if (!progress.totalBytes || progress.totalBytes <= 0) {
+    return label;
+  }
+  const percentage = Math.min(
+    100,
+    Math.round((progress.loadedBytes / progress.totalBytes) * 100)
+  );
+  return `${label} ${String(percentage)}%`;
 }
 
 function revokeAttachmentUrl(
