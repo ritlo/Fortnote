@@ -97,6 +97,33 @@ describe("CRDT collaboration", () => {
     );
   });
 
+  it("resubscribes each section after its highest reconciled server sequence", async () => {
+    const current = note();
+    const firstSubscribe = vi.fn();
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      subscribe: firstSubscribe
+    });
+    openCrdtNote(current, vi.fn());
+    await finishCrdtSync(current.id, current.keyEpoch, false, "root", 12);
+
+    setCrdtTransport(null);
+    const resumedSubscribe = vi.fn();
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      subscribe: resumedSubscribe
+    });
+
+    expect(resumedSubscribe).toHaveBeenCalledWith(
+      current.id,
+      "root",
+      current.keyEpoch,
+      12
+    );
+  });
+
   it("never assigns or reuses Yjs client IDs across root and section documents", () => {
     const current = note({
       rootSectionId: "00000000-0000-4000-8000-000000000002"

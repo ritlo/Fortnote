@@ -797,6 +797,10 @@ export function listNotes(deleted = false): Promise<{ notes: NoteSummary[] }> {
   return apiRequest<{ notes: NoteSummary[] }>(`/notes?deleted=${String(deleted)}`);
 }
 
+export function getNote(noteId: string): Promise<NoteSummary> {
+  return apiRequest<NoteSummary>(`/notes/${noteId}`);
+}
+
 export function createNote(
   payload: CreateNotePayload
 ): Promise<{

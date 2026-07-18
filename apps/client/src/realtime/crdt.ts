@@ -31,7 +31,12 @@ const transportWaiters: {
 
 interface CrdtTransport {
   discard: (noteId: string, beforeKeyEpoch: number) => void;
-  subscribe: (noteId: string, sectionId?: string, keyEpoch?: number) => void;
+  subscribe: (
+    noteId: string,
+    sectionId?: string,
+    keyEpoch?: number,
+    afterSequence?: number
+  ) => void;
   send: (update: ScopedEncryptedCrdtMessage) => Promise<void>;
 }
 
@@ -201,7 +206,12 @@ export function attachCrdtNote(
   for (const binding of attached) {
     binding.onChange = onChange;
     binding.note = note;
-    transport?.subscribe(note.id, binding.sectionId, note.keyEpoch);
+    transport?.subscribe(
+      note.id,
+      binding.sectionId,
+      note.keyEpoch,
+      binding.observedServerSequence
+    );
   }
   return () => {
     for (const binding of bindingsForNote(note.id)) {
@@ -231,7 +241,12 @@ export function openCrdtNote(
   for (const binding of attached) {
     binding.onChange = onChange;
     binding.note = note;
-    transport?.subscribe(note.id, binding.sectionId, note.keyEpoch);
+    transport?.subscribe(
+      note.id,
+      binding.sectionId,
+      note.keyEpoch,
+      binding.observedServerSequence
+    );
   }
   if (epochAdvanced && note.role !== "owner") {
     void checkpointCrdtNote(note).catch(() => undefined);
@@ -280,7 +295,12 @@ export function setCrdtTransport(next: CrdtTransport | null): void {
       const note = binding.note as DecryptedNote | undefined;
       if (note) {
         next.discard(note.id, note.keyEpoch);
-        next.subscribe(note.id, binding.sectionId, note.keyEpoch);
+        next.subscribe(
+          note.id,
+          binding.sectionId,
+          note.keyEpoch,
+          binding.observedServerSequence
+        );
       }
     }
   }
@@ -415,7 +435,8 @@ export async function finishCrdtSync(
   noteId: string,
   keyEpoch: number,
   hasUpdates: boolean,
-  sectionId?: string
+  sectionId?: string,
+  serverSequence?: number
 ): Promise<void> {
   const candidates = sectionId
     ? [bindings.get(bindingKey(noteId, sectionId))].filter(isBinding)
@@ -425,6 +446,12 @@ export async function finishCrdtSync(
   }
   const primarySectionId = defaultSectionId(noteId);
   for (const binding of candidates) {
+    if (serverSequence !== undefined) {
+      binding.observedServerSequence = Math.max(
+        binding.observedServerSequence,
+        serverSequence
+      );
+    }
     await finishBindingSync(
       binding,
       keyEpoch,

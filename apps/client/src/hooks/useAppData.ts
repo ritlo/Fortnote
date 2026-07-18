@@ -1,5 +1,6 @@
 import {
   getCurrentSharingKey,
+  getNote,
   listFolders,
   listNotes,
   storeCurrentSharingKey,
@@ -20,6 +21,7 @@ import {
 } from "../lib/keyMaterial";
 import { preserveCrdtContent } from "../realtime/crdt";
 import { useAppStore } from "../store/appStore";
+import type { DecryptedNote } from "../store/appStore";
 
 interface LoadDecryptedNotesOptions {
   preserveSelection?: boolean;
@@ -69,6 +71,35 @@ export async function loadDecryptedNotes(
         : (nextNotes[0]?.id ?? null);
   setSelectedNoteId(nextSelectedNoteId);
   setAttachmentsByNote({});
+}
+
+export async function loadDecryptedNote(
+  currentUser: User,
+  currentRootKey: Uint8Array,
+  noteId: string
+): Promise<DecryptedNote | null> {
+  const summary = await getNote(noteId);
+  const openedSharingKey = useAppStore.getState().openedSharingKey;
+  const decrypted = await decryptNoteSummary(
+    currentUser,
+    currentRootKey,
+    summary,
+    openedSharingKey
+  );
+  const nextNote = decrypted.isDeleted ? decrypted : preserveCrdtContent(decrypted);
+  const state = useAppStore.getState();
+  if (state.user?.id !== currentUser.id || state.rootKey !== currentRootKey) {
+    return null;
+  }
+  if (nextNote.isDeleted) {
+    state.setNotes((current) => current.filter((note) => note.id !== noteId));
+    state.setTrashNotes((current) => upsertSortedNote(current, nextNote));
+  } else {
+    state.setTrashNotes((current) => current.filter((note) => note.id !== noteId));
+    state.setNotes((current) => upsertSortedNote(current, nextNote));
+  }
+  reconcileTargetSelection(noteId);
+  return nextNote;
 }
 
 export async function loadFolders() {
@@ -178,4 +209,26 @@ export async function ensureSharingKey(
   await storeCurrentSharingKey(created.payload);
   setOpenedSharingKey(created.opened);
   return created.opened;
+}
+
+function upsertSortedNote(notes: DecryptedNote[], nextNote: DecryptedNote): DecryptedNote[] {
+  return [nextNote, ...notes.filter((note) => note.id !== nextNote.id)].sort(
+    (left, right) => right.updatedAt.localeCompare(left.updatedAt)
+  );
+}
+
+function reconcileTargetSelection(noteId: string): void {
+  const state = useAppStore.getState();
+  if (state.selectedNoteId !== noteId) {
+    return;
+  }
+  const visibleNotes = state.notesView === "trash" ? state.trashNotes : state.notes;
+  if (visibleNotes.some((note) => note.id === noteId)) {
+    return;
+  }
+  state.setSelectedNoteId(
+    state.notesView === "shared"
+      ? (visibleNotes.find((note) => note.role !== "owner")?.id ?? null)
+      : (visibleNotes[0]?.id ?? null)
+  );
 }

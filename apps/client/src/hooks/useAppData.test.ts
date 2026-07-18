@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createUserSharingKey, encryptFolderNameV2 } from "../cryptoClient";
 import {
   getCurrentSharingKey,
+  getNote,
   listFolders,
   listNotes,
   storeCurrentSharingKey,
@@ -11,10 +12,16 @@ import {
 } from "../api";
 import { decryptNoteSummary } from "../lib/keyMaterial";
 import { useAppStore } from "../store/appStore";
-import { ensureSharingKey, loadDecryptedNotes, loadFolders } from "./useAppData";
+import {
+  ensureSharingKey,
+  loadDecryptedNote,
+  loadDecryptedNotes,
+  loadFolders
+} from "./useAppData";
 
 vi.mock("../api", () => ({
   getCurrentSharingKey: vi.fn(),
+  getNote: vi.fn(),
   listFolders: vi.fn(),
   listNotes: vi.fn(),
   storeCurrentSharingKey: vi.fn(),
@@ -129,6 +136,46 @@ describe("app data collaboration bootstrap", () => {
     await loadDecryptedNotes(user, rootKey, false, { preserveSelection: true });
 
     expect(useAppStore.getState().selectedNoteId).toBe("older");
+  });
+
+  it("reloads only the targeted note metadata without clearing unrelated state", async () => {
+    const user = currentUser();
+    const rootKey = crypto.getRandomValues(new Uint8Array(32));
+    const existing = decryptedNote({ id: "target", title: "Old title" });
+    const untouched = decryptedNote({ id: "untouched", title: "Untouched" });
+    useAppStore.setState({
+      rootKey,
+      user,
+      notes: [existing, untouched],
+      selectedNoteId: "target",
+      attachmentsByNote: { target: [], untouched: [] }
+    });
+    vi.mocked(getNote).mockResolvedValue(noteSummary({
+      id: "target",
+      title: "Encrypted title",
+      updatedAt: "2026-07-03T00:00:00.000Z",
+      version: 2
+    }));
+    mockedDecryptNoteSummary.mockResolvedValue(decryptedNote({
+      id: "target",
+      title: "Remote title",
+      updatedAt: "2026-07-03T00:00:00.000Z",
+      version: 2
+    }));
+
+    await loadDecryptedNote(user, rootKey, "target");
+
+    expect(getNote).toHaveBeenCalledWith("target");
+    expect(listNotes).not.toHaveBeenCalled();
+    expect(useAppStore.getState().notes).toEqual([
+      expect.objectContaining({ id: "target", title: "Remote title", version: 2 }),
+      untouched
+    ]);
+    expect(useAppStore.getState().selectedNoteId).toBe("target");
+    expect(useAppStore.getState().attachmentsByNote).toEqual({
+      target: [],
+      untouched: []
+    });
   });
 
   it("does not clear a trash selection while reloading active notes", async () => {
@@ -270,6 +317,27 @@ function noteSummary(overrides: Partial<NoteSummary>): NoteSummary {
     id: "note-id",
     isDeleted: false,
     noteKeyNonce: "note-key-nonce",
+    ownerUserId: "alice-id",
+    role: "owner",
+    title: "Note",
+    updatedAt: "2026-07-02T00:00:00.000Z",
+    version: 1,
+    keyEpoch: 1,
+    ...overrides
+  };
+}
+
+function decryptedNote(
+  overrides: Partial<Awaited<ReturnType<typeof decryptNoteSummary>>>
+): Awaited<ReturnType<typeof decryptNoteSummary>> {
+  return {
+    body: "Body",
+    contentLength: 1,
+    cryptoOwnerId: "alice-id",
+    folderId: null,
+    id: "note-id",
+    isDeleted: false,
+    noteKeyBase64: "note-key",
     ownerUserId: "alice-id",
     role: "owner",
     title: "Note",

@@ -9,6 +9,7 @@ import {
   eventsRequireTrashReload,
   isOwnRevocation,
   mergeEventCursor,
+  noteIdsRequiringReload,
   removeRevokedNotes,
   shouldReloadFolders,
   shouldReloadNotes
@@ -226,8 +227,8 @@ describe("realtime event processing", () => {
         "user_bob"
       )
     ).toBe(false);
-    expect(shouldReloadNotes(event({ resourceType: "attachment" }))).toBe(true);
-    expect(shouldReloadNotes(event({ resourceType: "folder" }))).toBe(true);
+    expect(shouldReloadNotes(event({ resourceType: "attachment" }))).toBe(false);
+    expect(shouldReloadNotes(event({ resourceType: "folder" }))).toBe(false);
     expect(shouldReloadFolders(event({ resourceType: "folder" }))).toBe(true);
     expect(shouldReloadFolders(event({ resourceType: "note" }))).toBe(false);
     expect(shouldReloadNotes(event({ resourceType: "presence" }))).toBe(false);
@@ -256,6 +257,19 @@ describe("realtime event processing", () => {
       eventsRequireTrashReload([event({ type: "note.permanently_deleted" })])
     ).toBe(true);
     expect(eventsRequireTrashReload([event({ type: "note.updated" })])).toBe(false);
+    expect(noteIdsRequiringReload([
+      otherTabEvent,
+      event({ noteId: "note_2", resourceType: "membership" }),
+      event({ noteId: "note_2", resourceType: "membership" }),
+      event({ noteId: "attachment_note", resourceType: "attachment" }),
+      event({
+        noteId: "revoked_note",
+        resourceType: "membership",
+        type: "membership.revoked",
+        metadata: { membershipUserId: "user_bob" }
+      }),
+      event({ noteId: "deleted_note", type: "note.permanently_deleted" })
+    ], "user_bob")).toEqual(["note_1", "note_2"]);
   });
 
   it("does not regress the bootstrapped cursor", () => {

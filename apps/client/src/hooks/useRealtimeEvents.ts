@@ -17,8 +17,8 @@ import {
   removeCrdtNote,
   setCrdtTransport
 } from "../realtime/crdt";
-import { useAppStore } from "../store/appStore";
-import { loadDecryptedNotes, loadFolders } from "./useAppData";
+import { useAppStore, type DecryptedNote } from "../store/appStore";
+import { loadDecryptedNote, loadFolders } from "./useAppData";
 
 const RECONNECT_BASE_DELAY_MS = 500;
 const RECONNECT_MAX_DELAY_MS = 10_000;
@@ -181,7 +181,8 @@ export function useRealtimeEvents() {
               message.noteId,
               message.keyEpoch,
               message.nextSequence > 0,
-              message.sectionId
+              message.sectionId,
+              message.nextSequence
             ).catch(() => {
               setError("Realtime synchronization could not complete.");
             });
@@ -358,27 +359,28 @@ async function reloadAfterEvents(events: CollaborationEvent[]): Promise<void> {
   }
 
   const remoteEvents = eventsFromOtherClients(events, getClientInstanceId());
-  const shouldReloadFolders = eventsRequireFolderReload(remoteEvents);
-  const shouldReloadNoteData =
-    eventsRequireNoteReload(remoteEvents) || shouldReloadFolders;
-
-  if (shouldReloadFolders) {
+  if (eventsRequireFolderReload(remoteEvents)) {
     await loadFolders();
+    if (!isCurrentVaultSession(user.id, rootKey)) {
+      return;
+    }
+    applyFolderInvalidations(remoteEvents);
   }
-
-  if (!shouldReloadNoteData) {
+  if (!isCurrentVaultSession(user.id, rootKey)) {
     return;
   }
-
-  const reloads = [
-    loadDecryptedNotes(user, rootKey, false, { preserveSelection: true })
-  ];
-  if (eventsRequireTrashReload(remoteEvents)) {
-    reloads.push(
-      loadDecryptedNotes(user, rootKey, true, { preserveSelection: true })
-    );
+  invalidateAttachmentCaches(remoteEvents);
+  for (const event of remoteEvents) {
+    if (event.type === "note.permanently_deleted" && event.noteId) {
+      useAppStore.getState().removeNoteAccess(event.noteId);
+      removeCrdtNote(event.noteId);
+    }
   }
-  await Promise.all(reloads);
+  await Promise.all(
+    noteIdsRequiringReload(remoteEvents, user.id).map((noteId) =>
+      loadDecryptedNote(user, rootKey, noteId)
+    )
+  );
 }
 
 export function isOwnRevocation(event: CollaborationEvent, userId: string): boolean {
@@ -392,6 +394,22 @@ export function eventsRequireNoteReload(
   events: CollaborationEvent[]
 ): boolean {
   return events.some((event) => shouldReloadNotes(event));
+}
+
+export function noteIdsRequiringReload(
+  events: CollaborationEvent[],
+  userId: string
+): string[] {
+  return [...new Set(
+    events
+      .filter((event) =>
+        shouldReloadNotes(event) &&
+        event.type !== "note.permanently_deleted" &&
+        !isOwnRevocation(event, userId)
+      )
+      .map((event) => event.noteId)
+      .filter((noteId): noteId is string => noteId !== null)
+  )];
 }
 
 export function eventsFromOtherClients(
@@ -416,9 +434,7 @@ export function eventsRequireTrashReload(events: CollaborationEvent[]): boolean 
 export function shouldReloadNotes(event: CollaborationEvent): boolean {
   return (
     event.resourceType === "note" ||
-    event.resourceType === "membership" ||
-    event.resourceType === "attachment" ||
-    event.resourceType === "folder"
+    event.resourceType === "membership"
   );
 }
 
@@ -428,6 +444,49 @@ export function shouldReloadFolders(event: CollaborationEvent): boolean {
 
 export function mergeEventCursor(current: number, acknowledged: number): number {
   return Math.max(current, acknowledged);
+}
+
+function invalidateAttachmentCaches(events: CollaborationEvent[]): void {
+  const noteIds = new Set(
+    events
+      .filter((event) => event.resourceType === "attachment")
+      .map((event) => event.noteId)
+      .filter((noteId): noteId is string => noteId !== null)
+  );
+  if (noteIds.size === 0) {
+    return;
+  }
+  useAppStore.getState().setAttachmentsByNote((current) =>
+    Object.fromEntries(
+      Object.entries(current).filter(([noteId]) => !noteIds.has(noteId))
+    )
+  );
+}
+
+function applyFolderInvalidations(events: CollaborationEvent[]): void {
+  const deletedFolderIds = new Set(
+    events
+      .filter((event) => event.type === "folder.deleted")
+      .map((event) => event.resourceId)
+  );
+  if (deletedFolderIds.size === 0) {
+    return;
+  }
+  const state = useAppStore.getState();
+  const clearDeletedFolder = (note: DecryptedNote): DecryptedNote =>
+    note.folderId && deletedFolderIds.has(note.folderId)
+      ? { ...note, folderId: null }
+      : note;
+  state.setNotes((current) => current.map(clearDeletedFolder));
+  state.setTrashNotes((current) => current.map(clearDeletedFolder));
+  if (state.selectedFolderId && deletedFolderIds.has(state.selectedFolderId)) {
+    state.setSelectedFolderId(null);
+  }
+}
+
+function isCurrentVaultSession(userId: string, rootKey: Uint8Array): boolean {
+  const state = useAppStore.getState();
+  return state.user?.id === userId && state.rootKey === rootKey;
 }
 
 function sendSelectedNotePresence(
