@@ -6,7 +6,9 @@ export default tseslint.config(
   {
     ignores: [
       "**/dist/**",
+      "**/build/**",
       "**/node_modules/**",
+      "**/*.min.js",
       "coverage/**",
       "eslint.config.js",
       ".codegraph/**",
@@ -21,7 +23,7 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ["playwright.config.ts", "e2e/*.ts"]
+          allowDefaultProject: ["playwright.config.ts", "e2e/*.ts", "e2e/support/*.ts"]
         },
         tsconfigRootDir: import.meta.dirname
       },

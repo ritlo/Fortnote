@@ -7,10 +7,16 @@
     "packages/*"
   ],
   "scripts": {
+    "assurance": "pnpm lint && pnpm test && pnpm e2e && pnpm assurance:accessibility && pnpm assurance:mutation && pnpm assurance:verify",
+    "assurance:accessibility": "playwright test --project=accessibility",
+    "assurance:inventory": "node scripts/inventory-assurance.mjs",
+    "assurance:mutation": "stryker run",
+    "assurance:perf": "playwright test --project=performance",
+    "assurance:verify": "node scripts/verify-assurance.mjs",
     "build": "pnpm -r build",
     "dev": "pnpm --filter @fortnote/client dev",
     "dev:server": "pnpm --filter @fortnote/server dev",
-    "e2e": "playwright test",
+    "e2e": "playwright test --project=chromium",
     "lint": "eslint .",
     "test": "pnpm typecheck && pnpm -r --workspace-concurrency=1 --if-present test",
     "typecheck": "pnpm -r --if-present typecheck"
@@ -19,8 +25,11 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.61.1",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "@types/node": "^26.0.0",
     "eslint": "^10.5.0",
     "globals": "^17.7.0",

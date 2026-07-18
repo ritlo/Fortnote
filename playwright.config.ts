@@ -4,6 +4,7 @@ import process from "node:process";
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
+  outputDir: "test-results",
   retries: 0,
   reporter: "list",
   use: {
@@ -13,6 +14,21 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      testIgnore: ["accessibility.spec.ts", "performance.spec.ts"],
+      use: { ...devices["Desktop Chrome"] }
+    },
+    {
+      name: "accessibility",
+      testMatch: "accessibility.spec.ts",
+      outputDir: "test-results/accessibility",
+      use: { ...devices["Desktop Chrome"] }
+    },
+    {
+      name: "performance",
+      testMatch: "performance.spec.ts",
+      outputDir: "test-results/performance",
+      timeout: 180_000,
+      workers: 1,
       use: { ...devices["Desktop Chrome"] }
     }
   ],
