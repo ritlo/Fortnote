@@ -6,6 +6,19 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { getConfig, type ServerConfig } from "../config.js";
+import type { AppDb } from "../db/client.js";
+import {
+  createTestApp,
+  csrfHeaders,
+  notePayload,
+  registerAgent
+} from "../test/http.js";
+import {
+  ContentStorageScanner,
+  expireContentUploadsPage,
+  reconcileStorageAccountsPage
+} from "./maintenance.js";
+import { contentManifestHash } from "./manifests.js";
 import {
   ContentChunkConflictError,
   contentChunkPath,
@@ -15,8 +28,12 @@ import {
 } from "./storage.js";
 
 const cleanupDirectories: string[] = [];
+const cleanupDbs: AppDb[] = [];
 
 afterEach(() => {
+  for (const db of cleanupDbs.splice(0)) {
+    db.sqlite.close();
+  }
   for (const directory of cleanupDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -67,6 +84,33 @@ describe("encrypted content chunk storage", () => {
       ).rejects.toThrow();
       await expect(fsPromises.stat(contentChunkPath(config, uploadId, 0))).rejects.toThrow();
     }
+  });
+
+  it("removes partial data when the incoming stream is interrupted", async () => {
+    const config = testConfig();
+    const uploadId = crypto.randomUUID();
+    const bytes = Buffer.from("first partial ciphertext");
+    const interrupted = Readable.from(
+      (async function* () {
+        await Promise.resolve();
+        yield bytes;
+        throw new Error("connection interrupted");
+      })()
+    );
+
+    await expect(
+      writeEncryptedContentChunk(config, {
+        uploadId,
+        chunkIndex: 0,
+        expectedLength: bytes.length * 2,
+        expectedHash: digest(Buffer.concat([bytes, bytes])),
+        maxBytes: 1024,
+        source: interrupted
+      })
+    ).rejects.toThrow("connection interrupted");
+    await expect(fsPromises.stat(contentChunkPath(config, uploadId, 0))).rejects.toThrow();
+    const uploadDirectory = path.dirname(contentChunkPath(config, uploadId, 0));
+    expect(await fsPromises.readdir(uploadDirectory)).toEqual([]);
   });
 
   it("deduplicates identical retries and rejects conflicting duplicates", async () => {
@@ -122,6 +166,121 @@ describe("encrypted content chunk storage", () => {
     await expect(fsPromises.stat(contentChunkPath(config, firstId, 0))).rejects.toThrow();
     expect(await streamBytes(readEncryptedContentChunk(config, secondId, 0))).toEqual(bytes);
   });
+
+  it("expires uploads and cleans orphans in bounded pages without touching committed files", async () => {
+    const app = createTestApp({ maintenanceBatchSize: 2 });
+    const config = app.locals.config as ServerConfig;
+    const db = app.locals.db as AppDb;
+    const context = { config, db };
+    cleanupDirectories.push(config.dataDir);
+    cleanupDbs.push(db);
+    const agent = await registerAgent(app, "maintenance-owner");
+    const note = await agent
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload())
+      .expect(201);
+    const noteId = String(note.body.id);
+    const active = [];
+    for (const value of ["expiring one", "expiring two", "expiring three"]) {
+      active.push(await uploadRouteChunk(agent, noteId, value));
+    }
+    const committed = await uploadRouteChunk(agent, noteId, "durable committed", true);
+    db.sqlite
+      .prepare(`
+        UPDATE content_uploads SET expires_at = '2000-01-01T00:00:00.000Z'
+      `)
+      .run();
+
+    const firstPage = await expireContentUploadsPage(context);
+    expect(firstPage).toEqual({ processed: 2, hasMore: true });
+    const statusesAfterFirst = active.map(({ uploadId }) => uploadStatus(db, uploadId));
+    expect(statusesAfterFirst.filter((status) => status === "expired")).toHaveLength(2);
+    const secondPage = await expireContentUploadsPage(context);
+    expect(secondPage).toEqual({ processed: 1, hasMore: false });
+    expect(active.map(({ uploadId }) => uploadStatus(db, uploadId))).toEqual([
+      "expired",
+      "expired",
+      "expired"
+    ]);
+    for (const { uploadId } of active) {
+      expect(fs.existsSync(path.join(config.dataDir, "content", uploadId))).toBe(false);
+    }
+    expect(fs.existsSync(contentChunkPath(config, committed.uploadId, 0))).toBe(true);
+
+    const orphanIds = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+    for (const uploadId of orphanIds) {
+      await writeEncryptedContentChunk(config, {
+        uploadId,
+        chunkIndex: 0,
+        expectedLength: 6,
+        expectedHash: digest(Buffer.from("orphan")),
+        maxBytes: 1024,
+        source: Readable.from(Buffer.from("orphan"))
+      });
+    }
+    const scanner = new ContentStorageScanner(context);
+    const pages = [];
+    for (;;) {
+      const page = await scanner.nextPage();
+      pages.push(page);
+      expect(page.scanned).toBeLessThanOrEqual(config.maintenanceBatchSize);
+      if (page.done) {
+        break;
+      }
+    }
+    expect(pages.length).toBeGreaterThan(1);
+    for (const uploadId of orphanIds) {
+      expect(fs.existsSync(path.join(config.dataDir, "content", uploadId))).toBe(false);
+    }
+    expect(fs.existsSync(contentChunkPath(config, committed.uploadId, 0))).toBe(true);
+    expect(
+      db.sqlite
+        .prepare("SELECT reserved_bytes AS bytes FROM storage_accounts")
+        .get()
+    ).toEqual({ bytes: 0 });
+  });
+
+  it("reconciles committed and reserved counters in bounded user pages", async () => {
+    const app = createTestApp({ maintenanceBatchSize: 2 });
+    const config = app.locals.config as ServerConfig;
+    const db = app.locals.db as AppDb;
+    cleanupDirectories.push(config.dataDir);
+    cleanupDbs.push(db);
+    for (const username of ["quota-one", "quota-two", "quota-three"]) {
+      const agent = await registerAgent(app, username);
+      await agent
+        .post("/api/notes")
+        .set(csrfHeaders())
+        .send(notePayload())
+        .expect(201);
+    }
+    db.sqlite
+      .prepare(`
+        INSERT INTO storage_accounts (user_id, used_bytes, reserved_bytes)
+        SELECT id, 999, 999 FROM users
+      `)
+      .run();
+
+    const context = { config, db };
+    const first = reconcileStorageAccountsPage(context);
+    expect(first.processed).toBe(2);
+    expect(first.hasMore).toBe(true);
+    const second = reconcileStorageAccountsPage(context, first.nextUserId);
+    expect(second).toMatchObject({ processed: 1, hasMore: false });
+    expect(
+      db.sqlite
+        .prepare(`
+          SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes
+          FROM storage_accounts ORDER BY user_id
+        `)
+        .all()
+    ).toEqual([
+      { usedBytes: 0, reservedBytes: 0 },
+      { usedBytes: 0, reservedBytes: 0 },
+      { usedBytes: 0, reservedBytes: 0 }
+    ]);
+  });
 });
 
 function testConfig(): ServerConfig {
@@ -148,4 +307,61 @@ async function streamBytes(stream: NodeJS.ReadableStream): Promise<Buffer> {
     chunks.push(Buffer.from(value as Uint8Array));
   }
   return Buffer.concat(chunks);
+}
+
+async function uploadRouteChunk(
+  agent: Awaited<ReturnType<typeof registerAgent>>,
+  noteId: string,
+  value: string,
+  commit = false
+): Promise<{ uploadId: string }> {
+  const bytes = Buffer.from(value);
+  const nonce = Buffer.alloc(24, value.length % 251);
+  const uploadId = crypto.randomUUID();
+  const updateId = crypto.randomUUID();
+  const cipherHash = digest(bytes);
+  const manifestHash = contentManifestHash([
+    { chunkIndex: 0, cipherLength: bytes.length, cipherHash, nonce }
+  ]);
+  await agent
+    .post("/api/content/uploads")
+    .set(csrfHeaders())
+    .send({
+      uploadId,
+      updateId,
+      noteId,
+      sectionId: "root",
+      expectedKeyEpoch: 1,
+      kind: "update",
+      formatVersion: 2,
+      totalCipherBytes: bytes.length,
+      chunkCount: 1,
+      manifestHash
+    })
+    .expect(201);
+  await agent
+    .put(`/api/content/uploads/${uploadId}/chunks/0`)
+    .set(csrfHeaders())
+    .set("content-type", "application/octet-stream")
+    .set("content-length", String(bytes.length))
+    .set("x-fortnote-cipher-hash", cipherHash)
+    .set("x-fortnote-nonce", nonce.toString("base64"))
+    .send(bytes)
+    .expect(204);
+  if (commit) {
+    await agent
+      .post(`/api/content/uploads/${uploadId}/commit`)
+      .set(csrfHeaders())
+      .send({ requestId: crypto.randomUUID(), updateId, expectedKeyEpoch: 1 })
+      .expect(201);
+  }
+  return { uploadId };
+}
+
+function uploadStatus(db: AppDb, uploadId: string): string {
+  return (
+    db.sqlite
+      .prepare("SELECT status FROM content_uploads WHERE id = ?")
+      .get(uploadId) as { status: string }
+  ).status;
 }

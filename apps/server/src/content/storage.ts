@@ -105,6 +105,14 @@ export function readEncryptedContentChunk(
   return fs.createReadStream(contentChunkPath(config, uploadId, chunkIndex));
 }
 
+export async function deleteEncryptedContentChunk(
+  config: ServerConfig,
+  uploadId: string,
+  chunkIndex: number
+): Promise<void> {
+  await fsPromises.rm(contentChunkPath(config, uploadId, chunkIndex), { force: true });
+}
+
 export async function deleteUncommittedContentUpload(
   config: ServerConfig,
   uploadId: string

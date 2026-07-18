@@ -4,6 +4,7 @@ import type { AppDb } from "../db/client.js";
 import type { ServerConfig } from "../config.js";
 import type { RealtimePublisher } from "../realtime/types.js";
 import { createAttachmentsRouter } from "../attachments/routes.js";
+import { createContentRouter } from "../content/routes.js";
 import { createAuthRouter } from "../auth/routes.js";
 import { createEventsRouter } from "../events/routes.js";
 import { createFoldersRouter } from "../folders/routes.js";
@@ -60,6 +61,7 @@ export function createApp(context: AppContext) {
 
   app.use("/api/auth", createAuthRouter(context));
   app.use("/api", createAttachmentsRouter(context));
+  app.use("/api", createContentRouter(context));
   app.use("/api/events", createEventsRouter(context));
   app.use("/api/folders", createFoldersRouter(context));
   app.use("/api/key-material", createKeyMaterialRouter(context));
