@@ -123,6 +123,24 @@ describe("app data collaboration bootstrap", () => {
     expect(useAppStore.getState().selectedNoteId).toBe("newer");
   });
 
+  it("loads note metadata without transferring or retaining section bodies", async () => {
+    const user = currentUser();
+    const rootKey = crypto.getRandomValues(new Uint8Array(32));
+    const summary = noteSummary({ id: "body-free" });
+    useAppStore.setState({ rootKey, user });
+    mockedListNotesWith(summary);
+
+    await loadDecryptedNotes(user, rootKey);
+
+    expect(summary).not.toHaveProperty("contentCipher");
+    expect(summary).not.toHaveProperty("contentNonce");
+    expect(mockedDecryptNoteSummary).toHaveBeenCalledOnce();
+    expect(mockedDecryptNoteSummary.mock.calls[0]?.[2]).toBe(summary);
+    expect(useAppStore.getState().notes).toEqual([
+      expect.objectContaining({ id: "body-free", body: "" })
+    ]);
+  });
+
   it("preserves the current selection during realtime note reloads", async () => {
     const user = currentUser();
     const rootKey = crypto.getRandomValues(new Uint8Array(32));
@@ -289,7 +307,7 @@ function mockedListNotesWith(...notes: NoteSummary[]) {
   vi.mocked(listNotes).mockResolvedValue({ notes });
   mockedDecryptNoteSummary.mockImplementation((_user, _rootKey, note) =>
     Promise.resolve({
-      body: `Body for ${note.id}`,
+      body: "",
       contentLength: note.contentLength,
       cryptoOwnerId: note.cryptoOwnerId,
       folderId: note.folderId,
@@ -308,9 +326,7 @@ function mockedListNotesWith(...notes: NoteSummary[]) {
 
 function noteSummary(overrides: Partial<NoteSummary>): NoteSummary {
   return {
-    contentCipher: "cipher",
     contentLength: 1,
-    contentNonce: "nonce",
     cryptoOwnerId: "alice-id",
     encryptedNoteKey: "encrypted-key",
     folderId: null,

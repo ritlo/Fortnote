@@ -6,7 +6,6 @@ import type { DecryptedNote } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
 
 const mocks = vi.hoisted(() => ({
-  checkpoint: vi.fn(),
   deleteNote: vi.fn(),
   encrypt: vi.fn(),
   encryptNoteKey: vi.fn(),
@@ -34,7 +33,6 @@ vi.mock("../cryptoClient", () => ({
   noteKeyToBase64: vi.fn()
 }));
 
-vi.mock("../realtime/crdt", () => ({ checkpointCrdtNote: mocks.checkpoint }));
 vi.mock("./useAppData", () => ({
   loadDecryptedNotes: mocks.loadNotes,
   loadFolders: vi.fn()
@@ -61,7 +59,6 @@ beforeEach(() => {
     version: 2,
     updatedAt: "2026-07-02T00:00:01.000Z"
   });
-  mocks.checkpoint.mockResolvedValue(undefined);
   mocks.deleteNote.mockResolvedValue(undefined);
   mocks.loadNotes.mockResolvedValue(undefined);
   useAppStore.setState({
@@ -86,16 +83,12 @@ describe("note autosave", () => {
 
     act(() => {
       result.current.updateSelectedNote({ title: "First" });
-      result.current.updateSelectedNote({ title: "Latest", body: "Latest body" });
-      result.current.updateSelectedNote({ title: "Latest", body: "Latest body" });
+      result.current.updateSelectedNote({ title: "Latest" });
+      result.current.updateSelectedNote({ title: "Latest" });
     });
     await act(async () => vi.advanceTimersByTimeAsync(499));
     expect(mocks.updateNote).not.toHaveBeenCalled();
     await act(async () => vi.advanceTimersByTimeAsync(1));
-    expect(mocks.checkpoint).toHaveBeenCalledWith(
-      expect.objectContaining({ updatedAt: "2026-07-02T00:00:01.000Z" })
-    );
-
     expect(mocks.updateNote).toHaveBeenCalledOnce();
     expect(mocks.encrypt).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Latest", noteId: "note_1" })
@@ -236,10 +229,15 @@ describe("note autosave", () => {
   });
 
   it("does not downgrade metadata advanced by realtime during a save", async () => {
-    let finishCheckpoint!: () => void;
-    mocks.checkpoint.mockImplementationOnce(
-      () => new Promise<void>((resolve) => {
-        finishCheckpoint = resolve;
+    let finishSave!: (value: {
+      id: string;
+      rootVersion: number;
+      version: number;
+      updatedAt: string;
+    }) => void;
+    mocks.updateNote.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        finishSave = resolve;
       })
     );
     const { result } = renderHook(() => useNoteActions(note()));
@@ -252,7 +250,12 @@ describe("note autosave", () => {
       useAppStore.setState({
         notes: [note({ title: "Converged draft", updatedAt: "2026-07-03T00:00:00.000Z", version: 3 })]
       });
-      finishCheckpoint();
+      finishSave({
+        id: "note_1",
+        rootVersion: 2,
+        version: 2,
+        updatedAt: "2026-07-02T00:00:01.000Z"
+      });
     });
     await waitForAssertion(() => {
       expect(useAppStore.getState().status).toBe("Ready");
@@ -265,7 +268,7 @@ describe("note autosave", () => {
     });
   });
 
-  it("does not checkpoint an old epoch after realtime replaces the note", async () => {
+  it("does not overwrite an old epoch after realtime replaces the note", async () => {
     let finishSave!: (value: {
       id: string;
       rootVersion: number;
@@ -304,7 +307,6 @@ describe("note autosave", () => {
       expect(useAppStore.getState().status).toBe("Ready");
     });
 
-    expect(mocks.checkpoint).not.toHaveBeenCalled();
     expect(useAppStore.getState().notes[0]).toMatchObject({
       keyEpoch: 2,
       noteKeyBase64: "replacement-key",
@@ -463,12 +465,12 @@ describe("note autosave", () => {
     expect(useAppStore.getState().notes[0]?.title).toBe("Fresh session edit");
   });
 
-  it("keeps failed drafts and retries only after a later edit", async () => {
+  it("keeps failed metadata drafts and retries only after a later edit", async () => {
     mocks.updateNote.mockRejectedValueOnce(new Error("offline"));
     const { result } = renderHook(() => useNoteActions(note()));
 
     act(() => {
-      result.current.updateSelectedNote({ body: "Unsaved draft" });
+      result.current.updateSelectedNote({ title: "Unsaved draft" });
     });
     await advanceAutosave();
     await waitForAssertion(() => {
@@ -476,11 +478,11 @@ describe("note autosave", () => {
     });
     await act(async () => vi.runAllTimersAsync());
     expect(mocks.updateNote).toHaveBeenCalledOnce();
-    expect(useAppStore.getState().notes[0]?.body).toBe("Unsaved draft");
+    expect(useAppStore.getState().notes[0]?.title).toBe("Unsaved draft");
     expect(useAppStore.getState().status).toBe("Save failed");
 
     act(() => {
-      result.current.updateSelectedNote({ body: "Retry draft" });
+      result.current.updateSelectedNote({ title: "Retry draft" });
     });
     await advanceAutosave();
     expect(mocks.updateNote).toHaveBeenCalledTimes(2);
@@ -517,7 +519,7 @@ describe("note autosave", () => {
 });
 
 describe("note save conflict handling", () => {
-  it("keeps the local draft while adopting latest server metadata", () => {
+  it("keeps the local metadata draft while adopting latest server content metadata", () => {
     const latestNote = note({
       body: "Server copy",
       folderId: "server-folder",
@@ -538,14 +540,14 @@ describe("note save conflict handling", () => {
     const merged = mergeDraftAfterConflict(latestNote, localDraft);
 
     expect(merged).toMatchObject({
-      body: "Unsaved local draft",
+      body: "Server copy",
       folderId: "local-folder",
       role: "viewer",
       title: "Local title",
       updatedAt: "2026-07-02T10:00:00.000Z",
       version: 4
     });
-    expect(merged.contentLength).toBe(new TextEncoder().encode("Unsaved local draft").length);
+    expect(merged.contentLength).toBe(latestNote.contentLength);
   });
 });
 

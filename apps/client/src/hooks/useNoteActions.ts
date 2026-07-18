@@ -18,7 +18,6 @@ import {
 import { fromBase64 } from "@fortnote/shared";
 import { useEffect, useRef } from "react";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
-import { checkpointCrdtNote } from "../realtime/crdt";
 import { loadDecryptedNotes, loadFolders } from "./useAppData";
 
 type SaveResult = "saved" | "conflict" | "failed" | "skipped";
@@ -256,20 +255,6 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         finishSuccessfulSave(noteId);
         return "skipped";
       }
-      const contentLength = new TextEncoder().encode(noteToSave.body).length;
-      await checkpointCrdtNote({
-        ...noteToSave,
-        contentLength,
-        updatedAt: saved.updatedAt,
-        version: saved.version ?? noteToSave.version,
-        rootVersion:
-          saved.rootVersion ?? noteToSave.rootVersion ?? noteToSave.version,
-        rootSectionId
-      });
-      if (!isCurrentNoteOperation(operation)) {
-        finishSuccessfulSave(noteId);
-        return "skipped";
-      }
       setNotes((current) =>
         current.map((note) =>
           note.id === noteToSave.id
@@ -277,7 +262,6 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
               ? note
               : {
                 ...note,
-                contentLength: new TextEncoder().encode(note.body).length,
                 version: saved.version ?? note.version,
                 rootVersion: saved.rootVersion ?? note.rootVersion ?? note.version,
                 rootSectionId: rootSectionId ?? note.rootSectionId ?? null,
@@ -434,7 +418,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
   }
 
   function updateSelectedNote(
-    patch: Partial<Pick<DecryptedNote, "folderId" | "title" | "body">>
+    patch: Partial<Pick<DecryptedNote, "folderId" | "title">>
   ) {
     if (!selectedNoteId) {
       return;
@@ -444,8 +428,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     if (
       !note ||
       ((patch.folderId === undefined || patch.folderId === note.folderId) &&
-        (patch.title === undefined || patch.title === note.title) &&
-        (patch.body === undefined || patch.body === note.body))
+        (patch.title === undefined || patch.title === note.title))
     ) {
       return;
     }
@@ -649,8 +632,6 @@ export function mergeDraftAfterConflict(
 ): DecryptedNote {
   return {
     ...latestNote,
-    body: draft.body,
-    contentLength: new TextEncoder().encode(draft.body).length,
     folderId: draft.folderId,
     title: draft.title
   };
