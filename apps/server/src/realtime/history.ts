@@ -3,6 +3,7 @@ import type { AppContext } from "../http/app.js";
 import { isSessionActive } from "../auth/session.js";
 import {
   ensureNoteSection,
+  readNoteSectionAccess,
   storageSectionId
 } from "../notes/sections.js";
 
@@ -31,15 +32,6 @@ export interface SectionHistoryPage {
   nextSequence: number;
 }
 
-interface AccessRow {
-  cryptoOwnerId: string;
-  keyEpoch: number;
-  rotationFenced: number;
-  isDeleted: number;
-  role: string;
-  status: string;
-}
-
 interface ExistingUpdateRow {
   noteId: string;
   sectionId: string;
@@ -60,7 +52,7 @@ export function persistBinaryUpdate(
     if (!isSessionActive(context.db, input.sessionId)) {
       return { status: "rejected", code: "forbidden" };
     }
-    const access = readAccess(context, input.header.noteId, input.userId);
+    const access = readNoteSectionAccess(context, input.header.noteId, input.userId);
     if (access?.status !== "active" || access.isDeleted) {
       return { status: "rejected", code: "forbidden" };
     }
@@ -223,25 +215,4 @@ export function listSectionHistory(
     hasMore: hasMoreItems || entries.length < candidates.length,
     nextSequence: entries.at(-1)?.serverSequence ?? input.afterSequence
   };
-}
-
-function readAccess(
-  context: AppContext,
-  noteId: string,
-  userId: string
-): AccessRow | null {
-  return (context.db.sqlite
-    .prepare(`
-      SELECT
-        n.crypto_owner_id AS cryptoOwnerId,
-        n.key_epoch AS keyEpoch,
-        n.rotation_fenced AS rotationFenced,
-        n.is_deleted AS isDeleted,
-        m.role,
-        m.status
-      FROM notes n
-      INNER JOIN note_memberships m ON m.note_id = n.id
-      WHERE n.id = ? AND m.user_id = ?
-    `)
-    .get(noteId, userId) ?? null) as AccessRow | null;
 }

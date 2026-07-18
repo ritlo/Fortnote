@@ -13,7 +13,8 @@ import {
 } from "@fortnote/shared";
 import { getConfig } from "../config.js";
 import { createDb, type AppDb } from "../db/client.js";
-import { createApp } from "../http/app.js";
+import { createApp, type AppContext } from "../http/app.js";
+import { compareAndSetSectionInitialization } from "../notes/sections.js";
 import {
   csrfHeaders,
   notePayload,
@@ -23,6 +24,7 @@ import { RealtimeHub } from "./hub.js";
 import { attachRealtimeServer } from "./server.js";
 
 interface TestServer {
+  context: AppContext;
   db: AppDb;
   url: string;
 }
@@ -331,6 +333,81 @@ describe("realtime server", () => {
       updateId: futureCutoff.updateId,
       sectionId,
       code: "forbidden"
+    });
+  });
+
+  it("installs exactly one current authorized section initialization", async () => {
+    const server = await createRealtimeTestServer();
+    const alice = await register(server.url, "initializer_alice");
+    const noteId = crypto.randomUUID();
+    const sectionId = crypto.randomUUID();
+    await authed(server.url, alice.cookie)
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(protectedNotePayload(noteId, sectionId))
+      .expect(201);
+    const identity = server.db.sqlite
+      .prepare(`
+        SELECT s.id AS sessionId, s.user_id AS userId, n.crypto_owner_id AS cryptoOwnerId
+        FROM sessions s
+        INNER JOIN users u ON u.id = s.user_id
+        INNER JOIN notes n ON n.user_id = u.id
+        WHERE n.id = ?
+        ORDER BY s.created_at DESC
+        LIMIT 1
+      `)
+      .get(noteId) as { sessionId: string; userId: string; cryptoOwnerId: string };
+    const winnerManifestId = seedCheckpointManifest(server.db, {
+      noteId,
+      sectionId,
+      cryptoOwnerId: identity.cryptoOwnerId
+    });
+    const losingManifestId = seedCheckpointManifest(server.db, {
+      noteId,
+      sectionId,
+      cryptoOwnerId: identity.cryptoOwnerId
+    });
+    const initialization = {
+      sessionId: identity.sessionId,
+      userId: identity.userId,
+      noteId,
+      sectionId,
+      expectedKeyEpoch: 1,
+      expectedRootVersion: 1,
+      manifestId: winnerManifestId
+    };
+
+    expect(compareAndSetSectionInitialization(server.context, {
+      ...initialization,
+      expectedRootVersion: 2
+    })).toEqual({ status: "rejected", code: "stale-version" });
+    expect(compareAndSetSectionInitialization(server.context, initialization)).toEqual({
+      status: "installed",
+      manifestId: winnerManifestId
+    });
+    expect(compareAndSetSectionInitialization(server.context, {
+      ...initialization,
+      manifestId: losingManifestId
+    })).toEqual({
+      status: "already-initialized",
+      manifestId: winnerManifestId
+    });
+    expect(
+      server.db.sqlite
+        .prepare(`
+          SELECT
+            i.manifest_id AS manifestId,
+            i.legacy_root_version AS legacyRootVersion,
+            s.initialization_manifest_id AS sectionManifestId
+          FROM crdt_initializations i
+          INNER JOIN note_sections s ON s.id = i.section_id
+          WHERE i.note_id = ? AND i.section_id = ? AND i.key_epoch = 1
+        `)
+        .get(noteId, sectionId)
+    ).toEqual({
+      manifestId: winnerManifestId,
+      legacyRootVersion: 1,
+      sectionManifestId: winnerManifestId
     });
   });
 
@@ -1118,9 +1195,53 @@ async function createRealtimeTestServer(
   openHubs.push(realtime);
   const address = httpServer.address() as AddressInfo;
   return {
+    context,
     db,
     url: `http://127.0.0.1:${String(address.port)}`
   };
+}
+
+function seedCheckpointManifest(
+  db: AppDb,
+  input: { noteId: string; sectionId: string; cryptoOwnerId: string }
+): string {
+  const uploadId = crypto.randomUUID();
+  const updateId = crypto.randomUUID();
+  const manifestId = crypto.randomUUID();
+  db.sqlite
+    .prepare(`
+      INSERT INTO content_uploads (
+        id, update_id, note_id, section_id, crypto_owner_id, key_epoch,
+        kind, format_version, total_cipher_bytes, chunk_count, manifest_hash,
+        status, expires_at
+      ) VALUES (?, ?, ?, ?, ?, 1, 'checkpoint', 2, 6, 1, ?, 'committed', ?)
+    `)
+    .run(
+      uploadId,
+      updateId,
+      input.noteId,
+      input.sectionId,
+      input.cryptoOwnerId,
+      `hash-${manifestId}`,
+      "2099-01-01T00:00:00.000Z"
+    );
+  db.sqlite
+    .prepare(`
+      INSERT INTO content_manifests (
+        id, upload_id, update_id, note_id, section_id, key_epoch, kind,
+        format_version, first_sequence, last_sequence, total_cipher_bytes,
+        chunk_count, manifest_hash
+      ) VALUES (?, ?, ?, ?, ?, 1, 'checkpoint', 2, 1, 1, 6, 1, ?)
+    `)
+    .run(
+      manifestId,
+      uploadId,
+      updateId,
+      input.noteId,
+      input.sectionId,
+      `hash-${manifestId}`
+    );
+  return manifestId;
 }
 
 async function register(baseUrl: string, username: string): Promise<{ cookie: string }> {
