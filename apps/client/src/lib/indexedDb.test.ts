@@ -1,0 +1,145 @@
+import { indexedDB as fakeIndexedDb } from "fake-indexeddb";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  IndexedDbCapacityError,
+  normalizeIndexedDbError,
+  openFortnoteIndexedDb,
+  type EncryptedOutboxRecord,
+  type SectionCacheRecord
+} from "./indexedDb";
+
+const databases: Awaited<ReturnType<typeof openFortnoteIndexedDb>>[] = [];
+
+afterEach(async () => {
+  await Promise.all(databases.splice(0).map(async (database) => database.deleteDatabase()));
+});
+
+describe("protected IndexedDB storage", () => {
+  it("atomically replaces an outbox item with its acknowledged marker", async () => {
+    const database = await openDatabase();
+    const record = outboxRecord();
+    await database.putOutbox(record);
+
+    await database.acknowledgeOutbox(record, 17);
+
+    await expect(database.getOutbox(record)).resolves.toBeNull();
+    await expect(database.getAcknowledgement(record)).resolves.toMatchObject({
+      serverSequence: 17,
+      updateId: record.updateId
+    });
+  });
+
+  it("isolates compound ownership even when update IDs collide", async () => {
+    const database = await openDatabase();
+    const updateId = crypto.randomUUID();
+    const first = outboxRecord({ userId: "user-a", updateId });
+    const second = outboxRecord({ userId: "user-b", updateId });
+    await database.putOutbox(first);
+    await database.putOutbox(second);
+
+    await expect(database.listOutbox("user-a")).resolves.toEqual([first]);
+    await expect(database.listOutbox("user-b")).resolves.toEqual([second]);
+  });
+
+  it("serializes multi-tab lease compare-and-set decisions", async () => {
+    const name = databaseName();
+    const first = await openFortnoteIndexedDb({ factory: fakeIndexedDb, name });
+    const second = await openFortnoteIndexedDb({ factory: fakeIndexedDb, name });
+    databases.push(first, second);
+
+    const outcomes = await Promise.all([
+      first.acquireLease("user-a:note-a:section-a", "tab-a", 1_000, 5_000),
+      second.acquireLease("user-a:note-a:section-a", "tab-b", 1_000, 5_000)
+    ]);
+    expect(outcomes.filter(Boolean)).toHaveLength(1);
+    expect(await first.readLease("user-a:note-a:section-a")).toMatchObject({
+      ownerId: outcomes[0] ? "tab-a" : "tab-b",
+      expiresAt: 6_000
+    });
+  });
+
+  it("classifies capacity failures without exposing stored data", () => {
+    const normalized = normalizeIndexedDbError(
+      new DOMException("secret browser detail", "QuotaExceededError")
+    );
+    expect(normalized).toBeInstanceOf(IndexedDbCapacityError);
+    expect(normalized.message).toBe("Protected browser storage is full");
+    expect(normalized.message).not.toContain("secret");
+  });
+
+  it("evicts least-recently-used cache entries but never pending work", async () => {
+    const database = await openDatabase();
+    const pending = cacheRecord({ manifestId: "pending", lastAccessedAt: 1, pending: true });
+    const oldest = cacheRecord({ manifestId: "oldest", lastAccessedAt: 2 });
+    const newest = cacheRecord({ manifestId: "newest", lastAccessedAt: 3 });
+    await database.putSectionCache(pending);
+    await database.putSectionCache(oldest);
+    await database.putSectionCache(newest);
+
+    await expect(database.evictSectionCache("user-a", 2)).resolves.toEqual(["oldest"]);
+    await expect(database.listSectionCache("user-a")).resolves.toEqual([pending, newest]);
+  });
+
+  it("clears one account without deleting another account's protected records", async () => {
+    const database = await openDatabase();
+    const first = outboxRecord({ userId: "user-a" });
+    const second = outboxRecord({ userId: "user-b" });
+    await database.putOutbox(first);
+    await database.putOutbox(second);
+    await database.putSectionCache(cacheRecord({ userId: "user-a" }));
+
+    await database.clearAccount("user-a");
+
+    await expect(database.listOutbox("user-a")).resolves.toEqual([]);
+    await expect(database.listSectionCache("user-a")).resolves.toEqual([]);
+    await expect(database.listOutbox("user-b")).resolves.toEqual([second]);
+  });
+});
+
+async function openDatabase() {
+  const database = await openFortnoteIndexedDb({
+    factory: fakeIndexedDb,
+    name: databaseName()
+  });
+  databases.push(database);
+  return database;
+}
+
+function databaseName(): string {
+  return `fortnote-indexeddb-test-${crypto.randomUUID()}`;
+}
+
+function outboxRecord(
+  overrides: Partial<EncryptedOutboxRecord> = {}
+): EncryptedOutboxRecord {
+  return {
+    userId: "user-a",
+    noteId: "note-a",
+    sectionId: "section-a",
+    keyEpoch: 1,
+    updateId: crypto.randomUUID(),
+    kind: "update",
+    formatVersion: 2,
+    inlineCipher: Uint8Array.from([1, 2, 3]),
+    nonce: Uint8Array.from({ length: 24 }, (_, index) => index),
+    state: "queued",
+    attempts: 0,
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides
+  };
+}
+
+function cacheRecord(overrides: Partial<SectionCacheRecord> = {}): SectionCacheRecord {
+  return {
+    userId: "user-a",
+    noteId: "note-a",
+    sectionId: "section-a",
+    keyEpoch: 1,
+    manifestId: crypto.randomUUID(),
+    encryptedBytes: Uint8Array.from([4, 5, 6]),
+    lastAccessedAt: 1,
+    pending: false,
+    ...overrides
+  };
+}
