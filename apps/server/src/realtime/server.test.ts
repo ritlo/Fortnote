@@ -1,5 +1,8 @@
 import { createServer, type Server } from "node:http";
+import { mkdtemp, rm } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import request from "supertest";
 import WebSocket, { type RawData } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
@@ -26,10 +29,14 @@ import { attachRealtimeServer } from "./server.js";
 interface TestServer {
   context: AppContext;
   db: AppDb;
+  httpServer: Server;
+  realtime: RealtimeHub;
   url: string;
 }
 
 interface TestServerOptions {
+  databasePath?: string;
+  historyPageMaxItems?: number;
   presenceSweepIntervalMs?: number;
   presenceTtlMs?: number;
   sessionSweepIntervalMs?: number;
@@ -49,6 +56,8 @@ interface BinarySocketClient {
 const openServers: Server[] = [];
 const openSockets: WebSocket[] = [];
 const openHubs: RealtimeHub[] = [];
+const openDatabases: AppDb[] = [];
+const temporaryDirectories: string[] = [];
 const TEST_ALLOWED_ORIGIN = "http://localhost:5173";
 
 afterEach(async () => {
@@ -70,6 +79,14 @@ afterEach(async () => {
             resolve();
           });
         })
+    )
+  );
+  for (const db of openDatabases.splice(0)) {
+    db.sqlite.close();
+  }
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) =>
+      rm(directory, { recursive: true, force: true })
     )
   );
 });
@@ -229,6 +246,116 @@ describe("realtime server", () => {
       sectionId,
       nextSequence: 1,
       entries: [{ kind: "inline", updateId: header.updateId, serverSequence: 1 }]
+    });
+  });
+
+  it("replays paged binary history after a file-backed database restart", async () => {
+    await cryptoReady();
+    const directory = await mkdtemp(join(tmpdir(), "fortnote-realtime-restart-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "fortnote.sqlite");
+    const firstServer = await createRealtimeTestServer({
+      databasePath,
+      historyPageMaxItems: 2
+    });
+    const alice = await register(firstServer.url, "restart_alice");
+    const noteId = crypto.randomUUID();
+    const sectionId = crypto.randomUUID();
+    await authed(firstServer.url, alice.cookie)
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(protectedNotePayload(noteId, sectionId))
+      .expect(201);
+    const cryptoOwnerId = (
+      firstServer.db.sqlite
+        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
+        .get(noteId) as { cryptoOwnerId: string }
+    ).cryptoOwnerId;
+    const writer = await connectBinary(firstServer.url, alice.cookie);
+    await writer.nextJson("restart writer connected");
+    await writer.nextJson("restart writer replay");
+    const updates = [1, 2, 3].map((value) => ({
+      cipher: Uint8Array.from([value, 0, 0, 0, 0, 0]),
+      header: binaryHeader({ noteId, sectionId, cryptoOwnerId })
+    }));
+    for (const [index, update] of updates.entries()) {
+      writer.socket.send(
+        encodeCrdtBinaryFrame(update.header, update.cipher, 256 * 1024)
+      );
+      expect(await writer.nextJson(`restart update ${String(index + 1)} ack`)).toMatchObject({
+        type: "crdt-ack",
+        updateId: update.header.updateId,
+        result: "inserted",
+        serverSequence: index + 1
+      });
+      expect(
+        firstServer.db.sqlite
+          .prepare("SELECT server_sequence AS serverSequence FROM section_updates WHERE update_id = ?")
+          .get(update.header.updateId)
+      ).toEqual({ serverSequence: index + 1 });
+    }
+
+    await closeSocket(writer.socket);
+    await stopRealtimeTestServer(firstServer);
+
+    const restarted = await createRealtimeTestServer({
+      databasePath,
+      historyPageMaxItems: 2
+    });
+    const reader = await connectBinary(restarted.url, alice.cookie);
+    await reader.nextJson("restart reader connected");
+    await reader.nextJson("restart reader replay");
+    reader.socket.send(JSON.stringify({
+      type: "crdt-subscribe",
+      requestId: crypto.randomUUID(),
+      noteId,
+      sectionId,
+      expectedKeyEpoch: 1,
+      afterSequence: 0
+    }));
+    const firstPageFrames = await Promise.all([
+      reader.nextBinary("restart first page frame one"),
+      reader.nextBinary("restart first page frame two")
+    ]);
+    expect(
+      firstPageFrames.map((frame) =>
+        decodeCrdtBinaryFrame(frame, 256 * 1024).header.serverSequence
+      )
+    ).toEqual([1, 2]);
+    expect(await reader.nextJson("restart first page outcome")).toMatchObject({
+      type: "crdt-history-page",
+      afterSequence: 0,
+      nextSequence: 2,
+      hasMore: true,
+      entries: [
+        { updateId: updates[0]!.header.updateId, serverSequence: 1 },
+        { updateId: updates[1]!.header.updateId, serverSequence: 2 }
+      ]
+    });
+
+    reader.socket.send(JSON.stringify({
+      type: "crdt-subscribe",
+      requestId: crypto.randomUUID(),
+      noteId,
+      sectionId,
+      expectedKeyEpoch: 1,
+      afterSequence: 2
+    }));
+    expect(
+      decodeCrdtBinaryFrame(
+        await reader.nextBinary("restart second page frame"),
+        256 * 1024
+      )
+    ).toEqual({
+      header: { ...updates[2]!.header, serverSequence: 3 },
+      cipher: updates[2]!.cipher
+    });
+    expect(await reader.nextJson("restart second page outcome")).toMatchObject({
+      type: "crdt-history-page",
+      afterSequence: 2,
+      nextSequence: 3,
+      hasMore: false,
+      entries: [{ updateId: updates[2]!.header.updateId, serverSequence: 3 }]
     });
   });
 
@@ -1181,9 +1308,20 @@ describe("realtime server", () => {
 async function createRealtimeTestServer(
   options: TestServerOptions = {}
 ): Promise<TestServer> {
-  const config = { ...getConfig(), port: 0, databasePath: ":memory:" };
+  const {
+    databasePath = ":memory:",
+    historyPageMaxItems,
+    ...realtimeOptions
+  } = options;
+  const config = {
+    ...getConfig(),
+    port: 0,
+    databasePath,
+    ...(historyPageMaxItems === undefined ? {} : { historyPageMaxItems })
+  };
   const db = createDb(config);
-  const realtime = new RealtimeHub(options);
+  openDatabases.push(db);
+  const realtime = new RealtimeHub(realtimeOptions);
   const context = { config, db, realtime };
   const app = createApp(context);
   const httpServer = createServer(app);
@@ -1197,8 +1335,44 @@ async function createRealtimeTestServer(
   return {
     context,
     db,
+    httpServer,
+    realtime,
     url: `http://127.0.0.1:${String(address.port)}`
   };
+}
+
+async function stopRealtimeTestServer(server: TestServer): Promise<void> {
+  server.realtime.close();
+  removeTracked(openHubs, server.realtime);
+  await new Promise<void>((resolve, reject) => {
+    server.httpServer.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+  removeTracked(openServers, server.httpServer);
+  server.db.sqlite.close();
+  removeTracked(openDatabases, server.db);
+}
+
+function closeSocket(socket: WebSocket): Promise<void> {
+  if (socket.readyState === WebSocket.CLOSED) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    socket.once("close", resolve);
+    socket.close();
+  });
+}
+
+function removeTracked<T>(values: T[], value: T): void {
+  const index = values.indexOf(value);
+  if (index >= 0) {
+    values.splice(index, 1);
+  }
 }
 
 function seedCheckpointManifest(
