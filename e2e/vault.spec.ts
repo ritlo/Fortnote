@@ -109,7 +109,9 @@ test("renders potentially malicious editor text without executing it", async ({ 
     "<script>window.__markdownExecuted = true</script>"
   );
   await expect
-    .poll(() => page.evaluate(() => Boolean(window.__markdownExecuted)))
+    .poll(() => page.evaluate(() =>
+      Boolean((window as Window & { __markdownExecuted?: boolean }).__markdownExecuted)
+    ))
     .toBe(false);
 });
 

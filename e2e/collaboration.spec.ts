@@ -1,7 +1,8 @@
 import { Buffer } from "node:buffer";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { decodeCrdtBinaryFrame } from "../packages/shared/src/index.js";
 import {
   expect,
   test,
@@ -413,6 +414,107 @@ test("syncs edits between two tabs signed in to the same account", async ({
   }
 });
 
+test("converges offline tabs after a lost ack, API restart, and fresh session", async ({
+  baseURL,
+  browser
+}) => {
+  test.setTimeout(120_000);
+  const contexts: BrowserContext[] = [];
+  const alice = uniqueAccount("durable-alice");
+  const bob = uniqueAccount("durable-bob");
+  const noteTitle = `Durable convergence ${alice.suffix}`;
+  const droppedAcks = {
+    alreadyPresent: 0,
+    armed: false,
+    dropped: 0,
+    targetSends: 0,
+    targetUpdateId: null as string | null
+  };
+
+  try {
+    let bobPage = await newUserPage(browser, baseURL, contexts);
+    await register(bobPage, bob.username, bob.password);
+    await waitForSharingKey(bobPage);
+
+    const aliceContext = await browser.newContext({ baseURL });
+    contexts.push(aliceContext);
+    const firstAlicePage = await aliceContext.newPage();
+    await dropFirstDurableAck(firstAlicePage, droppedAcks);
+    await register(firstAlicePage, alice.username, alice.password);
+    await createNote(firstAlicePage, noteTitle, `Initial ${alice.suffix}`);
+    await shareNote(firstAlicePage, bob.username, "editor");
+    await openNote(bobPage, noteTitle);
+
+    const secondAlicePage = await aliceContext.newPage();
+    await signIn(secondAlicePage, alice.username, alice.password);
+    await openNote(secondAlicePage, noteTitle);
+    droppedAcks.armed = true;
+    await blockEditor(firstAlicePage).press("ControlOrMeta+End");
+    await blockEditor(firstAlicePage).pressSequentially(` lost-ack-${alice.suffix}`);
+    await expect.poll(() => droppedAcks.dropped, { timeout: 10_000 }).toBe(1);
+    await expect.poll(() => droppedAcks.targetSends, { timeout: 15_000 }).toBeGreaterThan(1);
+    await expect(blockEditor(secondAlicePage)).toContainText(`lost-ack-${alice.suffix}`, {
+      timeout: 15_000
+    });
+    await firstAlicePage.close();
+
+    await bobPage.context().setOffline(true);
+    await blockEditor(bobPage).press("ControlOrMeta+End");
+    await blockEditor(bobPage).pressSequentially(` bob-offline-${alice.suffix}`);
+    await expect(blockEditor(bobPage)).toContainText(`bob-offline-${alice.suffix}`);
+
+    await blockEditor(secondAlicePage).press("ControlOrMeta+Home");
+    await blockEditor(secondAlicePage).pressSequentially(`alice-online-${alice.suffix} `);
+    await blockEditor(secondAlicePage).press("ControlOrMeta+End");
+    await blockEditor(secondAlicePage).pressSequentially(` alice-tail-${alice.suffix}`);
+
+    await bobPage.context().setOffline(false);
+    await expect.poll(async () => {
+      const values = await Promise.all([
+        editorText(secondAlicePage),
+        editorText(bobPage)
+      ]);
+      return new Set(values).size;
+    }, { timeout: 30_000 }).toBe(1);
+    const beforeRestart = await editorText(secondAlicePage);
+    expect(beforeRestart).toContain(`bob-offline-${alice.suffix}`);
+    expect(beforeRestart).toContain(`lost-ack-${alice.suffix}`);
+    expect(beforeRestart).toContain(`alice-online-${alice.suffix}`);
+    expect(beforeRestart).toContain(`alice-tail-${alice.suffix}`);
+
+    const restarted = await restartManagedE2eServer();
+    if (!restarted) {
+      test.info().annotations.push({
+        type: "managed-server",
+        description: "API restart skipped because Playwright reused an external server"
+      });
+    }
+    await expect.poll(async () => {
+      const values = await Promise.all([
+        editorText(secondAlicePage),
+        editorText(bobPage)
+      ]);
+      return new Set(values).size;
+    }, { timeout: 30_000 }).toBe(1);
+
+    const postRestartSuffix = ` post-restart-${alice.suffix}`;
+    await blockEditor(secondAlicePage).press("ControlOrMeta+End");
+    await blockEditor(secondAlicePage).pressSequentially(postRestartSuffix);
+    await expect(blockEditor(bobPage)).toContainText(postRestartSuffix, {
+      timeout: 15_000
+    });
+    const finalBody = await editorText(secondAlicePage);
+
+    await closePageContext(bobPage, contexts);
+    bobPage = await newUserPage(browser, baseURL, contexts);
+    await signIn(bobPage, bob.username, bob.password);
+    await openNote(bobPage, noteTitle);
+    await expect.poll(() => editorText(bobPage), { timeout: 20_000 }).toBe(finalBody);
+  } finally {
+    await closeContexts(contexts);
+  }
+});
+
 test("removes a permanently deleted shared note after an offline client reconnects", async ({
   baseURL,
   browser
@@ -640,6 +742,105 @@ async function closeContexts(contexts: BrowserContext[]): Promise<void> {
   await Promise.all(
     contexts.splice(0).map((context) => context.close().catch(() => undefined))
   );
+}
+
+async function dropFirstDurableAck(
+  page: Page,
+  state: {
+    alreadyPresent: number;
+    armed: boolean;
+    dropped: number;
+    targetSends: number;
+    targetUpdateId: string | null;
+  }
+): Promise<void> {
+  await page.routeWebSocket(/\/api\/realtime/, (pageSocket) => {
+    const serverSocket = pageSocket.connectToServer();
+    pageSocket.onMessage((message) => {
+      if (state.armed && !state.targetUpdateId && typeof message !== "string") {
+        try {
+          state.targetUpdateId = decodeCrdtBinaryFrame(
+            Uint8Array.from(message),
+            256 * 1024
+          ).header.updateId;
+        } catch {
+          // Non-CRDT binary messages remain transparent to the proxy.
+        }
+      }
+      if (state.targetUpdateId && typeof message !== "string") {
+        try {
+          const updateId = decodeCrdtBinaryFrame(
+            Uint8Array.from(message),
+            256 * 1024
+          ).header.updateId;
+          if (updateId === state.targetUpdateId) {
+            state.targetSends += 1;
+          }
+        } catch {
+          // Non-CRDT binary messages remain transparent to the proxy.
+        }
+      }
+      serverSocket.send(message);
+    });
+    serverSocket.onMessage((message) => {
+      const controlMessage = typeof message === "string"
+        ? message
+        : message[0] === 0x7b
+          ? message.toString("utf8")
+          : null;
+      if (controlMessage) {
+        try {
+          const controlText: string = controlMessage;
+          const parsed = JSON.parse(controlText) as {
+            result?: string;
+            serverSequence?: number;
+            type?: string;
+            updateId?: string;
+          };
+          if (
+            parsed.type === "crdt-ack" &&
+            typeof parsed.serverSequence === "number" &&
+            parsed.updateId === state.targetUpdateId
+          ) {
+            if (state.dropped === 0) {
+              state.dropped += 1;
+              return;
+            }
+            if (parsed.result === "already-present") {
+              state.alreadyPresent += 1;
+            }
+          }
+        } catch {
+          // Non-control text frames are forwarded unchanged.
+        }
+      }
+      pageSocket.send(message);
+    });
+  });
+}
+
+async function restartManagedE2eServer(): Promise<boolean> {
+  const statePath = resolve("data/e2e-server.state");
+  const restartPath = resolve("data/e2e-server.restart");
+  let supervisorPid: number;
+  try {
+    const state = (await readFile(statePath, "utf8")).trim();
+    supervisorPid = Number(state.split(":").at(-1));
+    process.kill(supervisorPid, 0);
+  } catch {
+    return false;
+  }
+  const token = crypto.randomUUID();
+  await writeFile(restartPath, token, "utf8");
+  await expect.poll(async () => {
+    try {
+      const state: string = await readFile(statePath, "utf8");
+      return state.trim();
+    } catch {
+      return "";
+    }
+  }, { timeout: 45_000 }).toBe(`ready:${token}:${String(supervisorPid)}`);
+  return true;
 }
 
 async function register(page: Page, username: string, password: string): Promise<void> {
