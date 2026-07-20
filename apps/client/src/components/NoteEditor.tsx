@@ -67,6 +67,9 @@ function CollaborativeBlockNoteField({
   const fragment = getCrdtFragment(selectedNote.id, selectedNote.keyEpoch, sectionId);
   const provider = getCrdtProvider(selectedNote.id, selectedNote.keyEpoch, sectionId);
   const editor = useCreateBlockNote({
+    domAttributes: {
+      editor: { "aria-label": "Note content" }
+    },
     collaboration: {
       fragment,
       user: { name: user?.username ?? "User", color: "#30bced" },

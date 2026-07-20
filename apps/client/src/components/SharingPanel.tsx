@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Share2, UserPlus } from "lucide-react";
 import { fromBase64 } from "@fortnote/shared";
 import {
@@ -51,6 +51,8 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingTrust, setPendingTrust] = useState<PendingSharingTrust | null>(null);
   const [isTrustConfirmed, setIsTrustConfirmed] = useState(false);
+  const shareButtonRef = useRef<HTMLButtonElement>(null);
+  const trustCheckboxRef = useRef<HTMLInputElement>(null);
   const user = useAppStore((state) => state.user);
   const rootKey = useAppStore((state) => state.rootKey);
   const setError = useAppStore((state) => state.setError);
@@ -94,6 +96,18 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     setPendingTrust(null);
     setIsTrustConfirmed(false);
   }, [selectedNote?.id]);
+
+  useEffect(() => {
+    if (pendingTrust) {
+      trustCheckboxRef.current?.focus();
+    }
+  }, [pendingTrust]);
+
+  function closePendingTrust(): void {
+    setPendingTrust(null);
+    setIsTrustConfirmed(false);
+    window.setTimeout(() => shareButtonRef.current?.focus());
+  }
 
   async function submitInvite() {
     if (selectedNote?.role !== "owner" || !username.trim()) {
@@ -476,6 +490,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
               <option value="viewer">Viewer</option>
             </select>
             <button
+              ref={shareButtonRef}
               className="icon-button"
               type="button"
               aria-label="Share note"
@@ -488,7 +503,12 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
             </button>
           </div>
           {pendingTrust ? (
-            <div className="trust-confirmation">
+            <div
+              className="trust-confirmation"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Confirm collaborator key"
+            >
               <span>
                 <strong>{pendingTrust.publicKey.username}</strong>
                 <small>
@@ -499,6 +519,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
               <p>{sharingKeyTrustInstruction(pendingTrust.publicKey.username)}</p>
               <label>
                 <input
+                  ref={trustCheckboxRef}
                   type="checkbox"
                   checked={isTrustConfirmed}
                   onChange={(event) => {
@@ -523,8 +544,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
                   type="button"
                   disabled={isSubmitting}
                   onClick={() => {
-                    setPendingTrust(null);
-                    setIsTrustConfirmed(false);
+                    closePendingTrust();
                     setStatus("Share cancelled");
                   }}
                 >

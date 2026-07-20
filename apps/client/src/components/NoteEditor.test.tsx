@@ -183,6 +183,9 @@ describe("NoteEditor BlockNote lifecycle", () => {
 
     expect(mocks.getFragment).toHaveBeenLastCalledWith("note-1", 1, "section-1");
     expect(mocks.createOptions).toHaveLength(1);
+    expect(mocks.createOptions[0]).toMatchObject({
+      domAttributes: { editor: { "aria-label": "Note content" } }
+    });
 
     act(() => {
       installSection("section-2", "ready");

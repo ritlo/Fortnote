@@ -34,6 +34,11 @@ button {
   cursor: pointer;
 }
 
+:where(button, input, select, textarea, [contenteditable="true"], [tabindex]):focus-visible {
+  outline: 3px solid var(--brand-strong);
+  outline-offset: 2px;
+}
+
 button:disabled,
 input:disabled,
 select:disabled,
@@ -88,6 +93,10 @@ p {
   margin: 0;
 }
 
+.brand-row h1 {
+  font-size: inherit;
+}
+
 .muted,
 .auth-panel p,
 .pane-header p {
@@ -106,6 +115,42 @@ p {
 
 .pane-header .last-saved {
   margin-top: 4px;
+}
+
+.collaboration-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.collaboration-status progress {
+  max-width: 180px;
+}
+
+.collaboration-status-local-full,
+.collaboration-status-server-full,
+.collaboration-status-review,
+.collaboration-status-error,
+.collaboration-status-undecryptable,
+.collaboration-status-removed {
+  color: var(--danger);
+}
+
+.recovery-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 12px;
+  background: #fff8db;
+}
+
+.recovery-panel .action-row {
+  flex-wrap: wrap;
 }
 
 label {
@@ -725,5 +770,53 @@ textarea {
 
   .editor-column {
     min-height: 0;
+  }
+
+  .pane-header,
+  .action-row,
+  .membership-list li,
+  .rotation-retry {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 480px) {
+  .auth-screen,
+  .sidebar,
+  .editor-column,
+  .settings-panel {
+    padding: 12px;
+  }
+
+  .pane-header {
+    align-items: flex-start;
+    padding: 10px 12px;
+  }
+
+  .pane-header > div,
+  .share-form,
+  .membership-actions,
+  .collaboration-status,
+  .collaboration-status progress {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .share-form {
+    grid-template-columns: 1fr;
+  }
+
+  .membership-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .membership-actions select {
+    min-width: 0;
+  }
+
+  .section-actions button,
+  .recovery-panel button {
+    flex: 1 1 auto;
   }
 }

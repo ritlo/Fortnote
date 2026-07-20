@@ -31,7 +31,7 @@ export function Sidebar({
     <aside className="sidebar">
       <div className="brand-row compact">
         <div className="brand-mark">CN</div>
-        <strong>Fortnote</strong>
+        <h1>Fortnote</h1>
       </div>
       <button
         className={
