@@ -22,4 +22,8 @@ export interface PerformanceFixtureDefinition {
 }
 
 export const PERFORMANCE_FIXTURE: Readonly<Omit<PerformanceFixtureDefinition, "accounts" | "seed" | "title">>;
-export function performanceFixtureDefinition(seed?: string): PerformanceFixtureDefinition;
+export const PERFORMANCE_SMOKE_FIXTURE: Readonly<Omit<PerformanceFixtureDefinition, "accounts" | "seed" | "title">>;
+export function performanceFixtureDefinition(
+  seed?: string,
+  profile?: "smoke" | "full"
+): PerformanceFixtureDefinition;

@@ -19,7 +19,18 @@ export const PERFORMANCE_FIXTURE = Object.freeze({
   warmupRuns: 2
 });
 
-export function performanceFixtureDefinition(seed = "fortnote-performance-v1") {
+export const PERFORMANCE_SMOKE_FIXTURE = Object.freeze({
+  ...PERFORMANCE_FIXTURE,
+  logicalBytes: 5 * MIB,
+  samples: 3,
+  sectionCount: 4,
+  warmupRuns: 1
+});
+
+export function performanceFixtureDefinition(
+  seed = "fortnote-performance-v1",
+  profile = "smoke"
+) {
   const suffix = seed.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 24);
   if (!suffix) throw new Error("Performance fixture seed must contain a letter or digit");
   const account = (role) => ({
@@ -28,7 +39,7 @@ export function performanceFixtureDefinition(seed = "fortnote-performance-v1") {
     username: `perf-${role}-${suffix}`
   });
   return {
-    ...PERFORMANCE_FIXTURE,
+    ...(profile === "full" ? PERFORMANCE_FIXTURE : PERFORMANCE_SMOKE_FIXTURE),
     accounts: {
       editor: account("editor"),
       owner: account("owner"),
@@ -47,7 +58,14 @@ async function run() {
   const outputDirectory = path.resolve(
     process.env.FORTNOTE_PERFORMANCE_OUTPUT ?? "test-results/performance"
   );
-  const definition = performanceFixtureDefinition(process.env.FORTNOTE_PERFORMANCE_SEED);
+  const profile = process.env.FORTNOTE_PERFORMANCE_PROFILE ?? "smoke";
+  if (profile !== "smoke" && profile !== "full") {
+    throw new Error("FORTNOTE_PERFORMANCE_PROFILE must be smoke or full");
+  }
+  const definition = performanceFixtureDefinition(
+    process.env.FORTNOTE_PERFORMANCE_SEED,
+    profile
+  );
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(
     path.join(outputDirectory, "fixture.json"),
@@ -69,6 +87,7 @@ async function run() {
         PORT: String(apiPort),
         FORTNOTE_PERFORMANCE_BUILD: "1",
         FORTNOTE_PERFORMANCE_OUTPUT: outputDirectory,
+        FORTNOTE_PERFORMANCE_PROFILE: profile,
         FORTNOTE_PERFORMANCE_SEED: definition.seed,
         FORTNOTE_RUN_PERFORMANCE: "1"
       },

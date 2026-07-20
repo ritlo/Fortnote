@@ -8,7 +8,6 @@ import { performanceFixtureDefinition } from "../scripts/create-performance-fixt
 import {
   captureSectionTraffic,
   closeLargeNoteContexts,
-  closeLargeNotePage,
   createLargeNoteThroughEditor,
   expectColdOpenIsolation,
   newLargeNotePage,
@@ -38,8 +37,16 @@ test.describe("controlled production performance", () => {
     browserName
   }) => {
     test.setTimeout(45 * 60_000);
-    const definition = performanceFixtureDefinition(process.env.FORTNOTE_PERFORMANCE_SEED);
-    const enforceBudgets = process.env.FORTNOTE_PERFORMANCE_ENFORCE_BUDGETS !== "0";
+    const performanceProfile = process.env.FORTNOTE_PERFORMANCE_PROFILE === "full"
+      ? "full"
+      : "smoke";
+    const definition = performanceFixtureDefinition(
+      process.env.FORTNOTE_PERFORMANCE_SEED,
+      performanceProfile
+    );
+    const enforceBudgets = process.env.FORTNOTE_PERFORMANCE_ENFORCE_BUDGETS === "1" ||
+      (performanceProfile === "full" &&
+        process.env.FORTNOTE_PERFORMANCE_ENFORCE_BUDGETS !== "0");
     const samples = positiveInteger(process.env.FORTNOTE_PERFORMANCE_SAMPLES, definition.samples);
     const warmupRuns = positiveInteger(
       process.env.FORTNOTE_PERFORMANCE_WARMUPS,
@@ -95,29 +102,31 @@ test.describe("controlled production performance", () => {
       await openLargeNote(viewerPage, definition.title);
       await expect(viewerPage.locator(".block-editor .bn-editor"))
         .toHaveAttribute("contenteditable", "false");
+      const samplePage = await newLargeNotePage(browser, baseURL, contexts);
+      const initialTraffic = captureSectionTraffic(samplePage, dataset.noteId);
+      trackTransferBytes(samplePage, (bytes) => {
+        transferredBytes += bytes;
+      });
+      await signInLargeNoteUser(samplePage, definition.accounts.owner);
 
       for (let run = 0; run < warmupRuns + samples; run += 1) {
         const retained = run >= warmupRuns;
-        const coldPage = await newLargeNotePage(browser, baseURL, contexts);
-        const traffic = captureSectionTraffic(coldPage, dataset.noteId);
-        trackTransferBytes(coldPage, (bytes) => {
-          transferredBytes += bytes;
+        const traffic = run === 0
+          ? initialTraffic
+          : captureSectionTraffic(samplePage, dataset.noteId);
+        const noteUsable = await userTiming(samplePage, "note-usable", async () => {
+          await openOrdinaryNote(samplePage, ordinaryTitle);
         });
-        await signInLargeNoteUser(coldPage, definition.accounts.owner);
-        const noteUsable = await userTiming(coldPage, "note-usable", async () => {
-          await openOrdinaryNote(coldPage, ordinaryTitle);
+        const largeUsable = await userTiming(samplePage, "large-note-usable", async () => {
+          await openLargeNote(samplePage, definition.title);
         });
-        const largeUsable = await userTiming(coldPage, "large-note-usable", async () => {
-          await openLargeNote(coldPage, definition.title);
-        });
-        if (run === 0) await expectColdOpenIsolation(coldPage, dataset, traffic);
+        if (run === 0) await expectColdOpenIsolation(samplePage, dataset, traffic);
         residentSections = Math.max(
           residentSections,
-          await countResidentSections(coldPage, dataset.noteId)
+          await countResidentSections(samplePage, dataset.noteId)
         );
         expect(residentSections).toBeLessThanOrEqual(3);
         traffic.stop();
-        await closeLargeNotePage(coldPage, contexts);
 
         await ownerPage.getByRole("button", { name: "Section 1", exact: true }).click();
         const localFeedback = await userTiming(ownerPage, "local-feedback", async () => {
@@ -188,11 +197,13 @@ test.describe("controlled production performance", () => {
         samples: raw[name]
       }));
       const artifact = {
+        budgetsEnforced: enforceBudgets,
         commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
         dataset: { ...profile, collaborators: definition.collaborators, compactionEdits: definition.compactionEdits },
         environment,
         finishedAt: new Date().toISOString(),
         metrics,
+        profile: performanceProfile,
         residentSections,
         transferredBytes,
         warmupRuns

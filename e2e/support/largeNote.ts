@@ -17,6 +17,7 @@ export const REPRESENTATIVE_LARGE_NOTE = {
 
 const CONTENT_COMMIT = /\/api\/content\/uploads\/[^/]+\/commit$/u;
 const CONTENT_DOWNLOAD = /\/api\/content\/manifests\/[^/]+\/chunks\/\d+$/u;
+const GENERATED_EDIT_MAX_BYTES = MIB;
 
 export interface LargeNoteAccount {
   password: string;
@@ -544,10 +545,18 @@ async function replaceEditorWithGeneratedText(
   bytes: number,
   prefix: string
 ): Promise<void> {
-  const committed = page.waitForResponse(isSuccessfulContentCommit, { timeout: 120_000 });
-  await injectGeneratedEditorText(page, bytes, prefix, true);
+  let remaining = bytes;
+  let first = true;
+  while (remaining > 0) {
+    const chunkBytes = Math.min(remaining, GENERATED_EDIT_MAX_BYTES);
+    const chunkPrefix = first ? prefix : "";
+    const committed = page.waitForResponse(isSuccessfulContentCommit, { timeout: 120_000 });
+    await injectGeneratedEditorText(page, chunkBytes, chunkPrefix, first);
+    await committed;
+    remaining -= chunkBytes;
+    first = false;
+  }
   await expect(blockEditor(page)).toContainText(prefix.trim(), { timeout: 30_000 });
-  await committed;
 }
 
 async function appendGeneratedEditorText(
