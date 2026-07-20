@@ -138,15 +138,6 @@ export interface CreatedSharingKey {
   opened: OpenedSharingKey;
 }
 
-export interface RotatedNoteKeyMaterial {
-  contentCipher: string;
-  contentLength: number;
-  contentNonce: string;
-  encryptedNoteKey: string;
-  noteKeyBase64: string;
-  noteKeyNonce: string;
-}
-
 export interface RewrappedAttachmentKey {
   attachmentId: string;
   encryptedAttachmentKey: string;
@@ -685,34 +676,6 @@ function crdtMessageAad(input: CrdtAadInput): Uint8Array {
 
 export function noteKeyToBase64(noteKey: Uint8Array): string {
   return toBase64(noteKey);
-}
-
-export async function rotateNoteKeyMaterial(input: {
-  cryptoOwnerId: string;
-  noteId: string;
-  rootKey: Uint8Array;
-  body: string;
-}): Promise<RotatedNoteKeyMaterial> {
-  const noteKey = randomBytes(32);
-  const encryptedNoteKey = await encryptBytes(
-    noteKey,
-    input.rootKey,
-    noteKeyAad(input.cryptoOwnerId, input.noteId)
-  );
-  const encryptedBody = await encryptBytes(
-    utf8(input.body),
-    noteKey,
-    noteBodyAad(input.cryptoOwnerId, input.noteId)
-  );
-
-  return {
-    contentCipher: encryptedBody.cipher,
-    contentLength: encryptedBody.cipher.length,
-    contentNonce: encryptedBody.nonce,
-    encryptedNoteKey: encryptedNoteKey.cipher,
-    noteKeyBase64: toBase64(noteKey),
-    noteKeyNonce: encryptedNoteKey.nonce
-  };
 }
 
 export async function rewrapAttachmentKey(input: {
