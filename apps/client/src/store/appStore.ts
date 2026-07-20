@@ -78,7 +78,7 @@ export interface StorageCapacityState {
 }
 
 export interface OperationFailureState {
-  kind: "generic" | "local-capacity" | "server-capacity" | "server-maintenance";
+  kind: "conflict" | "generic" | "local-capacity" | "server-capacity" | "server-maintenance";
   message: string;
   status: string;
 }
@@ -143,6 +143,8 @@ export interface AppStore {
   collaborationEvents: CollaborationEvent[];
   presenceByNote: Record<string, PresenceUser[]>;
   openedSharingKey: OpenedSharingKey | null;
+  removedNoteId: string | null;
+  revocationRotationPendingNoteId: string | null;
   revocationRotationFailures: Record<string, RevocationRotationFailure>;
   recoverableDrafts: Record<string, RecoverableSectionDraft>;
   sectionIndexes: Record<string, NoteSectionIndexState>;
@@ -179,6 +181,7 @@ export interface AppStore {
   removeNoteAccess: (noteId: string) => void;
   setNotePresence: (noteId: string, users: PresenceUser[]) => void;
   setOpenedSharingKey: StoreSetter<OpenedSharingKey | null>;
+  setRevocationRotationPendingNoteId: StoreSetter<string | null>;
   setRevocationRotationFailure: (
     noteId: string,
     failure: RevocationRotationFailure | null
@@ -232,6 +235,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   collaborationEvents: [],
   presenceByNote: {},
   openedSharingKey: null,
+  removedNoteId: null,
+  revocationRotationPendingNoteId: null,
   revocationRotationFailures: {},
   recoverableDrafts: {},
   sectionIndexes: {},
@@ -299,7 +304,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSelectedNoteId: (value) => {
     set((state) => {
       const selectedNoteId = resolveState(value, state.selectedNoteId);
-      return { selectedNoteId };
+      return { selectedNoteId, removedNoteId: null };
     });
   },
   setSearch: (value) => {
@@ -358,10 +363,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
         attachmentsByNote: omitRecordKey(state.attachmentsByNote, noteId),
         notes,
         presenceByNote: omitRecordKey(state.presenceByNote, noteId),
+        removedNoteId: state.selectedNoteId === noteId ? noteId : state.removedNoteId,
         revocationRotationFailures: omitRecordKey(
           state.revocationRotationFailures,
           noteId
         ),
+        revocationRotationPendingNoteId:
+          state.revocationRotationPendingNoteId === noteId
+            ? null
+            : state.revocationRotationPendingNoteId,
         sectionIndexes: omitRecordKey(state.sectionIndexes, noteId),
         loadedSections: Object.fromEntries(
           Object.entries(state.loadedSections).filter(
@@ -386,6 +396,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setOpenedSharingKey: (value) => {
     set((state) => ({
       openedSharingKey: resolveState(value, state.openedSharingKey)
+    }));
+  },
+  setRevocationRotationPendingNoteId: (value) => {
+    set((state) => ({
+      revocationRotationPendingNoteId: resolveState(
+        value,
+        state.revocationRotationPendingNoteId
+      )
     }));
   },
   setRevocationRotationFailure: (noteId, failure) => {
@@ -541,6 +559,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       collaborationEvents: [],
       presenceByNote: {},
       openedSharingKey: null,
+      removedNoteId: null,
+      revocationRotationPendingNoteId: null,
       revocationRotationFailures: {},
       recoverableDrafts: {},
       sectionIndexes: {},
@@ -605,6 +625,15 @@ export function operationFailureState(
   fallback: string,
   fallbackStatus = "Operation failed"
 ): OperationFailureState {
+  if (["conflict", "version_conflict", "chunk_conflict", "manifest_mismatch"].includes(
+    errorCode(error) ?? ""
+  )) {
+    return {
+      kind: "conflict",
+      message: "Encrypted changes were retained because the server version changed.",
+      status: "Changes need review"
+    };
+  }
   if (errorCode(error) === "quota_exceeded" || errorCode(error) === "storage_limit") {
     return {
       kind: "server-capacity",

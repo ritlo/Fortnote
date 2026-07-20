@@ -141,6 +141,23 @@ describe("useRealtimeEvents lifecycle", () => {
     expect(mocks.connections).toHaveLength(2);
   });
 
+  it("reports the browser going offline immediately", async () => {
+    mocks.getCursor.mockResolvedValue({ cursor: 3 });
+    render(<RealtimeHarness />);
+    await flushEffects();
+    act(() => mocks.connections[0]!.options.onOpen?.());
+
+    await act(() => window.dispatchEvent(new Event("offline")));
+
+    expect(useAppStore.getState().realtimeStatus).toBe("disconnected");
+
+    await act(() => window.dispatchEvent(new Event("online")));
+
+    expect(mocks.connections[0]!.connection.close).toHaveBeenCalledOnce();
+    expect(mocks.connections).toHaveLength(2);
+    expect(useAppStore.getState().realtimeStatus).toBe("connecting");
+  });
+
   it("does not continue a delayed event reload into a replacement vault", async () => {
     const delayedFolders = deferred<undefined>();
     mocks.getCursor.mockResolvedValue({ cursor: 3 });

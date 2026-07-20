@@ -58,6 +58,13 @@ export function useNoteViewModel() {
   const user = useAppStore((state) => state.user);
   const rootKey = useAppStore((state) => state.rootKey);
   const realtimeStatus = useAppStore((state) => state.realtimeStatus);
+  const removedNoteId = useAppStore((state) => state.removedNoteId);
+  const revocationRotationPendingNoteId = useAppStore(
+    (state) => state.revocationRotationPendingNoteId
+  );
+  const revocationRotationFailures = useAppStore(
+    (state) => state.revocationRotationFailures
+  );
   const localStorageCapacity = useAppStore((state) => state.localStorageCapacity);
   const serverStorageCapacity = useAppStore((state) => state.serverStorageCapacity);
   const recoverableDrafts = useAppStore((state) => state.recoverableDrafts);
@@ -104,9 +111,16 @@ export function useNoteViewModel() {
     : undefined;
   const collaborationState = deriveCollaborationState({
     ...defaultCollaborationDimensions,
-    access: notesView === "trash"
+    access: !selectedNote && removedNoteId
+      ? "removed"
+      : notesView === "trash"
       ? "trash"
       : (selectedNote?.role ?? "owner"),
+    protection: selectedNote?.id === revocationRotationPendingNoteId
+      ? "preparing"
+      : selectedNote && revocationRotationFailures[selectedNote.id]
+        ? "aborted"
+        : "ready",
     section: selectedNote
       ? selectedSection?.status === "ready"
         ? "ready"
@@ -131,7 +145,9 @@ export function useNoteViewModel() {
       : retainedDraft
         ? "divergent"
         : operationFailure
-          ? operationFailure.kind === "generic" ? "error" : "none"
+          ? operationFailure.kind === "conflict"
+            ? "conflict"
+            : operationFailure.kind === "generic" ? "error" : "none"
           : error
             ? "error"
             : "none",

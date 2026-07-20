@@ -262,6 +262,58 @@ describe("protected note search", () => {
   });
 });
 
+describe("revocation rotation state", () => {
+  it("exposes preparation and aborted recovery for the selected note", () => {
+    useAppStore.setState({
+      notes: [note()],
+      notesView: "notes",
+      selectedNoteId: "note_1",
+      revocationRotationPendingNoteId: "note_1"
+    });
+
+    const { result } = renderHook(() => useNoteViewModel());
+
+    expect(result.current.collaborationState).toMatchObject({
+      editing: false,
+      id: "rotation-preparing",
+      label: "Securing access — editing paused"
+    });
+
+    act(() => {
+      useAppStore.setState({
+        revocationRotationPendingNoteId: null,
+        revocationRotationFailures: {
+          note_1: {
+            failedAt: "2026-07-20T00:00:00.000Z",
+            message: "Access change expired",
+            noteId: "note_1",
+            revokedUserId: "viewer",
+            revokedUsername: "viewer"
+          }
+        }
+      });
+    });
+
+    expect(result.current.collaborationState).toMatchObject({
+      actions: ["try-again", "review-access"],
+      id: "rotation-aborted",
+      label: "Access change not completed"
+    });
+  });
+
+  it("announces access removal after the selected note disappears", () => {
+    useAppStore.setState({ removedNoteId: "note_1", selectedNoteId: null });
+
+    const { result } = renderHook(() => useNoteViewModel());
+
+    expect(result.current.collaborationState).toMatchObject({
+      editing: false,
+      id: "removed",
+      label: "You no longer have access"
+    });
+  });
+});
+
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
     contentLength: 0,

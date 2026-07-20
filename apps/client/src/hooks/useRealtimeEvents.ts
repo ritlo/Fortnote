@@ -71,6 +71,24 @@ export function useRealtimeEvents() {
       eventRetryTimersRef.current = [];
     }
 
+    function handleOffline() {
+      if (isActive) {
+        setRealtimeStatus("disconnected");
+      }
+    }
+
+    function handleOnline() {
+      if (!isActive) {
+        return;
+      }
+      clearReconnectTimer();
+      const connection = connectionRef.current;
+      connectionRef.current = null;
+      setCrdtTransport(null);
+      connection?.close();
+      startConnection();
+    }
+
     const processEvents = createCollaborationEventProcessor({
       acknowledgeEvents: acknowledgeCollaborationEvents,
       applyEvents: (events) => {
@@ -179,10 +197,11 @@ export function useRealtimeEvents() {
           );
         },
         onClose: () => {
-          if (connectionRef.current === connection) {
-            connectionRef.current = null;
-            setCrdtTransport(null);
+          if (connectionRef.current !== connection) {
+            return;
           }
+          connectionRef.current = null;
+          setCrdtTransport(null);
           scheduleReconnect();
         },
         onError: () => {
@@ -265,6 +284,8 @@ export function useRealtimeEvents() {
     }
 
     void bootstrapConnection();
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
     const heartbeatId = window.setInterval(() => {
       sendSelectedNotePresence(
         connectionRef.current,
@@ -277,6 +298,8 @@ export function useRealtimeEvents() {
       isActive = false;
       clearReconnectTimer();
       clearEventRetryTimers();
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
       window.clearInterval(heartbeatId);
       reconnectAttemptRef.current = 0;
       const connection = connectionRef.current;

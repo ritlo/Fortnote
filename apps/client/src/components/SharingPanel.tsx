@@ -60,6 +60,9 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   const setRevocationRotationFailure = useAppStore(
     (state) => state.setRevocationRotationFailure
   );
+  const setRevocationRotationPendingNoteId = useAppStore(
+    (state) => state.setRevocationRotationPendingNoteId
+  );
   const setStatus = useAppStore((state) => state.setStatus);
   const selectedRotationFailure = useAppStore((state) =>
     selectedNote ? state.revocationRotationFailures[selectedNote.id] : undefined
@@ -255,6 +258,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     const vaultRootKey = rootKey;
 
     setIsSubmitting(true);
+    setRevocationRotationPendingNoteId(note.id);
     setError(null);
     try {
       const payload = await listNoteMemberships(note.id);
@@ -264,6 +268,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
       setStatus("Revoke failed");
       setError(revokeError instanceof Error ? revokeError.message : "Unable to revoke");
     } finally {
+      setRevocationRotationPendingNoteId(null);
       setIsSubmitting(false);
     }
   }
@@ -324,6 +329,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     }
 
     setIsSubmitting(true);
+    setRevocationRotationPendingNoteId(selectedNote.id);
     setError(null);
     setStatus("Retrying key rotation");
     try {
@@ -368,6 +374,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
       setStatus("Key rotation failed");
       setError(`Key rotation failed: ${message}`);
     } finally {
+      setRevocationRotationPendingNoteId(null);
       setIsSubmitting(false);
     }
   }

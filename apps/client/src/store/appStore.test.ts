@@ -64,6 +64,17 @@ describe("collaboration event store", () => {
     expect(useAppStore.getState().revocationRotationFailures).toEqual({});
   });
 
+  it("retains the removed note notice until another note is selected", () => {
+    useAppStore.getState().setNotes([note({ id: "revoked_note", role: "viewer" })]);
+    useAppStore.getState().setSelectedNoteId("revoked_note");
+
+    useAppStore.getState().removeNoteAccess("revoked_note");
+
+    expect(useAppStore.getState().removedNoteId).toBe("revoked_note");
+    useAppStore.getState().setSelectedNoteId("another_note");
+    expect(useAppStore.getState().removedNoteId).toBeNull();
+  });
+
   it("preserves revocation rotation failure when selection changes", () => {
     useAppStore.getState().setSelectedNoteId("note_1");
     useAppStore.getState().setRevocationRotationFailure("note_1", {
@@ -132,6 +143,14 @@ describe("collaboration event store", () => {
   });
 
   it("maps recognized failures without exposing their details", () => {
+    expect(operationFailureState(
+      { code: "version_conflict", message: "private server detail", status: 409 },
+      "fallback"
+    )).toEqual({
+      kind: "conflict",
+      message: "Encrypted changes were retained because the server version changed.",
+      status: "Changes need review"
+    });
     expect(operationFailureState(
       { code: "quota_exceeded", message: "private server detail", status: 413 },
       "fallback"
