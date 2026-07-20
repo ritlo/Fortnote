@@ -10,7 +10,7 @@
     "assurance": "pnpm lint && pnpm test && pnpm e2e && pnpm assurance:accessibility && pnpm assurance:mutation && pnpm assurance:verify",
     "assurance:accessibility": "playwright test --project=accessibility",
     "assurance:inventory": "node scripts/inventory-assurance.mjs",
-    "assurance:mutation": "stryker run",
+    "assurance:mutation": "stryker run && node scripts/classify-mutation-results.mjs",
     "assurance:perf": "pnpm build && node scripts/create-performance-fixture.mjs",
     "assurance:verify": "node scripts/verify-assurance.mjs",
     "build": "pnpm -r build",

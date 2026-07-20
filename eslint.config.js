@@ -23,7 +23,11 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ["playwright.config.ts", "scripts/*.d.mts"]
+          allowDefaultProject: [
+            "playwright.config.ts",
+            "scripts/*.d.mts",
+            "vitest.stryker.config.ts"
+          ]
         },
         tsconfigRootDir: import.meta.dirname
       },
