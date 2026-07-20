@@ -142,6 +142,22 @@ describe("useSectionData", () => {
     });
   });
 
+  it("keeps server-created sections visible while root ordering catches up", async () => {
+    const current = installNote();
+    mocks.getCrdtSectionOrder.mockReturnValue(["section-1"]);
+    useAppStore.getState().setSelectedSection(current.id, "section-1");
+
+    renderHook(() => useSectionData(current));
+
+    await waitFor(() => {
+      expect(useAppStore.getState().sectionIndexes[current.id]?.orderedSectionIds)
+        .toEqual(sectionIds(5));
+    });
+    await waitFor(() => {
+      expect(mocks.openCrdtSection).toHaveBeenCalledWith(current, "section-1");
+    });
+  });
+
   it("gates section subscriptions while a legacy body is migrating", async () => {
     const current = installNote({
       legacyContentAvailable: true,

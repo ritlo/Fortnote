@@ -27,6 +27,9 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
   const selectedSectionId = useAppStore((state) =>
     selectedNote ? state.selectedSectionByNote[selectedNote.id] ?? null : null
   );
+  const selectedSectionIndex = useAppStore((state) =>
+    selectedNote ? state.sectionIndexes[selectedNote.id] : undefined
+  );
   const setSectionIndex = useAppStore((state) => state.setSectionIndex);
   const setLoadedSection = useAppStore((state) => state.setLoadedSection);
   const setSelectedSection = useAppStore((state) => state.setSelectedSection);
@@ -174,7 +177,7 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
     if (!selectedNote || selectedNote.isDeleted || !selectedSectionId) {
       return;
     }
-    const index = useAppStore.getState().sectionIndexes[selectedNote.id];
+    const index = selectedSectionIndex;
     if (index?.status !== "ready") {
       return;
     }
@@ -206,7 +209,14 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
     return () => {
       controller.abort();
     };
-  }, [retryVersion, selectedNote?.id, selectedNote?.isDeleted, selectedNote?.keyEpoch, selectedSectionId]);
+  }, [
+    retryVersion,
+    selectedNote?.id,
+    selectedNote?.isDeleted,
+    selectedNote?.keyEpoch,
+    selectedSectionId,
+    selectedSectionIndex
+  ]);
 
   useEffect(() => {
     if (!selectedNote || selectedNote.isDeleted) {
@@ -267,9 +277,14 @@ async function loadSectionIndex(note: DecryptedNote, signal: AbortSignal): Promi
   throwIfCanceled(signal);
   const visibleIds = new Set(response.sections.map((section) => section.id));
   const encryptedOrder = getCrdtSectionOrder(note.id);
-  const orderedSectionIds = encryptedOrder.length > 0
-    ? encryptedOrder.filter((sectionId) => visibleIds.has(sectionId))
-    : response.sections.map((section) => section.id);
+  const encryptedVisibleOrder = encryptedOrder.filter((sectionId) => visibleIds.has(sectionId));
+  const encryptedVisibleIds = new Set(encryptedVisibleOrder);
+  const orderedSectionIds = [
+    ...encryptedVisibleOrder,
+    ...response.sections
+      .map((section) => section.id)
+      .filter((sectionId) => !encryptedVisibleIds.has(sectionId))
+  ];
   const state = useAppStore.getState();
   if (!isSelectedNote(note)) {
     return;
