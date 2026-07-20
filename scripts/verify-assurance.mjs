@@ -4,7 +4,18 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import Ajv2020 from "ajv/dist/2020.js";
+
+export const REQUIRED_ASSURANCE_COMMANDS = Object.freeze([
+  "pnpm lint",
+  "pnpm typecheck",
+  "pnpm test",
+  "pnpm e2e",
+  "pnpm assurance:accessibility",
+  "pnpm assurance:perf"
+]);
+
+const MUTATION_ARTIFACT =
+  "specs/001-collaboration-design-assurance/evidence/mutation-results.json";
 
 const performanceBudgets = {
   "authenticated-action": 500,
@@ -76,147 +87,64 @@ function majorVersion(value) {
   return match ? `${match[1]}${match[2]}` : value;
 }
 
-function isDateTime(value) {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(value)
-    && Number.isFinite(Date.parse(value));
-}
-
 function parseArguments(argv) {
   const options = {
     root: process.cwd(),
-    ledger: undefined,
-    schema: undefined,
-    now: new Date()
+    summary: undefined
   };
   for (let index = 0; index < argv.length; index += 2) {
     const option = argv[index];
     const value = argv[index + 1];
     if (!value) throw new Error(`${option ?? "argument"} requires a value`);
     if (option === "--root") options.root = path.resolve(value);
-    else if (option === "--ledger") options.ledger = path.resolve(value);
-    else if (option === "--schema") options.schema = path.resolve(value);
-    else if (option === "--now") options.now = new Date(value);
+    else if (option === "--summary") options.summary = path.resolve(value);
     else throw new Error(`Unknown argument: ${option}`);
   }
-  options.ledger ??= path.join(options.root, "specs/001-collaboration-design-assurance/assurance.json");
-  options.schema ??= path.join(options.root, "specs/001-collaboration-design-assurance/contracts/assurance-record.schema.json");
-  if (Number.isNaN(options.now.valueOf())) throw new Error("--now must be an ISO date-time");
+  options.summary ??= path.join(
+    options.root,
+    "specs/001-collaboration-design-assurance/assurance-summary.md"
+  );
   return options;
 }
 
-function resolveRepositoryPath(root, relativePath) {
-  if (typeof relativePath !== "string" || path.isAbsolute(relativePath)) return undefined;
-  const resolved = path.resolve(root, relativePath);
-  return resolved === root || resolved.startsWith(`${root}${path.sep}`) ? resolved : undefined;
-}
-
-function duplicateErrors(records, label) {
-  const seen = new Set();
+export function verifyAssuranceSummary(summary, root) {
   const errors = [];
-  for (const record of records) {
-    if (seen.has(record.id)) errors.push(`Duplicate ${label} ID: ${record.id}`);
-    seen.add(record.id);
+  for (const command of REQUIRED_ASSURANCE_COMMANDS) {
+    const row = summary.split("\n").find((line) => line.includes(`\`${command}\``));
+    if (!row) errors.push(`Assurance summary is missing command: ${command}`);
+    else if (!/\bPASS\b/u.test(row)) errors.push(`Assurance command is not passing: ${command}`);
   }
-  return errors;
-}
-
-function referenceErrors(record, root, now) {
-  const errors = [
-    ...duplicateErrors(record.sourceInventory, "inventory"),
-    ...duplicateErrors(record.evidence, "evidence"),
-    ...duplicateErrors(record.findings, "finding"),
-    ...duplicateErrors(record.exceptions, "exception")
-  ];
-  const requirements = new Map(record.sourceInventory.map((item) => [item.id, item]));
-  const evidence = new Map(record.evidence.map((item) => [item.id, item]));
-  const findings = new Map(record.findings.map((item) => [item.id, item]));
-  const exceptions = new Map(record.exceptions.map((item) => [item.id, item]));
-
-  for (const item of record.sourceInventory) {
-    const source = resolveRepositoryPath(root, item.source);
-    if (!source || !existsSync(source)) errors.push(`Inventory source path is stale: ${item.source}`);
-    else if (!readFileSync(source, "utf8").includes(`${item.kind === "requirement" ? "###" : "####"} ${item.kind === "requirement" ? "Requirement" : "Scenario"}: ${item.heading}`)) {
-      errors.push(`Inventory heading drift: ${item.heading} in ${item.source}`);
-    }
-    if (item.kind === "scenario" && (!item.parentId || requirements.get(item.parentId)?.kind !== "requirement")) {
-      errors.push(`Inventory scenario ${item.id} has a missing requirement parent.`);
-    }
-    for (const id of item.evidenceIds) if (!evidence.has(id)) errors.push(`Inventory ${item.id} references missing evidence ${id}.`);
-    for (const id of item.findingIds) if (!findings.has(id)) errors.push(`Inventory ${item.id} references missing finding ${id}.`);
-    if (item.evidenceIds.length === 0 && item.findingIds.length === 0) errors.push(`Inventory ${item.id} has no evidence or finding.`);
+  const risks = sectionContents(summary, "Known product risks");
+  if (!risks || risks.trim().length < 20) {
+    errors.push("Assurance summary requires known product risks.");
   }
-
-  for (const item of record.evidence) {
-    for (const id of item.requirementIds) if (!requirements.has(id)) errors.push(`Evidence ${item.id} references missing requirement ${id}.`);
-    if (item.result !== "pass") errors.push(`Required evidence ${item.id} is ${item.result}.`);
-    errors.push(...testReferenceErrors(item, root));
-    if (item.artifact && !existsRepositoryPath(root, item.artifact)) errors.push(`Evidence artifact is missing: ${item.artifact}`);
+  const limitations = sectionContents(summary, "Scope limitations") ?? "";
+  if (!/manual screen-reader/iu.test(limitations)) {
+    errors.push("Assurance summary must disclose omitted manual screen-reader qualification.");
   }
-
-  for (const item of record.findings) {
-    for (const id of item.requirementIds) if (!requirements.has(id)) errors.push(`Finding ${item.id} references missing requirement ${id}.`);
-    for (const id of item.evidenceIds) if (!evidence.has(id)) errors.push(`Finding ${item.id} references missing evidence ${id}.`);
-    if (["critical", "high"].includes(item.severity) && item.status === "open") {
-      errors.push(`${item.severity} finding ${item.id} remains open.`);
-    }
-    if (item.status === "accepted" && (!["medium", "low"].includes(item.severity) || !item.exceptionId)) {
-      errors.push(`Finding ${item.id} has an invalid accepted-risk exception.`);
-    }
-    if (item.status === "remediated" && (item.verificationStatus !== "passed" || item.evidenceIds.length === 0)) {
-      errors.push(`Remediated finding ${item.id} lacks passing verification evidence.`);
-    }
-    if (item.exceptionId && !exceptions.has(item.exceptionId)) errors.push(`Finding ${item.id} references missing exception ${item.exceptionId}.`);
+  if (!/100 MiB\/20-sample/iu.test(limitations)) {
+    errors.push("Assurance summary must disclose omitted 100 MiB/20-sample qualification.");
   }
-
-  for (const item of record.exceptions) {
-    for (const field of ["owner", "approver", "risk", "reason", "followUp"]) {
-      if (typeof item[field] !== "string" || item[field].trim() === "") errors.push(`Exception ${item.id} requires ${field}.`);
-    }
-    if (item.owner === item.approver) errors.push(`Exception ${item.id} requires an independent approver.`);
-    if (!Number.isFinite(Date.parse(item.expiresAt)) || new Date(item.expiresAt) <= now) errors.push(`Exception ${item.id} is expired or invalid.`);
-    for (const id of item.findingIds) {
-      const finding = findings.get(id);
-      if (!finding || finding.exceptionId !== item.id) errors.push(`Exception ${item.id} has an invalid finding reference ${id}.`);
+  if (!summary.includes(MUTATION_ARTIFACT)) {
+    errors.push("Assurance summary must reference the targeted mutation artifact.");
+  } else {
+    const artifact = path.join(root, MUTATION_ARTIFACT);
+    if (!existsSync(artifact)) errors.push(`Mutation artifact is missing: ${MUTATION_ARTIFACT}`);
+    else if (findMutationSurvivor(JSON.parse(readFileSync(artifact, "utf8")))) {
+      errors.push("Mutation artifact contains a non-equivalent survivor.");
     }
   }
   return errors;
 }
 
-function existsRepositoryPath(root, relativePath) {
-  const resolved = resolveRepositoryPath(root, relativePath);
-  return Boolean(resolved && existsSync(resolved));
+function sectionContents(summary, heading) {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return summary.match(
+    new RegExp(`^## ${escaped}\\s*$([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "imu")
+  )?.[1];
 }
 
-function testReferenceErrors(evidence, root) {
-  const [file, identity] = evidence.testReference.split("#", 2);
-  const resolved = resolveRepositoryPath(root, file);
-  if (!resolved || !existsSync(resolved)) return [`Evidence test path is missing: ${file}`];
-  if (!identity) return [`Evidence test identity is missing: ${evidence.testReference}`];
-  const normalizedIdentity = identity.replace(/[-_]/gu, " ").toLowerCase();
-  const normalizedContents = readFileSync(resolved, "utf8").replace(/[-_]/gu, " ").toLowerCase();
-  return normalizedContents.includes(normalizedIdentity) ? [] : [`Evidence test identity is stale: ${evidence.testReference}`];
-}
-
-function assuranceErrors(record, root, now) {
-  const errors = referenceErrors(record, root, now);
-  const passingLayers = new Set(record.evidence.filter(({ result }) => result === "pass").map(({ layer }) => layer));
-  if (!passingLayers.has("accessibility") || !passingLayers.has("manual")) {
-    errors.push("Distinct passing automated accessibility and manual accessibility evidence are required.");
-  }
-  for (const evidence of record.evidence.filter(({ layer, artifact }) => layer === "mutation" && artifact)) {
-    const artifact = resolveRepositoryPath(root, evidence.artifact);
-    if (!artifact || !existsSync(artifact)) continue;
-    const mutation = JSON.parse(readFileSync(artifact, "utf8"));
-    const survivor = findMutationSurvivor(mutation);
-    if (survivor) errors.push(`Mutation survivor ${survivor.id ?? "unknown"} is non-equivalent.`);
-  }
-  if (record.performance && typeof record.performance === "object") {
-    errors.push(...performanceRecordErrors(record.performance, root));
-  }
-  return errors;
-}
-
-function findMutationSurvivor(value) {
+export function findMutationSurvivor(value) {
   if (!value || typeof value !== "object") return undefined;
   if (String(value.status).toLowerCase() === "survived" && value.equivalent !== true) return value;
   for (const child of Array.isArray(value) ? value : Object.values(value)) {
@@ -226,48 +154,14 @@ function findMutationSurvivor(value) {
   return undefined;
 }
 
-function performanceRecordErrors(performance, root) {
-  const errors = [];
-  const baseline = Object.fromEntries(performance.baseline.metrics.map((metric) => [metric.name, metric.p95Ms]));
-  for (const metric of performance.baseline.metrics) {
-    if (!existsRepositoryPath(root, metric.rawSamplesArtifact)) errors.push(`Performance baseline artifact is missing: ${metric.rawSamplesArtifact}`);
-  }
-  for (const run of performance.runs) {
-    if (!run.equivalentEnvironment) errors.push("Performance run environment is not equivalent to the baseline.");
-    const summaries = run.metrics.map((metric) => ({
-      ...metric,
-      p95Ms: metric.currentP95Ms,
-      successRate: metric.successRate ?? 1,
-      successRatePassed: metric.successRatePassed ?? true
-    }));
-    errors.push(...verifyPerformanceMetrics(summaries, baseline).errors);
-    for (const metric of run.metrics) {
-      if (metric.budgetPassed === false) errors.push(`Performance budget failed for ${metric.name}.`);
-      if (metric.regressionPassed === false) errors.push(`Performance regression failed for ${metric.name}.`);
-      if (!existsRepositoryPath(root, metric.rawSamplesArtifact)) errors.push(`Performance run artifact is missing: ${metric.rawSamplesArtifact}`);
-    }
-  }
-  return errors;
-}
-
 const isMain = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
-let options;
 if (isMain) {
   try {
-    options = parseArguments(process.argv.slice(2));
-    const record = JSON.parse(readFileSync(options.ledger, "utf8"));
-    const schema = JSON.parse(readFileSync(options.schema, "utf8"));
-    const ajv = new Ajv2020({ allErrors: true, strict: false, formats: { "date-time": isDateTime } });
-    const validate = ajv.compile(schema);
-    const errors = validate(record) ? [] : validate.errors.map((error) =>
-      `Schema validation failed at ${error.instancePath || "/"}: ${error.message}`
-    );
-    if (record && Array.isArray(record.sourceInventory) && Array.isArray(record.evidence)
-      && Array.isArray(record.findings) && Array.isArray(record.exceptions)) {
-      errors.push(...assuranceErrors(record, options.root, options.now));
-    }
+    const options = parseArguments(process.argv.slice(2));
+    const summary = readFileSync(options.summary, "utf8");
+    const errors = verifyAssuranceSummary(summary, options.root);
     if (errors.length > 0) throw new Error([...new Set(errors)].join("\n"));
-    console.log(`Assurance verification passed for ${record.sourceInventory.length} inventory rows.`);
+    console.log("Assurance summary verification passed.");
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

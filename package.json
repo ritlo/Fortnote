@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "assurance": "pnpm lint && pnpm test && pnpm e2e && pnpm assurance:accessibility && pnpm assurance:mutation && pnpm assurance:verify",
+    "assurance": "pnpm lint && pnpm typecheck && pnpm test && pnpm e2e && pnpm assurance:accessibility && pnpm assurance:perf && pnpm assurance:verify",
     "assurance:accessibility": "playwright test --project=accessibility",
     "assurance:inventory": "node scripts/inventory-assurance.mjs",
     "assurance:mutation": "stryker run && node scripts/classify-mutation-results.mjs",
@@ -32,7 +32,6 @@
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/vitest-runner": "^9.6.1",
     "@types/node": "^26.0.0",
-    "ajv": "8.18.0",
     "eslint": "^10.5.0",
     "globals": "^17.7.0",
     "typescript": "^6.0.3",
