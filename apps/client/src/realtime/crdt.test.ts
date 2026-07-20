@@ -750,6 +750,45 @@ describe("CRDT collaboration", () => {
     expect(onChange).toHaveBeenCalledWith({ title: "Draft" });
   });
 
+  it("attaches an early title edit to the root binding", async () => {
+    const subscribe = vi.fn();
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      subscribe
+    });
+    const current = note({ rootSectionId: crypto.randomUUID() });
+
+    expect(editCrdtNote(current, { title: "Early draft" })).toBe(true);
+    expect(subscribe).toHaveBeenCalledWith(current.id, "root", 1, 0);
+    await vi.waitFor(() => {
+      expect(encryptCrdtMessage).toHaveBeenCalled();
+    });
+    await finishCrdtSync(current.id, 1, false, "root");
+    const restored = new Y.Doc();
+    for (const [input] of vi.mocked(encryptCrdtMessage).mock.calls) {
+      Y.applyUpdate(restored, input.update);
+    }
+    expect(restored.getText("title").toJSON()).toBe("Early draft");
+  });
+
+  it("keeps a local edit when the store replaces its note snapshot", async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    const current = note();
+    setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
+    openCrdtNote(current, vi.fn());
+    await finishCrdtSync(current.id, 1, false);
+    send.mockClear();
+
+    editCrdtNote(current, { title: "Rendered draft" });
+    openCrdtNote({ ...current, title: "Rendered draft" }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(send).toHaveBeenCalledOnce();
+    });
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ kind: "root-update" }));
+  });
+
   it("compacts a solo editor's locally sent updates", async () => {
     const send = vi
       .fn<(message: ScopedEncryptedCrdtMessage) => Promise<void>>()

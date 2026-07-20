@@ -569,9 +569,13 @@ export function connectRealtime({
     })());
     const delivered = outcome.then((result) => {
       if (result.kind === "local-capacity") {
+        onCrdtError?.(
+          "Protected browser storage is full; encrypted work remains queued."
+        );
         throw new Error("Protected browser storage is full");
       }
       if (result.kind === "server-capacity") {
+        onCrdtError?.("Server storage is full; encrypted work remains queued.");
         throw new Error("Server storage is full");
       }
       return result.manifest;

@@ -1,5 +1,7 @@
 import { defineConfig } from "vite";
 
+const apiPort = Number(process.env.API_PORT ?? 3001);
+
 const contentSecurityPolicy = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -22,7 +24,7 @@ export default defineConfig({
     },
     proxy: {
       "/api": {
-        target: "http://localhost:3001",
+        target: `http://127.0.0.1:${String(apiPort)}`,
         changeOrigin: true,
         ws: true
       }

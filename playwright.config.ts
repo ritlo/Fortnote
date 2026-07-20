@@ -1,6 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 import process from "node:process";
 
+const apiPort = Number(process.env.API_PORT ?? 3001);
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
@@ -35,8 +37,8 @@ export default defineConfig({
   webServer: [
     {
       command:
-        "DATABASE_PATH=data/e2e.sqlite DATA_DIR=data/e2e-attachments COOKIE_SECURE=false ALLOWED_ORIGIN=http://127.0.0.1:5173 pnpm exec tsx e2e/support/runE2eServer.ts",
-      url: "http://127.0.0.1:3001/api/health",
+        "pnpm exec tsx e2e/support/runE2eServer.ts",
+      url: `http://127.0.0.1:${String(apiPort)}/api/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000
     },

@@ -17,6 +17,7 @@ import {
 } from "../cryptoClient";
 import { fromBase64 } from "@fortnote/shared";
 import { useEffect, useRef } from "react";
+import { editCrdtNote } from "../realtime/crdt";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
 import { loadDecryptedNotes, loadFolders } from "./useAppData";
 
@@ -433,10 +434,14 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     ) {
       return;
     }
+    const canSave = note.role !== "viewer" && useAppStore.getState().notesView !== "trash";
+    if (canSave && patch.title !== undefined) {
+      editCrdtNote(note, { title: patch.title });
+    }
     setNotes((current) =>
       current.map((item) => (item.id === selectedNoteId ? { ...item, ...patch } : item))
     );
-    if (note.role !== "viewer" && useAppStore.getState().notesView !== "trash") {
+    if (canSave) {
       scheduleAutosave(note.id);
     }
   }

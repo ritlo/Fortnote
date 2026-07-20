@@ -16,7 +16,6 @@ import type { BlockNoteEditor, BlockSchema } from "@blocknote/core";
 import type * as Y from "yjs";
 import type { AttachmentSummary, FolderSummary } from "../api";
 import {
-  editCrdtNote,
   getCrdtFragment,
   getCrdtProvider,
   updateCrdtNote
@@ -312,9 +311,8 @@ export function NoteEditor({
           onBlur={markIdle}
           onChange={(event) => {
             markEditing();
-            if (!editCrdtNote(selectedNote.id, { title: event.target.value })) {
-              updateSelectedNote({ title: event.target.value });
-            }
+            const title = event.target.value;
+            updateSelectedNote({ title });
           }}
           onFocus={markEditing}
         />

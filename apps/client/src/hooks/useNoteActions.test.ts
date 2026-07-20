@@ -7,6 +7,7 @@ import { useAppStore } from "../store/appStore";
 
 const mocks = vi.hoisted(() => ({
   deleteNote: vi.fn(),
+  editCrdtNote: vi.fn(() => true),
   encrypt: vi.fn(),
   encryptNoteKey: vi.fn(),
   loadNotes: vi.fn(),
@@ -36,6 +37,10 @@ vi.mock("../cryptoClient", () => ({
 vi.mock("./useAppData", () => ({
   loadDecryptedNotes: mocks.loadNotes,
   loadFolders: vi.fn()
+}));
+
+vi.mock("../realtime/crdt", () => ({
+  editCrdtNote: mocks.editCrdtNote
 }));
 
 import { mergeDraftAfterConflict, useNoteActions } from "./useNoteActions";
@@ -86,6 +91,10 @@ describe("note autosave", () => {
       result.current.updateSelectedNote({ title: "Latest" });
       result.current.updateSelectedNote({ title: "Latest" });
     });
+    expect(mocks.editCrdtNote).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: "note_1", title: "First" }),
+      { title: "Latest" }
+    );
     await act(async () => vi.advanceTimersByTimeAsync(499));
     expect(mocks.updateNote).not.toHaveBeenCalled();
     await act(async () => vi.advanceTimersByTimeAsync(1));

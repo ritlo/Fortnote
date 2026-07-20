@@ -132,7 +132,7 @@ export async function ensureLegacyNoteMigrated(
       (candidate) => candidate.id === note.id && candidate.keyEpoch === note.keyEpoch
     )?.title;
     if (latestTitle !== undefined) {
-      editCrdtNote(note.id, { title: latestTitle });
+      editCrdtNote(note, { title: latestTitle });
     }
     await waitForCrdtSectionDurable(note.id, note.keyEpoch, "root");
     seedLegacyCrdtSection(migratingNote, reservation.sectionId, body);

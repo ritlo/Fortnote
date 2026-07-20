@@ -11,7 +11,16 @@ import {
 } from "@fortnote/shared";
 import { openFortnoteIndexedDb } from "../lib/indexedDb";
 import type { ScopedEncryptedCrdtMessage } from "./crdt";
+import type { PreparedEncryptedContentV2 } from "../cryptoClient";
 import { connectRealtime, parseRealtimeMessage } from "./client";
+
+const transferMocks = vi.hoisted(() => ({
+  downloadVerifiedContent: vi.fn(),
+  persistPreparedTransfer: vi.fn(),
+  resumeContentUpload: vi.fn()
+}));
+
+vi.mock("./contentTransfer", () => transferMocks);
 
 const sockets: MockWebSocket[] = [];
 
@@ -65,7 +74,32 @@ describe("realtime client", () => {
       }
     });
     sockets.length = 0;
+    vi.clearAllMocks();
     vi.stubGlobal("WebSocket", MockWebSocket);
+  });
+
+  it("reports server quota pressure while retaining a content transfer", async () => {
+    transferMocks.persistPreparedTransfer.mockResolvedValue({});
+    transferMocks.resumeContentUpload.mockResolvedValue({
+      kind: "server-capacity",
+      error: new Error("quota")
+    });
+    const onCrdtError = vi.fn();
+    const connection = connectRealtime({
+      after: 0,
+      userId: crypto.randomUUID(),
+      contentStore: {} as Awaited<ReturnType<typeof openFortnoteIndexedDb>>,
+      onMessage: vi.fn(),
+      onCrdtError
+    });
+
+    const delivery = connection.sendCrdtContentDurably(preparedContent());
+    await expect(delivery.durable).resolves.toBeUndefined();
+    await expect(delivery.delivered).rejects.toThrow("Server storage is full");
+    expect(onCrdtError).toHaveBeenCalledWith(
+      "Server storage is full; encrypted work remains queued."
+    );
+    connection.close();
   });
 
   it("ignores malformed websocket messages", () => {
@@ -756,5 +790,28 @@ function scopedUpdate(): ScopedEncryptedCrdtMessage {
     kind: "update",
     cipher: toBase64(Uint8Array.from([1, 2, 3])),
     nonce: toBase64(new Uint8Array(24))
+  };
+}
+
+function preparedContent(): PreparedEncryptedContentV2 {
+  return {
+    cryptoOwnerId: crypto.randomUUID(),
+    noteId: crypto.randomUUID(),
+    sectionId: crypto.randomUUID(),
+    keyEpoch: 1,
+    updateId: crypto.randomUUID(),
+    uploadId: crypto.randomUUID(),
+    requestId: crypto.randomUUID(),
+    kind: "update",
+    formatVersion: 2,
+    totalCipherBytes: 1,
+    chunkCount: 1,
+    manifestHash: "a".repeat(64),
+    chunks: [{
+      chunkIndex: 0,
+      cipherBytes: Uint8Array.of(1),
+      cipherHash: "b".repeat(64),
+      nonce: toBase64(new Uint8Array(24))
+    }]
   };
 }

@@ -591,21 +591,37 @@ export function openCrdtNote(
 }
 
 export function editCrdtNote(
-  noteId: string,
+  noteOrId: DecryptedNote | string,
   patch: Partial<Pick<DecryptedNote, "title">>
 ): boolean {
+  const noteId = typeof noteOrId === "string" ? noteOrId : noteOrId.id;
   const root = bindings.get(bindingKey(noteId, ROOT_SECTION_ID));
-  if (!root) {
-    return false;
+  let writableRoot: Binding;
+  if (typeof noteOrId === "string") {
+    if (!root) {
+      return false;
+    }
+    writableRoot = root;
+  } else {
+    writableRoot = root ?? getOrCreateBinding(noteId, ROOT_SECTION_ID, noteOrId.keyEpoch);
+    writableRoot.note = noteOrId;
+    transport?.subscribe(
+      noteId,
+      ROOT_SECTION_ID,
+      noteOrId.keyEpoch,
+      writableRoot.observedServerSequence
+    );
   }
-  if (!root.ready) {
-    root.pendingPatch = { ...root.pendingPatch, ...patch };
-    root.onChange(patch);
-    return true;
+  if (!writableRoot.ready) {
+    writableRoot.pendingPatch = { ...writableRoot.pendingPatch, ...patch };
+    writableRoot.onChange(patch);
   }
-  root.doc.transact(() => {
+  writableRoot.doc.transact(() => {
     if (patch.title !== undefined) {
-      const text = root.doc.getText("title");
+      const text = writableRoot.doc.getText("title");
+      if (text.toJSON() === patch.title) {
+        return;
+      }
       text.delete(0, text.length);
       text.insert(0, patch.title);
     }
@@ -844,7 +860,12 @@ async function finishBindingSync(
     }
   }
   if (binding.appliedUpdateCount === 0 && !binding.snapshotSeeded) {
-    seedBinding(binding, binding.note);
+    seedBinding(
+      binding,
+      binding.sectionId === ROOT_SECTION_ID && binding.pendingPatch.title !== undefined
+        ? { ...binding.note, title: binding.pendingPatch.title }
+        : binding.note
+    );
     binding.snapshotSeeded = true;
     if (binding.note.role !== "viewer") {
       await broadcastCheckpoint(binding);
@@ -859,7 +880,7 @@ async function finishBindingSync(
     binding.sectionId === ROOT_SECTION_ID &&
     pendingPatch.title !== undefined
   ) {
-    editCrdtNote(binding.noteId, pendingPatch);
+    editCrdtNote(binding.note, pendingPatch);
   }
 }
 
@@ -1249,7 +1270,7 @@ function isActiveBinding(binding: Binding): boolean {
 function isActiveBindingForNote(binding: Binding, note: DecryptedNote): boolean {
   return (
     isActiveBinding(binding) &&
-    binding.note === note &&
+    binding.note.id === note.id &&
     binding.keyEpoch === note.keyEpoch &&
     binding.note.cryptoOwnerId === note.cryptoOwnerId
   );

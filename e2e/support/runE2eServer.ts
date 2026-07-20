@@ -5,6 +5,15 @@ import process from "node:process";
 
 const restartPath = resolve("data/e2e-server.restart");
 const statePath = resolve("data/e2e-server.state");
+const serverEnvironment = {
+  ...process.env,
+  ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN ?? "http://127.0.0.1:5173",
+  COOKIE_SECURE: process.env.COOKIE_SECURE ?? "false",
+  DATABASE_PATH: process.env.DATABASE_PATH ?? "data/e2e.sqlite",
+  DATA_DIR: process.env.DATA_DIR ?? "data/e2e-attachments",
+  PORT: process.env.API_PORT ?? process.env.PORT ?? "3001"
+};
+const serverHealthUrl = `http://127.0.0.1:${serverEnvironment.PORT}/api/health`;
 let child: ChildProcess | null = null;
 let stopping = false;
 let restarting = false;
@@ -31,7 +40,7 @@ function startServer(): void {
     ["--filter", "@fortnote/server", "exec", "tsx", "src/index.ts"],
     {
       detached: process.platform !== "win32",
-      env: process.env,
+      env: serverEnvironment,
       stdio: "inherit"
     }
   );
@@ -100,7 +109,7 @@ async function waitForHealth(): Promise<void> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch("http://127.0.0.1:3001/api/health");
+      const response = await fetch(serverHealthUrl);
       if (response.ok) {
         return;
       }

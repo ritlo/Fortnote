@@ -11,7 +11,6 @@ import { blockNoteInitialContent, parseBlockNoteBody } from "../lib/blockNote";
 
 const mocks = vi.hoisted(() => ({
   createOptions: [] as unknown[],
-  edit: vi.fn(() => true),
   editor: {
     document: [
       {
@@ -107,7 +106,6 @@ vi.mock("@blocknote/mantine", () => ({
 }));
 
 vi.mock("../realtime/crdt", () => ({
-  editCrdtNote: mocks.edit,
   getCrdtFragment: mocks.getFragment,
   getCrdtProvider: mocks.getProvider,
   updateCrdtNote: mocks.updateBinding
@@ -228,14 +226,13 @@ describe("NoteEditor BlockNote lifecycle", () => {
     expect(screen.queryByText("Loading section…")).not.toBeNull();
   });
 
-  it("routes title edits through the collaborative title path", () => {
+  it("routes title edits through the note action", () => {
     const update = vi.fn();
     renderEditor(note(), update);
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Shared title" } });
 
-    expect(mocks.edit).toHaveBeenCalledWith("note-1", { title: "Shared title" });
-    expect(update).not.toHaveBeenCalledWith({ title: "Shared title" });
+    expect(update).toHaveBeenCalledWith({ title: "Shared title" });
   });
 
   it("renders viewer and trash documents read-only", () => {
