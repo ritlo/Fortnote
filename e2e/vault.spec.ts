@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { Buffer } from "node:buffer";
+import { waitForCrdtDurability } from "./support/durability.js";
 
 test("creates, edits, searches, trashes, restores, and attaches encrypted content", async ({
   page
@@ -16,6 +17,10 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
   await expectEditorToFillPane(page);
 
   await page.getByPlaceholder("Search decrypted notes").fill("First encrypted body");
+  await expect(page.locator(".search-coverage")).toContainText(
+    /Search covers all [1-9]\d* sections\./,
+    { timeout: 20_000 }
+  );
   await expect(page.getByRole("button", { name: /Launch plan/ })).toBeVisible();
 
   await page.getByLabel("Attach encrypted file").setInputFiles({
@@ -52,17 +57,14 @@ test("autosaves undo and redo and retains the result after relogin", async ({ pa
   await test.step("undo and redo the local edit", async () => {
     const editor = blockEditor(page);
     await editor.press("ControlOrMeta+End");
-    let saved = waitForNoteSave(page);
     await editor.pressSequentially(suffix);
-    await saved;
-    saved = waitForNoteSave(page);
+    await waitForCrdtDurability(page);
     await page.getByRole("button", { name: "Undo", exact: true }).click();
-    await saved;
     await expect(editor).not.toContainText(suffix);
-    saved = waitForNoteSave(page);
+    await waitForCrdtDurability(page);
     await page.getByRole("button", { name: "Redo", exact: true }).click();
     await expect(editor).toContainText(suffix);
-    await saved;
+    await waitForCrdtDurability(page);
   });
 
   await test.step("reload the persisted result", async () => {
@@ -84,7 +86,7 @@ test("recovers a vault with the saved recovery key", async ({ page }) => {
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("button", { name: "Lock vault" }).click();
   await page.getByRole("button", { name: "Recover" }).click();
-  await page.getByLabel("Username").fill(account.username);
+  await page.getByLabel("Account handle").fill(account.username);
   await page.getByLabel("Recovery key").fill(recoveryKey);
   await page.getByLabel("New account password").fill(recoveredPassword);
   await page.getByRole("button", { name: "Recover and decrypt" }).click();
@@ -131,7 +133,7 @@ test("lock and logout clear decrypted note content from the UI", async ({ page }
   await expect(page.getByRole("button", { name: new RegExp(noteTitle) })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.getByLabel("Username").fill(account.username);
+  await page.getByLabel("Account handle").fill(account.username);
   await page.getByLabel("Account password").fill(account.password);
   await page.getByRole("button", { name: "Sign in and decrypt" }).click();
 
@@ -151,7 +153,7 @@ async function register(
 ): Promise<string> {
   await page.goto("/");
   await page.getByRole("button", { name: "Register" }).click();
-  await page.getByLabel("Username").fill(username);
+  await page.getByLabel("Account handle").fill(username);
   await page.getByLabel("Account password").fill(password);
   await page.getByRole("button", { name: "Create encrypted vault" }).click();
   await expect(page.getByText("Signed in and decrypted")).toBeVisible();
@@ -172,6 +174,7 @@ async function createNote(page: Page, title: string, body: string): Promise<void
   await setEditorText(page, body);
   await titleInput.fill(title);
   await saved;
+  await waitForCrdtDurability(page);
   await expect(titleInput).toHaveValue(title);
   await expect(page.getByText(/^Last saved \d+ seconds ago$/)).toBeVisible();
   await expect(page.getByRole("button", { name: new RegExp(title) })).toBeVisible();

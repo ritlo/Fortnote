@@ -20,11 +20,11 @@ test("retains offline work through reconnect and ignores a delayed old-note save
 
   await page.context().setOffline(true);
   await appendEditorText(page, ` offline-${account.suffix}`);
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator(".collaboration-status")).toContainText(
     "Offline — changes kept on this device"
   );
   await page.context().setOffline(false);
-  await expect(page.getByRole("status")).toContainText("Saved and synchronized", {
+  await expect(page.locator(".collaboration-status")).toContainText("Saved and synchronized", {
     timeout: 30_000
   });
 
@@ -40,6 +40,10 @@ test("retains offline work through reconnect and ignores a delayed old-note save
   await expect.poll(() => delayed !== null).toBe(true);
   await openNote(page, second);
   await delayed!.continue();
+  await expect(page.locator(".collaboration-status")).toContainText(
+    "Saved and synchronized",
+    { timeout: 30_000 }
+  );
   await expect(page.getByLabel("Title")).toHaveValue(second);
 });
 
@@ -86,6 +90,7 @@ test("preserves conflict, undecryptable, stale-epoch, and terminally rejected wo
   });
   await page.getByLabel("Title").fill(`${title} conflict`);
   await expect(page.getByRole("alert")).toContainText("Changes need review");
+  await expect(page.getByLabel("Title")).toHaveValue(`${title} conflict`);
   await expectRecoveryActions(page, ["Review draft", "Encrypted export", "Reapply"]);
   await page.unroute("**/api/notes/*");
 
@@ -94,7 +99,7 @@ test("preserves conflict, undecryptable, stale-epoch, and terminally rejected wo
   });
   await page.reload();
   await signIn(page, account);
-  await openNote(page, title);
+  await openNote(page, `${title} conflict`);
   await expect(page.getByRole("alert")).toContainText("This note cannot be decrypted");
   await expectRecoveryActions(page, ["Retry", "Repair access"]);
   await page.unroute("**/api/notes/*/sections/*/history**");
@@ -107,8 +112,11 @@ test("preserves conflict, undecryptable, stale-epoch, and terminally rejected wo
       await safeError(route, 409, failure[0], "Encrypted update rejected");
     });
     await appendGeneratedText(page, 300 * 1024, ` ${failure[0]}-${account.suffix} `);
-    await expect(page.getByRole(failure[0] === "forbidden" ? "alert" : "status"))
-      .toContainText(failure[1]);
+    const target =
+      failure[0] === "forbidden"
+        ? page.getByRole("alert")
+        : page.locator(".collaboration-status");
+    await expect(target).toContainText(failure[1]);
     await expect(blockEditor(page)).toContainText(`${failure[0]}-${account.suffix}`);
     await page.unroute("**/api/content/uploads");
   }
@@ -132,13 +140,13 @@ test("keeps viewer and trash read-only, reports rotation abort, then removes rev
     await createNote(ownerPage, title);
     await shareNote(ownerPage, viewer.username, "viewer");
     await openNote(viewerPage, title);
-    await expect(viewerPage.getByRole("status")).toContainText("View only");
+    await expect(viewerPage.locator(".collaboration-status")).toContainText("View only");
     await expect(blockEditor(viewerPage)).toHaveAttribute("contenteditable", "false");
 
     await ownerPage.getByRole("button", { name: "Delete", exact: true }).click();
     await ownerPage.getByRole("button", { name: "Trash", exact: true }).click();
     await openNote(ownerPage, title);
-    await expect(ownerPage.getByRole("status")).toContainText("In trash — view only");
+    await expect(ownerPage.locator(".collaboration-status")).toContainText("In trash — view only");
     await expect(ownerPage.getByLabel("Title")).toBeDisabled();
     await ownerPage.getByRole("button", { name: "Restore" }).click();
     await ownerPage.getByRole("button", { name: "All notes", exact: true }).click();
@@ -255,7 +263,7 @@ async function installOutboxQuotaFault(page: Page): Promise<void> {
     const original = IDBObjectStore.prototype.put;
     IDBObjectStore.prototype.put = function (...args: Parameters<IDBObjectStore["put"]>) {
       if (
-        this.name === "outbox" &&
+        this.name === "encryptedOutbox" &&
         (window as Window & { __fortnoteFailOutbox?: boolean }).__fortnoteFailOutbox
       ) {
         throw new DOMException("Browser quota exhausted", "QuotaExceededError");

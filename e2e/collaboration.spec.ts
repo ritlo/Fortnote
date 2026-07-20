@@ -11,6 +11,7 @@ import {
   type Page,
   type Response
 } from "@playwright/test";
+import { waitForCrdtDurability } from "./support/durability.js";
 
 test("syncs a shared note for an online editor and offline viewer", async ({
   baseURL,
@@ -81,10 +82,6 @@ test("syncs a shared note for an online editor and offline viewer", async ({
       aliceEditor.press("ControlOrMeta+Home"),
       bobEditor.press("ControlOrMeta+End")
     ]);
-    const mergedSaved = Promise.any([
-      waitForNoteSave(alicePage),
-      waitForNoteSave(bobPage)
-    ]);
     await Promise.all([
       aliceEditor.pressSequentially("A "),
       bobEditor.pressSequentially(" B")
@@ -98,7 +95,10 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     }).toBe(true);
     const mergedBody = await editorText(alicePage);
     expect(mergedBody).toMatch(/^A .*B$/);
-    await mergedSaved;
+    await Promise.all([
+      waitForCrdtDurability(alicePage),
+      waitForCrdtDurability(bobPage)
+    ]);
 
     carolPage = await newUserPage(browser, baseURL, contexts);
     captureApiTraffic(carolPage, traffic);
@@ -205,15 +205,16 @@ test("syncs and persists collaborative undo and redo", async ({ baseURL, browser
     await test.step("synchronize undo and redo", async () => {
       const editor = blockEditor(alicePage);
       await editor.press("ControlOrMeta+End");
-      const saved = waitForNoteSave(alicePage);
       await editor.pressSequentially(suffix);
-      await saved;
+      await waitForCrdtDurability(alicePage);
       await expect(blockEditor(bobPage)).toContainText(suffix);
 
       await alicePage.getByRole("button", { name: "Undo", exact: true }).click();
+      await waitForCrdtDurability(alicePage);
       await expect(blockEditor(bobPage)).not.toContainText(suffix);
 
       await alicePage.getByRole("button", { name: "Redo", exact: true }).click();
+      await waitForCrdtDurability(alicePage);
       await expect(blockEditor(bobPage)).toContainText(suffix);
     });
 
@@ -260,14 +261,13 @@ test("embeds encrypted media for reloads and shared viewers", async ({
     await test.step("upload and render encrypted block media", async () => {
       await insertImageBlock(alicePage);
       const uploaded = waitForAttachmentUpload(alicePage);
-      const saved = waitForNoteSave(alicePage);
       await alicePage.locator('input[type="file"][accept="image/*"]').setInputFiles({
         name: filename,
         mimeType: "image/svg+xml",
         buffer: image
       });
       await uploaded;
-      await saved;
+      await waitForCrdtDurability(alicePage);
 
       await expect(alicePage.getByRole("img", { name: filename })).toHaveAttribute(
         "src",
@@ -280,9 +280,8 @@ test("embeds encrypted media for reloads and shared viewers", async ({
     await test.step("reuse the attachment without another upload", async () => {
       await insertImageBlock(alicePage);
       await alicePage.locator('[data-test="attachments-tab"]').click();
-      const saved = waitForNoteSave(alicePage);
       await alicePage.getByRole("button", { name: filename, exact: true }).click();
-      await saved;
+      await waitForCrdtDurability(alicePage);
 
       await expect(alicePage.getByRole("img", { name: filename })).toHaveCount(2);
       const imageSources = await alicePage
@@ -891,10 +890,11 @@ async function createNote(page: Page, title: string, body: string): Promise<void
   await expect(page.getByRole("button", { name: /Untitled note/ })).toBeVisible();
   const titleInput = page.getByLabel("Title");
   await expect(titleInput).toHaveValue("Untitled note");
-  const saved = waitForNoteSave(page);
+  const titleSaved = waitForNoteSave(page);
   await setEditorText(page, body);
   await titleInput.fill(title);
-  await saved;
+  await titleSaved;
+  await waitForCrdtDurability(page);
   await expect(titleInput).toHaveValue(title);
   await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
   await expect(page.getByText(/^Last saved \d+ seconds ago$/)).toBeVisible();
@@ -992,9 +992,8 @@ async function openNote(page: Page, title: string): Promise<void> {
 }
 
 async function editSelectedNote(page: Page, body: string): Promise<void> {
-  const saved = waitForNoteSave(page);
   await setEditorText(page, body);
-  await saved;
+  await waitForCrdtDurability(page);
 }
 
 function blockEditor(page: Page) {
