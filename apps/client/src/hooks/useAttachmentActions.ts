@@ -35,6 +35,7 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
   const setAttachmentsByNote = useAppStore((state) => state.setAttachmentsByNote);
   const setError = useAppStore((state) => state.setError);
   const setStatus = useAppStore((state) => state.setStatus);
+  const reportOperationFailure = useAppStore((state) => state.reportOperationFailure);
   const noteRef = useRef(selectedNote);
   const attachmentsRef = useRef(attachmentsByNote);
   const attachmentLoads = useRef(new Map<string, Promise<AttachmentSummary[]>>());
@@ -232,9 +233,10 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
       setStatus("Attachment encrypted and saved");
       return attachment;
     } catch (uploadError) {
-      setStatus("Attachment failed");
-      setError(
-        uploadError instanceof Error ? uploadError.message : "Unable to upload attachment"
+      reportOperationFailure(
+        uploadError,
+        uploadError instanceof Error ? uploadError.message : "Unable to upload attachment",
+        "Attachment failed"
       );
       return null;
     }

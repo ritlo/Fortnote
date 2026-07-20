@@ -116,6 +116,23 @@ describe("attachment upload", () => {
     expect(useAppStore.getState().error).toBe("encryption failed");
   });
 
+  it("maps browser capacity failure without claiming the attachment was saved", async () => {
+    mocks.createDraft.mockRejectedValue(Object.assign(new Error("private detail"), {
+      name: "QuotaExceededError"
+    }));
+    const { result } = renderHook(() => useAttachmentActions(note()));
+
+    const uploaded = await act(async () => result.current.uploadSelectedAttachment(
+      new File(["image"], "image.png", { type: "image/png" })
+    ));
+
+    expect(uploaded).toBeNull();
+    expect(useAppStore.getState()).toMatchObject({
+      status: "Local storage full — changes need attention",
+      localStorageCapacity: { status: "full", availableBytes: 0 }
+    });
+  });
+
   it("reports binary upload progress without placing the filename in status", async () => {
     let progressStatus = "";
     mocks.createDraft.mockResolvedValue({ id: ATTACHMENT_ID });

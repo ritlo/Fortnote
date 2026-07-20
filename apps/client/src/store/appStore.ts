@@ -77,6 +77,12 @@ export interface StorageCapacityState {
   quotaBytes: number;
 }
 
+export interface OperationFailureState {
+  kind: "generic" | "local-capacity" | "server-capacity" | "server-maintenance";
+  message: string;
+  status: string;
+}
+
 export interface RevocationRotationFailure {
   noteId: string;
   revokedUserId: string;
@@ -182,6 +188,11 @@ export interface AppStore {
   setSelectedSection: (noteId: string, sectionId: string | null) => void;
   setLocalStorageCapacity: StoreSetter<StorageCapacityState>;
   setServerStorageCapacity: StoreSetter<StorageCapacityState>;
+  reportOperationFailure: (
+    error: unknown,
+    fallback: string,
+    fallbackStatus?: string
+  ) => OperationFailureState;
   setError: StoreSetter<string | null>;
   setStatus: StoreSetter<string>;
   resetVaultState: (nextStatus: string) => void;
@@ -457,6 +468,32 @@ export const useAppStore = create<AppStore>((set) => ({
       serverStorageCapacity: resolveState(value, state.serverStorageCapacity)
     }));
   },
+  reportOperationFailure: (error, fallback, fallbackStatus) => {
+    const failure = operationFailureState(error, fallback, fallbackStatus);
+    set((state) => ({
+      error: failure.message,
+      status: failure.status,
+      ...(failure.kind === "local-capacity"
+        ? {
+            localStorageCapacity: {
+              ...state.localStorageCapacity,
+              availableBytes: 0,
+              status: "full" as const
+            }
+          }
+        : {}),
+      ...(failure.kind === "server-capacity" || failure.kind === "server-maintenance"
+        ? {
+            serverStorageCapacity: {
+              ...state.serverStorageCapacity,
+              ...(failure.kind === "server-capacity" ? { availableBytes: 0 } : {}),
+              status: failure.kind === "server-capacity" ? "full" as const : "error" as const
+            }
+          }
+        : {})
+    }));
+    return failure;
+  },
   setError: (value) => {
     set((state) => ({ error: resolveState(value, state.error) }));
   },
@@ -536,6 +573,50 @@ function omitRecordKey<T>(record: Record<string, T>, keyToRemove: string): Recor
   return Object.fromEntries(
     Object.entries(record).filter(([key]) => key !== keyToRemove)
   );
+}
+
+export function operationFailureState(
+  error: unknown,
+  fallback: string,
+  fallbackStatus = "Operation failed"
+): OperationFailureState {
+  if (errorCode(error) === "quota_exceeded" || errorCode(error) === "storage_limit") {
+    return {
+      kind: "server-capacity",
+      message: "Encrypted changes remain on this device until server storage is available.",
+      status: "Server storage full — changes kept on this device"
+    };
+  }
+  if (errorName(error) === "IndexedDbCapacityError" || errorName(error) === "QuotaExceededError") {
+    return {
+      kind: "local-capacity",
+      message: "The visible draft is not crash-safe. Free browser storage, export, or split it.",
+      status: "Local storage full — changes need attention"
+    };
+  }
+  if (errorCode(error) === "internal_error" || errorStatus(error) >= 500) {
+    return {
+      kind: "server-maintenance",
+      message: "Encrypted changes remain local while the server is unavailable.",
+      status: "Synchronizing paused — server unavailable"
+    };
+  }
+  return { kind: "generic", message: fallback, status: fallbackStatus };
+}
+
+function errorCode(error: unknown): string | null {
+  return typeof error === "object" && error !== null && "code" in error &&
+    typeof error.code === "string" ? error.code : null;
+}
+
+function errorName(error: unknown): string | null {
+  return typeof error === "object" && error !== null && "name" in error &&
+    typeof error.name === "string" ? error.name : null;
+}
+
+function errorStatus(error: unknown): number {
+  return typeof error === "object" && error !== null && "status" in error &&
+    typeof error.status === "number" ? error.status : 0;
 }
 
 function emptyCapacityState(): StorageCapacityState {

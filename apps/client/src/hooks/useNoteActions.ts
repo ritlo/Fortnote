@@ -37,11 +37,12 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
   const setSelectedNoteId = useAppStore((state) => state.setSelectedNoteId);
   const setError = useAppStore((state) => state.setError);
   const setStatus = useAppStore((state) => state.setStatus);
+  const reportOperationFailure = useAppStore((state) => state.reportOperationFailure);
   const autosave = useRef({
     inFlightNoteId: null as string | null,
     issues: new Map<
       string,
-      { error: string; result: "conflict" | "failed"; status: "Save conflict" | "Save failed" }
+      { error: string; result: "conflict" | "failed"; status: string }
     >(),
     pending: new Set<string>(),
     statusNoteId: null as string | null,
@@ -116,8 +117,11 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       if (!isCurrentSession(sessionUserId, sessionRootKey)) {
         return;
       }
-      setStatus("Save failed");
-      setError(noteError instanceof Error ? noteError.message : "Unable to create note");
+      reportOperationFailure(
+        noteError,
+        noteError instanceof Error ? noteError.message : "Unable to create note",
+        "Save failed"
+      );
     }
   }
 
@@ -146,12 +150,13 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
   function recordSaveIssue(
     noteId: string,
     result: "conflict" | "failed",
-    error: string
+    error: string,
+    status = result === "conflict" ? "Save conflict" : "Save failed"
   ) {
     autosave.current.issues.set(noteId, {
       error,
       result,
-      status: result === "conflict" ? "Save conflict" : "Save failed"
+      status
     });
     showSaveIssues();
   }
@@ -288,11 +293,12 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         return "conflict";
       }
 
-      recordSaveIssue(
-        noteId,
-        "failed",
-        saveError instanceof Error ? saveError.message : "Unable to save note"
+      const failure = reportOperationFailure(
+        saveError,
+        saveError instanceof Error ? saveError.message : "Unable to save note",
+        "Save failed"
       );
+      recordSaveIssue(noteId, "failed", failure.message, failure.status);
       return "failed";
     }
   }

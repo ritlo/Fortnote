@@ -113,11 +113,13 @@ export function useNoteViewModel() {
           ? "loading"
           : "opening"
       : "idle",
-    durability: localStorageCapacity.status === "full"
+    durability: localStorageCapacity.status === "full" || localStorageCapacity.status === "error"
       ? "local-full"
       : serverStorageCapacity.status === "full"
         ? "server-full"
-        : "clean",
+        : serverStorageCapacity.status === "error"
+          ? "compacting"
+          : "clean",
     connection: realtimeStatus === "connecting"
       ? "reconnecting"
       : realtimeStatus === "disconnected"

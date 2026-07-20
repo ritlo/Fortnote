@@ -347,6 +347,42 @@ describe("note autosave", () => {
     expect(mocks.updateNote).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps quota-rejected edits local without reporting them saved", async () => {
+    mocks.updateNote.mockRejectedValueOnce({
+      code: "quota_exceeded",
+      message: "internal quota detail",
+      status: 413
+    });
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "Retained draft" });
+    });
+    await advanceAutosave();
+
+    expect(useAppStore.getState()).toMatchObject({
+      status: "Server storage full — changes kept on this device",
+      error: "Encrypted changes remain on this device until server storage is available.",
+      serverStorageCapacity: { status: "full", availableBytes: 0 }
+    });
+    expect(useAppStore.getState().notes[0]?.title).toBe("Retained draft");
+  });
+
+  it("distinguishes server maintenance from quota pressure", async () => {
+    mocks.updateNote.mockRejectedValueOnce({ code: "internal_error", status: 503 });
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.updateSelectedNote({ title: "Pending maintenance" });
+    });
+    await advanceAutosave();
+
+    expect(useAppStore.getState()).toMatchObject({
+      status: "Synchronizing paused — server unavailable",
+      serverStorageCapacity: { status: "error" }
+    });
+  });
+
   it("preserves edits made while a conflicting save is in flight", async () => {
     let rejectSave!: (reason: unknown) => void;
     mocks.updateNote.mockImplementationOnce(
