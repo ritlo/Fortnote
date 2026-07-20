@@ -157,6 +157,40 @@ describe("SectionNavigator", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry section" }));
     expect(retry).toHaveBeenCalledTimes(2);
   });
+
+  it("moves focus from a search result to the selected section boundary", () => {
+    installReadyIndex();
+    useAppStore.getState().setLoadedSection({
+      noteId: "note-1",
+      sectionId: "section-1",
+      keyEpoch: 1,
+      status: "loading",
+      currentSequence: 2,
+      prefetched: false
+    });
+    render(
+      <>
+        <button
+          type="button"
+          data-section-target="section-1"
+          onClick={() => {
+            useAppStore.getState().setSelectedSection("note-1", "section-1");
+          }}
+        >
+          Search result
+        </button>
+        <SectionNavigator noteId="note-1" canEdit={false} />
+      </>
+    );
+
+    const searchResult = screen.getByRole("button", { name: "Search result" });
+    searchResult.focus();
+    fireEvent.click(searchResult);
+
+    expect(screen.getByRole("button", { name: "Section 2" })).toBe(document.activeElement);
+    expect(screen.getByRole("navigation", { name: "Note sections" }).getAttribute("aria-busy"))
+      .toBe("true");
+  });
 });
 
 function installReadyIndex(): void {

@@ -46,6 +46,8 @@ describe("NotesPane protected search", () => {
     );
 
     expect(screen.getByLabelText("Search notes")).toBeTruthy();
+    expect(screen.getByLabelText("Search notes").getAttribute("aria-describedby"))
+      .toBe("search-coverage-status");
     expect(screen.getByText(/more results may appear.*1 of 3/u)).toBeTruthy();
     expect(screen.getByRole("progressbar", { name: "Search indexing progress" }))
       .toHaveProperty("value", 1);

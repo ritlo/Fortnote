@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { sectionRuntimeKey, useAppStore } from "../store/appStore";
 
 interface SectionNavigatorProps {
@@ -29,6 +30,17 @@ export function SectionNavigator({
   );
   const loadedSections = useAppStore((state) => state.loadedSections);
   const setSelectedSection = useAppStore((state) => state.setSelectedSection);
+  const currentButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const source = document.activeElement;
+    if (
+      source instanceof HTMLElement &&
+      source.dataset.sectionTarget === selectedSectionId
+    ) {
+      currentButtonRef.current?.focus();
+    }
+  }, [selectedSectionId]);
 
   if (!index || index.status === "idle" || index.status === "loading") {
     return (
@@ -62,8 +74,12 @@ export function SectionNavigator({
     : undefined;
 
   return (
-    <nav aria-label="Note sections" className="section-navigator">
-      <div className="section-position" aria-live="polite">
+    <nav
+      aria-busy={current?.status === "loading" ? true : undefined}
+      aria-label="Note sections"
+      className="section-navigator"
+    >
+      <div className="section-position" role="status" aria-live="polite">
         {currentIndex >= 0
           ? `Section ${String(currentIndex + 1)} of ${String(ordered.length)}`
           : `${String(ordered.length)} sections`}
@@ -80,7 +96,7 @@ export function SectionNavigator({
           {String(current.transferProgress.totalChunks)} chunks
         </progress>
       ) : null}
-      <ol>
+      <ol aria-label="Sections in note">
         {ordered.map((sectionId, position) => {
           const section = loadedSections[sectionRuntimeKey(noteId, sectionId)];
           const isCurrent = sectionId === selectedSectionId;
@@ -89,13 +105,18 @@ export function SectionNavigator({
               <button
                 type="button"
                 aria-current={isCurrent ? "page" : undefined}
+                aria-describedby={`section-status-${sectionId}`}
+                ref={isCurrent ? currentButtonRef : undefined}
                 onClick={() => {
                   setSelectedSection(noteId, sectionId);
                 }}
               >
                 Section {String(position + 1)}
               </button>
-              <span className="section-boundary-status">
+              <span
+                className="section-boundary-status"
+                id={`section-status-${sectionId}`}
+              >
                 {sectionStatus(section?.status)}
               </span>
             </li>

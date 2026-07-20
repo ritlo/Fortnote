@@ -66,13 +66,14 @@ export function NotesPane({
           <Plus size={18} />
         </button>
       </header>
-      <div className="search">
+      <div className="search" role="search">
         <Search size={16} />
         <label className="visually-hidden" htmlFor="note-search">
           Search notes
         </label>
         <input
           id="note-search"
+          aria-describedby={search.trim() ? "search-coverage-status" : undefined}
           placeholder="Search decrypted notes"
           value={search}
           onChange={(event) => {
@@ -96,7 +97,7 @@ export function NotesPane({
       {recoverySecret ? (
         <p className="recovery-code">Recovery key: {recoverySecret}</p>
       ) : null}
-      <ul className="note-list">
+      <ul className="note-list" aria-label="Notes and matching sections">
         {filteredNotes.length === 0 ? (
           <li className="empty-state">
             {notesView === "trash"
@@ -129,11 +130,15 @@ export function NotesPane({
                 </button>
                 {noteMatches.length > 0 ? (
                   <ul className="search-match-list" aria-label={`Section matches in ${note.title}`}>
-                    {noteMatches.map((match) => (
+                    {noteMatches.map((match, position) => (
                       <li key={`${match.sectionId}:${match.blockId}`}>
                         <button
                           className="search-match"
                           type="button"
+                          data-section-target={match.sectionId}
+                          aria-label={`Open matching section ${String(position + 1)} of ${String(
+                            noteMatches.length
+                          )} in ${note.title}: ${match.excerpt || "Matching encrypted section"}`}
                           onClick={() => {
                             selectSearchMatch(match);
                           }}
@@ -168,7 +173,12 @@ function SearchCoverageStatus({
   const isDiscovering = status === "discovering";
   const label = searchCoverageLabel(coverage, status);
   return (
-    <div className="search-coverage" role="status" aria-live="polite">
+    <div
+      className="search-coverage"
+      id="search-coverage-status"
+      role="status"
+      aria-live="polite"
+    >
       <span>{label}</span>
       {isDiscovering ? (
         <progress aria-label="Search indexing progress" />
