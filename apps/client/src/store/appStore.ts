@@ -150,6 +150,8 @@ export interface AppStore {
   selectedSectionByNote: Record<string, string>;
   localStorageCapacity: StorageCapacityState;
   serverStorageCapacity: StorageCapacityState;
+  operationFailure: OperationFailureState | null;
+  requestTokens: Record<string, string>;
   error: string | null;
   status: string;
   setUser: StoreSetter<User | null>;
@@ -193,6 +195,9 @@ export interface AppStore {
     fallback: string,
     fallbackStatus?: string
   ) => OperationFailureState;
+  beginRequest: (scope: string) => string;
+  finishRequest: (scope: string, token: string) => void;
+  isCurrentRequest: (scope: string, token: string) => boolean;
   setError: StoreSetter<string | null>;
   setStatus: StoreSetter<string>;
   resetVaultState: (nextStatus: string) => void;
@@ -202,7 +207,7 @@ function resolveState<T>(value: StateUpdate<T>, current: T): T {
   return typeof value === "function" ? (value as (current: T) => T)(current) : value;
 }
 
-export const useAppStore = create<AppStore>((set) => ({
+export const useAppStore = create<AppStore>((set, get) => ({
   user: null,
   rootKey: null,
   keyMaterialVersion: null,
@@ -234,6 +239,8 @@ export const useAppStore = create<AppStore>((set) => ({
   selectedSectionByNote: {},
   localStorageCapacity: emptyCapacityState(),
   serverStorageCapacity: emptyCapacityState(),
+  operationFailure: null,
+  requestTokens: {},
   error: null,
   status: "Checking session",
   setUser: (value) => {
@@ -472,6 +479,7 @@ export const useAppStore = create<AppStore>((set) => ({
     const failure = operationFailureState(error, fallback, fallbackStatus);
     set((state) => ({
       error: failure.message,
+      operationFailure: failure,
       status: failure.status,
       ...(failure.kind === "local-capacity"
         ? {
@@ -494,8 +502,23 @@ export const useAppStore = create<AppStore>((set) => ({
     }));
     return failure;
   },
+  beginRequest: (scope) => {
+    const token = crypto.randomUUID();
+    set((state) => ({ requestTokens: { ...state.requestTokens, [scope]: token } }));
+    return token;
+  },
+  finishRequest: (scope, token) => {
+    set((state) => state.requestTokens[scope] === token
+      ? { requestTokens: omitRecordKey(state.requestTokens, scope) }
+      : {}
+    );
+  },
+  isCurrentRequest: (scope, token) => get().requestTokens[scope] === token,
   setError: (value) => {
-    set((state) => ({ error: resolveState(value, state.error) }));
+    set((state) => {
+      const error = resolveState(value, state.error);
+      return { error, ...(error === null ? { operationFailure: null } : {}) };
+    });
   },
   setStatus: (value) => {
     set((state) => ({ status: resolveState(value, state.status) }));
@@ -525,6 +548,8 @@ export const useAppStore = create<AppStore>((set) => ({
       selectedSectionByNote: {},
       localStorageCapacity: emptyCapacityState(),
       serverStorageCapacity: emptyCapacityState(),
+      operationFailure: null,
+      requestTokens: {},
       search: "",
       password: "",
       newPassword: "",

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CollaborationEvent } from "../api";
 import type { DecryptedNote } from "./appStore";
-import { useAppStore } from "./appStore";
+import { operationFailureState, useAppStore } from "./appStore";
 
 describe("collaboration event store", () => {
   beforeEach(() => {
@@ -129,6 +129,31 @@ describe("collaboration event store", () => {
 
     useAppStore.getState().resetVaultState("locked");
     expect(useAppStore.getState().recoverableDrafts).toEqual({});
+  });
+
+  it("maps recognized failures without exposing their details", () => {
+    expect(operationFailureState(
+      { code: "quota_exceeded", message: "private server detail", status: 413 },
+      "fallback"
+    )).toEqual({
+      kind: "server-capacity",
+      message: "Encrypted changes remain on this device until server storage is available.",
+      status: "Server storage full — changes kept on this device"
+    });
+    expect(operationFailureState(
+      { message: "private browser detail", name: "QuotaExceededError" },
+      "fallback"
+    ).message).not.toContain("private");
+  });
+
+  it("rejects completions from superseded request tokens", () => {
+    const first = useAppStore.getState().beginRequest("search");
+    const second = useAppStore.getState().beginRequest("search");
+
+    expect(useAppStore.getState().isCurrentRequest("search", first)).toBe(false);
+    expect(useAppStore.getState().isCurrentRequest("search", second)).toBe(true);
+    useAppStore.getState().finishRequest("search", first);
+    expect(useAppStore.getState().isCurrentRequest("search", second)).toBe(true);
   });
 });
 

@@ -64,6 +64,7 @@ export function useNoteViewModel() {
   const loadedSections = useAppStore((state) => state.loadedSections);
   const selectedSectionByNote = useAppStore((state) => state.selectedSectionByNote);
   const error = useAppStore((state) => state.error);
+  const operationFailure = useAppStore((state) => state.operationFailure);
   const [searchSession, setSearchSession] = useState<SearchSession | null>(null);
   const [searchCoverage, setSearchCoverage] = useState<SearchCoverage | null>(null);
   const [searchIndexStatus, setSearchIndexStatus] = useState<SearchIndexStatus>("idle");
@@ -129,9 +130,11 @@ export function useNoteViewModel() {
       ? "reviewing"
       : retainedDraft
         ? "divergent"
-        : error
-          ? "error"
-          : "none",
+        : operationFailure
+          ? operationFailure.kind === "generic" ? "error" : "none"
+          : error
+            ? "error"
+            : "none",
     vault: selectedNote
       ? "ready"
       : viewNotes.length === 0
@@ -165,6 +168,14 @@ export function useNoteViewModel() {
       return;
     }
     const controller = new AbortController();
+    const requestScope = "protected-search-discovery";
+    const requestToken = useAppStore.getState().beginRequest(requestScope);
+    const throwIfStale = () => {
+      throwIfCanceled(controller.signal);
+      if (!useAppStore.getState().isCurrentRequest(requestScope, requestToken)) {
+        throw new DOMException("Search request superseded", "AbortError");
+      }
+    };
     let database: Awaited<ReturnType<typeof openFortnoteIndexedDb>> | null = null;
     const userId = user.id;
     const vaultRootKey = rootKey;
@@ -175,7 +186,7 @@ export function useNoteViewModel() {
       setSearchIndexError(null);
       setSearchIndexStatus("discovering");
       database = await openFortnoteIndexedDb();
-      throwIfCanceled(controller.signal);
+      throwIfStale();
       const index = createProtectedSearchIndex({
         database,
         rootKey: vaultRootKey,
@@ -186,14 +197,14 @@ export function useNoteViewModel() {
         currentNotes,
         controller.signal
       );
-      throwIfCanceled(controller.signal);
+      throwIfStale();
       const session = {
         index,
         targets
       };
       setSearchSession(session);
       let coverage = await index.coverage(targets);
-      throwIfCanceled(controller.signal);
+      throwIfStale();
       setSearchCoverage(coverage);
 
       if (!normalizedSearch) {
@@ -206,7 +217,7 @@ export function useNoteViewModel() {
         coverage = await index.buildNextBatch(targets, (target) =>
           loadSearchSection(target, currentNotes, controller.signal)
         );
-        throwIfCanceled(controller.signal);
+        throwIfStale();
         setSearchCoverage(coverage);
         setSearchRevision((revision) => revision + 1);
       }
@@ -219,7 +230,10 @@ export function useNoteViewModel() {
       }
       setSearchIndexStatus("ready");
     })().catch((error: unknown) => {
-      if (controller.signal.aborted) {
+      if (
+        controller.signal.aborted ||
+        !useAppStore.getState().isCurrentRequest(requestScope, requestToken)
+      ) {
         return;
       }
       setSearchRevision((revision) => revision + 1);
@@ -229,6 +243,7 @@ export function useNoteViewModel() {
 
     return () => {
       controller.abort();
+      useAppStore.getState().finishRequest(requestScope, requestToken);
       database?.close();
     };
   }, [normalizedSearch, rootKey, searchRetryVersion, searchableNotesSignature, user]);
@@ -290,12 +305,13 @@ export function useNoteViewModel() {
       setQueryMatches({ query: normalizedSearch, matches: [] });
       return;
     }
-    let active = true;
+    const requestScope = "protected-search-query";
+    const requestToken = useAppStore.getState().beginRequest(requestScope);
     const visibleNoteIds = new Set(viewNotes.map((note) => note.id));
     void searchSession.index
       .query(normalizedSearch, searchSession.targets)
       .then((result) => {
-        if (!active) {
+        if (!useAppStore.getState().isCurrentRequest(requestScope, requestToken)) {
           return;
         }
         setQueryMatches({
@@ -304,7 +320,7 @@ export function useNoteViewModel() {
         });
       })
       .catch((error: unknown) => {
-        if (!active) {
+        if (!useAppStore.getState().isCurrentRequest(requestScope, requestToken)) {
           return;
         }
         setQueryMatches({ query: normalizedSearch, matches: [] });
@@ -312,7 +328,7 @@ export function useNoteViewModel() {
         setSearchIndexError(errorMessage(error, "Protected search query failed."));
       });
     return () => {
-      active = false;
+      useAppStore.getState().finishRequest(requestScope, requestToken);
     };
   }, [normalizedSearch, searchRevision, searchSession, viewNotes]);
 
