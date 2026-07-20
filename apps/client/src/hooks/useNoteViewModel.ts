@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listNoteSections } from "../api";
 import type { BlockNoteFragmentSnapshot } from "../lib/blockNote";
+import {
+  defaultCollaborationDimensions,
+  deriveCollaborationState
+} from "../lib/collaborationState";
 import { openFortnoteIndexedDb } from "../lib/indexedDb";
 import {
   createProtectedSearchIndex,
@@ -53,6 +57,13 @@ export function useNoteViewModel() {
   const search = useAppStore((state) => state.search);
   const user = useAppStore((state) => state.user);
   const rootKey = useAppStore((state) => state.rootKey);
+  const realtimeStatus = useAppStore((state) => state.realtimeStatus);
+  const localStorageCapacity = useAppStore((state) => state.localStorageCapacity);
+  const serverStorageCapacity = useAppStore((state) => state.serverStorageCapacity);
+  const recoverableDrafts = useAppStore((state) => state.recoverableDrafts);
+  const loadedSections = useAppStore((state) => state.loadedSections);
+  const selectedSectionByNote = useAppStore((state) => state.selectedSectionByNote);
+  const error = useAppStore((state) => state.error);
   const [searchSession, setSearchSession] = useState<SearchSession | null>(null);
   const [searchCoverage, setSearchCoverage] = useState<SearchCoverage | null>(null);
   const [searchIndexStatus, setSearchIndexStatus] = useState<SearchIndexStatus>("idle");
@@ -75,6 +86,47 @@ export function useNoteViewModel() {
   const selectedAttachments = selectedNoteId
     ? attachmentsByNote[selectedNoteId] ?? []
     : [];
+  const retainedDraft = selectedNote
+    ? Object.values(recoverableDrafts).find(
+        (draft) => draft.noteId === selectedNote.id && draft.state !== "discarded"
+      )
+    : undefined;
+  const selectedSectionId = selectedNote
+    ? selectedSectionByNote[selectedNote.id]
+    : undefined;
+  const selectedSection = selectedNote && selectedSectionId
+    ? loadedSections[sectionRuntimeKey(selectedNote.id, selectedSectionId)]
+    : undefined;
+  const collaborationState = deriveCollaborationState({
+    ...defaultCollaborationDimensions,
+    access: notesView === "trash"
+      ? "trash"
+      : (selectedNote?.role ?? "owner"),
+    section: selectedNote
+      ? selectedSection?.status === "ready"
+        ? "ready"
+        : selectedSection?.status === "loading"
+          ? "loading"
+          : "opening"
+      : "idle",
+    durability: localStorageCapacity.status === "full"
+      ? "local-full"
+      : serverStorageCapacity.status === "full"
+        ? "server-full"
+        : "clean",
+    connection: realtimeStatus === "connecting"
+      ? "reconnecting"
+      : realtimeStatus === "disconnected"
+        ? "offline"
+        : "connected",
+    recovery: retainedDraft ? "divergent" : error ? "error" : "none",
+    vault: selectedNote
+      ? "ready"
+      : viewNotes.length === 0
+        ? "empty"
+        : "ready",
+    draftRetained: Boolean(retainedDraft)
+  });
   const normalizedSearch = normalizeSearch(search);
   const searchMatches = queryMatches.query === normalizedSearch
     ? queryMatches.matches
@@ -263,6 +315,7 @@ export function useNoteViewModel() {
 
   return {
     filteredNotes,
+    collaborationState,
     retrySearchIndex,
     searchCoverage,
     searchIndexError,

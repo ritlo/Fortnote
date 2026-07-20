@@ -66,7 +66,20 @@ describe("EditorHeader last-saved feedback", () => {
   });
 });
 
-function renderHeader() {
+describe("EditorHeader role affordances", () => {
+  it("allows only owners to delete active notes", () => {
+    renderHeader({ selectedNote: { ...note(), role: "viewer" } });
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Delete" }).disabled).toBe(true);
+  });
+
+  it("allows only owners to restore or permanently delete trash notes", () => {
+    renderHeader({ notesView: "trash", selectedNote: { ...note(), role: "viewer", isDeleted: true } });
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Restore" }).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Delete forever" }).disabled).toBe(true);
+  });
+});
+
+function renderHeader(overrides: Partial<Parameters<typeof EditorHeader>[0]> = {}) {
   return render(
     createElement(EditorHeader, {
       deleteSelectedForever: vi.fn(),
@@ -76,7 +89,8 @@ function renderHeader() {
       notesView: "notes",
       restoreSelectedNote: vi.fn(),
       selectedNote: note(),
-      user: { id: "current-user", username: "current" }
+      user: { id: "current-user", username: "current" },
+      ...overrides
     })
   );
 }

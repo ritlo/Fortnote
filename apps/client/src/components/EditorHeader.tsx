@@ -2,8 +2,11 @@ import type { PresenceUser, User } from "../api";
 import { useEffect, useState } from "react";
 import type { DecryptedNote, NotesView } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
+import type { CollaborationState } from "../lib/collaborationState";
+import { CollaborationStatus } from "./CollaborationStatus";
 
 interface EditorHeaderProps {
+  collaborationState?: CollaborationState;
   keyMaterialVersion: number | null;
   notesView: NotesView;
   selectedNote: DecryptedNote | null;
@@ -15,6 +18,7 @@ interface EditorHeaderProps {
 }
 
 export function EditorHeader({
+  collaborationState,
   keyMaterialVersion,
   notesView,
   selectedNote,
@@ -67,6 +71,7 @@ export function EditorHeader({
         </p>
         {presenceSummary ? <p className="presence-summary">{presenceSummary}</p> : null}
         {lastSaved ? <p className="last-saved">{lastSaved}</p> : null}
+        {collaborationState ? <CollaborationStatus state={collaborationState} /> : null}
       </div>
       {notesView === "settings" ? (
         <div className="action-row">
@@ -87,7 +92,7 @@ export function EditorHeader({
               <button
                 className="text-button"
                 type="button"
-                disabled={!selectedNote}
+                disabled={!canDelete}
                 onClick={() => {
                   void restoreSelectedNote();
                 }}
@@ -97,7 +102,7 @@ export function EditorHeader({
               <button
                 className="text-button danger"
                 type="button"
-                disabled={!selectedNote}
+                disabled={!canDelete}
                 onClick={() => {
                   void deleteSelectedForever();
                 }}

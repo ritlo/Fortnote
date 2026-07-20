@@ -76,6 +76,7 @@ export function AppShell() {
         status={status}
       />
       <EditorPane
+        collaborationState={noteView.collaborationState}
         changePassword={authActions.changePassword}
         cleanupSharingKeys={authActions.cleanupSharingKeys}
         deleteSelectedForever={noteActions.deleteSelectedForever}

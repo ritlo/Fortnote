@@ -254,6 +254,27 @@ describe("NoteEditor BlockNote lifecycle", () => {
     expect(screen.queryByRole("button", { name: "Redo" })).toBeNull();
   });
 
+  it("does not invoke write callbacks for viewer or trash interactions", () => {
+    const update = vi.fn();
+    const upload = vi.fn();
+    const viewer = renderEditor(note({ role: "viewer" }), update, "shared", {
+      uploadSelectedAttachment: upload
+    });
+    expect(screen.getByLabelText("Title")).toHaveProperty("disabled", true);
+    expect(screen.getByLabelText("Attach encrypted file")).toHaveProperty("disabled", true);
+    expect(update).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+    viewer.unmount();
+
+    renderEditor(note({ isDeleted: true }), update, "trash", {
+      uploadSelectedAttachment: upload
+    });
+    expect(screen.getByLabelText("Title")).toHaveProperty("disabled", true);
+    expect(screen.getByLabelText("Attach encrypted file")).toHaveProperty("disabled", true);
+    expect(update).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+  });
+
   it("uses BlockNote's native undo and redo for writable notes", () => {
     renderEditor(note(), vi.fn());
 

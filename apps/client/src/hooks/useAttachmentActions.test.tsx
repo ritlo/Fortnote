@@ -143,6 +143,35 @@ describe("attachment upload", () => {
   });
 });
 
+describe("attachment write guards", () => {
+  it("does not encrypt, upload, or delete for viewers, trash readers, or revoked notes", async () => {
+    const file = new File(["image"], "image.png", { type: "image/png" });
+    const viewer = renderHook(() => useAttachmentActions(note({ role: "viewer" })));
+    await act(async () => {
+      await viewer.result.current.uploadSelectedAttachment(file);
+      await viewer.result.current.removeSelectedAttachment(ATTACHMENT_ID);
+    });
+    viewer.unmount();
+
+    useAppStore.setState({ notesView: "trash" });
+    const trash = renderHook(() => useAttachmentActions(note({ isDeleted: true })));
+    await act(async () => {
+      await trash.result.current.uploadSelectedAttachment(file);
+      await trash.result.current.removeSelectedAttachment(ATTACHMENT_ID);
+    });
+    trash.unmount();
+
+    const revoked = renderHook(() => useAttachmentActions(null));
+    await act(async () => {
+      await revoked.result.current.uploadSelectedAttachment(file);
+      await revoked.result.current.removeSelectedAttachment(ATTACHMENT_ID);
+    });
+    expect(mocks.createDraft).not.toHaveBeenCalled();
+    expect(mocks.uploadAttachment).not.toHaveBeenCalled();
+    expect(mocks.deleteAttachment).not.toHaveBeenCalled();
+  });
+});
+
 describe("attachment metadata", () => {
   it("decrypts protected filename and MIME envelopes before storing them", async () => {
     useAppStore.setState({ attachmentsByNote: {} });

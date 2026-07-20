@@ -197,7 +197,7 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
   async function uploadSelectedAttachment(
     file: File | undefined
   ): Promise<AttachmentSummary | null> {
-    if (!file || !user || !selectedNote || selectedNote.role === "viewer") {
+    if (!file || !user || !selectedNote || !canWriteSelectedAttachment(selectedNote)) {
       return null;
     }
 
@@ -211,6 +211,9 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
         noteKeyBase64: selectedNote.noteKeyBase64,
         file
       });
+      if (!canWriteSelectedAttachment(selectedNote)) {
+        return null;
+      }
       const uploaded = await uploadAttachment(
         selectedNote.id,
         encrypted,
@@ -324,7 +327,7 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
   );
 
   async function removeSelectedAttachment(attachmentId: string) {
-    if (!selectedNote || selectedNote.role === "viewer") {
+    if (!selectedNote || !canWriteSelectedAttachment(selectedNote)) {
       return;
     }
 
@@ -348,6 +351,17 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
     resolveAttachmentUrl,
     uploadSelectedAttachment
   };
+}
+
+function canWriteSelectedAttachment(note: DecryptedNote): boolean {
+  const state = useAppStore.getState();
+  return (
+    state.user !== null &&
+    state.selectedNoteId === note.id &&
+    state.notesView !== "trash" &&
+    !note.isDeleted &&
+    note.role !== "viewer"
+  );
 }
 
 export async function decryptAuthorizedAttachment(

@@ -4,8 +4,10 @@ import type { SectionActions } from "../hooks/useSectionActions";
 import { EditorHeader } from "./EditorHeader";
 import { NoteEditor } from "./NoteEditor";
 import { SettingsPanel } from "./SettingsPanel";
+import type { CollaborationState } from "../lib/collaborationState";
 
 interface EditorPaneProps {
+  collaborationState: CollaborationState;
   folders: FolderSummary[];
   keyMaterialVersion: number | null;
   newPassword: string;
@@ -35,6 +37,7 @@ interface EditorPaneProps {
 }
 
 export function EditorPane({
+  collaborationState,
   folders,
   keyMaterialVersion,
   newPassword,
@@ -68,6 +71,7 @@ export function EditorPane({
   return (
     <section className="editor-pane">
       <EditorHeader
+        collaborationState={collaborationState}
         deleteSelectedForever={deleteSelectedForever}
         keyMaterialVersion={keyMaterialVersion}
         lockVault={lockVault}
