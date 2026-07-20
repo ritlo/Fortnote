@@ -56,6 +56,17 @@ export function useRealtimeEvents() {
     const currentRootKey = rootKey;
     const userId = user.id;
 
+    function reportCrdtError(message: string, error?: unknown) {
+      if (!isActive || !isCurrentVaultSession(userId, currentRootKey)) {
+        return;
+      }
+      if (error) {
+        useAppStore.getState().reportOperationFailure(error, message);
+        return;
+      }
+      setError(message);
+    }
+
     function clearReconnectTimer() {
       if (reconnectTimerRef.current === null) {
         return;
@@ -148,7 +159,7 @@ export function useRealtimeEvents() {
       const connection = connectRealtime({
         after: useAppStore.getState().eventCursor,
         userId,
-        onCrdtError: setError,
+        onCrdtError: reportCrdtError,
         onRecoverableCrdtDraft: (draft) => {
           if (
             !isActive ||

@@ -76,7 +76,7 @@ interface RealtimeClientOptions {
   after: number;
   userId: string;
   onMessage: (message: RealtimeMessage) => void;
-  onCrdtError?: (message: string) => void;
+  onCrdtError?: (message: string, error?: unknown) => void;
   onRecoverableCrdtDraft?: (draft: RecoverableCrdtDraft) => void;
   onOpen?: () => void;
   onClose?: () => void;
@@ -540,7 +540,8 @@ export function connectRealtime({
           : "Encrypted realtime update could not be queued."
       );
       onCrdtError?.(
-        "Offline edits could not be saved durably; keep this tab open until storage is available."
+        "Offline edits could not be saved durably; keep this tab open until storage is available.",
+        error
       );
       throw error;
     });

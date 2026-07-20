@@ -44,9 +44,25 @@ describe("deriveCollaborationState", () => {
   });
 
   it("offers only the recovery actions appropriate to retained work", () => {
-    expect(derive({ durability: "local-full", draftRetained: true })).toMatchObject({
+    expect(derive({ durability: "local-full", draftRetained: true })).toEqual({
+      announcement: "alert",
       actions: ["retry", "encrypted-export", "split-section", "cleanup"],
-      draftRetained: true
+      draftRetained: true,
+      editing: true,
+      id: "local-full",
+      label: "Local storage full — changes need attention",
+      saved: false,
+      synchronized: false
+    });
+    expect(derive({ durability: "server-full", draftRetained: true })).toEqual({
+      announcement: "alert",
+      actions: ["retry", "encrypted-export"],
+      draftRetained: true,
+      editing: true,
+      id: "server-full",
+      label: "Server storage full — changes kept on this device",
+      saved: false,
+      synchronized: false
     });
     expect(derive({ recovery: "divergent", draftRetained: true }).actions).toEqual([
       "review-draft",

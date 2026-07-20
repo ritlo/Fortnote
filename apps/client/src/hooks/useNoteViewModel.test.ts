@@ -314,6 +314,29 @@ describe("revocation rotation state", () => {
   });
 });
 
+describe("capacity state", () => {
+  it("prefers local capacity when local and server storage are full", () => {
+    const state = useAppStore.getState();
+    useAppStore.setState({
+      notes: [note()],
+      notesView: "notes",
+      selectedNoteId: "note_1",
+      localStorageCapacity: { ...state.localStorageCapacity, status: "full" },
+      serverStorageCapacity: { ...state.serverStorageCapacity, status: "full" }
+    });
+
+    const { result } = renderHook(() => useNoteViewModel());
+
+    expect(result.current.collaborationState).toMatchObject({
+      actions: ["retry", "encrypted-export", "split-section", "cleanup"],
+      id: "local-full",
+      label: "Local storage full — changes need attention",
+      saved: false,
+      synchronized: false
+    });
+  });
+});
+
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
     contentLength: 0,

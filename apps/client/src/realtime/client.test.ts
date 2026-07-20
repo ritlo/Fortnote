@@ -9,7 +9,7 @@ import {
   encodeCrdtBinaryFrame,
   toBase64
 } from "@fortnote/shared";
-import { openFortnoteIndexedDb } from "../lib/indexedDb";
+import { IndexedDbCapacityError, openFortnoteIndexedDb } from "../lib/indexedDb";
 import type { ScopedEncryptedCrdtMessage } from "./crdt";
 import type { PreparedEncryptedContentV2 } from "../cryptoClient";
 import { connectRealtime, parseRealtimeMessage } from "./client";
@@ -266,6 +266,37 @@ describe("realtime client", () => {
     await vi.waitFor(async () => {
       await expect(database.listOutbox(userId)).resolves.toEqual([]);
     });
+    connection.close();
+    await database.deleteDatabase();
+  });
+
+  it("preserves local-capacity errors when durable enqueue fails", async () => {
+    await cryptoReady();
+    const database = await openFortnoteIndexedDb({
+      factory: new IDBFactory(),
+      name: `fortnote-client-quota-${crypto.randomUUID()}`
+    });
+    const capacityError = new IndexedDbCapacityError();
+    vi.spyOn(database, "putOutbox").mockRejectedValue(capacityError);
+    const onCrdtError = vi.fn();
+    const connection = connectRealtime({
+      after: 0,
+      userId: crypto.randomUUID(),
+      outboxStore: database,
+      onMessage: vi.fn(),
+      onCrdtError
+    });
+
+    const delivery = connection.sendCrdtUpdateDurably(scopedUpdate());
+
+    await Promise.all([
+      expect(delivery.durable).rejects.toBe(capacityError),
+      expect(delivery.delivered).rejects.toThrow("Protected browser storage is full")
+    ]);
+    expect(onCrdtError).toHaveBeenCalledWith(
+      expect.stringContaining("saved durably"),
+      capacityError
+    );
     connection.close();
     await database.deleteDatabase();
   });

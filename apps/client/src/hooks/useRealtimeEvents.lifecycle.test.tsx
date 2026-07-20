@@ -12,6 +12,7 @@ import { useAppStore } from "../store/appStore";
 interface ConnectionOptions {
   after: number;
   onClose?: () => void;
+  onCrdtError?: (message: string, error?: unknown) => void;
   onError?: () => void;
   onMessage: (message: RealtimeMessage) => void;
   onOpen?: () => void;
@@ -101,6 +102,64 @@ describe("useRealtimeEvents lifecycle", () => {
 
     expect(useAppStore.getState().realtimeStatus).toBe("connected");
     expect(first.connection.sendPresence).toHaveBeenCalledWith("note-1", "editing");
+  });
+
+  it("preserves local-capacity errors from durable realtime storage", async () => {
+    mocks.getCursor.mockResolvedValue({ cursor: 3 });
+
+    render(<RealtimeHarness />);
+    await flushEffects();
+    const connection = mocks.connections[0]!;
+
+    act(() => connection.options.onCrdtError?.(
+      "Offline edits could not be saved durably.",
+      { name: "IndexedDbCapacityError" }
+    ));
+
+    expect(useAppStore.getState()).toMatchObject({
+      localStorageCapacity: { status: "full" },
+      operationFailure: {
+        kind: "local-capacity",
+        status: "Local storage full — changes need attention"
+      }
+    });
+  });
+
+  it("keeps message-only realtime errors generic", async () => {
+    mocks.getCursor.mockResolvedValue({ cursor: 3 });
+
+    render(<RealtimeHarness />);
+    await flushEffects();
+
+    act(() => mocks.connections[0]!.options.onCrdtError?.("Safe realtime fallback"));
+
+    expect(useAppStore.getState()).toMatchObject({
+      error: "Safe realtime fallback",
+      operationFailure: null
+    });
+  });
+
+  it("ignores capacity errors from a replaced vault", async () => {
+    mocks.getCursor.mockResolvedValue({ cursor: 3 });
+
+    render(<RealtimeHarness />);
+    await flushEffects();
+    const staleConnection = mocks.connections[0]!;
+
+    act(() => useAppStore.setState({
+      rootKey: new Uint8Array([9]),
+      user: { id: "user-2", username: "bob" }
+    }));
+    await flushEffects();
+    act(() => staleConnection.options.onCrdtError?.(
+      "Offline edits could not be saved durably.",
+      { name: "IndexedDbCapacityError" }
+    ));
+
+    expect(useAppStore.getState()).toMatchObject({
+      localStorageCapacity: { status: "unknown" },
+      operationFailure: null
+    });
   });
 
   it("reconnects, sends note transitions, and cancels timers on unmount", async () => {

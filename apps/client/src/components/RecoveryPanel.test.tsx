@@ -12,6 +12,12 @@ describe("RecoveryPanel", () => {
     const callbacks = recoveryCallbacks();
     renderPanel({ durability: "local-full", draftRetained: true }, callbacks);
 
+    expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "Retry",
+      "Encrypted export",
+      "Split section",
+      "Clean up"
+    ]);
     click("Retry");
     click("Encrypted export");
     click("Split section");
