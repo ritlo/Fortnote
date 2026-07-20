@@ -21,7 +21,10 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
     /Search covers all [1-9]\d* sections\./,
     { timeout: 20_000 }
   );
-  await expect(page.getByRole("button", { name: /Launch plan/ })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Open matching section .* in Launch plan/u })
+  ).toBeVisible();
+  await page.getByPlaceholder("Search decrypted notes").fill("");
 
   await page.getByLabel("Attach encrypted file").setInputFiles({
     name: "plan.txt",

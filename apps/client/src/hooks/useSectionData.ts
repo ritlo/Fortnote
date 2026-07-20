@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getStorageQuota,
+  initializeNoteSection,
   listNoteSections,
   type LogicalNoteSectionSummary
 } from "../api";
 import {
+  createCrdtSectionInitializationManifest,
   getCrdtSectionOrder,
   openCrdtSection,
   releaseCrdtSection,
@@ -368,7 +370,12 @@ async function loadOneSection(
     if (!isSelectedNote(input.note) || input.loadedTargets.get(key) !== target) {
       return;
     }
-    input.setLoadedSection(sectionState(input.note, section, "ready", prefetched));
+    const readySection = await initializeSectionIfNeeded(input.note, section);
+    throwIfCanceled(input.signal);
+    if (!isSelectedNote(input.note) || input.loadedTargets.get(key) !== target) {
+      return;
+    }
+    input.setLoadedSection(sectionState(input.note, readySection, "ready", prefetched));
   } catch (error) {
     if (input.signal.aborted || input.loadedTargets.get(key) !== target) {
       return;
@@ -380,6 +387,48 @@ async function loadOneSection(
   } finally {
     lease.provider.off("progress", onProgress);
   }
+}
+
+async function initializeSectionIfNeeded(
+  note: DecryptedNote,
+  section: LogicalNoteSectionSummary
+): Promise<LogicalNoteSectionSummary> {
+  if (section.initialized || note.role === "viewer") return section;
+  const manifest = await createCrdtSectionInitializationManifest(
+    note.id,
+    note.keyEpoch,
+    section.id
+  );
+  const initialized = await initializeNoteSection(note.id, section.id, {
+    manifestId: manifest.manifestId,
+    expectedKeyEpoch: note.keyEpoch,
+    expectedRootVersion: note.rootVersion ?? note.version
+  });
+  const ready = {
+    ...section,
+    initialized: true,
+    currentSequence: manifest.lastSequence
+  };
+  const state = useAppStore.getState();
+  const index = state.sectionIndexes[note.id];
+  if (index) {
+    state.setSectionIndex(note.id, {
+      ...index,
+      sections: index.sections.map((candidate) =>
+        candidate.id === section.id ? ready : candidate
+      )
+    });
+  }
+  state.setNotes((notes) => notes.map((candidate) =>
+    candidate.id === note.id && candidate.keyEpoch === note.keyEpoch
+      ? {
+          ...candidate,
+          rootVersion: initialized.rootVersion,
+          version: initialized.version
+        }
+      : candidate
+  ));
+  return ready;
 }
 
 async function releaseTarget(

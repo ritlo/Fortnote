@@ -10,8 +10,10 @@ import {
 } from "../store/appStore";
 
 const mocks = vi.hoisted(() => ({
+  createCrdtSectionInitializationManifest: vi.fn(),
   getCrdtSectionOrder: vi.fn(),
   getStorageQuota: vi.fn(),
+  initializeNoteSection: vi.fn(),
   listNoteSections: vi.fn(),
   migrateLegacyNote: vi.fn(),
   openCrdtSection: vi.fn(),
@@ -22,10 +24,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../api", () => ({
   getStorageQuota: mocks.getStorageQuota,
+  initializeNoteSection: mocks.initializeNoteSection,
   listNoteSections: mocks.listNoteSections
 }));
 
 vi.mock("../realtime/crdt", () => ({
+  createCrdtSectionInitializationManifest: mocks.createCrdtSectionInitializationManifest,
   getCrdtSectionOrder: mocks.getCrdtSectionOrder,
   openCrdtSection: mocks.openCrdtSection,
   releaseCrdtSection: mocks.releaseCrdtSection,
@@ -43,6 +47,16 @@ describe("useSectionData", () => {
     vi.clearAllMocks();
     useAppStore.getState().resetVaultState("test reset");
     mocks.getCrdtSectionOrder.mockReturnValue(sectionIds(5));
+    mocks.createCrdtSectionInitializationManifest.mockResolvedValue({
+      manifestId: "manifest-1",
+      lastSequence: 1
+    });
+    mocks.initializeNoteSection.mockResolvedValue({
+      status: "installed",
+      manifestId: "manifest-1",
+      rootVersion: 1,
+      version: 1
+    });
     mocks.listNoteSections.mockResolvedValue({ sections: sections(5) });
     mocks.migrateLegacyNote.mockResolvedValue(undefined);
     mocks.getStorageQuota.mockResolvedValue({
@@ -155,6 +169,35 @@ describe("useSectionData", () => {
     });
     await waitFor(() => {
       expect(mocks.openCrdtSection).toHaveBeenCalledWith(current, "section-1");
+    });
+  });
+
+  it("initializes a new protected root section before exposing it as ready", async () => {
+    const current = installNote();
+    mocks.listNoteSections.mockResolvedValue({
+      sections: [{ ...sections(1)[0]!, initialized: false }]
+    });
+
+    renderHook(() => useSectionData(current));
+
+    await waitFor(() => {
+      expect(mocks.initializeNoteSection).toHaveBeenCalledWith(
+        current.id,
+        "section-1",
+        {
+          manifestId: "manifest-1",
+          expectedKeyEpoch: current.keyEpoch,
+          expectedRootVersion: current.rootVersion
+        }
+      );
+    });
+    expect(useAppStore.getState().sectionIndexes[current.id]?.sections[0]).toMatchObject({
+      initialized: true,
+      currentSequence: 1
+    });
+    expect(sectionState(current.id, "section-1")).toMatchObject({
+      status: "ready",
+      currentSequence: 1
     });
   });
 
