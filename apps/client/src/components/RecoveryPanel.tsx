@@ -1,15 +1,17 @@
 import type { CollaborationAction, CollaborationState } from "../lib/collaborationState";
 
 export interface RecoveryCallbacks {
-  cleanup: () => void;
-  encryptedExport: () => void;
-  reapply: () => void;
-  repairAccess: () => void;
-  retry: () => void;
-  reviewAccess: () => void;
-  reviewDraft: () => void;
-  splitSection: () => void;
-  tryAgain: () => void;
+  cleanup: () => void | Promise<void>;
+  copy: () => void | Promise<void>;
+  discard: () => void | Promise<void>;
+  encryptedExport: () => void | Promise<void>;
+  reapply: () => void | Promise<void>;
+  repairAccess: () => void | Promise<void>;
+  retry: () => void | Promise<void>;
+  reviewAccess: () => void | Promise<void>;
+  reviewDraft: () => void | Promise<void>;
+  splitSection: () => void | Promise<void>;
+  tryAgain: () => void | Promise<void>;
 }
 
 interface RecoveryPanelProps {
@@ -19,6 +21,8 @@ interface RecoveryPanelProps {
 
 const actions: Record<CollaborationAction, [string, keyof RecoveryCallbacks]> = {
   cleanup: ["Clean up", "cleanup"],
+  copy: ["Copy encrypted draft", "copy"],
+  discard: ["Discard draft", "discard"],
   "encrypted-export": ["Encrypted export", "encryptedExport"],
   reapply: ["Reapply", "reapply"],
   "repair-access": ["Repair access", "repairAccess"],
@@ -39,7 +43,7 @@ export function RecoveryPanel({ state, callbacks }: RecoveryPanelProps) {
       <div className="action-row">
         {state.actions.map((action) => {
           const [label, callback] = actions[action];
-          return <button type="button" key={action} onClick={callbacks[callback]}>{label}</button>;
+          return <button type="button" key={action} onClick={() => void callbacks[callback]()}>{label}</button>;
         })}
       </div>
     </section>

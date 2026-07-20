@@ -88,7 +88,11 @@ export function useNoteViewModel() {
     : [];
   const retainedDraft = selectedNote
     ? Object.values(recoverableDrafts).find(
-        (draft) => draft.noteId === selectedNote.id && draft.state !== "discarded"
+        (draft) =>
+          draft.noteId === selectedNote.id &&
+          (draft.state === "retained" ||
+            draft.state === "reviewing" ||
+            draft.state === "exported")
       )
     : undefined;
   const selectedSectionId = selectedNote
@@ -119,7 +123,13 @@ export function useNoteViewModel() {
       : realtimeStatus === "disconnected"
         ? "offline"
         : "connected",
-    recovery: retainedDraft ? "divergent" : error ? "error" : "none",
+    recovery: retainedDraft?.state === "reviewing"
+      ? "reviewing"
+      : retainedDraft
+        ? "divergent"
+        : error
+          ? "error"
+          : "none",
     vault: selectedNote
       ? "ready"
       : viewNotes.length === 0

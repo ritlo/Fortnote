@@ -521,10 +521,12 @@ function isRecoverableDraftTransition(
 ): boolean {
   return (
     current === next ||
-    (current === "retained" && next === "reviewing") ||
-    (current === "reviewing" &&
+    (current === "retained" &&
+      (next === "reviewing" || next === "exported" || next === "reapplied")) ||
+    ((current === "reviewing" || current === "exported") &&
       (next === "reapplied" ||
         next === "exported" ||
+        next === "reviewing" ||
         next === "split" ||
         next === "discarded"))
   );

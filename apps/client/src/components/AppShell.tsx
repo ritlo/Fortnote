@@ -4,6 +4,7 @@ import { useNoteActions } from "../hooks/useNoteActions";
 import { useNoteViewModel } from "../hooks/useNoteViewModel";
 import { useSectionData } from "../hooks/useSectionData";
 import { useSectionActions } from "../hooks/useSectionActions";
+import { useRecoveryActions } from "../hooks/useRecoveryActions";
 import { useAppStore } from "../store/appStore";
 import { EditorPane } from "./EditorPane";
 import { NotesPane } from "./NotesPane";
@@ -30,6 +31,11 @@ export function AppShell() {
   const noteView = useNoteViewModel();
   const sectionData = useSectionData(noteView.selectedNote);
   const sectionActions = useSectionActions(noteView.selectedNote);
+  const recoveryCallbacks = useRecoveryActions(
+    noteView.selectedNote,
+    sectionActions,
+    sectionData.retry
+  );
   const authActions = useAuthActions();
   const noteActions = useNoteActions(noteView.selectedNote);
   const attachmentActions = useAttachmentActions(noteView.selectedNote);
@@ -87,6 +93,7 @@ export function AppShell() {
         moveSelectedToTrash={noteActions.moveSelectedToTrash}
         newPassword={newPassword}
         notesView={notesView}
+        recoveryCallbacks={recoveryCallbacks}
         recoverySecret={recoverySecret}
         removeSelectedAttachment={attachmentActions.removeSelectedAttachment}
         resolveAttachmentUrl={attachmentActions.resolveAttachmentUrl}

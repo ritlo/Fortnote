@@ -40,6 +40,16 @@ describe("RecoveryPanel", () => {
     renderPanel({}, recoveryCallbacks());
     expect(screen.queryByRole("region", { name: "Recovery actions" })).toBeNull();
   });
+
+  it("requires review before offering copy and explicit discard", () => {
+    const callbacks = recoveryCallbacks();
+    renderPanel({ recovery: "reviewing", draftRetained: true }, callbacks);
+
+    click("Copy encrypted draft");
+    click("Discard draft");
+    expect(callbacks.copy).toHaveBeenCalledOnce();
+    expect(callbacks.discard).toHaveBeenCalledOnce();
+  });
 });
 
 function renderPanel(
@@ -61,6 +71,8 @@ function click(name: string): void {
 function recoveryCallbacks(): RecoveryCallbacks {
   return {
     cleanup: vi.fn(),
+    copy: vi.fn(),
+    discard: vi.fn(),
     encryptedExport: vi.fn(),
     reapply: vi.fn(),
     repairAccess: vi.fn(),

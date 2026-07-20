@@ -43,6 +43,24 @@ describe("protected IndexedDB storage", () => {
     await expect(database.listOutbox("user-b")).resolves.toEqual([second]);
   });
 
+  it("deletes only the resolved outbox fence", async () => {
+    const database = await openDatabase();
+    const resolved = outboxRecord({ updateId: "resolved" });
+    const sameSectionNewEpoch = outboxRecord({ keyEpoch: 2, updateId: "new-epoch" });
+    const otherSection = outboxRecord({ sectionId: "section-b", updateId: "other" });
+    await Promise.all([
+      database.putOutbox(resolved),
+      database.putOutbox(sameSectionNewEpoch),
+      database.putOutbox(otherSection)
+    ]);
+
+    await database.deleteOutboxFence(resolved);
+
+    const remaining = await database.listOutbox("user-a");
+    expect(remaining).toHaveLength(2);
+    expect(remaining).toEqual(expect.arrayContaining([sameSectionNewEpoch, otherSection]));
+  });
+
   it("serializes multi-tab lease compare-and-set decisions", async () => {
     const name = databaseName();
     const first = await openFortnoteIndexedDb({ factory: fakeIndexedDb, name });

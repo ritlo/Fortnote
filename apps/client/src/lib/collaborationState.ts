@@ -1,5 +1,7 @@
 export type CollaborationAction =
   | "cleanup"
+  | "copy"
+  | "discard"
   | "encrypted-export"
   | "reapply"
   | "repair-access"
@@ -15,7 +17,7 @@ export interface CollaborationDimensions {
   section: "idle" | "opening" | "loading" | "ready" | "unavailable";
   durability: "clean" | "memory" | "pending" | "saving" | "uploading" | "local-full" | "server-full" | "compacting";
   connection: "connected" | "offline" | "reconnecting";
-  recovery: "none" | "divergent" | "conflict" | "error";
+  recovery: "none" | "divergent" | "reviewing" | "conflict" | "error";
   vault: "loading" | "empty" | "ready";
   draftRetained: boolean;
 }
@@ -61,6 +63,7 @@ function pickState(
 ): Omit<CollaborationState, "draftRetained" | "saved" | "synchronized"> {
   if (value.access === "removed") return state("removed", "You no longer have access", "alert", false);
   if (value.protection === "undecryptable") return state("undecryptable", "This note cannot be decrypted", "alert", false, ["retry", "repair-access"]);
+  if (value.recovery === "reviewing") return state("reviewing", "Review retained encrypted draft", "alert", false, ["copy", "encrypted-export", "reapply", "split-section", "discard"]);
   if (value.recovery === "divergent" || value.recovery === "conflict") return state("review", "Changes need review", "alert", false, ["review-draft", "encrypted-export", "reapply"]);
   if (value.durability === "local-full") return state("local-full", "Local storage full — changes need attention", "alert", editable, ["retry", "encrypted-export", "split-section", "cleanup"]);
   if (value.durability === "server-full") return state("server-full", "Server storage full — changes kept on this device", "alert", editable, ["retry", "encrypted-export"]);

@@ -5,9 +5,11 @@ import { EditorHeader } from "./EditorHeader";
 import { NoteEditor } from "./NoteEditor";
 import { SettingsPanel } from "./SettingsPanel";
 import type { CollaborationState } from "../lib/collaborationState";
+import { RecoveryPanel, type RecoveryCallbacks } from "./RecoveryPanel";
 
 interface EditorPaneProps {
   collaborationState: CollaborationState;
+  recoveryCallbacks: RecoveryCallbacks;
   folders: FolderSummary[];
   keyMaterialVersion: number | null;
   newPassword: string;
@@ -38,6 +40,7 @@ interface EditorPaneProps {
 
 export function EditorPane({
   collaborationState,
+  recoveryCallbacks,
   folders,
   keyMaterialVersion,
   newPassword,
@@ -81,6 +84,7 @@ export function EditorPane({
         selectedNote={selectedNote}
         user={user}
       />
+      <RecoveryPanel state={collaborationState} callbacks={recoveryCallbacks} />
       {notesView === "settings" ? (
         <SettingsPanel
           changePassword={changePassword}

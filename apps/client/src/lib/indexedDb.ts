@@ -164,6 +164,9 @@ export interface FortnoteIndexedDb {
   clearAccount(userId: string): Promise<void>;
   close(): void;
   deleteContentTransfer(userId: string, uploadId: string): Promise<void>;
+  deleteOutboxFence(
+    fence: Pick<EncryptedOutboxRecord, "userId" | "noteId" | "sectionId" | "keyEpoch">
+  ): Promise<void>;
   deleteSectionCache(record: CacheKey): Promise<void>;
   deleteDatabase(): Promise<void>;
   evictSectionCache(userId: string, maxEntries: number, maxBytes?: number): Promise<string[]>;
@@ -330,6 +333,21 @@ function createDatabaseApi(
     async deleteContentTransfer(userId, uploadId) {
       await deleteRecord(database, CONTENT_TRANSFER_STORE, [userId, uploadId]);
       notify({ store: "content-transfers", userId });
+    },
+    async deleteOutboxFence(fence) {
+      await safeOperation(async () => {
+        const transaction = database.transaction(OUTBOX_STORE, "readwrite");
+        const done = transactionDone(transaction);
+        const store = transaction.objectStore(OUTBOX_STORE);
+        const records = await requestResult(
+          store.getAll() as IDBRequest<EncryptedOutboxRecord[]>
+        );
+        records.filter((record) => matchesOutboxFence(record, fence)).forEach((record) => {
+          store.delete(outboxKey(record));
+        });
+        await done;
+      });
+      notify({ store: "outbox", userId: fence.userId });
     },
     async deleteSectionCache(record) {
       await deleteRecord(database, SECTION_CACHE_STORE, cacheKey(record));
