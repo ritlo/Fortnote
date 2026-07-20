@@ -269,10 +269,11 @@ export function useRealtimeEvents() {
           }
           if (message.type === "crdt-reject") {
             const code = "code" in message ? message.code : message.reason;
+            if (code === "storage-limit") {
+              return;
+            }
             setError(
-              code === "storage-limit"
-                ? "Realtime storage limit reached; waiting for compaction."
-                : code === "payload-too-large" || code === "frame-too-large"
+              code === "payload-too-large" || code === "frame-too-large"
                   ? "Realtime update is too large to synchronize."
                   : code === "rotation-pending"
                     ? "Note-key rotation is pending; encrypted work remains queued."

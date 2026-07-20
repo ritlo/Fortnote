@@ -188,6 +188,11 @@ export function connectRealtime({
         }
       } else if (message.type === "crdt-reject" && "code" in message) {
         handleDurableReject(message);
+      } else if (message.type === "crdt-reject" && message.reason === "storage-limit") {
+        onCrdtError?.(
+          "Realtime storage is full; encrypted work remains queued.",
+          message
+        );
       } else if (message.type === "crdt-reject" && message.reason !== "storage-limit") {
         readCrdtOutbox(userId).delete(message.updateId);
         persistCrdtOutbox(userId);
@@ -291,10 +296,11 @@ export function connectRealtime({
       );
       if (outcome.kind === "local-capacity") {
         onCrdtError?.(
-          "Protected browser storage is full; encrypted work remains queued."
+          "Protected browser storage is full; encrypted work remains queued.",
+          outcome.error
         );
       } else if (outcome.kind === "server-capacity") {
-        onCrdtError?.("Server storage is full; encrypted work remains queued.");
+        onCrdtError?.("Server storage is full; encrypted work remains queued.", outcome.error);
       }
     }
   }
@@ -364,7 +370,7 @@ export function connectRealtime({
 
   function handleDurableReject(message: CrdtRejectV2): void {
     if (message.code === "storage-limit") {
-      onCrdtError?.("Realtime storage is full; encrypted work remains queued.");
+      onCrdtError?.("Realtime storage is full; encrypted work remains queued.", message);
       return;
     }
     if (message.code === "frame-too-large") {
@@ -571,12 +577,13 @@ export function connectRealtime({
     const delivered = outcome.then((result) => {
       if (result.kind === "local-capacity") {
         onCrdtError?.(
-          "Protected browser storage is full; encrypted work remains queued."
+          "Protected browser storage is full; encrypted work remains queued.",
+          result.error
         );
         throw new Error("Protected browser storage is full");
       }
       if (result.kind === "server-capacity") {
-        onCrdtError?.("Server storage is full; encrypted work remains queued.");
+        onCrdtError?.("Server storage is full; encrypted work remains queued.", result.error);
         throw new Error("Server storage is full");
       }
       return result.manifest;

@@ -79,10 +79,11 @@ describe("realtime client", () => {
   });
 
   it("reports server quota pressure while retaining a content transfer", async () => {
+    const serverCapacityError = { code: "storage_limit" };
     transferMocks.persistPreparedTransfer.mockResolvedValue({});
     transferMocks.resumeContentUpload.mockResolvedValue({
       kind: "server-capacity",
-      error: new Error("quota")
+      error: serverCapacityError
     });
     const onCrdtError = vi.fn();
     const connection = connectRealtime({
@@ -97,7 +98,8 @@ describe("realtime client", () => {
     await expect(delivery.durable).resolves.toBeUndefined();
     await expect(delivery.delivered).rejects.toThrow("Server storage is full");
     expect(onCrdtError).toHaveBeenCalledWith(
-      "Server storage is full; encrypted work remains queued."
+      "Server storage is full; encrypted work remains queued.",
+      serverCapacityError
     );
     connection.close();
   });
@@ -480,6 +482,30 @@ describe("realtime client", () => {
     await database.deleteDatabase();
   });
 
+  it("reports structured v2 storage-limit rejections once", () => {
+    const onCrdtError = vi.fn();
+    connectRealtime({
+      after: 0,
+      userId: "user_1",
+      onMessage: vi.fn(),
+      onCrdtError
+    });
+    const rejection = {
+      type: "crdt-reject",
+      updateId: crypto.randomUUID(),
+      sectionId: crypto.randomUUID(),
+      code: "storage-limit"
+    };
+
+    sockets[0]!.receive(rejection);
+
+    expect(onCrdtError).toHaveBeenCalledOnce();
+    expect(onCrdtError).toHaveBeenCalledWith(
+      "Realtime storage is full; encrypted work remains queued.",
+      rejection
+    );
+  });
+
   it("retains a stale-epoch section draft before disabling retries", async () => {
     const database = await openFortnoteIndexedDb({
       factory: fakeIndexedDb,
@@ -577,7 +603,8 @@ describe("realtime client", () => {
       nonce: "nonce"
     };
     const onMessage = vi.fn();
-    const first = connectRealtime({ after: 0, userId: "user_1", onMessage });
+    const onCrdtError = vi.fn();
+    const first = connectRealtime({ after: 0, userId: "user_1", onMessage, onCrdtError });
     const firstDelivery = first.sendCrdtUpdate(update);
     expect(sockets[0]!.sent).toEqual([]);
 
@@ -595,6 +622,11 @@ describe("realtime client", () => {
     };
     sockets[0]!.receive(rejection);
     expect(onMessage).toHaveBeenLastCalledWith(rejection);
+    expect(onCrdtError).toHaveBeenCalledOnce();
+    expect(onCrdtError).toHaveBeenCalledWith(
+      "Realtime storage is full; encrypted work remains queued.",
+      rejection
+    );
     expect(JSON.parse(localStorage.getItem(outboxKey("user_1")) ?? "[]"))
       .toEqual([update]);
 

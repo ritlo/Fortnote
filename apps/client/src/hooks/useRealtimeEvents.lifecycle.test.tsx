@@ -162,6 +162,36 @@ describe("useRealtimeEvents lifecycle", () => {
     });
   });
 
+  it("keeps structured realtime storage limits classified as server capacity", async () => {
+    mocks.getCursor.mockResolvedValue({ cursor: 3 });
+
+    render(<RealtimeHarness />);
+    await flushEffects();
+    const connection = mocks.connections[0]!;
+    const rejection = {
+      type: "crdt-reject" as const,
+      updateId: crypto.randomUUID(),
+      sectionId: crypto.randomUUID(),
+      code: "storage-limit" as const
+    };
+
+    act(() => {
+      connection.options.onCrdtError?.(
+        "Realtime storage is full; encrypted work remains queued.",
+        rejection
+      );
+      connection.options.onMessage(rejection);
+    });
+
+    expect(useAppStore.getState()).toMatchObject({
+      serverStorageCapacity: { status: "full" },
+      operationFailure: {
+        kind: "server-capacity",
+        status: "Server storage full — changes kept on this device"
+      }
+    });
+  });
+
   it("reconnects, sends note transitions, and cancels timers on unmount", async () => {
     mocks.getCursor.mockResolvedValue({ cursor: 7 });
     const view = render(<RealtimeHarness />);
