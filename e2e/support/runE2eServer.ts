@@ -7,7 +7,8 @@ const restartPath = resolve("data/e2e-server.restart");
 const statePath = resolve("data/e2e-server.state");
 const serverEnvironment = {
   ...process.env,
-  ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN ?? "http://127.0.0.1:5173",
+  ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN ??
+    `http://127.0.0.1:${process.env.CLIENT_PORT ?? "5173"}`,
   COOKIE_SECURE: process.env.COOKIE_SECURE ?? "false",
   DATABASE_PATH: process.env.DATABASE_PATH ?? "data/e2e.sqlite",
   DATA_DIR: process.env.DATA_DIR ?? "data/e2e-attachments",

@@ -11,7 +11,7 @@
     "assurance:accessibility": "playwright test --project=accessibility",
     "assurance:inventory": "node scripts/inventory-assurance.mjs",
     "assurance:mutation": "stryker run",
-    "assurance:perf": "playwright test --project=performance",
+    "assurance:perf": "pnpm build && node scripts/create-performance-fixture.mjs",
     "assurance:verify": "node scripts/verify-assurance.mjs",
     "build": "pnpm -r build",
     "dev": "pnpm --filter @fortnote/client dev",
