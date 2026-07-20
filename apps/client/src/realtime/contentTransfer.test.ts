@@ -135,10 +135,11 @@ describe("resumable encrypted content transfer", () => {
     const database = await openDatabase();
     const prepared = await preparedContent();
     let began = false;
+    const localCapacityError = new IndexedDbCapacityError();
     const localCapacityDatabase: FortnoteIndexedDb = {
       ...database,
       putContentTransfer() {
-        return Promise.reject(new IndexedDbCapacityError());
+        return Promise.reject(localCapacityError);
       }
     };
     const neverCalledApi = fakeApi({
@@ -147,34 +148,48 @@ describe("resumable encrypted content transfer", () => {
         return Promise.resolve(status(payload.uploadId, []));
       }
     });
-    await expect(
-      uploadPreparedContent({
-        userId: "user-a",
-        database: localCapacityDatabase,
-        prepared,
-        api: neverCalledApi
-      })
-    ).resolves.toMatchObject({ kind: "local-capacity" });
+    await expect(uploadPreparedContent({
+      userId: "user-a",
+      database: localCapacityDatabase,
+      prepared,
+      api: neverCalledApi
+    })).resolves.toEqual({ kind: "local-capacity", error: localCapacityError });
     expect(began).toBe(false);
 
+    const serverCapacityError = new ApiRequestError(
+      413,
+      "storage_limit",
+      "Storage quota exceeded"
+    );
     const serverApi = fakeApi({
       beginContentUpload() {
-        return Promise.reject(
-          new ApiRequestError(413, "storage_limit", "Storage quota exceeded")
-        );
+        return Promise.reject(serverCapacityError);
       }
     });
-    await expect(
-      uploadPreparedContent({
-        userId: "user-a",
-        database,
-        prepared,
-        api: serverApi
-      })
-    ).resolves.toMatchObject({ kind: "server-capacity" });
-    await expect(
-      database.getContentTransfer("user-a", prepared.uploadId)
-    ).resolves.not.toBeNull();
+    await expect(uploadPreparedContent({
+      userId: "user-a",
+      database,
+      prepared,
+      api: serverApi
+    })).resolves.toEqual({ kind: "server-capacity", error: serverCapacityError });
+    const persisted = await database.getContentTransfer("user-a", prepared.uploadId);
+    expect(persisted).not.toBeNull();
+    if (!persisted) throw new Error("Expected capacity-limited transfer to remain persisted");
+    const durableSnapshot = structuredClone(persisted);
+
+    await expect(resumeContentUpload({
+      database,
+      record: persisted,
+      api: serverApi
+    })).resolves.toEqual({ kind: "server-capacity", error: serverCapacityError });
+    await expect(resumeContentUpload({
+      database: localCapacityDatabase,
+      record: persisted,
+      api: neverCalledApi
+    })).resolves.toEqual({ kind: "local-capacity", error: localCapacityError });
+    await expect(database.getContentTransfer("user-a", prepared.uploadId)).resolves.toEqual(
+      durableSnapshot
+    );
   });
 
   it("downloads and verifies the complete manifest before authenticated decryption", async () => {

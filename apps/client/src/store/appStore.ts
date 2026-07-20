@@ -634,7 +634,7 @@ export function operationFailureState(
       status: "Changes need review"
     };
   }
-  if (errorCode(error) === "quota_exceeded" || errorCode(error) === "storage_limit") {
+  if (["quota_exceeded", "storage_limit", "storage-limit"].includes(errorCode(error) ?? "")) {
     return {
       kind: "server-capacity",
       message: "Encrypted changes remain on this device until server storage is available.",

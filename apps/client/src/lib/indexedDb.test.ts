@@ -79,6 +79,9 @@ describe("protected IndexedDB storage", () => {
   });
 
   it("classifies capacity failures without exposing stored data", () => {
+    const capacity = new IndexedDbCapacityError();
+    expect(normalizeIndexedDbError(capacity)).toBe(capacity);
+
     const normalized = normalizeIndexedDbError(
       new DOMException("secret browser detail", "QuotaExceededError")
     );

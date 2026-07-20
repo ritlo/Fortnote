@@ -162,7 +162,29 @@ describe("collaboration event store", () => {
     expect(operationFailureState(
       { message: "private browser detail", name: "QuotaExceededError" },
       "fallback"
-    ).message).not.toContain("private");
+    )).toMatchObject({
+      kind: "local-capacity",
+      status: "Local storage full — changes need attention"
+    });
+    expect(operationFailureState(
+      { code: "storage_limit", message: "private server detail", status: 507 },
+      "fallback"
+    )).toMatchObject({
+      kind: "server-capacity",
+      status: "Server storage full — changes kept on this device"
+    });
+    expect(operationFailureState(
+      { code: "storage-limit" },
+      "fallback"
+    )).toMatchObject({
+      kind: "server-capacity",
+      status: "Server storage full — changes kept on this device"
+    });
+    expect(operationFailureState(undefined, "safe fallback")).toEqual({
+      kind: "generic",
+      message: "safe fallback",
+      status: "Operation failed"
+    });
   });
 
   it("rejects completions from superseded request tokens", () => {
