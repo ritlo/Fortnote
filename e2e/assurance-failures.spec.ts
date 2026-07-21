@@ -133,7 +133,7 @@ test("preserves conflict, undecryptable, stale-epoch, and terminally rejected wo
           const corrupted = Uint8Array.from(message);
           corrupted[corrupted.length - 1] ^= 0xff;
           corruptedHistoryFrame = true;
-          pageSocket.send(corrupted);
+          pageSocket.send(Buffer.from(corrupted));
           return;
         } catch {
           // Forward non-CRDT binary traffic unchanged.
