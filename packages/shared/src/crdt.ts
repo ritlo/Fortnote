@@ -23,6 +23,7 @@ export interface CrdtBinaryHeader {
   expectedKeyEpoch: number;
   nonce: string;
   cipherLength: number;
+  originClientId?: string;
   checkpointSequenceCutoff?: number;
   serverSequence?: number;
 }
@@ -269,6 +270,7 @@ function validateBinaryHeader(value: unknown): CrdtBinaryHeader {
     !isPositiveInteger(record.expectedKeyEpoch) ||
     typeof record.nonce !== "string" ||
     !isPositiveInteger(record.cipherLength) ||
+    (record.originClientId !== undefined && !isUuid(record.originClientId)) ||
     (record.checkpointSequenceCutoff !== undefined &&
       !isNonnegativeInteger(record.checkpointSequenceCutoff)) ||
     (record.serverSequence !== undefined && !isPositiveInteger(record.serverSequence))
@@ -294,6 +296,9 @@ function validateBinaryHeader(value: unknown): CrdtBinaryHeader {
     nonce: record.nonce,
     cipherLength: record.cipherLength
   };
+  if (record.originClientId !== undefined) {
+    header.originClientId = record.originClientId;
+  }
   if (record.checkpointSequenceCutoff !== undefined) {
     header.checkpointSequenceCutoff = record.checkpointSequenceCutoff;
   }

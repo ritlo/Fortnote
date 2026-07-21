@@ -257,6 +257,64 @@ describe("realtime server", () => {
     });
   });
 
+  it("broadcasts a relayed binary update back to its originating tab", async () => {
+    await cryptoReady();
+    const server = await createRealtimeTestServer();
+    const alice = await register(server.url, "relay_alice");
+    const noteId = crypto.randomUUID();
+    const sectionId = crypto.randomUUID();
+    await authed(server.url, alice.cookie)
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(protectedNotePayload(noteId, sectionId))
+      .expect(201);
+    const cryptoOwnerId = (
+      server.db.sqlite
+        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
+        .get(noteId) as { cryptoOwnerId: string }
+    ).cryptoOwnerId;
+    const tabA = crypto.randomUUID();
+    const tabB = crypto.randomUUID();
+    const origin = await connectBinary(server.url, alice.cookie, tabA);
+    const relay = await connectBinary(server.url, alice.cookie, tabB);
+    await origin.nextJson("origin connected");
+    await origin.nextJson("origin replay");
+    await relay.nextJson("relay connected");
+    await relay.nextJson("relay replay");
+    for (const [socket, label] of [
+      [origin, "origin"],
+      [relay, "relay"]
+    ] as const) {
+      socket.socket.send(JSON.stringify({
+        type: "crdt-subscribe",
+        requestId: crypto.randomUUID(),
+        noteId,
+        sectionId,
+        expectedKeyEpoch: 1,
+        afterSequence: 0
+      }));
+      await socket.nextJson(`${label} history`);
+    }
+
+    const cipher = Uint8Array.from([9, 8, 7, 6, 5, 4]);
+    const header = binaryHeader({
+      noteId,
+      sectionId,
+      cryptoOwnerId,
+      originClientId: tabA
+    });
+    relay.socket.send(encodeCrdtBinaryFrame(header, cipher, 256 * 1024));
+    expect(decodeCrdtBinaryFrame(await origin.nextBinary("origin relay"), 256 * 1024))
+      .toEqual({ header: { ...header, serverSequence: 1 }, cipher });
+    expect(decodeCrdtBinaryFrame(await relay.nextBinary("relay echo"), 256 * 1024))
+      .toEqual({ header: { ...header, serverSequence: 1 }, cipher });
+    expect(await relay.nextJson("relay ack")).toMatchObject({
+      type: "crdt-ack",
+      updateId: header.updateId,
+      result: "inserted"
+    });
+  });
+
   it("replays paged binary history after a file-backed database restart", async () => {
     await cryptoReady();
     const directory = await mkdtemp(join(tmpdir(), "fortnote-realtime-restart-"));
@@ -1566,6 +1624,7 @@ function binaryHeader(input: {
   sectionId: string;
   cryptoOwnerId: string;
   expectedKeyEpoch?: number;
+  originClientId?: string;
 }): CrdtBinaryHeader {
   return {
     type: "crdt-binary",
@@ -1577,13 +1636,19 @@ function binaryHeader(input: {
     cryptoOwnerId: input.cryptoOwnerId,
     expectedKeyEpoch: input.expectedKeyEpoch ?? 1,
     nonce: toBase64(crypto.getRandomValues(new Uint8Array(24))),
-    cipherLength: 6
+    cipherLength: 6,
+    ...(input.originClientId === undefined ? {} : { originClientId: input.originClientId })
   };
 }
 
-async function connectBinary(baseUrl: string, cookie: string): Promise<BinarySocketClient> {
+async function connectBinary(
+  baseUrl: string,
+  cookie: string,
+  clientId?: string
+): Promise<BinarySocketClient> {
+  const clientQuery = clientId === undefined ? "" : `&clientId=${encodeURIComponent(clientId)}`;
   const socket = new WebSocket(
-    `${baseUrl.replace(/^http/, "ws")}/api/realtime?after=0&capabilities=crdt-binary-v2`,
+    `${baseUrl.replace(/^http/, "ws")}/api/realtime?after=0&capabilities=crdt-binary-v2${clientQuery}`,
     { headers: { Cookie: cookie, Origin: TEST_ALLOWED_ORIGIN } }
   );
   const messages: { data: RawData; isBinary: boolean }[] = [];

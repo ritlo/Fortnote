@@ -24,6 +24,7 @@ import { ensureNoteSection } from "../notes/sections.js";
 
 export interface RealtimeClient {
   id: string;
+  clientInstanceId?: string;
   sessionId: string;
   userId: string;
   username: string;
@@ -109,8 +110,9 @@ export class RealtimeHub implements RealtimePublisher {
     socket: WebSocket;
     crdtEnabled: boolean;
     crdtV2Enabled?: boolean;
+    clientInstanceId?: string;
   }): RealtimeClient {
-    const client = {
+    const client: RealtimeClient = {
       id: crypto.randomUUID(),
       sessionId: input.sessionId,
       userId: input.userId,
@@ -121,6 +123,9 @@ export class RealtimeHub implements RealtimePublisher {
       subscribedNoteIds: new Set<string>(),
       subscribedCrdtScopes: new Set<string>()
     };
+    if (input.clientInstanceId !== undefined) {
+      client.clientInstanceId = input.clientInstanceId;
+    }
     this.clients.add(client);
     input.socket.on("close", () => {
       this.clients.delete(client);
@@ -384,7 +389,7 @@ export class RealtimeHub implements RealtimePublisher {
     for (const recipient of this.clients) {
       const access = getNoteAccess(this.context, header.noteId, recipient.userId);
       if (
-        recipient === client ||
+        (recipient === client && header.originClientId === recipient.clientInstanceId) ||
         !recipient.crdtV2Enabled ||
         !this.ensureClientSession(recipient) ||
         !recipient.subscribedCrdtScopes.has(crdtScope(header.noteId, header.sectionId)) ||

@@ -27,6 +27,18 @@ describe("bounded CRDT v2 protocol", () => {
     ).header).toEqual(rootHeader);
   });
 
+  it("preserves the originating client identity for relayed outbox updates", () => {
+    const cipher = randomBytes(16);
+    const header = {
+      ...binaryHeader(cipher.length),
+      originClientId: crypto.randomUUID()
+    };
+    expect(decodeCrdtBinaryFrame(
+      encodeCrdtBinaryFrame(header, cipher, 1024),
+      1024
+    ).header).toEqual(header);
+  });
+
   it("rejects mismatched lengths, malformed headers, and oversized frames", () => {
     const cipher = randomBytes(32);
     expect(() =>

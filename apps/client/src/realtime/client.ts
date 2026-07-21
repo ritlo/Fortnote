@@ -130,7 +130,8 @@ export function connectRealtime({
   contentStore,
   ownerId = getClientInstanceId()
 }: RealtimeClientOptions): RealtimeConnection {
-  const socket = new WebSocket(realtimeUrl(after));
+  const transportClientId = crypto.randomUUID();
+  const socket = new WebSocket(realtimeUrl(after, transportClientId));
   socket.binaryType = "arraybuffer";
   const pendingSubscriptions = new Set<string>();
   const pendingSectionSubscriptions = new Map<string, OutboxFence & { afterSequence: number }>();
@@ -342,6 +343,9 @@ export function connectRealtime({
           expectedKeyEpoch: record.keyEpoch,
           nonce: toBase64(nonce),
           cipherLength: cipher.length,
+          ...(record.originClientId === undefined
+            ? {}
+            : { originClientId: record.originClientId }),
           ...(record.checkpointSequenceCutoff === undefined
             ? {}
             : { checkpointSequenceCutoff: record.checkpointSequenceCutoff })
@@ -611,6 +615,7 @@ export function connectRealtime({
       formatVersion: update.formatVersion,
       inlineCipher: fromCanonicalBase64(update.cipher),
       nonce: fromCanonicalBase64(update.nonce),
+      originClientId: transportClientId,
       ...(update.checkpointSequenceCutoff === undefined
         ? {}
         : { checkpointSequenceCutoff: update.checkpointSequenceCutoff }),
@@ -641,10 +646,11 @@ export function connectRealtime({
   }
 }
 
-function realtimeUrl(after: number): string {
+function realtimeUrl(after: number, clientId: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const query = new URLSearchParams({
     after: String(after),
+    clientId,
     capabilities: `${CRDT_REALTIME_CAPABILITY},${CRDT_REALTIME_CAPABILITY_V2}`
   });
   return `${protocol}//${window.location.host}/api/realtime?${query.toString()}`;

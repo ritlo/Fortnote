@@ -23,6 +23,7 @@ export interface EncryptedOutboxRecord {
   formatVersion: number;
   inlineCipher: Uint8Array;
   nonce: Uint8Array;
+  originClientId?: string;
   checkpointSequenceCutoff?: number;
   state: "queued" | "sending" | "terminal-rejected";
   terminalReason?: "forbidden" | "stale-epoch";

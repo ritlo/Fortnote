@@ -23,7 +23,8 @@ const MAX_REALTIME_MESSAGE_BYTES = 2 * 1024 * 1024;
 
 const realtimeQuerySchema = z.object({
   after: z.coerce.number().int().nonnegative().default(0),
-  capabilities: z.string().default("")
+  capabilities: z.string().default(""),
+  clientId: z.uuid().optional()
 });
 
 const clientMessageSchema = z.discriminatedUnion("type", [
@@ -106,7 +107,16 @@ export function attachRealtimeServer(
       parsed.data.capabilities.split(",").includes(CRDT_REALTIME_CAPABILITY_V2);
 
     webSocketServer.handleUpgrade(request, socket, head, (socket) => {
-      connectClient(context, hub, socket, session, after, crdtEnabled, crdtV2Enabled);
+      connectClient(
+        context,
+        hub,
+        socket,
+        session,
+        after,
+        crdtEnabled,
+        crdtV2Enabled,
+        parsed.success ? parsed.data.clientId : undefined
+      );
     });
   });
 
@@ -124,7 +134,8 @@ function connectClient(
   session: SessionRecord,
   after: number,
   crdtEnabled: boolean,
-  crdtV2Enabled: boolean
+  crdtV2Enabled: boolean,
+  clientInstanceId?: string
 ): void {
   const client = hub.addClient({
     sessionId: session.id,
@@ -132,7 +143,8 @@ function connectClient(
     username: session.username,
     socket,
     crdtEnabled,
-    crdtV2Enabled
+    crdtV2Enabled,
+    ...(clientInstanceId === undefined ? {} : { clientInstanceId })
   });
   socket.on("message", (message, isBinary) => {
     handleClientMessage(context, hub, client, socket, message, isBinary);

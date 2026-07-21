@@ -254,7 +254,8 @@ describe("realtime client", () => {
       updateId: update.updateId,
       noteId: update.noteId,
       sectionId: update.sectionId,
-      expectedKeyEpoch: update.keyEpoch
+      expectedKeyEpoch: update.keyEpoch,
+      originClientId: expect.any(String)
     });
     expect(decoded.cipher).toEqual(Uint8Array.from([1, 2, 3]));
     expect(
