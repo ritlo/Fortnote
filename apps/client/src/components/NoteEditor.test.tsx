@@ -235,6 +235,137 @@ describe("NoteEditor simplified editor", () => {
   });
 });
 
+describe("NoteEditor inline attachment states", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.createOptions.length = 0;
+    mocks.provider.isSynced = false;
+    mocks.getProvider.mockReturnValue(mocks.provider);
+    useAppStore.setState({
+      selectedNoteId: "note-1",
+      user: { id: "alice", username: "alice" }
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    useAppStore.getState().resetVaultState("reset");
+  });
+
+  it("passes resolveFileUrl to the BlockNote editor", () => {
+    const resolveUrl = vi.fn((url: string) => Promise.resolve(url));
+    render(
+      <NoteEditor
+        folders={[]}
+        notesView="notes"
+        resolveAttachmentUrl={resolveUrl}
+        selectedNote={note()}
+        updateSelectedNote={vi.fn()}
+        uploadSelectedAttachment={vi.fn()}
+      />
+    );
+    const options = mocks.createOptions[0] as Record<string, unknown>;
+    expect(options.resolveFileUrl).toBe(resolveUrl);
+  });
+
+  it("configures uploadFile callback in editable mode", () => {
+    renderEditor(note());
+    const options = mocks.createOptions[0] as Record<string, unknown>;
+    expect(options.uploadFile).toBeDefined();
+    expect(typeof options.uploadFile).toBe("function");
+  });
+
+  it("does not configure uploadFile callback in read-only mode", () => {
+    renderEditor(note({ role: "viewer" }));
+    const options = mocks.createOptions[0] as Record<string, unknown>;
+    expect(options.uploadFile).toBeUndefined();
+  });
+
+  it("renders FortnoteFilePanel inside the editor when editable", () => {
+    renderEditor(note());
+    expect(screen.getByTestId("file-panel-controller")).toBeTruthy();
+    expect(screen.getByTestId("upload-tab")).toBeTruthy();
+    expect(screen.getByTestId("embed-tab")).toBeTruthy();
+  });
+
+  it("shows compatible attachments in the file panel attachments tab", () => {
+    useAppStore.setState({
+      attachmentsByNote: {
+        "note-1": [
+          attachment({ filename: "photo.png", mimeType: "image/png" }),
+          attachment({ filename: "screenshot.jpeg", mimeType: "image/jpeg" })
+        ]
+      }
+    });
+    renderEditor(note());
+    expect(screen.getByText("photo.png")).toBeTruthy();
+    expect(screen.getByText("screenshot.jpeg")).toBeTruthy();
+  });
+
+  it("does not render file panel controller in read-only mode", () => {
+    renderEditor(note({ role: "viewer" }));
+    expect(screen.queryByTestId("file-panel-controller")).toBeNull();
+  });
+
+  it("does not render duplicate standalone file controls", () => {
+    renderEditor(note());
+    expect(screen.queryByLabelText("Attach encrypted file")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Attachments" })).toBeNull();
+  });
+
+  it("uploadFile callback calls uploadSelectedAttachment and returns formatAttachmentReference", async () => {
+    const uploadFn = vi.fn().mockResolvedValue({
+      filename: "image.png",
+      id: "00000000-0000-4000-8000-000000000001",
+      mimeType: "image/png",
+      keyEpoch: 1,
+      size: 3,
+      createdAt: "2026-07-18T00:00:00.000Z",
+      encryptedAttachmentKey: "key",
+      attachmentKeyNonce: "nonce",
+      fileNonce: "nonce"
+    });
+    render(
+      <NoteEditor
+        folders={[]}
+        notesView="notes"
+        resolveAttachmentUrl={(url) => Promise.resolve(url)}
+        selectedNote={note()}
+        updateSelectedNote={vi.fn()}
+        uploadSelectedAttachment={uploadFn}
+      />
+    );
+    const options = mocks.createOptions[0] as { uploadFile?: (file: File) => Promise<{ props: { name: string; url: string } }> };
+    const result = await options.uploadFile!(new File(["data"], "test.png", { type: "image/png" }));
+    expect(uploadFn).toHaveBeenCalledOnce();
+    expect(result.props.name).toBe("image.png");
+    expect(result.props.url).toContain("fortnote-attachment:");
+  });
+
+  it("exposes loading state via file panel during upload", () => {
+    useAppStore.setState({ status: "Encrypting attachment" });
+    renderEditor(note());
+    const filePanel = screen.getByTestId("file-panel-controller");
+    expect(filePanel).toBeTruthy();
+    expect(screen.getByTestId("file-tabs")).toBeTruthy();
+  });
+});
+
+function attachment(overrides: Partial<AttachmentSummary> = {}): AttachmentSummary {
+  return {
+    attachmentKeyNonce: "attachment-key-nonce",
+    createdAt: "2026-07-18T00:00:00.000Z",
+    encryptedAttachmentKey: "encrypted-key",
+    fileNonce: "file-nonce",
+    filename: "image.png",
+    id: "00000000-0000-4000-8000-000000000001",
+    keyEpoch: 1,
+    mimeType: "image/png",
+    size: 3,
+    ...overrides
+  };
+}
+
 function renderEditor(
   selectedNote: DecryptedNote,
   updateSelectedNote: UpdateSelectedNote = vi.fn()

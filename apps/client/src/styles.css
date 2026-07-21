@@ -624,45 +624,6 @@ textarea {
   line-height: 1.55;
 }
 
-.attachment-panel {
-  display: grid;
-  gap: 10px;
-}
-
-.attachment-list {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.attachment-list li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 10px;
-}
-
-.attachment-list span {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-}
-
-.attachment-list strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.attachment-list small {
-  color: var(--muted);
-}
-
 .sharing-panel {
   display: grid;
   gap: 10px;
