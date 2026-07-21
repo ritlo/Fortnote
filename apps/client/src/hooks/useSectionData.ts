@@ -10,6 +10,7 @@ import {
   getCrdtSectionOrder,
   isCrdtHistoryUnreadableError,
   openCrdtSection,
+  retryCrdtSection,
   releaseCrdtSection,
   waitForCrdtSectionReady
 } from "../realtime/crdt";
@@ -108,6 +109,9 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
       return;
     }
     const note = selectedNote;
+    if (retryVersion > 0) {
+      retryCrdtSection(note.id, ROOT_SECTION_ID, note.keyEpoch);
+    }
     const rootLease = openCrdtSection(note, ROOT_SECTION_ID, (patch) => {
       if (patch.title === undefined) {
         return;
@@ -140,7 +144,8 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
     selectedNote?.keyEpoch,
     selectedNote?.legacyBodyLoaded,
     selectedNote?.legacyContentAvailable,
-    selectedNote?.role
+    selectedNote?.role,
+    retryVersion
   ]);
 
   useEffect(() => {
@@ -212,6 +217,11 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
       index.orderedSectionIds,
       selectedSectionId
     );
+    if (retryVersion > 0) {
+      targets.forEach((section) => {
+        retryCrdtSection(note.id, section.id, note.keyEpoch);
+      });
+    }
     const targetKeys = new Set(
       targets.map(({ id }) => sectionRuntimeKey(note.id, id))
     );

@@ -227,6 +227,40 @@ export function openCrdtSection(
   return { provider: binding.provider, generation: binding.openGeneration };
 }
 
+export function retryCrdtSection(
+  noteId: string,
+  sectionId: string,
+  keyEpoch: number
+): void {
+  const binding = bindings.get(bindingKey(noteId, sectionId));
+  if (
+    binding?.keyEpoch !== keyEpoch ||
+    binding.failedUpdateIds.size === 0
+  ) {
+    return;
+  }
+  const failedSequences = [...binding.failedUpdateIds]
+    .map((updateId) => binding.receivedServerSequences.get(updateId))
+    .filter((sequence): sequence is number => sequence !== undefined);
+  if (failedSequences.length > 0) {
+    binding.observedServerSequence = Math.min(
+      binding.observedServerSequence,
+      Math.max(0, Math.min(...failedSequences) - 1)
+    );
+  }
+  for (const updateId of binding.failedUpdateIds) {
+    binding.pendingUpdateIds.delete(updateId);
+    binding.receivedServerSequences.delete(updateId);
+  }
+  binding.failedUpdateIds.clear();
+  binding.ready = false;
+  binding.provider.isSynced = false;
+  const note = binding.note as DecryptedNote | undefined;
+  if (note) {
+    transport?.subscribe(note.id, sectionId, keyEpoch, binding.observedServerSequence);
+  }
+}
+
 export function seedLegacyCrdtSection(
   note: DecryptedNote,
   sectionId: string,
