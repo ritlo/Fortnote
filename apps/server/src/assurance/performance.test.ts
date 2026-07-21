@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
+import { performanceFixtureDefinition } from "../../../../scripts/create-performance-fixture.mjs";
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL("../../../..", import.meta.url)));
 const verifierUrl = pathToFileURL(
@@ -52,6 +53,24 @@ async function helpers(): Promise<PerformanceHelpers> {
 }
 
 describe("performance assurance calculations", () => {
+  it("builds the deterministic full three-collaborator fixture", () => {
+    const first = performanceFixtureDefinition("release-candidate", "full");
+    const second = performanceFixtureDefinition("release-candidate", "full");
+
+    expect(first).toEqual(second);
+    expect(first).toMatchObject({
+      activeSectionBytes: 4 * 1024 * 1024,
+      collaborators: 3,
+      compactionEdits: 65,
+      logicalBytes: 100 * 1024 * 1024,
+      samples: 20,
+      sectionCount: 100,
+      seed: "release-candidate",
+      warmupRuns: 2
+    });
+    expect(new Set(Object.values(first.accounts).map(({ username }) => username)).size).toBe(3);
+  });
+
   it("calculates nearest-rank p95 from sorted and unsorted samples", async () => {
     const { nearestRankP95 } = await helpers();
     const values = [20, 1, 19, 2, 18, 3, 17, 4, 16, 5, 15, 6, 14, 7, 13, 8, 12, 9, 11, 10];
