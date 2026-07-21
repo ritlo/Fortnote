@@ -112,7 +112,7 @@ export function useNoteViewModel() {
     : undefined;
   const collaborationState = deriveCollaborationState({
     ...defaultCollaborationDimensions,
-    access: !selectedNote && removedNoteId
+    access: removedNoteId
       ? "removed"
       : notesView === "trash"
       ? "trash"

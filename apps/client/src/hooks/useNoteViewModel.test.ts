@@ -313,6 +313,22 @@ describe("revocation rotation state", () => {
     });
   });
 
+  it("keeps the access-removal alert visible while fallback selection is automatic", () => {
+    useAppStore.setState({
+      notes: [note(), note({ id: "next_note", title: "Next" })],
+      notesView: "notes",
+      removedNoteId: "note_1",
+      selectedNoteId: "next_note"
+    });
+
+    const { result } = renderHook(() => useNoteViewModel());
+
+    expect(result.current.collaborationState).toMatchObject({
+      id: "removed",
+      label: "You no longer have access"
+    });
+  });
+
   it("blocks editing when the selected note history cannot be decrypted", () => {
     useAppStore.setState({
       notes: [note()],
