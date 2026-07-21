@@ -1,10 +1,13 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type BrowserContext, type Page, type Route } from "@playwright/test";
+import { decodeCrdtBinaryFrame } from "../packages/shared/src/index.js";
 import {
   closeAssuranceContexts,
   newAssurancePage,
   uniqueAssuranceAccount,
   type AssuranceAccount
 } from "./support/assurance.js";
+import { waitForCrdtDurability } from "./support/durability.js";
 
 test("retains offline work through reconnect and ignores a delayed old-note save", async ({ page }) => {
   const account = uniqueAssuranceAccount("failure-offline");
@@ -56,23 +59,45 @@ test("distinguishes local and server quota while retaining the visible draft", a
   await page.evaluate(() => {
     (window as Window & { __fortnoteFailOutbox?: boolean }).__fortnoteFailOutbox = true;
   });
-  await appendEditorText(page, ` local-quota-${account.suffix}`);
+  const localText = `local-quota-${account.suffix}`;
+  await appendEditorText(page, ` ${localText}`);
   await expect(page.getByRole("alert")).toContainText(
     "Local storage full — changes need attention"
   );
+  await expect(page.getByRole("alert")).toHaveCount(1);
+  await expect(blockEditor(page)).toContainText(localText);
   await expectRecoveryActions(page, ["Retry", "Encrypted export", "Split section", "Clean up"]);
+  const localLatency = await page.evaluate(() => {
+    const failureAt = (window as Window & { __fortnoteOutboxFailureAt?: number })
+      .__fortnoteOutboxFailureAt;
+    return failureAt === undefined ? null : performance.now() - failureAt;
+  });
+  expect(localLatency).not.toBeNull();
+  await expectNoSeriousAxeViolations(page);
 
   await page.reload();
   await signIn(page, account);
+  const serverTiming = { failureAt: 0 };
   await page.route("**/api/content/uploads", async (route) => {
+    serverTiming.failureAt = Date.now();
     await safeError(route, 507, "storage_limit", "Encrypted storage quota reached");
   });
-  await appendGeneratedText(page, 300 * 1024, ` server-quota-${account.suffix} `);
+  const serverText = `server-quota-${account.suffix}`;
+  await appendGeneratedText(page, 300 * 1024, ` ${serverText} `);
   await expect(page.getByRole("alert")).toContainText(
     "Server storage full — changes kept on this device"
   );
+  await expect(page.getByRole("alert")).toHaveCount(1);
   await expectRecoveryActions(page, ["Retry", "Encrypted export"]);
-  await expect(blockEditor(page)).toContainText(`server-quota-${account.suffix}`);
+  await expect(blockEditor(page)).toContainText(serverText);
+  expect(serverTiming.failureAt).toBeGreaterThan(0);
+  await expectNoSeriousAxeViolations(page);
+  test.info().annotations.push({
+    type: "capacity-latency",
+    description: `local=${String(Math.round(localLatency ?? 0))}ms server=${String(
+      Date.now() - serverTiming.failureAt
+    )}ms`
+  });
 });
 
 test("preserves conflict, undecryptable, stale-epoch, and terminally rejected work", async ({ page }) => {
@@ -94,15 +119,33 @@ test("preserves conflict, undecryptable, stale-epoch, and terminally rejected wo
   await expectRecoveryActions(page, ["Review draft", "Encrypted export", "Reapply"]);
   await page.unroute("**/api/notes/*");
 
-  await page.route("**/api/notes/*/sections/*/history**", async (route) => {
-    await safeError(route, 422, "undecryptable_history", "Encrypted history is unreadable");
+  let corruptedHistoryFrame = false;
+  await page.routeWebSocket(/\/api\/realtime/, (pageSocket) => {
+    const serverSocket = pageSocket.connectToServer();
+    pageSocket.onMessage((message) => {
+      serverSocket.send(message);
+    });
+    serverSocket.onMessage((message) => {
+      if (!corruptedHistoryFrame && typeof message !== "string") {
+        try {
+          decodeCrdtBinaryFrame(Uint8Array.from(message), 256 * 1024);
+          const corrupted = Uint8Array.from(message);
+          corrupted[corrupted.length - 1] ^= 0xff;
+          corruptedHistoryFrame = true;
+          pageSocket.send(corrupted);
+          return;
+        } catch {
+          // Forward non-CRDT binary traffic unchanged.
+        }
+      }
+      pageSocket.send(message);
+    });
   });
   await page.reload();
   await signIn(page, account);
   await openNote(page, `${title} conflict`);
   await expect(page.getByRole("alert")).toContainText("This note cannot be decrypted");
   await expectRecoveryActions(page, ["Retry", "Repair access"]);
-  await page.unroute("**/api/notes/*/sections/*/history**");
 
   for (const failure of [
     ["stale_epoch", "Access changed — refreshing protection"],
@@ -198,6 +241,7 @@ async function createNote(page: Page, title: string): Promise<void> {
   );
   await page.getByLabel("Title").fill(title);
   await saved;
+  await waitForCrdtDurability(page);
   await expect(page.getByRole("button", { name: titlePattern(title) })).toBeVisible();
 }
 
@@ -266,6 +310,8 @@ async function installOutboxQuotaFault(page: Page): Promise<void> {
         this.name === "encryptedOutbox" &&
         (window as Window & { __fortnoteFailOutbox?: boolean }).__fortnoteFailOutbox
       ) {
+        (window as Window & { __fortnoteOutboxFailureAt?: number })
+          .__fortnoteOutboxFailureAt = performance.now();
         throw new DOMException("Browser quota exhausted", "QuotaExceededError");
       }
       return original.apply(this, args);
@@ -284,7 +330,14 @@ async function safeError(route: Route, status: number, code: string, message: st
 async function expectRecoveryActions(page: Page, labels: string[]): Promise<void> {
   const recovery = page.getByRole("region", { name: "Recovery actions" });
   await expect(recovery).toBeVisible();
-  for (const label of labels) await expect(recovery.getByRole("button", { name: label })).toBeVisible();
+  await expect(recovery.getByRole("button")).toHaveText(labels);
+}
+
+async function expectNoSeriousAxeViolations(page: Page): Promise<void> {
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(
+    results.violations.filter(({ impact }) => impact === "serious" || impact === "critical")
+  ).toEqual([]);
 }
 
 function blockEditor(page: Page) {
