@@ -270,7 +270,7 @@ describe("useRealtimeEvents lifecycle", () => {
 
   it("does not reload away the removed-access announcement", async () => {
     mocks.getCursor.mockResolvedValue({ cursor: 3 });
-    mocks.loadNotes.mockImplementation(async () => {
+    mocks.loadNotes.mockImplementation(() => {
       useAppStore.getState().setNotes([]);
       useAppStore.getState().setSelectedNoteId(null);
     });
@@ -294,17 +294,19 @@ describe("useRealtimeEvents lifecycle", () => {
     render(<RealtimeHarness />);
     await flushEffects();
 
-    act(() => mocks.connections[0]!.options.onMessage({
-      type: "event",
-      event: collaborationEvent({
-        eventId: "own-revoke",
-        metadata: { clientInstanceId: "other-client", membershipUserId: "user-1" },
-        noteId: "note-1",
-        resourceId: "membership-1",
-        resourceType: "membership",
-        type: "membership.revoked"
-      })
-    }));
+    act(() => {
+      mocks.connections[0]!.options.onMessage({
+        type: "event",
+        event: collaborationEvent({
+          eventId: "own-revoke",
+          metadata: { clientInstanceId: "other-client", membershipUserId: "user-1" },
+          noteId: "note-1",
+          resourceId: "membership-1",
+          resourceType: "membership",
+          type: "membership.revoked"
+        })
+      });
+    });
     await flushEffects();
 
     expect(mocks.loadNotes).not.toHaveBeenCalled();
