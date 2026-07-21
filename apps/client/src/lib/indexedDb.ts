@@ -621,9 +621,14 @@ async function putRecord(
 ): Promise<void> {
   await safeOperation(async () => {
     const transaction = database.transaction(storeName, "readwrite");
-    const done = transactionDone(transaction);
-    transaction.objectStore(storeName).put(record);
-    await done;
+    try {
+      const done = transactionDone(transaction);
+      transaction.objectStore(storeName).put(record);
+      await done;
+    } catch (error) {
+      transaction.abort();
+      throw error;
+    }
   });
 }
 

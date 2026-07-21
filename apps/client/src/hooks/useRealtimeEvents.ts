@@ -475,13 +475,19 @@ async function reloadAfterEvents(events: CollaborationEvent[]): Promise<void> {
     return;
   }
   invalidateAttachmentCaches(remoteEvents);
-  if (!eventsRequireNoteReload(remoteEvents) && !eventsRequireTrashReload(remoteEvents)) {
+  const reloadableEvents = remoteEvents.filter(
+    (event) => !isOwnRevocation(event, user.id)
+  );
+  if (
+    !eventsRequireNoteReload(reloadableEvents) &&
+    !eventsRequireTrashReload(reloadableEvents)
+  ) {
     return;
   }
   const reloads: Promise<unknown>[] = [
     loadDecryptedNotes(user, rootKey, false, { preserveSelection: true })
   ];
-  if (eventsRequireTrashReload(remoteEvents)) {
+  if (eventsRequireTrashReload(reloadableEvents)) {
     reloads.push(loadDecryptedNotes(user, rootKey, true, { preserveSelection: true }));
   }
   await Promise.all(reloads);

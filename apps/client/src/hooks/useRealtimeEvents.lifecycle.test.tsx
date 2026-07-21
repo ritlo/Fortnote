@@ -268,6 +268,53 @@ describe("useRealtimeEvents lifecycle", () => {
     });
   });
 
+  it("does not reload away the removed-access announcement", async () => {
+    mocks.getCursor.mockResolvedValue({ cursor: 3 });
+    mocks.loadNotes.mockImplementation(async () => {
+      useAppStore.getState().setNotes([]);
+      useAppStore.getState().setSelectedNoteId(null);
+    });
+    useAppStore.setState({
+      notes: [{
+        id: "note-1",
+        folderId: null,
+        title: "Shared",
+        noteKeyBase64: "key",
+        contentLength: 0,
+        version: 1,
+        keyEpoch: 1,
+        isDeleted: false,
+        updatedAt: "2026-07-18T00:00:00.000Z",
+        ownerUserId: "owner",
+        cryptoOwnerId: "owner",
+        role: "viewer"
+      }],
+      selectedNoteId: "note-1"
+    });
+    render(<RealtimeHarness />);
+    await flushEffects();
+
+    act(() => mocks.connections[0]!.options.onMessage({
+      type: "event",
+      event: collaborationEvent({
+        eventId: "own-revoke",
+        metadata: { clientInstanceId: "other-client", membershipUserId: "user-1" },
+        noteId: "note-1",
+        resourceId: "membership-1",
+        resourceType: "membership",
+        type: "membership.revoked"
+      })
+    }));
+    await flushEffects();
+
+    expect(mocks.loadNotes).not.toHaveBeenCalled();
+    expect(useAppStore.getState()).toMatchObject({
+      notes: [],
+      removedNoteId: "note-1",
+      selectedNoteId: null
+    });
+  });
+
   it("reloads both note lists for replayed permanent deletion", async () => {
     mocks.getCursor.mockResolvedValue({ cursor: 3 });
     mocks.loadNotes.mockResolvedValue(undefined);
