@@ -238,6 +238,7 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
     selectedNote?.id,
     selectedNote?.isDeleted,
     selectedNote?.keyEpoch,
+    selectedNote?.role,
     selectedSectionId,
     selectedSectionIndex
   ]);

@@ -296,6 +296,28 @@ describe("useSectionData", () => {
     });
   });
 
+  it("reopens the selected section when access changes", async () => {
+    const current = installNote();
+    const { rerender } = renderHook(
+      ({ note: selected }) => useSectionData(selected),
+      { initialProps: { note: current } }
+    );
+
+    await waitFor(() => {
+      expect(sectionState(current.id, "section-1")?.status).toBe("ready");
+    });
+    const openedBeforeRoleChange = mocks.openCrdtSection.mock.calls.length;
+
+    const viewer = { ...current, role: "viewer" as const };
+    rerender({ note: viewer });
+
+    await waitFor(() => {
+      expect(mocks.openCrdtSection.mock.calls.length).toBeGreaterThan(
+        openedBeforeRoleChange
+      );
+    });
+  });
+
   it("reports local browser pressure separately from available server quota", async () => {
     const current = installNote();
     Object.defineProperty(navigator, "storage", {
