@@ -122,6 +122,8 @@ test("syncs a shared note for an online editor and offline viewer", async ({
       0
     );
     await expect(blockEditor(carolPage)).toHaveCount(0);
+    await expect(blockEditor(alicePage)).toBeVisible({ timeout: 10_000 });
+    await waitForCrdtDurability(alicePage);
     await closePageContext(carolPage, contexts);
 
     await closePageContext(bobPage, contexts);
