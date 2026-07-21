@@ -18,6 +18,7 @@ import {
   fromBase64,
   fromCanonicalBase64,
   generateRecoverySecret,
+  hkdfSha256,
   noteAssociatedData,
   openSealedBytes,
   randomBytes,
@@ -42,6 +43,25 @@ describe("crypto helpers", () => {
     const vault = await deriveVaultWrappingKey("correct horse", params);
 
     expect(toBase64(auth)).not.toEqual(toBase64(vault));
+  });
+
+  it("matches the RFC 5869 HKDF-SHA-256 test vector", async () => {
+    const hex = (value: string) =>
+      Uint8Array.from(value.match(/.{2}/g)!.map((byte) => Number.parseInt(byte, 16)));
+    const derived = await hkdfSha256(
+      hex("0b".repeat(22)),
+      hex("000102030405060708090a0b0c"),
+      hex("f0f1f2f3f4f5f6f7f8f9"),
+      42
+    );
+
+    expect(toBase64(derived)).toEqual(
+      toBase64(
+        hex(
+          "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"
+        )
+      )
+    );
   });
 
   it("round-trips note ciphertext with associated data", async () => {

@@ -12,6 +12,7 @@ import {
   encodeCrdtBinaryFrame,
   fromCanonicalBase64,
   parseCrdtControlMessage,
+  randomUuid,
   toBase64,
   type CrdtAck,
   type CrdtAckV2,
@@ -131,7 +132,7 @@ export function connectRealtime({
   contentStore,
   ownerId = getClientInstanceId()
 }: RealtimeClientOptions): RealtimeConnection {
-  const transportClientId = crypto.randomUUID();
+  const transportClientId = randomUuid();
   const socket = new WebSocket(realtimeUrl(after, transportClientId));
   socket.binaryType = "arraybuffer";
   const pendingSubscriptions = new Set<string>();
@@ -437,7 +438,7 @@ export function connectRealtime({
     }
     socket.send(JSON.stringify({
       type: "crdt-subscribe",
-      requestId: crypto.randomUUID(),
+      requestId: randomUuid(),
       noteId: subscription.noteId,
       sectionId: subscription.sectionId,
       expectedKeyEpoch: subscription.keyEpoch,

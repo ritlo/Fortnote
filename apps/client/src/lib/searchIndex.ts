@@ -1,7 +1,9 @@
 import {
   associatedDataV2,
   decryptBytes,
-  encryptBytesV2
+  encryptBytesV2,
+  hkdfSha256,
+  sha256
 } from "@fortnote/shared";
 import type {
   FortnoteIndexedDb,
@@ -428,27 +430,17 @@ function searchAssociatedData(
 }
 
 async function deriveSearchKey(rootKey: Uint8Array, userId: string): Promise<Uint8Array> {
-  const keyBuffer = new ArrayBuffer(rootKey.byteLength);
-  new Uint8Array(keyBuffer).set(rootKey);
-  const material = await crypto.subtle.importKey("raw", keyBuffer, "HKDF", false, [
-    "deriveBits"
-  ]);
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: "HKDF",
-      hash: "SHA-256",
-      salt: textEncoder.encode("fortnote:search-index:salt:v1"),
-      info: textEncoder.encode(`fortnote:search-index:key:v1:${userId}`)
-    },
-    material,
-    256
+  return hkdfSha256(
+    rootKey,
+    textEncoder.encode("fortnote:search-index:salt:v1"),
+    textEncoder.encode(`fortnote:search-index:key:v1:${userId}`),
+    32
   );
-  return new Uint8Array(bits);
 }
 
 async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", textEncoder.encode(value));
-  return [...new Uint8Array(digest)]
+  const digest = await sha256(textEncoder.encode(value));
+  return [...digest]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }

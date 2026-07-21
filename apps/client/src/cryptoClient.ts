@@ -18,6 +18,7 @@ import {
   epochLinkAssociatedData,
   fromBase64,
   generateRecoverySecret,
+  sha256,
   openSealedBytes,
   randomBytes,
   randomUuid,
@@ -1278,7 +1279,7 @@ export async function contentManifestHashV2(
 }
 
 async function sha256Hex(value: Uint8Array): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", value.slice()));
+  const digest = await sha256(value);
   return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 

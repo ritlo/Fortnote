@@ -19,6 +19,7 @@ import {
   openUserSharingKey,
   type OpenedSharingKey
 } from "../cryptoClient";
+import { randomUuid } from "@fortnote/shared";
 import {
   decryptNoteSummary,
   prepareSharingKeyEnvelopeMigrationV2
@@ -77,7 +78,7 @@ export async function ensureLegacyNoteMigrated(
   }
 
   const requestedSectionId =
-    legacyMigrationSectionIds.get(note.id) ?? crypto.randomUUID();
+    legacyMigrationSectionIds.get(note.id) ?? randomUuid();
   legacyMigrationSectionIds.set(note.id, requestedSectionId);
   let expectedRootVersion = legacy.rootVersion;
   for (;;) {

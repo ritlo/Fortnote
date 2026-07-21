@@ -2,6 +2,7 @@ import {
   CRDT_BINARY_FORMAT_VERSION,
   CRDT_BINARY_HEADER_MAX_BYTES,
   fromBase64,
+  randomUuid,
   toBase64,
   type CrdtBinaryHeader,
   type CrdtManifestReferenceV2,
@@ -371,7 +372,7 @@ export async function createCrdtSectionInitializationManifest(
   }
   throwIfCrdtHistoryUnreadable(binding);
   const note = binding.note;
-  const updateId = crypto.randomUUID();
+  const updateId = randomUuid();
   const checkpointSequenceCutoff = binding.observedServerSequence;
   const prepared = await encryptContentChunksV2({
     cryptoOwnerId: note.cryptoOwnerId,
@@ -957,7 +958,7 @@ function broadcastUpdate(binding: Binding, update: Uint8Array): DurableDelivery<
     if (!isActiveBindingForNote(binding, note)) {
       return null;
     }
-    const updateId = crypto.randomUUID();
+    const updateId = randomUuid();
     const kind = binding.sectionId === ROOT_SECTION_ID ? "root-update" : "update";
     const envelope = {
       type: "crdt-update" as const,
@@ -1003,7 +1004,7 @@ function broadcastUpdate(binding: Binding, update: Uint8Array): DurableDelivery<
 
 async function broadcastCheckpoint(
   binding: Binding,
-  updateId: string = crypto.randomUUID()
+  updateId: string = randomUuid()
 ): Promise<void> {
   if (!canWrite(binding)) {
     return;

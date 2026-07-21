@@ -15,7 +15,7 @@ import {
   encryptNoteTitleV2,
   noteKeyToBase64
 } from "../cryptoClient";
-import { fromBase64 } from "@fortnote/shared";
+import { fromBase64, randomUuid } from "@fortnote/shared";
 import { useEffect, useRef } from "react";
 import { editCrdtNote } from "../realtime/crdt";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
@@ -234,7 +234,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       const shouldMigrateOwnedKey =
         noteToSave.role === "owner" && noteToSave.metadataMigration !== "current";
       const rootSectionId =
-        noteToSave.rootSectionId ?? (shouldMigrateOwnedKey ? crypto.randomUUID() : null);
+        noteToSave.rootSectionId ?? (shouldMigrateOwnedKey ? randomUuid() : null);
       const encryptedNoteKey = shouldMigrateOwnedKey
         ? await encryptNoteKeyEnvelopeV2({
             cryptoOwnerId: noteToSave.cryptoOwnerId,
@@ -469,7 +469,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
 
     setError(null);
     try {
-      const id = crypto.randomUUID();
+      const id = randomUuid();
       const encryptedName = await encryptFolderNameV2({
         userId: user.id,
         folderId: id,

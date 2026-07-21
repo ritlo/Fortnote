@@ -1,4 +1,4 @@
-import { KdfParams } from "@fortnote/shared";
+import { randomUuid, type KdfParams } from "@fortnote/shared";
 
 export const JSON_CONTROL_MAX_BYTES = 1024 * 1024;
 
@@ -508,7 +508,7 @@ export class ApiRequestError extends Error {
   }
 }
 
-const clientInstanceId = crypto.randomUUID();
+const clientInstanceId = randomUuid();
 
 export function getClientInstanceId(): string {
   return clientInstanceId;
@@ -522,7 +522,7 @@ export async function apiRequest<T>(
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
-  const requestId = crypto.randomUUID();
+  const requestId = randomUuid();
   const headers = requestHeaders(init, requestId, true);
   assertBoundedJsonControl(init.body, headers, requestId);
 
@@ -552,7 +552,7 @@ async function apiBinaryRequest(
   path: string,
   init: RequestInit = {}
 ): Promise<BinaryApiResponse> {
-  const requestId = crypto.randomUUID();
+  const requestId = randomUuid();
   const headers = requestHeaders(init, requestId, false);
   const response = await fetch(`/api${path}`, {
     ...init,
@@ -1073,7 +1073,7 @@ export function uploadAttachment(
   payload: UploadAttachmentPayload,
   onProgress?: (progress: BinaryTransferProgress) => void
 ): Promise<{ id: string; keyEpoch: number }> {
-  const requestId = crypto.randomUUID();
+  const requestId = randomUuid();
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `/api/notes/${noteId}/attachments`);
@@ -1143,7 +1143,7 @@ export function downloadAttachment(
   attachmentId: string,
   onProgress?: (progress: BinaryTransferProgress) => void
 ): Promise<AttachmentDownload> {
-  const requestId = crypto.randomUUID();
+  const requestId = randomUuid();
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("GET", `/api/attachments/${attachmentId}`);

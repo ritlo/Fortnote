@@ -79,7 +79,76 @@ export function randomBase64(length: number): string {
 }
 
 export function randomUuid(): string {
-  return crypto.randomUUID();
+  if (typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export async function sha256(value: Uint8Array): Promise<Uint8Array> {
+  await cryptoReady();
+  return sodium.crypto_hash_sha256(value);
+}
+
+export async function hkdfSha256(
+  inputKeyMaterial: Uint8Array,
+  salt: Uint8Array,
+  info: Uint8Array,
+  length: number
+): Promise<Uint8Array> {
+  await cryptoReady();
+  if (!Number.isSafeInteger(length) || length < 0 || length > 255 * 32) {
+    throw new Error("Invalid HKDF output length");
+  }
+
+  const prk = hmacSha256(
+    inputKeyMaterial,
+    salt.length === 0 ? new Uint8Array(32) : salt
+  );
+  const output = new Uint8Array(length);
+  let previous = new Uint8Array() as Uint8Array<ArrayBufferLike>;
+  let offset = 0;
+  for (let counter = 1; offset < length; counter += 1) {
+    const message = new Uint8Array(previous.length + info.length + 1);
+    message.set(previous);
+    message.set(info, previous.length);
+    message[message.length - 1] = counter;
+    previous = hmacSha256(message, prk);
+    const copied = Math.min(previous.length, length - offset);
+    output.set(previous.subarray(0, copied), offset);
+    offset += copied;
+  }
+  return output;
+}
+
+function hmacSha256(message: Uint8Array, key: Uint8Array): Uint8Array {
+  const block = 64;
+  const normalizedKey = key.length > block ? sodium.crypto_hash_sha256(key) : key;
+  const paddedKey = new Uint8Array(block);
+  paddedKey.set(normalizedKey);
+  const innerPad = new Uint8Array(block);
+  const outerPad = new Uint8Array(block);
+  for (let index = 0; index < block; index += 1) {
+    const byte = paddedKey[index] ?? 0;
+    innerPad[index] = byte ^ 0x36;
+    outerPad[index] = byte ^ 0x5c;
+  }
+  return sodium.crypto_hash_sha256(
+    concatBytes(outerPad, sodium.crypto_hash_sha256(concatBytes(innerPad, message)))
+  );
+}
+
+function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
+  const result = new Uint8Array(left.length + right.length);
+  result.set(left);
+  result.set(right, left.length);
+  return result;
 }
 
 export function createKdfParams(): KdfParams {

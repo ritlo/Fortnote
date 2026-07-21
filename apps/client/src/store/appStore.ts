@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { randomUuid } from "@fortnote/shared";
 import type { OpenedSharingKey } from "../cryptoClient";
 import type {
   AttachmentSummary,
@@ -536,7 +537,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return failure;
   },
   beginRequest: (scope) => {
-    const token = crypto.randomUUID();
+    const token = randomUuid();
     set((state) => ({ requestTokens: { ...state.requestTokens, [scope]: token } }));
     return token;
   },

@@ -5,6 +5,7 @@ import {
   initializeNoteSection,
   type LogicalNoteSectionSummary
 } from "../api";
+import { randomUuid } from "@fortnote/shared";
 import {
   appendCrdtSectionContent,
   createCrdtSectionInitializationManifest,
@@ -203,7 +204,7 @@ async function createInitializedSection(
   note: DecryptedNote,
   snapshot?: BlockNoteFragmentSnapshot
 ): Promise<{ note: DecryptedNote; section: LogicalNoteSectionSummary }> {
-  const sectionId = crypto.randomUUID();
+  const sectionId = randomUuid();
   const created = await createNoteSection(note.id, {
     sectionId,
     ...mutationFence(note)

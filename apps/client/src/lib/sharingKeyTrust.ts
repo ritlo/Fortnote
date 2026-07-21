@@ -1,8 +1,8 @@
 import {
-  cryptoReady,
   decryptBytes,
   encryptBytes,
   fromBase64,
+  sha256,
   utf8
 } from "@fortnote/shared";
 import type { PublicSharingKey } from "../api";
@@ -47,12 +47,8 @@ export type SharingKeyTrustDecision =
     };
 
 export async function fingerprintPublicSharingKey(publicKey: string): Promise<string> {
-  await cryptoReady();
-
   const publicKeyBytes = Uint8Array.from(fromBase64(publicKey));
-  const digest = new Uint8Array(
-    await globalThis.crypto.subtle.digest("SHA-256", publicKeyBytes.buffer)
-  );
+  const digest = await sha256(publicKeyBytes);
   return Array.from(digest.slice(0, 16))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("")
