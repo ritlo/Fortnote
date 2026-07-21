@@ -147,6 +147,8 @@ test("preserves conflict, undecryptable, stale-epoch, and terminally rejected wo
   await openNote(page, title);
   await expect(page.getByRole("alert")).toContainText("This note cannot be decrypted");
   await expectRecoveryActions(page, ["Retry", "Repair access"]);
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(blockEditor(page)).toBeVisible({ timeout: 15_000 });
 
   for (const failure of [
     ["stale_epoch", "Access changed — refreshing protection"],
