@@ -91,13 +91,12 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       if (!isCurrentSession(sessionUserId, sessionRootKey)) {
         return;
       }
-      // Fence any note-list request that started before this local create.
-      // The server now includes the new note, so the latest metadata is the
-      // safest base before selecting and editing it.
-      await loadDecryptedNotes(user, rootKey, false, { preserveSelection: true });
-      if (!isCurrentSession(sessionUserId, sessionRootKey)) {
-        return;
-      }
+      // Fence any note-list request that started before this local create while
+      // keeping the new editor responsive. The response merges the local note
+      // if it was captured before the create committed.
+      void loadDecryptedNotes(user, rootKey, false, { preserveSelection: true }).catch(
+        () => undefined
+      );
       const note: DecryptedNote = {
         id: draft.id,
         folderId: selectedFolderId,
