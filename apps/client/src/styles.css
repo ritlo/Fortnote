@@ -837,6 +837,26 @@ dialog h3 {
   min-width: 80px;
 }
 
+.sharing-dialog {
+  max-width: 480px;
+}
+
+.sharing-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.sharing-dialog-header h3 {
+  margin: 0;
+}
+
+.sharing-dialog-content .sharing-panel {
+  border-top: none;
+  padding-top: 0;
+}
+
 .note-actions {
   margin-top: 6px;
   display: flex;

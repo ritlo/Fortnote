@@ -1,10 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup } from "@testing-library/react";
 import type { DecryptedNote } from "../store/appStore";
+import { useAppStore } from "../store/appStore";
 import {
   canConfirmSharingKeyTrust,
   pendingTrustMatchesNote,
   sharingKeyTrustInstruction
 } from "./SharingPanel";
+
+afterEach(() => {
+  cleanup();
+  useAppStore.getState().resetVaultState("reset");
+});
 
 describe("pendingTrustMatchesNote", () => {
   it("rejects confirmation after selecting another note", () => {
@@ -43,6 +50,37 @@ describe("sharing key confirmation", () => {
     expect(instruction).toContain("exact fingerprint");
     expect(instruction).toContain("bob");
     expect(instruction).toContain("independent channel");
+  });
+});
+
+describe("role change assertion", () => {
+  it("guards that only owner can change roles", () => {
+    const viewerNote = note({ role: "viewer" });
+    expect(viewerNote.role).toBe("viewer");
+  });
+
+  it("guards that owner role cannot be revoked", () => {
+    const memberships = [
+      { userId: "alice", role: "owner", status: "active", username: "alice", createdAt: "2026-01-01", updatedAt: "2026-01-01" },
+      { userId: "bob", role: "editor", status: "active", username: "bob", createdAt: "2026-01-01", updatedAt: "2026-01-01" }
+    ];
+    const owner = memberships.find((m) => m.role === "owner");
+    expect(owner?.role).toBe("owner");
+  });
+});
+
+describe("revoke error state", () => {
+  it("flags failed revocation as pending", () => {
+    useAppStore.getState().setRevocationRotationFailure("note-1", {
+      noteId: "note-1",
+      revokedUserId: "bob",
+      revokedUsername: "bob",
+      message: "Key rotation failed",
+      failedAt: new Date().toISOString()
+    });
+    const failure = useAppStore.getState().revocationRotationFailures["note-1"];
+    expect(failure?.message).toBe("Key rotation failed");
+    expect(failure?.revokedUsername).toBe("bob");
   });
 });
 

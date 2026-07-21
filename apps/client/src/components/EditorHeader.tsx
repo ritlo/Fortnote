@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import type { DecryptedNote, NotesView } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
 import type { CollaborationState } from "../lib/collaborationState";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Share2 } from "lucide-react";
 import { CollaborationStatus } from "./CollaborationStatus";
 import type { RecoveryCallbacks } from "./RecoveryPanel";
 
@@ -13,6 +13,7 @@ interface EditorHeaderProps {
   notesView: NotesView;
   selectedNote: DecryptedNote | null;
   user: User;
+  canShare: boolean;
   deleteSelectedForever: () => Promise<void>;
   lockVault: () => void;
   moveSelectedToTrash: () => Promise<void>;
@@ -20,6 +21,7 @@ interface EditorHeaderProps {
   recoveryOpen?: boolean;
   restoreSelectedNote: () => Promise<void>;
   setRecoveryOpen?: (open: boolean) => void;
+  onShare?: () => void;
 }
 
 export function EditorHeader({
@@ -28,13 +30,15 @@ export function EditorHeader({
   notesView,
   selectedNote,
   user,
+  canShare,
   deleteSelectedForever,
   lockVault,
   moveSelectedToTrash,
   recoveryCallbacks: _recoveryCallbacks,
   recoveryOpen: _recoveryOpen,
   restoreSelectedNote,
-  setRecoveryOpen
+  setRecoveryOpen,
+  onShare
 }: EditorHeaderProps) {
   const canDelete = selectedNote?.role === "owner";
   const presenceByNote = useAppStore((state) => state.presenceByNote);
@@ -76,6 +80,16 @@ export function EditorHeader({
         {lastSaved ? <p className="last-saved">{lastSaved}</p> : null}
         {collaborationState ? <CollaborationStatus state={collaborationState} /> : null}
       </div>
+      {canShare && notesView !== "settings" && notesView !== "trash" ? (
+        <button
+          className="text-button"
+          type="button"
+          onClick={() => { onShare?.(); }}
+          aria-label="Share note"
+        >
+          <Share2 size={16} /> Share
+        </button>
+      ) : null}
       {hasRecoveryActions && notesView !== "settings" ? (
         <button
           className="text-button"

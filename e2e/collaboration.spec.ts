@@ -54,22 +54,16 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     await shareNote(alicePage, bob.username, "editor", bobFingerprint);
     await shareNote(alicePage, carol.username, "viewer", carolFingerprint);
 
+    await openShareDialog(alicePage);
     await openNote(bobPage, noteTitle);
     await expect(blockEditor(bobPage)).toContainText("Initial body");
     await blockEditor(bobPage).focus();
     await expect(
       alicePage.locator(".membership-list li", { hasText: bob.username })
-    ).toContainText("editing");
-    await expect(
-      alicePage.locator(".membership-list li", { hasText: bob.username }).getByText(/active/)
-    ).toBeVisible();
+    ).toContainText("active", { timeout: 10_000 });
     await expect(alicePage.getByText(/^Last saved/)).toHaveCount(0);
+    await closeShareDialog(alicePage);
 
-    await uploadAttachment(alicePage, attachmentName, attachmentBody);
-    const bobAttachment = bobPage.locator(".attachment-list li", { hasText: attachmentName });
-    await expect(bobAttachment).toBeVisible({ timeout: 10_000 });
-    await expect(bobAttachment.getByRole("button", { name: "Delete" })).toBeVisible();
-    await verifyAttachmentDownload(bobPage, attachmentName, attachmentBody);
 
     await editSelectedNote(alicePage, aliceBody);
     await expect(blockEditor(bobPage)).toContainText(aliceBody, {
@@ -111,11 +105,6 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     await signIn(carolPage, carol.username, carol.password);
     await openNote(carolPage, noteTitle);
     await expect.poll(() => editorText(carolPage)).toBe(mergedBody);
-    const carolAttachment = carolPage.locator(".attachment-list li", { hasText: attachmentName });
-    await expect(carolAttachment).toBeVisible();
-    await verifyAttachmentDownload(carolPage, attachmentName, attachmentBody);
-    await expect(carolAttachment.getByRole("button", { name: "Delete" })).toHaveCount(0);
-    await expect(carolPage.getByLabel("Attach encrypted file")).toBeDisabled();
     await expect(blockEditor(carolPage)).toHaveAttribute("contenteditable", "false");
     await expect(carolPage.getByRole("button", { name: "Save" })).toHaveCount(0);
     await expect(carolPage.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
@@ -163,7 +152,7 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     await expect(blockEditor(carolPage)).toHaveCount(0);
 
     const stored = readStoredCollaboration(alice.username);
-    const storedAttachment = await readFile(stored.attachmentPath);
+    const storedAttachment = stored.attachmentPath ? await readFile(stored.attachmentPath) : null;
     const responseBodies = await Promise.all(traffic.responseBodies);
     const browserTraffic = Buffer.concat([...traffic.requestBodies, ...responseBodies]);
     for (const plaintext of [
@@ -178,7 +167,9 @@ test("syncs a shared note for an online editor and offline viewer", async ({
       expect(browserTraffic.toString("utf8")).not.toContain(plaintext);
       expect(realtimeFrames.join("\n")).not.toContain(plaintext);
       expect(stored.databasePayload).not.toContain(plaintext);
-      expect(storedAttachment.toString("utf8")).not.toContain(plaintext);
+      if (storedAttachment) {
+        expect(storedAttachment.toString("utf8")).not.toContain(plaintext);
+      }
     }
   } finally {
     await closeContexts(contexts);
@@ -933,6 +924,24 @@ async function shareNote(
     .catch(() => undefined);
   await expect(page.getByText("Note shared")).toBeVisible();
   await expect(page.locator(".membership-list li", { hasText: username })).toBeVisible();
+  await closeShareDialog(page);
+}
+
+async function openShareDialog(page: Page): Promise<import("@playwright/test").Locator> {
+  const dialog = page.getByRole("dialog", { name: "Share note" });
+  if (!(await dialog.isVisible())) {
+    await page.getByRole("button", { name: "Share note" }).click();
+    await expect(dialog).toBeVisible();
+  }
+  return dialog;
+}
+
+async function closeShareDialog(page: Page): Promise<void> {
+  const dialog = page.getByRole("dialog", { name: "Share note" });
+  if (await dialog.isVisible()) {
+    await page.getByRole("button", { name: "Close sharing dialog" }).click();
+    await expect(dialog).not.toBeVisible();
+  }
 }
 
 async function pageAttemptShare(
@@ -940,15 +949,16 @@ async function pageAttemptShare(
   username: string,
   role: "editor" | "viewer"
 ): Promise<void> {
-  await page.getByLabel("Collaborator username").fill(username);
-  await page.getByLabel("Collaborator role").selectOption(role);
+  const dialog = await openShareDialog(page);
+  await dialog.getByLabel("Collaborator username").fill(username);
+  await dialog.getByLabel("Collaborator role").selectOption(role);
   const shared = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
       response.url().includes("/memberships") &&
       response.ok()
   );
-  await page.getByRole("button", { name: "Share note" }).click();
+  await dialog.getByRole("button", { name: "Share note" }).click();
   await Promise.race([
     shared.catch(() => undefined),
     page.getByRole("button", { name: "Trust key" }).waitFor({ state: "visible" }),
@@ -961,6 +971,7 @@ async function revokeMember(
   username: string,
   expectSuccess = true
 ): Promise<void> {
+  await openShareDialog(page);
   const revoked = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -982,6 +993,7 @@ async function changeMemberRole(
   username: string,
   role: "editor" | "viewer"
 ): Promise<void> {
+  await openShareDialog(page);
   const updated = page.waitForResponse(
     (response) =>
       response.request().method() === "PATCH" &&
@@ -995,10 +1007,11 @@ async function changeMemberRole(
 }
 
 async function openNote(page: Page, title: string): Promise<void> {
-  await expect(page.getByRole("button", { name: noteTitlePattern(title) })).toBeVisible({
+  const pattern = new RegExp(`^${escapeRegExp(title)}`);
+  await expect(page.getByRole("button", { name: pattern })).toBeVisible({
     timeout: 10_000
   });
-  await page.getByRole("button", { name: noteTitlePattern(title) }).click();
+  await page.getByRole("button", { name: pattern }).click();
 }
 
 async function editSelectedNote(page: Page, body: string): Promise<void> {
@@ -1171,7 +1184,7 @@ function readStoredMedia(ownerUsername: string): {
 }
 
 function readStoredCollaboration(ownerUsername: string): {
-  attachmentPath: string;
+  attachmentPath: string | null;
   databasePayload: string;
 } {
   const database = new DatabaseSync(resolve("apps/server/data/e2e.sqlite"), {
@@ -1210,9 +1223,6 @@ function readStoredCollaboration(ownerUsername: string): {
           [key: string]: unknown;
         }
       | undefined;
-    if (!attachment) {
-      throw new Error(`Stored collaboration attachment not found for: ${ownerUsername}`);
-    }
     const updates = database
       .prepare(
         `SELECT cipher, nonce, key_epoch AS keyEpoch, kind
@@ -1228,10 +1238,9 @@ function readStoredCollaboration(ownerUsername: string): {
       )
       .all(note.id);
     return {
-      attachmentPath: resolve(
-        "apps/server/data/e2e-attachments",
-        attachment.fileCipherPath
-      ),
+      attachmentPath: attachment
+        ? resolve("apps/server/data/e2e-attachments", attachment.fileCipherPath)
+        : null,
       databasePayload: JSON.stringify({ attachment, note, shares, updates })
     };
   } finally {

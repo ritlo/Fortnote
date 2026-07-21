@@ -8,6 +8,7 @@ import { SettingsPanel } from "./SettingsPanel";
 import type { CollaborationState } from "../lib/collaborationState";
 import { type RecoveryCallbacks } from "./RecoveryPanel";
 import { RecoveryDialog } from "./RecoveryDialog";
+import { SharingDialog } from "./SharingDialog";
 
 interface EditorPaneProps {
   collaborationState: CollaborationState;
@@ -59,16 +60,24 @@ export function EditorPane({
   uploadSelectedAttachment
 }: EditorPaneProps) {
   const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [sharingOpen, setSharingOpen] = useState(false);
+  const canShare =
+    selectedNote !== null &&
+    selectedNote.role !== "viewer" &&
+    notesView !== "settings" &&
+    notesView !== "trash";
 
   return (
     <section className="editor-pane">
       <EditorHeader
+        canShare={canShare}
         collaborationState={collaborationState}
         deleteSelectedForever={deleteSelectedForever}
         keyMaterialVersion={keyMaterialVersion}
         lockVault={lockVault}
         moveSelectedToTrash={moveSelectedToTrash}
         notesView={notesView}
+        onShare={() => { setSharingOpen(true); }}
         recoveryCallbacks={recoveryCallbacks}
         recoveryOpen={recoveryOpen}
         restoreSelectedNote={restoreSelectedNote}
@@ -81,6 +90,11 @@ export function EditorPane({
         callbacks={recoveryCallbacks}
         open={recoveryOpen}
         onClose={() => { setRecoveryOpen(false); }}
+      />
+      <SharingDialog
+        selectedNote={selectedNote}
+        open={sharingOpen}
+        onClose={() => { setSharingOpen(false); }}
       />
       {notesView === "settings" ? (
         <SettingsPanel

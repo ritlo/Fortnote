@@ -112,6 +112,41 @@ describe("EditorHeader recovery trigger", () => {
   });
 });
 
+describe("EditorHeader Share action", () => {
+  it("renders Share button when canShare is true", () => {
+    renderHeader({ canShare: true });
+    expect(screen.getByRole("button", { name: "Share note" })).toBeTruthy();
+  });
+
+  it("does not render Share button when canShare is false", () => {
+    renderHeader({ canShare: false });
+    expect(screen.queryByRole("button", { name: "Share note" })).toBeNull();
+  });
+
+  it("calls onShare when clicked", () => {
+    const onShare = vi.fn();
+    renderHeader({ canShare: true, onShare });
+    screen.getByRole("button", { name: "Share note" }).click();
+    expect(onShare).toHaveBeenCalledOnce();
+  });
+
+  it("does not render Share button in settings view", () => {
+    renderHeader({ canShare: true, notesView: "settings" });
+    expect(screen.queryByRole("button", { name: "Share note" })).toBeNull();
+  });
+
+  it("does not render Share button in trash view", () => {
+    renderHeader({ canShare: true, notesView: "trash" });
+    expect(screen.queryByRole("button", { name: "Share note" })).toBeNull();
+  });
+
+  it("renders Share alongside presence and last-saved status", () => {
+    renderHeader({ canShare: true });
+    expect(screen.getByRole("button", { name: "Share note" })).toBeTruthy();
+    expect(screen.getByText(/^Last saved/)).toBeTruthy();
+  });
+});
+
 describe("EditorHeader simplified display", () => {
   it("does not show key material version text", () => {
     renderHeader();
@@ -123,11 +158,13 @@ describe("EditorHeader simplified display", () => {
 function renderHeader(overrides: Partial<Parameters<typeof EditorHeader>[0]> = {}) {
   return render(
     createElement(EditorHeader, {
+      canShare: true,
       deleteSelectedForever: vi.fn(),
       keyMaterialVersion: null,
       lockVault: vi.fn(),
       moveSelectedToTrash: vi.fn(),
       notesView: "notes",
+      onShare: vi.fn(),
       restoreSelectedNote: vi.fn(),
       selectedNote: note(),
       user: { id: "current-user", username: "current" },

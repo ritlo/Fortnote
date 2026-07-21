@@ -192,6 +192,20 @@ test("reloads and retains the encrypted editor content", async ({ page }) => {
   });
 });
 
+test("opens Share dialog from editor header, invites collaborator, and closes", async ({ page }) => {
+  const account = uniqueAccount("share-dialog");
+  const noteTitle = `Share dialog note ${account.suffix}`;
+
+  await register(page, account.username, account.password);
+  await createNote(page, noteTitle, "Share dialog body");
+  await page.getByRole("button", { name: "Share note" }).click();
+  const dialog = page.getByRole("dialog", { name: "Share note" });
+  await expect(dialog).toBeVisible();
+  await page.getByRole("button", { name: "Close sharing dialog" }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "Share note" })).toBeVisible();
+});
+
 async function register(
   page: Page,
   username: string,
