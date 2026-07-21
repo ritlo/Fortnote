@@ -12,6 +12,7 @@ import {
 const mocks = vi.hoisted(() => ({
   createCrdtSectionInitializationManifest: vi.fn(),
   getCrdtSectionOrder: vi.fn(),
+  isCrdtHistoryUnreadableError: vi.fn(),
   getStorageQuota: vi.fn(),
   initializeNoteSection: vi.fn(),
   listNoteSections: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock("../api", () => ({
 vi.mock("../realtime/crdt", () => ({
   createCrdtSectionInitializationManifest: mocks.createCrdtSectionInitializationManifest,
   getCrdtSectionOrder: mocks.getCrdtSectionOrder,
+  isCrdtHistoryUnreadableError: mocks.isCrdtHistoryUnreadableError,
   openCrdtSection: mocks.openCrdtSection,
   releaseCrdtSection: mocks.releaseCrdtSection,
   waitForCrdtSectionReady: mocks.waitForCrdtSectionReady
@@ -47,6 +49,9 @@ describe("useSectionData", () => {
     vi.clearAllMocks();
     useAppStore.getState().resetVaultState("test reset");
     mocks.getCrdtSectionOrder.mockReturnValue(sectionIds(5));
+    mocks.isCrdtHistoryUnreadableError.mockImplementation(
+      (error: unknown) => error instanceof Error && error.message === "Realtime history could not be decrypted"
+    );
     mocks.createCrdtSectionInitializationManifest.mockResolvedValue({
       manifestId: "manifest-1",
       lastSequence: 1
@@ -310,6 +315,21 @@ describe("useSectionData", () => {
     expect(useAppStore.getState().serverStorageCapacity).toMatchObject({
       usedBytes: 120,
       availableBytes: 880
+    });
+  });
+
+  it("surfaces undecryptable history as note protection state", async () => {
+    const current = installNote();
+    mocks.waitForCrdtSectionReady.mockRejectedValueOnce(
+      new Error("Realtime history could not be decrypted")
+    );
+
+    renderHook(() => useSectionData(current));
+
+    await waitFor(() => {
+      expect(useAppStore.getState().noteProtectionFailures).toEqual({
+        [current.id]: "undecryptable"
+      });
     });
   });
 });

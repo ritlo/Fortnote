@@ -8,6 +8,7 @@ import {
 import {
   createCrdtSectionInitializationManifest,
   getCrdtSectionOrder,
+  isCrdtHistoryUnreadableError,
   openCrdtSection,
   releaseCrdtSection,
   waitForCrdtSectionReady
@@ -35,6 +36,7 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
   const setSectionIndex = useAppStore((state) => state.setSectionIndex);
   const setLoadedSection = useAppStore((state) => state.setLoadedSection);
   const setSelectedSection = useAppStore((state) => state.setSelectedSection);
+  const setNoteProtectionFailure = useAppStore((state) => state.setNoteProtectionFailure);
   const setLocalStorageCapacity = useAppStore(
     (state) => state.setLocalStorageCapacity
   );
@@ -54,6 +56,7 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
     }
     const controller = new AbortController();
     const note = selectedNote;
+    setNoteProtectionFailure(note.id, null);
     setSectionIndex(note.id, {
       noteId: note.id,
       status: "loading",
@@ -71,11 +74,15 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
         sections: [],
         error: errorMessage(error, "Legacy encrypted note could not migrate")
       });
+      if (isCrdtHistoryUnreadableError(error)) {
+        setNoteProtectionFailure(note.id, "undecryptable");
+      }
     });
     return () => {
       controller.abort();
     };
   }, [
+    setNoteProtectionFailure,
     retryVersion,
     selectedNote?.id,
     selectedNote?.isDeleted,
@@ -142,6 +149,7 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
     }
     const controller = new AbortController();
     const note = selectedNote;
+    setNoteProtectionFailure(note.id, null);
     setSectionIndex(note.id, {
       noteId: note.id,
       status: "loading",
@@ -160,12 +168,16 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
         sections: [],
         error: errorMessage(error, "Encrypted note index could not load")
       });
+      if (isCrdtHistoryUnreadableError(error)) {
+        setNoteProtectionFailure(note.id, "undecryptable");
+      }
     });
 
     return () => {
       controller.abort();
     };
   }, [
+    setNoteProtectionFailure,
     retryVersion,
     selectedNote?.id,
     selectedNote?.isDeleted,
