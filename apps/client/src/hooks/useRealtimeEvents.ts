@@ -97,7 +97,7 @@ export function useRealtimeEvents() {
       const connection = connectionRef.current;
       connectionRef.current = null;
       setCrdtTransport(null);
-      connection?.close();
+      connection?.suspend();
       startConnection();
     }
 

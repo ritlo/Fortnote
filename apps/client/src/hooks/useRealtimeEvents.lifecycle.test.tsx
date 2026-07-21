@@ -43,6 +43,7 @@ vi.mock("../realtime/client", () => ({
   connectRealtime: (options: ConnectionOptions) => {
     const connection: RealtimeConnection = {
       close: vi.fn(),
+      suspend: vi.fn(),
       discardCrdtUpdates: vi.fn(),
       downloadCrdtContent: vi.fn(),
       sendPresence: vi.fn(),
@@ -364,7 +365,7 @@ describe("useRealtimeEvents lifecycle", () => {
 
     await act(() => window.dispatchEvent(new Event("online")));
 
-    expect(mocks.connections[0]!.connection.close).toHaveBeenCalledOnce();
+    expect(mocks.connections[0]!.connection.suspend).toHaveBeenCalledOnce();
     expect(mocks.connections).toHaveLength(2);
     expect(useAppStore.getState().realtimeStatus).toBe("connecting");
   });

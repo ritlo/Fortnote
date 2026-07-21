@@ -88,6 +88,7 @@ interface RealtimeClientOptions {
 
 export interface RealtimeConnection {
   close: () => void;
+  suspend: () => void;
   discardCrdtUpdates: (noteId: string, beforeKeyEpoch: number) => void;
   downloadCrdtContent: (input: VerifiedContentDownloadInput) => Promise<Uint8Array>;
   sendPresence: (noteId: string, state: ClientPresenceState) => void;
@@ -216,7 +217,9 @@ export function connectRealtime({
     }
   });
   socket.addEventListener("close", (event) => {
-    closeDurableStorage();
+    // A transport close is recoverable. Keep the account-scoped outbox and
+    // database alive while the reconnecting client continues to accept edits.
+    durableOutbox?.setTransport(null);
     onClose?.(event);
   });
   socket.addEventListener("error", () => {
@@ -533,6 +536,10 @@ export function connectRealtime({
       return delivery.delivered;
     },
     sendCrdtContentDurably: startContentDelivery,
+    suspend: () => {
+      durableOutbox?.setTransport(null);
+      socket.close();
+    },
     close: () => {
       for (const pending of pendingCrdtAcks.values()) {
         pending.reject(new Error("Realtime connection closed."));
