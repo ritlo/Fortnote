@@ -120,8 +120,8 @@ test("preserves conflict, undecryptable, stale-epoch, and terminally rejected wo
   await expectRecoveryActions(page, ["Review draft", "Encrypted export", "Reapply"]);
   await page.unroute("**/api/notes/*");
 
-  let corruptedHistoryFrame = false;
   await page.routeWebSocket(/\/api\/realtime/, (pageSocket) => {
+    let corruptedHistoryFrame = false;
     const serverSocket = pageSocket.connectToServer();
     pageSocket.onMessage((message) => {
       serverSocket.send(message);
