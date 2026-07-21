@@ -219,6 +219,34 @@ describe("app data collaboration bootstrap", () => {
     expect(useAppStore.getState().selectedNoteId).toBe("older");
   });
 
+  it("ignores an older note-list response that finishes after a newer reload", async () => {
+    const user = currentUser();
+    const rootKey = crypto.getRandomValues(new Uint8Array(32));
+    let finishFirst!: (value: { notes: NoteSummary[] }) => void;
+    let finishSecond!: (value: { notes: NoteSummary[] }) => void;
+    vi.mocked(listNotes)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishFirst = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishSecond = resolve;
+      }));
+    useAppStore.setState({ rootKey, user });
+
+    const firstLoad = loadDecryptedNotes(user, rootKey);
+    const secondLoad = loadDecryptedNotes(user, rootKey, false, {
+      preserveSelection: true
+    });
+    finishSecond({ notes: [noteSummary({ id: "newer", title: "Newer" })] });
+    await secondLoad;
+    finishFirst({ notes: [noteSummary({ id: "older", title: "Older" })] });
+    await firstLoad;
+
+    expect(useAppStore.getState().notes).toEqual([
+      expect.objectContaining({ id: "newer", title: "Newer" })
+    ]);
+  });
+
   it("reloads only the targeted note metadata without clearing unrelated state", async () => {
     const user = currentUser();
     const rootKey = crypto.getRandomValues(new Uint8Array(32));

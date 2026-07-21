@@ -248,44 +248,54 @@ export async function loadDecryptedNotes(
   deleted = false,
   options: LoadDecryptedNotesOptions = {}
 ) {
-  const payload = await listNotes(deleted);
-  const openedSharingKey = useAppStore.getState().openedSharingKey;
-  const decrypted = await Promise.all(
-    payload.notes
-      .filter((note) => Boolean(note.isDeleted) === deleted)
-      .map((note) =>
-        decryptNoteSummary(currentUser, currentRootKey, note, openedSharingKey)
-      )
-  );
-  const nextNotes = (deleted ? decrypted : decrypted.map(preserveCrdtContent)).sort(
-    (left, right) => right.updatedAt.localeCompare(left.updatedAt)
-  );
+  const requestScope = `decrypted-notes:${deleted ? "trash" : "active"}`;
+  const requestToken = useAppStore.getState().beginRequest(requestScope);
+  try {
+    const payload = await listNotes(deleted);
+    const openedSharingKey = useAppStore.getState().openedSharingKey;
+    const decrypted = await Promise.all(
+      payload.notes
+        .filter((note) => Boolean(note.isDeleted) === deleted)
+        .map((note) =>
+          decryptNoteSummary(currentUser, currentRootKey, note, openedSharingKey)
+        )
+    );
+    const nextNotes = (deleted ? decrypted : decrypted.map(preserveCrdtContent)).sort(
+      (left, right) => right.updatedAt.localeCompare(left.updatedAt)
+    );
 
-  const state = useAppStore.getState();
-  if (state.user?.id !== currentUser.id || state.rootKey !== currentRootKey) {
-    return;
+    const state = useAppStore.getState();
+    if (
+      state.user?.id !== currentUser.id ||
+      state.rootKey !== currentRootKey ||
+      !state.isCurrentRequest(requestScope, requestToken)
+    ) {
+      return;
+    }
+    const { setAttachmentsByNote, setNotes, setSelectedNoteId, setTrashNotes } = state;
+    if (deleted) {
+      setTrashNotes(nextNotes);
+    } else {
+      setNotes(nextNotes);
+    }
+    const { notesView, selectedNoteId } = useAppStore.getState();
+    const managesSelection = deleted
+      ? notesView === "trash"
+      : notesView === "notes" || notesView === "shared";
+    if (!managesSelection) {
+      return;
+    }
+    const nextSelectedNoteId =
+      options.preserveSelection && nextNotes.some((note) => note.id === selectedNoteId)
+        ? selectedNoteId
+        : notesView === "shared"
+          ? (nextNotes.find((note) => note.role !== "owner")?.id ?? null)
+          : (nextNotes[0]?.id ?? null);
+    setSelectedNoteId(nextSelectedNoteId);
+    setAttachmentsByNote({});
+  } finally {
+    useAppStore.getState().finishRequest(requestScope, requestToken);
   }
-  const { setAttachmentsByNote, setNotes, setSelectedNoteId, setTrashNotes } = state;
-  if (deleted) {
-    setTrashNotes(nextNotes);
-  } else {
-    setNotes(nextNotes);
-  }
-  const { notesView, selectedNoteId } = useAppStore.getState();
-  const managesSelection = deleted
-    ? notesView === "trash"
-    : notesView === "notes" || notesView === "shared";
-  if (!managesSelection) {
-    return;
-  }
-  const nextSelectedNoteId =
-    options.preserveSelection && nextNotes.some((note) => note.id === selectedNoteId)
-      ? selectedNoteId
-      : notesView === "shared"
-        ? (nextNotes.find((note) => note.role !== "owner")?.id ?? null)
-        : (nextNotes[0]?.id ?? null);
-  setSelectedNoteId(nextSelectedNoteId);
-  setAttachmentsByNote({});
 }
 
 export async function loadDecryptedNote(
