@@ -237,6 +237,7 @@ async function signIn(page: Page, account: AssuranceAccount): Promise<void> {
 
 async function createNote(page: Page, title: string): Promise<void> {
   await page.getByLabel("New note").click();
+  await expect(page.getByLabel("Title")).toHaveValue("Untitled note");
   const saved = page.waitForResponse((response) =>
     response.request().method() === "PUT" && response.url().includes("/api/notes/") && response.ok()
   );
