@@ -13,12 +13,13 @@ import {
 import {
   clearCrdtNotes,
   finishCrdtSync,
+  isCrdtHistoryUnreadableError,
   receiveCrdtUpdate,
   removeCrdtNote,
   setCrdtTransport
 } from "../realtime/crdt";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
-import { loadDecryptedNote, loadFolders } from "./useAppData";
+import { loadDecryptedNote, loadDecryptedNotes, loadFolders } from "./useAppData";
 
 const RECONNECT_BASE_DELAY_MS = 500;
 const RECONNECT_MAX_DELAY_MS = 10_000;
@@ -151,6 +152,14 @@ export function useRealtimeEvents() {
       startConnection();
     }
 
+    function reportCrdtSyncFailure(noteId: string, error: unknown): void {
+      if (isCrdtHistoryUnreadableError(error)) {
+        useAppStore.getState().setNoteProtectionFailure(noteId, "undecryptable");
+        return;
+      }
+      setError("Realtime synchronization could not complete.");
+    }
+
     function startConnection() {
       if (!isActive) {
         return;
@@ -207,12 +216,17 @@ export function useRealtimeEvents() {
             localPresenceStateRef.current
           );
         },
-        onClose: () => {
+        onClose: (event) => {
           if (connectionRef.current !== connection) {
             return;
           }
           connectionRef.current = null;
           setCrdtTransport(null);
+          const revokedNoteId = revokedNoteIdFromClose(event);
+          if (revokedNoteId) {
+            useAppStore.getState().removeNoteAccess(revokedNoteId);
+            removeCrdtNote(revokedNoteId);
+          }
           scheduleReconnect();
         },
         onError: () => {
@@ -252,8 +266,8 @@ export function useRealtimeEvents() {
               message.nextSequence > 0,
               message.sectionId,
               message.nextSequence
-            ).catch(() => {
-              setError("Realtime synchronization could not complete.");
+            ).catch((error: unknown) => {
+              reportCrdtSyncFailure(message.noteId, error);
             });
             return;
           }
@@ -262,8 +276,8 @@ export function useRealtimeEvents() {
               message.noteId,
               message.keyEpoch,
               message.hasUpdates
-            ).catch(() => {
-              setError("Realtime synchronization could not complete.");
+            ).catch((error: unknown) => {
+              reportCrdtSyncFailure(message.noteId, error);
             });
             return;
           }
@@ -434,6 +448,12 @@ export function removeRevokedNotes(events: CollaborationEvent[]): void {
   }
 }
 
+function revokedNoteIdFromClose(event?: CloseEvent): string | null {
+  const prefix = "Note access revoked:";
+  const reason = event?.reason ?? "";
+  return reason.startsWith(prefix) ? reason.slice(prefix.length) || null : null;
+}
+
 async function reloadAfterEvents(events: CollaborationEvent[]): Promise<void> {
   const { rootKey, user } = useAppStore.getState();
   if (!rootKey || !user) {
@@ -452,17 +472,16 @@ async function reloadAfterEvents(events: CollaborationEvent[]): Promise<void> {
     return;
   }
   invalidateAttachmentCaches(remoteEvents);
-  for (const event of remoteEvents) {
-    if (event.type === "note.permanently_deleted" && event.noteId) {
-      useAppStore.getState().removeNoteAccess(event.noteId);
-      removeCrdtNote(event.noteId);
-    }
+  if (!eventsRequireNoteReload(remoteEvents) && !eventsRequireTrashReload(remoteEvents)) {
+    return;
   }
-  await Promise.all(
-    noteIdsRequiringReload(remoteEvents, user.id).map((noteId) =>
-      loadDecryptedNote(user, rootKey, noteId)
-    )
-  );
+  const reloads: Promise<unknown>[] = [
+    loadDecryptedNotes(user, rootKey, false, { preserveSelection: true })
+  ];
+  if (eventsRequireTrashReload(remoteEvents)) {
+    reloads.push(loadDecryptedNotes(user, rootKey, true, { preserveSelection: true }));
+  }
+  await Promise.all(reloads);
 }
 
 export function isOwnRevocation(event: CollaborationEvent, userId: string): boolean {

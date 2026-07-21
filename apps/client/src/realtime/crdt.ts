@@ -1133,6 +1133,10 @@ function throwIfCrdtHistoryUnreadable(binding: Binding): void {
   }
 }
 
+export function isCrdtHistoryUnreadableError(error: unknown): boolean {
+  return error instanceof Error && error.message === "Realtime history could not be decrypted";
+}
+
 function trackUpdate(binding: Binding, updateId: string): void {
   binding.pendingUpdateIds.add(updateId);
   if (

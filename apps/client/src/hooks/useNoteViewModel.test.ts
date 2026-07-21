@@ -312,6 +312,24 @@ describe("revocation rotation state", () => {
       label: "You no longer have access"
     });
   });
+
+  it("blocks editing when the selected note history cannot be decrypted", () => {
+    useAppStore.setState({
+      notes: [note()],
+      notesView: "notes",
+      selectedNoteId: "note_1",
+      noteProtectionFailures: { note_1: "undecryptable" }
+    });
+
+    const { result } = renderHook(() => useNoteViewModel());
+
+    expect(result.current.collaborationState).toMatchObject({
+      actions: ["retry", "repair-access"],
+      editing: false,
+      id: "undecryptable",
+      label: "This note cannot be decrypted"
+    });
+  });
 });
 
 describe("capacity state", () => {

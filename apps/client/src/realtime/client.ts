@@ -79,7 +79,7 @@ interface RealtimeClientOptions {
   onCrdtError?: (message: string, error?: unknown) => void;
   onRecoverableCrdtDraft?: (draft: RecoverableCrdtDraft) => void;
   onOpen?: () => void;
-  onClose?: () => void;
+  onClose?: (event?: CloseEvent) => void;
   onError?: () => void;
   outboxStore?: EncryptedOutboxStore;
   contentStore?: FortnoteIndexedDb;
@@ -214,9 +214,9 @@ export function connectRealtime({
       onMessage(message);
     }
   });
-  socket.addEventListener("close", () => {
+  socket.addEventListener("close", (event) => {
     closeDurableStorage();
-    onClose?.();
+    onClose?.(event);
   });
   socket.addEventListener("error", () => {
     onError?.();

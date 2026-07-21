@@ -48,6 +48,11 @@ class MockWebSocket extends EventTarget {
     this.readyState = 3;
   }
 
+  closeWithReason(code: number, reason: string): void {
+    this.readyState = 3;
+    this.dispatchEvent(new CloseEvent("close", { code, reason }));
+  }
+
   open(): void {
     this.readyState = MockWebSocket.OPEN;
     this.dispatchEvent(new Event("open"));
@@ -102,6 +107,22 @@ describe("realtime client", () => {
       serverCapacityError
     );
     connection.close();
+  });
+
+  it("passes websocket close reasons to realtime consumers", () => {
+    const onClose = vi.fn();
+    connectRealtime({
+      after: 0,
+      userId: "user_1",
+      onMessage: vi.fn(),
+      onClose
+    });
+
+    sockets[0]!.closeWithReason(1008, "Note access revoked:note_1");
+
+    expect(onClose).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 1008, reason: "Note access revoked:note_1" })
+    );
   });
 
   it("ignores malformed websocket messages", () => {

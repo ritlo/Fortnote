@@ -65,6 +65,7 @@ export function useNoteViewModel() {
   const revocationRotationFailures = useAppStore(
     (state) => state.revocationRotationFailures
   );
+  const noteProtectionFailures = useAppStore((state) => state.noteProtectionFailures);
   const localStorageCapacity = useAppStore((state) => state.localStorageCapacity);
   const serverStorageCapacity = useAppStore((state) => state.serverStorageCapacity);
   const recoverableDrafts = useAppStore((state) => state.recoverableDrafts);
@@ -116,7 +117,9 @@ export function useNoteViewModel() {
       : notesView === "trash"
       ? "trash"
       : (selectedNote?.role ?? "owner"),
-    protection: selectedNote?.id === revocationRotationPendingNoteId
+    protection: selectedNote && noteProtectionFailures[selectedNote.id] === "undecryptable"
+      ? "undecryptable"
+      : selectedNote?.id === revocationRotationPendingNoteId
       ? "preparing"
       : selectedNote && revocationRotationFailures[selectedNote.id]
         ? "aborted"

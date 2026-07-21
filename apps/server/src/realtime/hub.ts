@@ -148,7 +148,7 @@ export class RealtimeHub implements RealtimePublisher {
           client.subscribedCrdtScopes.delete(scope);
         }
       }
-      this.disconnectClient(client, "Note access revoked");
+        this.disconnectClient(client, `Note access revoked:${noteId}`);
     }
   }
 

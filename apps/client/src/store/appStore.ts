@@ -14,6 +14,7 @@ import type { LinkedEpochRotationPreparation } from "../lib/keyMaterial";
 export type AuthMode = "login" | "register" | "recover";
 export type NotesView = "notes" | "shared" | "trash" | "settings";
 export type RealtimeStatus = "idle" | "connecting" | "connected" | "disconnected";
+export type NoteProtectionFailure = "undecryptable";
 
 export interface DecryptedNote {
   id: string;
@@ -146,6 +147,7 @@ export interface AppStore {
   removedNoteId: string | null;
   revocationRotationPendingNoteId: string | null;
   revocationRotationFailures: Record<string, RevocationRotationFailure>;
+  noteProtectionFailures: Record<string, NoteProtectionFailure>;
   recoverableDrafts: Record<string, RecoverableSectionDraft>;
   sectionIndexes: Record<string, NoteSectionIndexState>;
   loadedSections: Record<string, LoadedSectionState>;
@@ -185,6 +187,10 @@ export interface AppStore {
   setRevocationRotationFailure: (
     noteId: string,
     failure: RevocationRotationFailure | null
+  ) => void;
+  setNoteProtectionFailure: (
+    noteId: string,
+    failure: NoteProtectionFailure | null
   ) => void;
   retainRecoverableDraft: (draft: RetainedSectionDraft) => void;
   setRecoverableDraftState: (id: string, state: RecoverableDraftState) => void;
@@ -238,6 +244,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   removedNoteId: null,
   revocationRotationPendingNoteId: null,
   revocationRotationFailures: {},
+  noteProtectionFailures: {},
   recoverableDrafts: {},
   sectionIndexes: {},
   loadedSections: {},
@@ -368,6 +375,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
           state.revocationRotationFailures,
           noteId
         ),
+        noteProtectionFailures: omitRecordKey(state.noteProtectionFailures, noteId),
         revocationRotationPendingNoteId:
           state.revocationRotationPendingNoteId === noteId
             ? null
@@ -414,6 +422,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
             [noteId]: failure
           }
         : omitRecordKey(state.revocationRotationFailures, noteId)
+    }));
+  },
+  setNoteProtectionFailure: (noteId, failure) => {
+    set((state) => ({
+      noteProtectionFailures: failure
+        ? { ...state.noteProtectionFailures, [noteId]: failure }
+        : omitRecordKey(state.noteProtectionFailures, noteId)
     }));
   },
   retainRecoverableDraft: (draft) => {
@@ -562,6 +577,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       removedNoteId: null,
       revocationRotationPendingNoteId: null,
       revocationRotationFailures: {},
+      noteProtectionFailures: {},
       recoverableDrafts: {},
       sectionIndexes: {},
       loadedSections: {},

@@ -64,6 +64,23 @@ describe("collaboration event store", () => {
     expect(useAppStore.getState().revocationRotationFailures).toEqual({});
   });
 
+  it("clears undecryptable protection when note access is removed", () => {
+    useAppStore.getState().setNoteProtectionFailure("revoked_note", "undecryptable");
+    useAppStore.getState().setNotes([note({ id: "revoked_note", role: "editor" })]);
+
+    useAppStore.getState().removeNoteAccess("revoked_note");
+
+    expect(useAppStore.getState().noteProtectionFailures).toEqual({});
+  });
+
+  it("clears undecryptable protection on vault reset", () => {
+    useAppStore.getState().setNoteProtectionFailure("note_1", "undecryptable");
+
+    useAppStore.getState().resetVaultState("locked");
+
+    expect(useAppStore.getState().noteProtectionFailures).toEqual({});
+  });
+
   it("retains the removed note notice until another note is selected", () => {
     useAppStore.getState().setNotes([note({ id: "revoked_note", role: "viewer" })]);
     useAppStore.getState().setSelectedNoteId("revoked_note");

@@ -11,7 +11,7 @@ import { useAppStore } from "../store/appStore";
 
 interface ConnectionOptions {
   after: number;
-  onClose?: () => void;
+  onClose?: (event?: CloseEvent) => void;
   onCrdtError?: (message: string, error?: unknown) => void;
   onError?: () => void;
   onMessage: (message: RealtimeMessage) => void;
@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   connections: [] as MockConnection[],
   getCursor: vi.fn(),
   loadFolders: vi.fn(),
+  loadNotes: vi.fn(),
   loadNote: vi.fn()
 }));
 
@@ -58,6 +59,7 @@ vi.mock("../realtime/client", () => ({
 }));
 
 vi.mock("./useAppData", () => ({
+  loadDecryptedNotes: mocks.loadNotes,
   loadDecryptedNote: mocks.loadNote,
   loadFolders: mocks.loadFolders
 }));
@@ -71,6 +73,7 @@ describe("useRealtimeEvents lifecycle", () => {
     mocks.connections.length = 0;
     mocks.getCursor.mockReset();
     mocks.loadFolders.mockReset();
+    mocks.loadNotes.mockReset();
     mocks.loadNote.mockReset();
     useAppStore.getState().resetVaultState("reset");
     useAppStore.setState({
@@ -230,6 +233,74 @@ describe("useRealtimeEvents lifecycle", () => {
       return Promise.resolve();
     });
     expect(mocks.connections).toHaveLength(2);
+  });
+
+  it("removes a note immediately when the server closes access", async () => {
+    mocks.getCursor.mockResolvedValue({ cursor: 3 });
+    useAppStore.setState({
+      notes: [{
+        id: "note-1",
+        folderId: null,
+        title: "Shared",
+        noteKeyBase64: "key",
+        contentLength: 0,
+        version: 1,
+        keyEpoch: 1,
+        isDeleted: false,
+        updatedAt: "2026-07-18T00:00:00.000Z",
+        ownerUserId: "owner",
+        cryptoOwnerId: "owner",
+        role: "editor"
+      }],
+      selectedNoteId: "note-1"
+    });
+    render(<RealtimeHarness />);
+    await flushEffects();
+
+    act(() => mocks.connections[0]!.options.onClose?.(
+      new CloseEvent("close", { code: 1008, reason: "Note access revoked:note-1" })
+    ));
+
+    expect(useAppStore.getState()).toMatchObject({
+      notes: [],
+      removedNoteId: "note-1",
+      selectedNoteId: null
+    });
+  });
+
+  it("reloads both note lists for replayed permanent deletion", async () => {
+    mocks.getCursor.mockResolvedValue({ cursor: 3 });
+    mocks.loadNotes.mockResolvedValue(undefined);
+    render(<RealtimeHarness />);
+    await flushEffects();
+
+    act(() => {
+      mocks.connections[0]!.options.onMessage({
+        type: "event",
+        event: collaborationEvent({
+          eventId: "permanent-delete",
+          noteId: "note-1",
+          resourceId: "note-1",
+          type: "note.permanently_deleted"
+        })
+      });
+    });
+    await flushEffects();
+
+    expect(mocks.loadNotes).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ id: "user-1" }),
+      expect.any(Uint8Array),
+      false,
+      { preserveSelection: true }
+    );
+    expect(mocks.loadNotes).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ id: "user-1" }),
+      expect.any(Uint8Array),
+      true,
+      { preserveSelection: true }
+    );
   });
 
   it("reports the browser going offline immediately", async () => {
