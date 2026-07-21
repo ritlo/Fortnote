@@ -236,6 +236,13 @@ export function connectRealtime({
   }
 
   async function getDurableOutbox(): Promise<EncryptedOutbox> {
+    if (durableStorageClosing) {
+      // A socket close is a transport interruption, not a vault teardown.
+      // Reopen the account-scoped store so edits made while offline remain
+      // durably queued for the next connection.
+      durableStorageClosing = false;
+      durableOutboxPromise = null;
+    }
     durableOutboxPromise ??= (async () => {
       const database = outboxStore ?? await getOwnedDatabase();
       durableOutbox = createEncryptedOutbox({
@@ -264,7 +271,7 @@ export function connectRealtime({
 
   async function getOwnedDatabase(): Promise<FortnoteIndexedDb> {
     if (durableStorageClosing) {
-      throw new Error("Realtime connection closed.");
+      durableStorageClosing = false;
     }
     ownedDatabasePromise ??= openFortnoteIndexedDb()
       .then((database) => {
@@ -631,6 +638,7 @@ export function connectRealtime({
     durableOutbox?.setTransport(null);
     durableOutbox?.close();
     durableOutbox = null;
+    durableOutboxPromise = null;
     if (activeContentTransfers.size === 0) {
       closeOwnedDatabase();
     }
