@@ -4,6 +4,7 @@ import { useAppStore, type DecryptedNote } from "../store/appStore";
 import {
   createCollaborationEventProcessor,
   eventsFromOtherClients,
+  eventsForReload,
   eventsRequireFolderReload,
   eventsRequireNoteReload,
   eventsRequireTrashReload,
@@ -272,6 +273,22 @@ describe("realtime event processing", () => {
       }),
       event({ noteId: "deleted_note", type: "note.permanently_deleted" })
     ], "user_bob")).toEqual(["note_1", "note_2", "section_note"]);
+  });
+
+  it("keeps owner state fresh after its own member revocation", () => {
+    const ownRotation = event({
+      type: "membership.revoked",
+      resourceType: "membership",
+      metadata: {
+        clientInstanceId: "this-client",
+        membershipUserId: "user_carol"
+      }
+    });
+
+    expect(eventsForReload([ownRotation], "this-client", "user_alice")).toEqual([
+      ownRotation
+    ]);
+    expect(eventsForReload([ownRotation], "this-client", "user_carol")).toEqual([]);
   });
 
   it("does not regress the bootstrapped cursor", () => {

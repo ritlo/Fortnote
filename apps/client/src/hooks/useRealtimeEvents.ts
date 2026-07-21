@@ -468,19 +468,19 @@ async function reloadAfterEvents(events: CollaborationEvent[]): Promise<void> {
     return;
   }
 
-  const remoteEvents = eventsFromOtherClients(events, getClientInstanceId());
-  if (eventsRequireFolderReload(remoteEvents)) {
+  const reloadEvents = eventsForReload(events, getClientInstanceId(), user.id);
+  if (eventsRequireFolderReload(reloadEvents)) {
     await loadFolders();
     if (!isCurrentVaultSession(user.id, rootKey)) {
       return;
     }
-    applyFolderInvalidations(remoteEvents);
+    applyFolderInvalidations(reloadEvents);
   }
   if (!isCurrentVaultSession(user.id, rootKey)) {
     return;
   }
-  invalidateAttachmentCaches(remoteEvents);
-  const reloadableEvents = remoteEvents.filter(
+  invalidateAttachmentCaches(reloadEvents);
+  const reloadableEvents = reloadEvents.filter(
     (event) => !isOwnRevocation(event, user.id)
   );
   if (
@@ -534,6 +534,21 @@ export function eventsFromOtherClients(
   return events.filter(
     (event) => event.metadata?.clientInstanceId !== clientInstanceId
   );
+}
+
+export function eventsForReload(
+  events: CollaborationEvent[],
+  clientInstanceId: string,
+  userId: string
+): CollaborationEvent[] {
+  const remoteEvents = eventsFromOtherClients(events, clientInstanceId);
+  const ownKeyRotationEvents = events.filter(
+    (event) =>
+      event.type === "membership.revoked" &&
+      event.metadata?.clientInstanceId === clientInstanceId &&
+      !isOwnRevocation(event, userId)
+  );
+  return [...remoteEvents, ...ownKeyRotationEvents];
 }
 
 export function eventsRequireFolderReload(events: CollaborationEvent[]): boolean {
