@@ -641,7 +641,9 @@ describe("CRDT collaboration", () => {
     expect(synced).toHaveBeenCalledOnce();
   });
 
-  it("checkpoints an editor's open document after a key epoch advances", async () => {
+  it.each(["owner", "editor"] as const)(
+    "checkpoints a %s open document after a key epoch advances",
+    async (role) => {
     const send = vi.fn().mockResolvedValue(undefined);
     const discard = vi.fn();
     setCrdtTransport({ discard, send, subscribe: vi.fn() });
@@ -655,7 +657,7 @@ describe("CRDT collaboration", () => {
     });
     send.mockClear();
 
-    openCrdtNote(note({ keyEpoch: 2, noteKeyBase64: "rotated-key", role: "editor" }), vi.fn());
+    openCrdtNote(note({ keyEpoch: 2, noteKeyBase64: "rotated-key", role }), vi.fn());
     expect(fragmentText(getCrdtProvider(note().id, 2).doc)).toBe("Live body before rotation");
 
     await vi.waitFor(() => {
@@ -665,7 +667,8 @@ describe("CRDT collaboration", () => {
       expect.objectContaining({ compactedUpdateIds: [], keyEpoch: 2, type: "crdt-checkpoint" })
     );
     expect(discard).toHaveBeenCalledWith(note().id, 2);
-  });
+    }
+  );
 
   it("checkpoints metadata after a closed document rotates", async () => {
     const send = vi.fn().mockResolvedValue(undefined);

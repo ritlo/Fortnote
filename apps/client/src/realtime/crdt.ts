@@ -152,6 +152,7 @@ interface Binding {
   ready: boolean;
   receiving: Promise<void>;
   snapshotSeeded: boolean;
+  inheritedEpochState: boolean;
   keyEpoch: number;
 }
 
@@ -490,6 +491,7 @@ function getOrCreateBinding(
     ready: existing?.ready ?? false,
     receiving: Promise.resolve(),
     snapshotSeeded: inheritedState !== null,
+    inheritedEpochState: epochAdvanced && inheritedState !== null,
     keyEpoch: keyEpoch ?? 0
   };
   nextBindingGeneration += 1;
@@ -580,7 +582,7 @@ export function openCrdtNote(
       binding.observedServerSequence
     );
   }
-  if (epochAdvanced && note.role !== "owner") {
+  if (epochAdvanced) {
     void checkpointCrdtNote(note).catch(() => undefined);
   }
   return () => {
@@ -874,6 +876,12 @@ async function finishBindingSync(
   binding.ready = true;
   binding.provider.emit("synced");
   notifyCrdtSectionChange(binding);
+  const shouldRepublishInheritedEpochState =
+    binding.inheritedEpochState && binding.note.role !== "viewer";
+  binding.inheritedEpochState = false;
+  if (shouldRepublishInheritedEpochState) {
+    void broadcastCheckpoint(binding).catch(() => undefined);
+  }
   const pendingPatch = binding.pendingPatch;
   binding.pendingPatch = {};
   if (
