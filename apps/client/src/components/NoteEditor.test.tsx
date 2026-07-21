@@ -205,7 +205,6 @@ describe("NoteEditor simplified editor", () => {
   it("shows empty state when no note selected", () => {
     render(
       <NoteEditor
-        folders={[]}
         notesView="notes"
         resolveAttachmentUrl={(url) => Promise.resolve(url)}
         selectedNote={null}
@@ -220,7 +219,6 @@ describe("NoteEditor simplified editor", () => {
     const view = render(
       <StrictMode>
         <NoteEditor
-          folders={[]}
           notesView="notes"
           resolveAttachmentUrl={(url) => Promise.resolve(url)}
           selectedNote={note()}
@@ -256,7 +254,6 @@ describe("NoteEditor inline attachment states", () => {
     const resolveUrl = vi.fn((url: string) => Promise.resolve(url));
     render(
       <NoteEditor
-        folders={[]}
         notesView="notes"
         resolveAttachmentUrl={resolveUrl}
         selectedNote={note()}
@@ -327,7 +324,6 @@ describe("NoteEditor inline attachment states", () => {
     });
     render(
       <NoteEditor
-        folders={[]}
         notesView="notes"
         resolveAttachmentUrl={(url) => Promise.resolve(url)}
         selectedNote={note()}
@@ -372,7 +368,6 @@ function renderEditor(
 ) {
   return render(
     <NoteEditor
-      folders={[]}
       notesView="notes"
       resolveAttachmentUrl={(url) => Promise.resolve(url)}
       selectedNote={selectedNote}

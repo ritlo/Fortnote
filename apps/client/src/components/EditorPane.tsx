@@ -1,7 +1,6 @@
 import { useState } from "react";
-import type { AttachmentSummary, FolderSummary, User } from "../api";
+import type { AttachmentSummary, User } from "../api";
 import type { DecryptedNote, NotesView } from "../store/appStore";
-import type { SectionActions } from "../hooks/useSectionActions";
 import { EditorHeader } from "./EditorHeader";
 import { NoteEditor } from "./NoteEditor";
 import { SettingsPanel } from "./SettingsPanel";
@@ -13,7 +12,6 @@ import { SharingDialog } from "./SharingDialog";
 interface EditorPaneProps {
   collaborationState: CollaborationState;
   recoveryCallbacks: RecoveryCallbacks;
-  folders: FolderSummary[];
   keyMaterialVersion: number | null;
   newPassword: string;
   notesView: NotesView;
@@ -39,7 +37,6 @@ interface EditorPaneProps {
 export function EditorPane({
   collaborationState,
   recoveryCallbacks,
-  folders,
   keyMaterialVersion,
   newPassword,
   notesView,
@@ -108,7 +105,6 @@ export function EditorPane({
         />
       ) : (
         <NoteEditor
-          folders={folders}
           notesView={notesView}
           resolveAttachmentUrl={resolveAttachmentUrl}
           selectedNote={selectedNote}

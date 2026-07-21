@@ -14,7 +14,7 @@ import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
 import type { BlockNoteEditor, BlockSchema } from "@blocknote/core";
 import type * as Y from "yjs";
-import type { AttachmentSummary, FolderSummary } from "../api";
+import type { AttachmentSummary } from "../api";
 import {
   getCrdtFragment,
   getCrdtProvider,
@@ -28,7 +28,6 @@ import type { DecryptedNote, NotesView } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
 
 interface NoteEditorProps {
-  folders: FolderSummary[];
   notesView: NotesView;
   selectedNote: DecryptedNote | null;
   resolveAttachmentUrl: (url: string) => Promise<string>;
@@ -224,7 +223,6 @@ export function FortnoteFilePanel({ blockId }: FilePanelProps) {
 }
 
 export function NoteEditor({
-  folders,
   notesView,
   selectedNote,
   updateSelectedNote,

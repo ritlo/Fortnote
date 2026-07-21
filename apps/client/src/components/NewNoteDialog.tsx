@@ -43,11 +43,11 @@ export function NewNoteDialog({ folders, open, onClose, onCreate }: NewNoteDialo
   return (
     <dialog
       ref={dialogRef}
-      aria-label="New note"
+      aria-labelledby="new-note-dialog-title"
       onClose={handleClose}
     >
       <form method="dialog" onSubmit={handleSubmit}>
-        <h3>New note</h3>
+        <h3 id="new-note-dialog-title">New note</h3>
         <label>
           Folder
           <select

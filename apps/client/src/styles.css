@@ -588,15 +588,6 @@ textarea {
   flex-wrap: wrap;
 }
 
-.section-loading-status {
-  min-height: 240px;
-  display: grid;
-  place-items: center;
-  border: 1px dashed var(--line);
-  border-radius: 7px;
-  color: var(--muted);
-}
-
 .settings-panel {
   display: grid;
   align-content: start;
@@ -608,20 +599,6 @@ textarea {
   display: grid;
   gap: 12px;
   max-width: 460px;
-}
-
-.notice {
-  border-left: 4px solid var(--brand);
-  border-radius: 7px;
-  padding: 12px;
-  background: #edf2ee;
-  color: var(--muted);
-}
-
-.preview-body {
-  min-height: 320px;
-  white-space: pre-wrap;
-  line-height: 1.55;
 }
 
 .sharing-panel {

@@ -89,7 +89,6 @@ export function AppShell() {
         changePassword={authActions.changePassword}
         cleanupSharingKeys={authActions.cleanupSharingKeys}
         deleteSelectedForever={noteActions.deleteSelectedForever}
-        folders={folders}
         keyMaterialVersion={keyMaterialVersion}
         lockVault={authActions.lockVault}
         moveSelectedToTrash={noteActions.moveSelectedToTrash}

@@ -100,7 +100,6 @@ describe("EditorPane composition", () => {
       <StrictMode>
         <EditorPane
           collaborationState={{ actions: [], announcement: "none", draftRetained: false, editing: false, id: "idle", label: "Ready", saved: true, synchronized: true }}
-          folders={[]}
           keyMaterialVersion={null}
           newPassword=""
           notesView="notes"
@@ -137,7 +136,6 @@ function renderEditorPane(overrides: Partial<Parameters<typeof EditorPane>[0]> =
   return render(
     <EditorPane
       collaborationState={{ actions: [], announcement: "none", draftRetained: false, editing: false, id: "idle", label: "Ready", saved: true, synchronized: true }}
-      folders={[]}
       keyMaterialVersion={null}
       newPassword=""
       notesView="notes"

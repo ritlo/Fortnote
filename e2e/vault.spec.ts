@@ -95,7 +95,7 @@ test("recovers a vault with the saved recovery key", async ({ page }) => {
   await page.getByRole("button", { name: "Recover and decrypt" }).click();
 
   await expect(page.getByText("Recovered and decrypted")).toBeVisible();
-  await expect(page.getByRole("button", { name: new RegExp(noteTitle) })).toBeVisible();
+  await expect(page.locator(".note-card", { hasText: new RegExp(noteTitle) })).toBeVisible();
 });
 
 test("renders potentially malicious editor text without executing it", async ({ page }) => {

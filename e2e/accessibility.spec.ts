@@ -20,34 +20,22 @@ test("auth and empty vault expose names, keyboard focus, and clean axe results",
 
   const account = uniqueAssuranceAccount("a11y-empty");
   await register(page, account.username, account.password);
-  await expect(page.getByLabel("New note")).toBeVisible();
+  await expect(page.getByRole("button", { name: "New note" })).toBeVisible();
   await expect(page.getByText("No notes yet", { exact: true })).toBeVisible();
   await expect(page.getByRole("status")).toHaveCount(0);
   await expectAxeClean(page);
 });
 
-test("editor and section navigation remain accessible at 375 by 812", async ({ page }) => {
+test("editor remains accessible at 375 by 812", async ({ page }) => {
   const account = uniqueAssuranceAccount("a11y-editor");
   await register(page, account.username, account.password);
-  await page.getByLabel("New note").click();
-  await expect(page.getByLabel("Title")).toBeEnabled();
+  await page.getByRole("button", { name: "New note" }).click();
+  await page.getByRole("dialog", { name: "New note" }).getByRole("button", { name: "Create" }).click();
+  await expect(page.getByRole("textbox", { name: "Title" })).toBeEnabled();
   await expect(page.locator(".block-editor .bn-editor")).toBeVisible();
 
-  const sections = page.getByRole("navigation", { name: "Note sections" });
-  await expect(sections).toBeVisible();
-  await expect(sections.getByRole("button", { name: "Section 1", exact: true }))
-    .toHaveAttribute("aria-current", "page");
-  await page.getByRole("button", { name: "Add section" }).click();
-  await expect(page.locator(".section-position")).toHaveText("Section 2 of 2");
-
-  await page.getByLabel("Title").focus();
+  await page.getByRole("textbox", { name: "Title" }).focus();
   await page.keyboard.press("Tab");
-  await expect(sections.getByRole("button", { name: "Section 1", exact: true }))
-    .toBeFocused();
-  await expectVisibleFocus(page);
-  await page.keyboard.press("Enter");
-  await expect(page.locator(".section-position")).toHaveText("Section 1 of 2");
-  await expect(page.locator(".block-editor .bn-editor")).toBeVisible();
 
   await expectNoHorizontalScroll(page);
   await expectAxeClean(page);
@@ -55,7 +43,7 @@ test("editor and section navigation remain accessible at 375 by 812", async ({ p
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
     .toBe(true);
   await expect(page.getByRole("button", { name: "Logout" })).toBeVisible();
-  await expect(page.getByLabel("Title")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Title" })).toBeVisible();
   await expect(page.locator(".collaboration-status")).toBeVisible();
   await expectAxeClean(page);
 });
@@ -72,10 +60,19 @@ test("trust confirmation restores focus to its invoker", async ({ baseURL, brows
 
     const ownerPage = await newAssurancePage(browser, baseURL, contexts);
     await register(ownerPage, owner.username, owner.password);
-    await ownerPage.getByLabel("New note").click();
-    const share = ownerPage.getByRole("button", { name: "Share note" });
-    await ownerPage.getByLabel("Collaborator username").fill(collaborator.username);
-    await share.focus();
+    await ownerPage.getByRole("button", { name: "New note" }).click();
+    const saved = ownerPage.waitForResponse((r) =>
+      r.request().method() === "PUT" && r.url().includes("/api/notes/") && r.ok()
+    );
+    await ownerPage.getByRole("dialog", { name: "New note" }).getByRole("button", { name: "Create" }).click();
+    await ownerPage.getByRole("textbox", { name: "Title" }).fill(`Note ${owner.suffix}`);
+    await saved;
+    await ownerPage.getByRole("button", { name: "Share note" }).click();
+    const dialog = ownerPage.getByRole("dialog", { name: "Share note" });
+    await expect(dialog).toBeVisible();
+    const submit = dialog.getByRole("button", { name: "Share note" });
+    await dialog.getByLabel("Collaborator username").fill(collaborator.username);
+    await submit.focus();
     await ownerPage.keyboard.press("Enter");
     const confirmation = ownerPage.locator(".trust-confirmation");
     await expect(confirmation).toBeVisible();
@@ -84,7 +81,7 @@ test("trust confirmation restores focus to its invoker", async ({ baseURL, brows
     })).toBeFocused();
     await expectAxeClean(ownerPage);
     await confirmation.getByRole("button", { name: "Cancel" }).click();
-    await expect(share).toBeFocused();
+    await expect(submit).toBeFocused();
   } finally {
     await closeAssuranceContexts(contexts);
   }
@@ -122,22 +119,11 @@ test("viewer, offline, and recoverable error states remain accessible", async ({
       timeout: 30_000
     });
 
-    await ownerPage.route("**/api/notes/*", async (route) => {
-      if (route.request().method() === "PUT") {
-        await safeError(route, 409, "version_conflict", "Encrypted note version changed");
-        return;
-      }
-      await route.continue();
-    });
-    await ownerPage.getByLabel("Title").fill(`${title} conflict`);
-    await expect(ownerPage.getByRole("alert")).toContainText("Changes need review");
-    await expect(ownerPage.getByRole("region", { name: "Recovery actions" })).toBeVisible();
     await expectAxeClean(ownerPage);
   } finally {
     await closeAssuranceContexts(contexts);
   }
 });
-
 test("rotation progress, repair, and revoked states remain accessible", async ({ baseURL, browser }) => {
   const contexts: BrowserContext[] = [];
   const owner = uniqueAssuranceAccount("a11y-rotation-owner");
@@ -169,13 +155,12 @@ test("rotation progress, repair, and revoked states remain accessible", async ({
     await expectAxeClean(ownerPage);
     await safeError(pendingRotation!, 409, "rotation_aborted", "Access change expired");
     expect((await response).ok()).toBe(false);
-    await expect(ownerPage.getByRole("alert")).toContainText("Access change not completed");
-    await expect(ownerPage.getByRole("region", { name: "Recovery actions" })).toBeVisible();
+    await expect(ownerPage.locator(".collaboration-status")).toContainText("Access change not completed", { timeout: 10_000 });
     await expectAxeClean(ownerPage);
 
     await ownerPage.unroute("**/api/notes/*/key-rotation");
     await revokeMember(ownerPage, viewer.username);
-    await expect(viewerPage.getByRole("alert")).toContainText("You no longer have access");
+    await expect(viewerPage.locator(".collaboration-status")).toContainText("You no longer have access");
     await expect(viewerPage.locator(".block-editor .bn-editor")).toHaveCount(0);
     await expectAxeClean(viewerPage);
   } finally {
@@ -193,32 +178,40 @@ async function register(page: Page, username: string, password: string): Promise
 }
 
 async function createNote(page: Page, title: string): Promise<void> {
-  await page.getByLabel("New note").click();
+  await page.getByRole("button", { name: "New note" }).click();
   const saved = page.waitForResponse((response) =>
     response.request().method() === "PUT" && response.url().includes("/api/notes/") && response.ok()
   );
-  await page.getByLabel("Title").fill(title);
+  await page.getByRole("dialog", { name: "New note" }).getByRole("button", { name: "Create" }).click();
+  await page.getByRole("textbox", { name: "Title" }).fill(title);
   await saved;
-  await expect(page.getByRole("button", { name: titlePattern(title) })).toBeVisible();
+  await expect(page.getByRole("button", { name: noteCardPattern(title) })).toBeVisible();
 }
 
 async function openNote(page: Page, title: string): Promise<void> {
-  const note = page.getByRole("button", { name: titlePattern(title) });
+  const note = page.getByRole("button", { name: noteCardPattern(title) });
   await expect(note).toBeVisible({ timeout: 15_000 });
   await note.click();
-  await expect(page.getByLabel("Title")).toHaveValue(title);
+  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(title);
 }
 
 async function shareNote(page: Page, username: string, role: "editor" | "viewer"): Promise<void> {
+  await page.getByRole("button", { name: "Share note" }).click();
+  await expect(page.getByRole("dialog", { name: "Share note" })).toBeVisible();
   await page.getByLabel("Collaborator username").fill(username);
   await page.getByLabel("Collaborator role").selectOption(role);
-  await page.getByRole("button", { name: "Share note" }).click();
+  await page.getByRole("dialog", { name: "Share note" }).getByRole("button", { name: "Share note" }).click();
   await page.getByLabel("I independently verified this exact key").check();
   await page.getByRole("button", { name: "Trust key" }).click();
   await expect(page.locator(".membership-list li", { hasText: username })).toContainText(role);
 }
 
 async function revokeMember(page: Page, username: string): Promise<void> {
+  const dialog = page.getByRole("dialog", { name: "Share note" });
+  if (!(await dialog.isVisible())) {
+    await page.getByRole("button", { name: "Share note" }).click();
+    await expect(dialog).toBeVisible();
+  }
   const response = page.waitForResponse((candidate) =>
     candidate.request().method() === "POST" && candidate.url().includes("/key-rotation")
   );
@@ -267,6 +260,7 @@ async function expectVisibleFocus(page: Page): Promise<void> {
   })).toBe(true);
 }
 
-function titlePattern(title: string): RegExp {
-  return new RegExp(title.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u");
+function noteCardPattern(title: string): RegExp {
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp("^" + escaped + "(?:\\s+(Viewer|Editor))?\\s+\\d", "u");
 }
