@@ -117,7 +117,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         rootSectionId: created.rootSectionId,
         metadataMigration: "current"
       };
-      setNotes((current) => [note, ...current]);
+      setNotes((current) => [note, ...current.filter((candidate) => candidate.id !== note.id)]);
       setSelectedNoteId(note.id);
       setStatus("Note encrypted and saved");
     } catch (noteError) {
