@@ -214,9 +214,6 @@ export function openCrdtSection(
   sectionId: string,
   onChange: Binding["onChange"] = () => undefined
 ): { provider: CrdtProvider; generation: number } {
-  const epochAdvanced = bindingsForNote(note.id).some(
-    (binding) => note.keyEpoch > binding.keyEpoch
-  );
   const binding = getOrCreateBinding(note.id, sectionId, note.keyEpoch);
   binding.openGeneration += 1;
   binding.note = note;
@@ -227,9 +224,6 @@ export function openCrdtSection(
     note.keyEpoch,
     binding.observedServerSequence
   );
-  if (sectionId === ROOT_SECTION_ID && epochAdvanced) {
-    void checkpointCrdtNote(note).catch(() => undefined);
-  }
   return { provider: binding.provider, generation: binding.openGeneration };
 }
 
@@ -497,7 +491,7 @@ function getOrCreateBinding(
     titleAuthorityVersion: existing?.titleAuthorityVersion ?? 0,
     pendingBroadcasts: new Set(),
     openGeneration: 0,
-    ready: existing?.ready ?? false,
+    ready: epochAdvanced ? false : (existing?.ready ?? false),
     receiving: Promise.resolve(),
     snapshotSeeded: inheritedState !== null,
     inheritedEpochState: epochAdvanced && inheritedState !== null,
@@ -579,7 +573,6 @@ export function openCrdtNote(
   if (currentBindings.length === 0) {
     return attachCrdtNote(note, onChange);
   }
-  const epochAdvanced = currentBindings.some((binding) => note.keyEpoch > binding.keyEpoch);
   const attached = noteBindings(note, true);
   for (const binding of attached) {
     binding.onChange = onChange;
@@ -590,9 +583,6 @@ export function openCrdtNote(
       note.keyEpoch,
       binding.observedServerSequence
     );
-  }
-  if (epochAdvanced) {
-    void checkpointCrdtNote(note).catch(() => undefined);
   }
   return () => {
     for (const binding of bindingsForNote(note.id)) {
@@ -912,6 +902,7 @@ async function finishBindingSync(
     binding.inheritedEpochState && binding.note.role !== "viewer";
   binding.inheritedEpochState = false;
   if (shouldRepublishInheritedEpochState) {
+    transport?.discard(binding.note.id, binding.keyEpoch);
     void broadcastCheckpoint(binding).catch(() => undefined);
   }
   const pendingPatch = binding.pendingPatch;

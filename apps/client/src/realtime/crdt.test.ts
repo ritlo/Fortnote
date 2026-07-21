@@ -659,6 +659,8 @@ describe("CRDT collaboration", () => {
 
     openCrdtSection(note({ keyEpoch: 2, noteKeyBase64: "rotated-key", role }), "root");
     expect(fragmentText(getCrdtProvider(note().id, 2, "root").doc)).toBe("Live body before rotation");
+    expect(getCrdtProvider(note().id, 2, "root").isSynced).toBe(false);
+    await finishCrdtSync(note().id, 2, false, "root");
 
     await vi.waitFor(() => {
       expect(send).toHaveBeenCalledOnce();
