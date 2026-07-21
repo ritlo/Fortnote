@@ -593,6 +593,55 @@ describe("note save conflict handling", () => {
   });
 });
 
+describe("moveNoteToFolder", () => {
+  it("updates the note folder id in state", () => {
+    useAppStore.setState({ notes: [note()] });
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.moveNoteToFolder("note_1", "folder-1");
+    });
+
+    expect(useAppStore.getState().notes[0]?.folderId).toBe("folder-1");
+  });
+
+  it("skips update when folder id is unchanged", () => {
+    useAppStore.setState({ notes: [note({ folderId: "folder-1" })] });
+    const { result } = renderHook(() => useNoteActions(note({ folderId: "folder-1" })));
+
+    act(() => {
+      result.current.moveNoteToFolder("note_1", "folder-1");
+    });
+
+    expect(useAppStore.getState().notes[0]?.folderId).toBe("folder-1");
+    expect(mocks.updateNote).not.toHaveBeenCalled();
+  });
+
+  it("schedules autosave when the selected note is moved", async () => {
+    useAppStore.setState({ notes: [note()], selectedNoteId: "note_1" });
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.moveNoteToFolder("note_1", "folder-2");
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+
+    expect(mocks.updateNote).toHaveBeenCalledOnce();
+  });
+
+  it("does not schedule autosave for non-selected notes", () => {
+    useAppStore.setState({ notes: [note(), note({ id: "note_2", title: "Second" })], selectedNoteId: "note_1" });
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    act(() => {
+      result.current.moveNoteToFolder("note_2", "folder-2");
+    });
+    act(() => vi.advanceTimersByTime(500));
+
+    expect(mocks.updateNote).not.toHaveBeenCalled();
+  });
+});
+
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
     contentLength: 0,

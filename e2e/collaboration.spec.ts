@@ -893,9 +893,12 @@ async function readOwnSharingFingerprint(page: Page): Promise<string> {
 }
 
 async function createNote(page: Page, title: string, body: string): Promise<void> {
-  await page.getByLabel("New note").click();
-  await expect(page.getByRole("button", { name: /Untitled note/ })).toBeVisible();
-  const titleInput = page.getByLabel("Title");
+  await page.getByRole("button", { name: "New note" }).click();
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".note-card").first()).toBeVisible();
+  await expect(page.getByText("Note encrypted and saved")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
+  const titleInput = page.getByRole("textbox", { name: "Title" });
   await expect(titleInput).toHaveValue("Untitled note");
   const titleSaved = waitForNoteSave(page);
   await setEditorText(page, body);
@@ -905,7 +908,7 @@ async function createNote(page: Page, title: string, body: string): Promise<void
   await expect(titleInput).toHaveValue(title);
   await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
   await expect(page.getByText(/^Last saved \d+ seconds ago$/)).toBeVisible();
-  await expect(page.getByRole("button", { name: noteTitlePattern(title) })).toBeVisible();
+  await expect(page.getByRole("button", { name: noteTitlePattern(title) }).first()).toBeVisible();
 }
 
 async function shareNote(

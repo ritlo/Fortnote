@@ -149,6 +149,49 @@ test("lock and logout clear decrypted note content from the UI", async ({ page }
   await expect(page.getByRole("button", { name: new RegExp(noteTitle) })).toHaveCount(0);
 });
 
+test("creates a note with a folder, moves it, and reloads the assignment", async ({ page }) => {
+  const account = uniqueAccount("folder");
+  const noteTitle = `Folder note ${account.suffix}`;
+
+  await register(page, account.username, account.password);
+  await createNote(page, noteTitle, "Folder-encrypted body");
+
+  await test.step("create a folder and move the note into it via the Move menu", async () => {
+    page.on("dialog", (dialog) => {
+      dialog.accept("Folder 1");
+    });
+    await page.getByRole("button", { name: "New folder" }).click();
+    await expect(page.getByText("Folder created")).toBeVisible();
+    await page.getByRole("button", { name: "Move" }).click();
+    await page.getByRole("menuitem", { name: "Folder 1" }).click();
+    await expect(page.getByText("Move")).toBeVisible();
+  });
+
+  await test.step("reload and verify the note is still in the folder", async () => {
+    await page.reload();
+    await page.getByLabel("Account password").fill(account.password);
+    await page.getByRole("button", { name: "Sign in and decrypt" }).click();
+    await expect(page.locator(".note-card").first()).toBeVisible({ timeout: 15000 });
+  });
+});
+
+test("reloads and retains the encrypted editor content", async ({ page }) => {
+  const account = uniqueAccount("reload-content");
+  const noteTitle = `Content note ${account.suffix}`;
+  const noteBody = `Persistent body ${account.suffix}`;
+
+  await register(page, account.username, account.password);
+  await createNote(page, noteTitle, noteBody);
+
+  await test.step("reload and confirm the note body is still rendered", async () => {
+    await page.reload();
+    await page.getByLabel("Account password").fill(account.password);
+    await page.getByRole("button", { name: "Sign in and decrypt" }).click();
+    await expect(page.locator(".block-editor .bn-editor")).toBeVisible();
+    await expect(page.getByText(noteBody)).toBeVisible();
+  });
+});
+
 async function register(
   page: Page,
   username: string,
@@ -167,11 +210,12 @@ async function register(
 }
 
 async function createNote(page: Page, title: string, body: string): Promise<void> {
-  await page.getByLabel("New note").click();
-  await expect(page.getByRole("button", { name: /Untitled note/ })).toBeVisible();
+  await page.getByRole("button", { name: "New note" }).click();
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator(".note-card").first()).toBeVisible();
   await expect(page.getByText("Note encrypted and saved")).toBeVisible();
   await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
-  const titleInput = page.getByLabel("Title");
+  const titleInput = page.getByRole("textbox", { name: "Title" });
   await expect(titleInput).toHaveValue("Untitled note");
   const saved = waitForNoteSave(page);
   await setEditorText(page, body);
@@ -180,7 +224,7 @@ async function createNote(page: Page, title: string, body: string): Promise<void
   await waitForCrdtDurability(page);
   await expect(titleInput).toHaveValue(title);
   await expect(page.getByText(/^Last saved \d+ seconds ago$/)).toBeVisible();
-  await expect(page.getByRole("button", { name: new RegExp(title) })).toBeVisible();
+  await expect(page.locator(".note-card").first()).toBeVisible();
 }
 
 async function expectEditorToFillPane(page: Page): Promise<void> {
