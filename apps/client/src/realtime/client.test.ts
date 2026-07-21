@@ -428,6 +428,54 @@ describe("realtime client", () => {
     await database.deleteDatabase();
   });
 
+  it("queues scoped updates after a transport closes", async () => {
+    await cryptoReady();
+    const database = await openFortnoteIndexedDb({
+      factory: fakeIndexedDb,
+      name: `fortnote-client-offline-${crypto.randomUUID()}`
+    });
+    const userId = crypto.randomUUID();
+    const first = connectRealtime({
+      after: 0,
+      userId,
+      ownerId: "tab-a",
+      outboxStore: database,
+      onMessage: vi.fn()
+    });
+    first.close();
+
+    const update = scopedUpdate();
+    const delivery = first.sendCrdtUpdateDurably(update);
+    await expect(delivery.durable).resolves.toBeUndefined();
+    expect(await database.listOutbox(userId)).toEqual([
+      expect.objectContaining({ updateId: update.updateId })
+    ]);
+
+    first.subscribeCrdt(update.noteId, update.sectionId, update.keyEpoch);
+    sockets[0]!.open();
+    sockets[0]!.receive({
+      ...connectedMessage(userId),
+      capabilities: ["crdt-binary-v2"]
+    });
+    await vi.waitFor(() => {
+      expect(sockets[0]!.binarySent).toHaveLength(1);
+    });
+    sockets[0]!.receive({
+      type: "crdt-ack",
+      updateId: update.updateId,
+      sectionId: update.sectionId,
+      result: "already-present",
+      keyEpoch: update.keyEpoch,
+      serverSequence: 1
+    });
+    await expect(delivery.delivered).resolves.toBeUndefined();
+    await vi.waitFor(async () => {
+      expect(await database.listOutbox(userId)).toEqual([]);
+    });
+    first.close();
+    await database.deleteDatabase();
+  });
+
   it("closes an owned database that finishes opening after the connection closes", async () => {
     const factory = new IDBFactory();
     vi.stubGlobal("indexedDB", factory);
