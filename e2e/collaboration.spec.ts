@@ -91,8 +91,12 @@ test("syncs a shared note for an online editor and offline viewer", async ({
         editorText(alicePage),
         editorText(bobPage)
       ]);
-      return aliceValue === bobValue;
-    }).toBe(true);
+      return (
+        aliceValue === bobValue &&
+        aliceValue.includes("A ") &&
+        aliceValue.includes(" B")
+      );
+    }, { timeout: 10_000 }).toBe(true);
     const mergedBody = await editorText(alicePage);
     expect(mergedBody.match(/A /gu)).toHaveLength(1);
     expect(mergedBody.match(/ B/gu)).toHaveLength(1);
