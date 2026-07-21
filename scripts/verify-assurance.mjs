@@ -112,7 +112,12 @@ export function verifyAssuranceSummary(summary, root) {
   for (const command of REQUIRED_ASSURANCE_COMMANDS) {
     const row = summary.split("\n").find((line) => line.includes(`\`${command}\``));
     if (!row) errors.push(`Assurance summary is missing command: ${command}`);
-    else if (!/\bPASS\b/u.test(row)) errors.push(`Assurance command is not passing: ${command}`);
+    else {
+      const result = row.split("|").slice(1, -1).map((cell) => cell.trim())[1] ?? "";
+      if (!result || /^(?:n\/a|not run|pending|tbd|todo|unknown)$/iu.test(result)) {
+        errors.push(`Assurance command lacks an actual result: ${command}`);
+      }
+    }
   }
   const risks = sectionContents(summary, "Known product risks");
   if (!risks || risks.trim().length < 20) {

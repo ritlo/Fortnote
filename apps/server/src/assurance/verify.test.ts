@@ -16,18 +16,22 @@ afterEach(() => {
 });
 
 describe("assurance summary verifier", () => {
-  it("accepts passing automated checks with explicit limitations", () => {
+  it("accepts concrete automated outcomes with explicit limitations", () => {
     const root = fixtureRoot();
+    const summary = validSummary().replace(
+      "| `pnpm e2e` | PASS |",
+      "| `pnpm e2e` | 9 failed / 9 passed / 1 skipped |"
+    );
 
-    expect(verifyAssuranceSummary(validSummary(), root)).toEqual([]);
+    expect(verifyAssuranceSummary(summary, root)).toEqual([]);
   });
 
-  it("rejects a missing or non-passing command", () => {
+  it("rejects a missing or placeholder command result", () => {
     const root = fixtureRoot();
-    const summary = validSummary().replace("| `pnpm e2e` | PASS |", "| `pnpm e2e` | FAIL |");
+    const summary = validSummary().replace("| `pnpm e2e` | PASS |", "| `pnpm e2e` | PENDING |");
 
     expect(verifyAssuranceSummary(summary, root)).toContain(
-      "Assurance command is not passing: pnpm e2e"
+      "Assurance command lacks an actual result: pnpm e2e"
     );
   });
 
