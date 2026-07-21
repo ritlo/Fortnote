@@ -249,6 +249,11 @@ export async function loadDecryptedNotes(
   options: LoadDecryptedNotesOptions = {}
 ) {
   const requestScope = `decrypted-notes:${deleted ? "trash" : "active"}`;
+  const initialNoteIds = new Set(
+    (deleted ? useAppStore.getState().trashNotes : useAppStore.getState().notes).map(
+      (note) => note.id
+    )
+  );
   const requestToken = useAppStore.getState().beginRequest(requestScope);
   try {
     const payload = await listNotes(deleted);
@@ -260,11 +265,15 @@ export async function loadDecryptedNotes(
           decryptNoteSummary(currentUser, currentRootKey, note, openedSharingKey)
         )
     );
-    const nextNotes = (deleted ? decrypted : decrypted.map(preserveCrdtContent)).sort(
+    const loadedNotes = deleted ? decrypted : decrypted.map(preserveCrdtContent);
+    const state = useAppStore.getState();
+    const locallyAddedNotes = (deleted ? state.trashNotes : state.notes).filter(
+      (note) => !initialNoteIds.has(note.id) && !loadedNotes.some(({ id }) => id === note.id)
+    );
+    const nextNotes = [...loadedNotes, ...locallyAddedNotes].sort(
       (left, right) => right.updatedAt.localeCompare(left.updatedAt)
     );
 
-    const state = useAppStore.getState();
     if (
       state.user?.id !== currentUser.id ||
       state.rootKey !== currentRootKey ||

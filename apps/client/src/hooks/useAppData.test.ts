@@ -247,6 +247,35 @@ describe("app data collaboration bootstrap", () => {
     ]);
   });
 
+  it("retains a note created while the list request was in flight", async () => {
+    const user = currentUser();
+    const rootKey = crypto.getRandomValues(new Uint8Array(32));
+    let finishLoad!: (value: { notes: NoteSummary[] }) => void;
+    vi.mocked(listNotes).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        finishLoad = resolve;
+      })
+    );
+    const created = decryptedNote({
+      id: "created-during-load",
+      title: "Created locally",
+      updatedAt: "2026-07-02T11:00:00.000Z"
+    });
+    useAppStore.setState({ rootKey, user });
+
+    const loading = loadDecryptedNotes(user, rootKey);
+    useAppStore.getState().setNotes([created]);
+    finishLoad({ notes: [noteSummary({ id: "remote" })] });
+    await loading;
+
+    expect(useAppStore.getState().notes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "remote" }),
+        expect.objectContaining({ id: "created-during-load", title: "Created locally" })
+      ])
+    );
+  });
+
   it("reloads only the targeted note metadata without clearing unrelated state", async () => {
     const user = currentUser();
     const rootKey = crypto.getRandomValues(new Uint8Array(32));

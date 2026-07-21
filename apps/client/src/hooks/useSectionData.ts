@@ -56,28 +56,33 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
     }
     const controller = new AbortController();
     const note = selectedNote;
-    setNoteProtectionFailure(note.id, null);
     setSectionIndex(note.id, {
       noteId: note.id,
       status: "loading",
       orderedSectionIds: [],
       sections: []
     });
-    void ensureLegacyNoteMigrated(note, controller.signal).catch((error: unknown) => {
-      if (controller.signal.aborted || !isSelectedNote(note)) {
-        return;
-      }
-      setSectionIndex(note.id, {
-        noteId: note.id,
-        status: "error",
-        orderedSectionIds: [],
-        sections: [],
-        error: errorMessage(error, "Legacy encrypted note could not migrate")
+    void ensureLegacyNoteMigrated(note, controller.signal)
+      .then(() => {
+        if (!controller.signal.aborted && isSelectedNote(note)) {
+          setNoteProtectionFailure(note.id, null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || !isSelectedNote(note)) {
+          return;
+        }
+        setSectionIndex(note.id, {
+          noteId: note.id,
+          status: "error",
+          orderedSectionIds: [],
+          sections: [],
+          error: errorMessage(error, "Legacy encrypted note could not migrate")
+        });
+        if (isCrdtHistoryUnreadableError(error)) {
+          setNoteProtectionFailure(note.id, "undecryptable");
+        }
       });
-      if (isCrdtHistoryUnreadableError(error)) {
-        setNoteProtectionFailure(note.id, "undecryptable");
-      }
-    });
     return () => {
       controller.abort();
     };
@@ -149,7 +154,6 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
     }
     const controller = new AbortController();
     const note = selectedNote;
-    setNoteProtectionFailure(note.id, null);
     setSectionIndex(note.id, {
       noteId: note.id,
       status: "loading",
@@ -157,21 +161,27 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
       sections: []
     });
 
-    void loadSectionIndex(note, controller.signal).catch((error: unknown) => {
-      if (controller.signal.aborted || !isSelectedNote(note)) {
-        return;
-      }
-      setSectionIndex(note.id, {
-        noteId: note.id,
-        status: "error",
-        orderedSectionIds: [],
-        sections: [],
-        error: errorMessage(error, "Encrypted note index could not load")
+    void loadSectionIndex(note, controller.signal)
+      .then(() => {
+        if (!controller.signal.aborted && isSelectedNote(note)) {
+          setNoteProtectionFailure(note.id, null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || !isSelectedNote(note)) {
+          return;
+        }
+        setSectionIndex(note.id, {
+          noteId: note.id,
+          status: "error",
+          orderedSectionIds: [],
+          sections: [],
+          error: errorMessage(error, "Encrypted note index could not load")
+        });
+        if (isCrdtHistoryUnreadableError(error)) {
+          setNoteProtectionFailure(note.id, "undecryptable");
+        }
       });
-      if (isCrdtHistoryUnreadableError(error)) {
-        setNoteProtectionFailure(note.id, "undecryptable");
-      }
-    });
 
     return () => {
       controller.abort();
