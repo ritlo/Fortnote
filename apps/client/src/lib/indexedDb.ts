@@ -626,7 +626,11 @@ async function putRecord(
       transaction.objectStore(storeName).put(record);
       await done;
     } catch (error) {
-      transaction.abort();
+      try {
+        transaction.abort();
+      } catch {
+        // The transaction may already have entered its terminal state.
+      }
       throw error;
     }
   });
