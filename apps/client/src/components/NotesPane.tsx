@@ -1,11 +1,15 @@
 import { Plus, Search } from "lucide-react";
+import type { FolderSummary } from "../api";
 import type { SearchCoverage, SearchMatch } from "../lib/searchIndex";
 import type { SearchIndexStatus } from "../hooks/useNoteViewModel";
 import type { DecryptedNote, NotesView, RealtimeStatus } from "../store/appStore";
+import { useState } from "react";
+import { NewNoteDialog } from "./NewNoteDialog";
 
 interface NotesPaneProps {
   error: string | null;
   filteredNotes: DecryptedNote[];
+  folders: FolderSummary[];
   notesView: NotesView;
   realtimeStatus: RealtimeStatus;
   recoverySecret: string | null;
@@ -16,7 +20,8 @@ interface NotesPaneProps {
   searchMatches: SearchMatch[];
   selectedNoteId: string | null;
   status: string;
-  addNote: () => Promise<void>;
+  addNote: (folderId?: string | null) => Promise<void>;
+  moveNoteToFolder: (noteId: string, folderId: string | null) => void;
   retrySearchIndex: () => void;
   selectSearchMatch: (match: SearchMatch) => void;
   setSearch: (value: string) => void;
@@ -26,6 +31,7 @@ interface NotesPaneProps {
 export function NotesPane({
   error,
   filteredNotes,
+  folders,
   notesView,
   realtimeStatus,
   recoverySecret,
@@ -37,13 +43,32 @@ export function NotesPane({
   selectedNoteId,
   status,
   addNote,
+  moveNoteToFolder,
   retrySearchIndex,
   selectSearchMatch,
   setSearch,
   setSelectedNoteId
 }: NotesPaneProps) {
+  const [newNoteDialogOpen, setNewNoteDialogOpen] = useState(false);
+
+  function handleNoteDrop(event: React.DragEvent, targetFolderId: string | null) {
+    const noteId = event.dataTransfer.getData("text/note-id");
+    if (noteId) {
+      moveNoteToFolder(noteId, targetFolderId);
+    }
+  }
+
   return (
     <section className="notes-pane">
+      <NewNoteDialog
+        folders={folders}
+        open={newNoteDialogOpen}
+        onClose={() => setNewNoteDialogOpen(false)}
+        onCreate={async (folderId) => {
+          await addNote(folderId);
+          setNewNoteDialogOpen(false);
+        }}
+      />
       <header className="pane-header">
         <h2>
           {notesView === "trash"
@@ -60,7 +85,7 @@ export function NotesPane({
           aria-label="New note"
           disabled={notesView !== "notes"}
           onClick={() => {
-            void addNote();
+            setNewNoteDialogOpen(true);
           }}
         >
           <Plus size={18} />
@@ -112,43 +137,17 @@ export function NotesPane({
           filteredNotes.map((note) => {
             const noteMatches = searchMatches.filter((match) => match.noteId === note.id);
             return (
-              <li key={note.id}>
-                <button
-                  className={note.id === selectedNoteId ? "note-card active" : "note-card"}
-                  type="button"
-                  onClick={() => {
-                    setSelectedNoteId(note.id);
-                  }}
-                >
-                  <span className="note-title-row">
-                    <strong>{note.title}</strong>
-                    {note.role !== "owner" ? (
-                      <small className="role-badge">{roleLabel(note.role)}</small>
-                    ) : null}
-                  </span>
-                  <span>{String(note.contentLength)} encrypted bytes</span>
-                </button>
-                {noteMatches.length > 0 ? (
-                  <ul className="search-match-list" aria-label={`Matches in ${note.title}`}>
-                    {noteMatches.map((match, position) => (
-                      <li key={`${match.sectionId}:${match.blockId}`}>
-                        <button
-                          className="search-match"
-                          type="button"
-                          aria-label={`Search result ${String(position + 1)} of ${String(
-                            noteMatches.length
-                          )} in ${note.title}: ${match.excerpt || "Matching content"}`}
-                          onClick={() => {
-                            selectSearchMatch(match);
-                          }}
-                        >
-                          <span>{match.excerpt || "Matching content"}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </li>
+              <NoteListItem
+                key={note.id}
+                note={note}
+                folders={folders}
+                notesView={notesView}
+                selectedNoteId={selectedNoteId}
+                noteMatches={noteMatches}
+                onSelect={setSelectedNoteId}
+                onMove={moveNoteToFolder}
+                onSearchSelect={selectSearchMatch}
+              />
             );
           })
         )}
@@ -210,6 +209,108 @@ function searchCoverageLabel(
   return `Searching indexed sections — more results may appear (${String(
     coverage.indexedSections
   )} of ${String(coverage.totalSections)}).`;
+}
+
+function NoteListItem({
+  note,
+  folders,
+  notesView,
+  selectedNoteId,
+  noteMatches,
+  onSelect,
+  onMove,
+  onSearchSelect
+}: {
+  note: DecryptedNote;
+  folders: FolderSummary[];
+  notesView: NotesView;
+  selectedNoteId: string | null;
+  noteMatches: SearchMatch[];
+  onSelect: (id: string) => void;
+  onMove: (noteId: string, folderId: string | null) => void;
+  onSearchSelect: (match: SearchMatch) => void;
+}) {
+  const [showMove, setShowMove] = useState(false);
+
+  function handleDragStart(event: React.DragEvent) {
+    event.dataTransfer.setData("text/note-id", note.id);
+    event.dataTransfer.effectAllowed = "move";
+  }
+
+  function handleMoveSelect(folderId: string) {
+    onMove(note.id, folderId);
+    setShowMove(false);
+  }
+
+  return (
+    <li
+      key={note.id}
+      draggable={notesView === "notes" && note.role !== "viewer"}
+      onDragStart={handleDragStart}
+    >
+      <button
+        className={note.id === selectedNoteId ? "note-card active" : "note-card"}
+        type="button"
+        onClick={() => {
+          onSelect(note.id);
+        }}
+      >
+        <span className="note-title-row">
+          <strong>{note.title}</strong>
+          {note.role !== "owner" ? (
+            <small className="role-badge">{roleLabel(note.role)}</small>
+          ) : null}
+        </span>
+        <span>{String(note.contentLength)} encrypted bytes</span>
+      </button>
+      {notesView === "notes" && note.role !== "viewer" ? (
+        <div className="note-actions">
+          <button
+            className="text-button"
+            type="button"
+            aria-label={`Move ${note.title} to folder`}
+            onClick={() => setShowMove(!showMove)}
+          >
+            {showMove ? "Cancel" : "Move"}
+          </button>
+          {showMove ? (
+            <div className="move-folder-list" role="menu">
+              {folders.map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handleMoveSelect(f.id)}
+                >
+                  {f.name}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {noteMatches.length > 0 ? (
+        <ul className="search-match-list" aria-label={`Matches in ${note.title}`}>
+          {noteMatches.map((match, position) => (
+            <li key={`${match.sectionId}:${match.blockId}`}>
+              <button
+                className="search-match"
+                type="button"
+                aria-label={`Search result ${String(position + 1)} of ${String(
+                  noteMatches.length
+                )} in ${note.title}: ${match.excerpt || "Matching content"}`}
+                onClick={() => {
+                  onSearchSelect(match);
+                }}
+              >
+                <span>{match.excerpt || "Matching content"}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
 }
 
 export function roleLabel(role: DecryptedNote["role"]): string {

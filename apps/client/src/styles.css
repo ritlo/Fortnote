@@ -848,3 +848,58 @@ textarea {
     flex: 1 1 auto;
   }
 }
+
+dialog {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 20px;
+  max-width: 380px;
+  width: 100%;
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+dialog h3 {
+  margin-bottom: 12px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.dialog-actions button {
+  min-width: 80px;
+}
+
+.note-actions {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.move-folder-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.move-folder-list button {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 5px 9px;
+  background: white;
+  font-size: 12px;
+}
+
+.drop-target-over {
+  border-radius: 7px;
+  background: #e8f4f2;
+  outline: 2px dashed var(--brand);
+  outline-offset: -2px;
+}

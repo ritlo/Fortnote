@@ -59,13 +59,14 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     []
   );
 
-  async function addNote() {
+  async function addNote(chosenFolderId?: string | null) {
     if (!user || !rootKey) {
       return;
     }
 
     const sessionUserId = user.id;
     const sessionRootKey = rootKey;
+    const targetFolderId = chosenFolderId ?? selectedFolderId;
     setError(null);
     setStatus("Encrypting note");
     try {
@@ -79,7 +80,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       }
       const created = await createNote({
         id: draft.id,
-        folderId: selectedFolderId,
+        folderId: targetFolderId,
         rootSectionId: draft.rootSectionId,
         titleCipher: draft.titleCipher,
         titleNonce: draft.titleNonce,
@@ -99,7 +100,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       );
       const note: DecryptedNote = {
         id: draft.id,
-        folderId: selectedFolderId,
+        folderId: targetFolderId,
         title: "Untitled note",
         noteKeyBase64: noteKeyToBase64(draft.noteKey),
         contentLength: 0,
@@ -586,10 +587,23 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     }
   }
 
+  function moveNoteToFolder(noteId: string, folderId: string | null) {
+    const state = useAppStore.getState();
+    const note = state.notes.find((n) => n.id === noteId);
+    if (!note || note.folderId === folderId) return;
+    setNotes((current) =>
+      current.map((n) => (n.id === noteId ? { ...n, folderId } : n))
+    );
+    if (selectedNoteId === noteId) {
+      scheduleAutosave(noteId);
+    }
+  }
+
   return {
     addFolder,
     addNote,
     deleteSelectedForever,
+    moveNoteToFolder,
     moveSelectedToTrash,
     openNotes,
     openSharedNotes,

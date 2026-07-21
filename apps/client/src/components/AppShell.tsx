@@ -49,6 +49,7 @@ export function AppShell() {
       <Sidebar
         addFolder={noteActions.addFolder}
         folders={folders}
+        moveNoteToFolder={noteActions.moveNoteToFolder}
         notesView={notesView}
         openNotes={noteActions.openNotes}
         openSharedNotes={noteActions.openSharedNotes}
@@ -66,6 +67,8 @@ export function AppShell() {
         addNote={noteActions.addNote}
         error={error}
         filteredNotes={noteView.filteredNotes}
+        folders={folders}
+        moveNoteToFolder={noteActions.moveNoteToFolder}
         notesView={notesView}
         recoverySecret={recoverySecret}
         retrySearchIndex={noteView.retrySearchIndex}
