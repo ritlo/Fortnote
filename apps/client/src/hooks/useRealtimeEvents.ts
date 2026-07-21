@@ -258,6 +258,11 @@ export function useRealtimeEvents() {
             message.type === "crdt-manifest"
           ) {
             void receiveCrdtUpdate(message).catch(() => {
+              // A ciphertext that reaches the binding but cannot be opened is
+              // a protection failure, not merely a transport warning. Surface
+              // the typed recovery state immediately; the sync terminator may
+              // arrive later (or be lost during reconnect).
+              useAppStore.getState().setNoteProtectionFailure(message.noteId, "undecryptable");
               setError("A realtime update could not be decrypted; recovery is pending.");
             });
             return;
