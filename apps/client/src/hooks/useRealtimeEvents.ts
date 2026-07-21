@@ -3,6 +3,7 @@ import {
   acknowledgeCollaborationEvents,
   getClientInstanceId,
   getCollaborationEventCursor,
+  isApiRequestError,
   type CollaborationEvent
 } from "../api";
 import {
@@ -59,6 +60,13 @@ export function useRealtimeEvents() {
 
     function reportCrdtError(message: string, error?: unknown) {
       if (!isActive || !isCurrentVaultSession(userId, currentRootKey)) {
+        return;
+      }
+      if (isApiRequestError(error) && error.code === "stale_epoch") {
+        const noteId = selectedNoteIdRef.current;
+        if (noteId) {
+          useAppStore.getState().setNoteProtectionFailure(noteId, "stale");
+        }
         return;
       }
       if (error) {

@@ -592,20 +592,26 @@ export function connectRealtime({
         throw error;
       }
     })());
-    const delivered = outcome.then((result) => {
-      if (result.kind === "local-capacity") {
-        onCrdtError?.(
-          "Protected browser storage is full; encrypted work remains queued.",
-          result.error
-        );
-        throw new Error("Protected browser storage is full");
+    const delivered = outcome.then(
+      (result) => {
+        if (result.kind === "local-capacity") {
+          onCrdtError?.(
+            "Protected browser storage is full; encrypted work remains queued.",
+            result.error
+          );
+          throw new Error("Protected browser storage is full");
+        }
+        if (result.kind === "server-capacity") {
+          onCrdtError?.("Server storage is full; encrypted work remains queued.", result.error);
+          throw new Error("Server storage is full");
+        }
+        return result.manifest;
+      },
+      (error: unknown) => {
+        onCrdtError?.("Encrypted content transfer failed.", error);
+        throw error;
       }
-      if (result.kind === "server-capacity") {
-        onCrdtError?.("Server storage is full; encrypted work remains queued.", result.error);
-        throw new Error("Server storage is full");
-      }
-      return result.manifest;
-    });
+    );
     return { durable, delivered };
   }
 

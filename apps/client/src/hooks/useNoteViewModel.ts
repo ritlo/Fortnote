@@ -119,6 +119,8 @@ export function useNoteViewModel() {
       : (selectedNote?.role ?? "owner"),
     protection: selectedNote && noteProtectionFailures[selectedNote.id] === "undecryptable"
       ? "undecryptable"
+      : selectedNote && noteProtectionFailures[selectedNote.id] === "stale"
+        ? "stale"
       : selectedNote?.id === revocationRotationPendingNoteId
       ? "preparing"
       : selectedNote && revocationRotationFailures[selectedNote.id]

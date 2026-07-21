@@ -169,6 +169,13 @@ describe("collaboration event store", () => {
       status: "Changes need review"
     });
     expect(operationFailureState(
+      { code: "forbidden", message: "private server detail", status: 409 },
+      "fallback"
+    )).toMatchObject({
+      kind: "conflict",
+      status: "Changes need review"
+    });
+    expect(operationFailureState(
       { code: "quota_exceeded", message: "private server detail", status: 413 },
       "fallback"
     )).toEqual({

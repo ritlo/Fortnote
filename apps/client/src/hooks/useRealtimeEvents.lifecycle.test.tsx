@@ -36,7 +36,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../api", () => ({
   acknowledgeCollaborationEvents: mocks.acknowledgeEvents,
   getClientInstanceId: () => "test-client",
-  getCollaborationEventCursor: mocks.getCursor
+  getCollaborationEventCursor: mocks.getCursor,
+  isApiRequestError: (error: unknown) =>
+    typeof error === "object" && error !== null && "code" in error && "status" in error
 }));
 
 vi.mock("../realtime/client", () => ({
@@ -139,6 +141,24 @@ describe("useRealtimeEvents lifecycle", () => {
 
     expect(useAppStore.getState()).toMatchObject({
       error: "Safe realtime fallback",
+      operationFailure: null
+    });
+  });
+
+  it("surfaces stale epoch failures as protection refresh state", async () => {
+    mocks.getCursor.mockResolvedValue({ cursor: 3 });
+
+    render(<RealtimeHarness />);
+    await flushEffects();
+    const connection = mocks.connections[0]!;
+
+    act(() => connection.options.onCrdtError?.(
+      "Encrypted update rejected",
+      { code: "stale_epoch", status: 409 }
+    ));
+
+    expect(useAppStore.getState()).toMatchObject({
+      noteProtectionFailures: { "note-1": "stale" },
       operationFailure: null
     });
   });

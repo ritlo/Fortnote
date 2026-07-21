@@ -14,7 +14,7 @@ import type { LinkedEpochRotationPreparation } from "../lib/keyMaterial";
 export type AuthMode = "login" | "register" | "recover";
 export type NotesView = "notes" | "shared" | "trash" | "settings";
 export type RealtimeStatus = "idle" | "connecting" | "connected" | "disconnected";
-export type NoteProtectionFailure = "undecryptable";
+export type NoteProtectionFailure = "stale" | "undecryptable";
 
 export interface DecryptedNote {
   id: string;
@@ -641,7 +641,7 @@ export function operationFailureState(
   fallback: string,
   fallbackStatus = "Operation failed"
 ): OperationFailureState {
-  if (["conflict", "version_conflict", "chunk_conflict", "manifest_mismatch"].includes(
+  if (["conflict", "version_conflict", "chunk_conflict", "manifest_mismatch", "forbidden"].includes(
     errorCode(error) ?? ""
   )) {
     return {
