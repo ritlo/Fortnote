@@ -146,10 +146,12 @@ describe("useRealtimeEvents lifecycle", () => {
     await flushEffects();
     const staleConnection = mocks.connections[0]!;
 
-    act(() => useAppStore.setState({
-      rootKey: new Uint8Array([9]),
-      user: { id: "user-2", username: "bob" }
-    }));
+    act(() => {
+      useAppStore.setState({
+        rootKey: new Uint8Array([9]),
+        user: { id: "user-2", username: "bob" }
+      });
+    });
     await flushEffects();
     act(() => staleConnection.options.onCrdtError?.(
       "Offline edits could not be saved durably.",
