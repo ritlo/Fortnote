@@ -647,18 +647,18 @@ describe("CRDT collaboration", () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const discard = vi.fn();
     setCrdtTransport({ discard, send, subscribe: vi.fn() });
-    openCrdtNote(note(), vi.fn());
-    await finishCrdtSync(note().id, 1, false);
+    openCrdtSection(note(), "root");
+    await finishCrdtSync(note().id, 1, false, "root");
     expect(send).toHaveBeenCalledOnce();
     send.mockClear();
-    setFragmentBody(getCrdtProvider(note().id).doc, "Live body before rotation");
+    setFragmentBody(getCrdtProvider(note().id, 1, "root").doc, "Live body before rotation");
     await vi.waitFor(() => {
       expect(send).toHaveBeenCalledOnce();
     });
     send.mockClear();
 
-    openCrdtNote(note({ keyEpoch: 2, noteKeyBase64: "rotated-key", role }), vi.fn());
-    expect(fragmentText(getCrdtProvider(note().id, 2).doc)).toBe("Live body before rotation");
+    openCrdtSection(note({ keyEpoch: 2, noteKeyBase64: "rotated-key", role }), "root");
+    expect(fragmentText(getCrdtProvider(note().id, 2, "root").doc)).toBe("Live body before rotation");
 
     await vi.waitFor(() => {
       expect(send).toHaveBeenCalledOnce();

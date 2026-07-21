@@ -213,6 +213,9 @@ export function openCrdtSection(
   sectionId: string,
   onChange: Binding["onChange"] = () => undefined
 ): { provider: CrdtProvider; generation: number } {
+  const epochAdvanced = bindingsForNote(note.id).some(
+    (binding) => note.keyEpoch > binding.keyEpoch
+  );
   const binding = getOrCreateBinding(note.id, sectionId, note.keyEpoch);
   binding.openGeneration += 1;
   binding.note = note;
@@ -223,6 +226,9 @@ export function openCrdtSection(
     note.keyEpoch,
     binding.observedServerSequence
   );
+  if (sectionId === ROOT_SECTION_ID && epochAdvanced) {
+    void checkpointCrdtNote(note).catch(() => undefined);
+  }
   return { provider: binding.provider, generation: binding.openGeneration };
 }
 
