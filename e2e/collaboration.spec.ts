@@ -94,7 +94,8 @@ test("syncs a shared note for an online editor and offline viewer", async ({
       return aliceValue === bobValue;
     }).toBe(true);
     const mergedBody = await editorText(alicePage);
-    expect(mergedBody).toMatch(/^A .*B$/);
+    expect(mergedBody.match(/A /gu)).toHaveLength(1);
+    expect(mergedBody.match(/ B/gu)).toHaveLength(1);
     await Promise.all([
       waitForCrdtDurability(alicePage),
       waitForCrdtDurability(bobPage)

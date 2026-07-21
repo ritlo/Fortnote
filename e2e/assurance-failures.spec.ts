@@ -18,6 +18,7 @@ test("retains offline work through reconnect and ignores a delayed old-note save
   await page.reload();
   await signIn(page, account);
   await openNote(page, first);
+  await waitForCrdtDurability(page);
   await createNote(page, second);
   await openNote(page, first);
 
@@ -143,7 +144,7 @@ test("preserves conflict, undecryptable, stale-epoch, and terminally rejected wo
   });
   await page.reload();
   await signIn(page, account);
-  await openNote(page, `${title} conflict`);
+  await openNote(page, title);
   await expect(page.getByRole("alert")).toContainText("This note cannot be decrypted");
   await expectRecoveryActions(page, ["Retry", "Repair access"]);
 
