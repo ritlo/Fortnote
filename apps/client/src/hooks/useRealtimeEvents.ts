@@ -153,6 +153,9 @@ export function useRealtimeEvents() {
     }
 
     function reportCrdtSyncFailure(noteId: string, error: unknown): void {
+      if (!isActive || !isCurrentVaultSession(userId, currentRootKey)) {
+        return;
+      }
       if (isCrdtHistoryUnreadableError(error)) {
         useAppStore.getState().setNoteProtectionFailure(noteId, "undecryptable");
         return;
