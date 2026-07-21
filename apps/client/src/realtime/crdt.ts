@@ -147,6 +147,7 @@ interface Binding {
   checkpointing: boolean;
   observedServerSequence: number;
   pendingPatch: Partial<Pick<DecryptedNote, "title">>;
+  titleAuthorityVersion: number;
   pendingBroadcasts: Set<Promise<void>>;
   openGeneration: number;
   ready: boolean;
@@ -243,6 +244,7 @@ export function seedLegacyCrdtSection(
     replaceBlockNoteFragment(binding.fragment, body);
     setSnapshotVersion(binding.doc, note.version);
   }, SNAPSHOT_SEED);
+  binding.titleAuthorityVersion = Math.max(binding.titleAuthorityVersion, note.version);
   binding.snapshotSeeded = true;
   binding.ready = true;
   binding.provider.emit("synced");
@@ -492,6 +494,7 @@ function getOrCreateBinding(
     checkpointing: false,
     observedServerSequence: epochAdvanced ? 0 : (existing?.observedServerSequence ?? 0),
     pendingPatch: {},
+    titleAuthorityVersion: existing?.titleAuthorityVersion ?? 0,
     pendingBroadcasts: new Set(),
     openGeneration: 0,
     ready: existing?.ready ?? false,
@@ -613,6 +616,10 @@ export function editCrdtNote(
   } else {
     writableRoot = root ?? getOrCreateBinding(noteId, ROOT_SECTION_ID, noteOrId.keyEpoch);
     writableRoot.note = noteOrId;
+    writableRoot.titleAuthorityVersion = Math.max(
+      writableRoot.titleAuthorityVersion,
+      noteOrId.version
+    );
     transport?.subscribe(
       noteId,
       ROOT_SECTION_ID,
@@ -626,6 +633,12 @@ export function editCrdtNote(
   }
   writableRoot.doc.transact(() => {
     if (patch.title !== undefined) {
+      if (typeof noteOrId !== "string") {
+        writableRoot.titleAuthorityVersion = Math.max(
+          writableRoot.titleAuthorityVersion,
+          noteOrId.version + 1
+        );
+      }
       const text = writableRoot.doc.getText("title");
       if (text.toJSON() === patch.title) {
         return;
@@ -672,6 +685,9 @@ export function preserveCrdtContent(note: DecryptedNote): DecryptedNote {
   }
   if (!root.ready) {
     return { ...note, ...root.pendingPatch };
+  }
+  if (root.titleAuthorityVersion < note.version) {
+    return note;
   }
   const content = {
     title: root.doc.getText("title").toJSON()
@@ -744,6 +760,7 @@ export async function checkpointCrdtNote(note: DecryptedNote): Promise<void> {
     binding.doc.transact(() => {
       setSnapshotVersion(binding.doc, note.version);
     }, SNAPSHOT_SEED);
+    binding.titleAuthorityVersion = Math.max(binding.titleAuthorityVersion, note.version);
   }
   transport?.discard(note.id, note.keyEpoch);
   await Promise.all(current.map((binding) => broadcastCheckpoint(binding)));
@@ -867,6 +884,12 @@ async function finishBindingSync(
       await broadcastCheckpoint(binding);
     }
   }
+  if (binding.sectionId === ROOT_SECTION_ID && binding.appliedUpdateCount > 0) {
+    binding.titleAuthorityVersion = Math.max(
+      binding.titleAuthorityVersion,
+      getSnapshotVersion(binding.doc)
+    );
+  }
   if (binding.appliedUpdateCount === 0 && !binding.snapshotSeeded) {
     seedBinding(
       binding,
@@ -874,6 +897,9 @@ async function finishBindingSync(
         ? { ...binding.note, title: binding.pendingPatch.title }
         : binding.note
     );
+    if (binding.sectionId === ROOT_SECTION_ID) {
+      binding.titleAuthorityVersion = Math.max(binding.titleAuthorityVersion, binding.note.version);
+    }
     binding.snapshotSeeded = true;
     if (binding.note.role !== "viewer") {
       await broadcastCheckpoint(binding);

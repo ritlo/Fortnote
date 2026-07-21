@@ -890,7 +890,7 @@ describe("CRDT collaboration", () => {
     const current = note();
     openCrdtNote(current, vi.fn());
     await finishCrdtSync(current.id, 1, false);
-    editCrdtNote(current.id, { title: "Live CRDT title" });
+    editCrdtNote(current, { title: "Live CRDT title" });
 
     expect(
       preserveCrdtContent(note({
@@ -901,6 +901,23 @@ describe("CRDT collaboration", () => {
     ).toMatchObject({
       title: "Live CRDT title",
       updatedAt: "2026-07-14T00:00:00.000Z",
+      version: 2
+    });
+  });
+
+  it("does not let an older CRDT title replace newer metadata", async () => {
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      subscribe: vi.fn()
+    });
+    const current = note();
+    openCrdtNote(current, vi.fn());
+    await finishCrdtSync(current.id, 1, false);
+    editCrdtNote(current.id, { title: "Untitled note" });
+
+    expect(preserveCrdtContent(note({ title: "Delayed note", version: 2 }))).toMatchObject({
+      title: "Delayed note",
       version: 2
     });
   });
