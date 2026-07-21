@@ -354,6 +354,62 @@ describe("useSectionData", () => {
       });
     });
   });
+
+  it("retains stable ordered section blocks for legacy encrypted content after migration", async () => {
+    const current = installNote({
+      legacyContentAvailable: true,
+      legacyBodyLoaded: false,
+      rootSectionId: null
+    });
+    mocks.getCrdtSectionOrder.mockReturnValue(["section-1", "section-2"]);
+    mocks.waitForCrdtSectionReady.mockResolvedValue(undefined);
+
+    renderHook(() => useSectionData(current));
+
+    await waitFor(() => {
+      expect(mocks.migrateLegacyNote).toHaveBeenCalled();
+    });
+    await act(async () => {
+      useAppStore.getState().setSectionIndex(current.id, {
+        noteId: current.id,
+        status: "ready",
+        orderedSectionIds: ["section-1", "section-2"],
+        sections: sections(2)
+      });
+    });
+    const index = useAppStore.getState().sectionIndexes[current.id];
+    expect(index?.orderedSectionIds).toEqual(["section-1", "section-2"]);
+  });
+
+  it("handles empty section index without exposing navigation", async () => {
+    const current = installNote();
+    useAppStore.getState().setSectionIndex(current.id, {
+      noteId: current.id,
+      status: "ready",
+      orderedSectionIds: [],
+      sections: []
+    });
+    const index = useAppStore.getState().sectionIndexes[current.id];
+    expect(index?.orderedSectionIds).toEqual([]);
+    expect(useAppStore.getState().selectedSectionByNote[current.id]).toBeUndefined();
+  });
+
+  it("preserves ordered multi-section content as a stable ordered list", async () => {
+    const current = installNote();
+    const expected = sectionIds(3);
+    mocks.getCrdtSectionOrder.mockReturnValue(expected);
+    mocks.listNoteSections.mockResolvedValue({ sections: sections(3) });
+
+    renderHook(() => useSectionData(current));
+
+    await waitFor(() => {
+      const index = useAppStore.getState().sectionIndexes[current.id];
+      expect(index?.orderedSectionIds).toHaveLength(3);
+    });
+    const index = useAppStore.getState().sectionIndexes[current.id];
+    expect(index?.orderedSectionIds).toEqual(expected);
+    expect(index?.sections).toHaveLength(3);
+  });
 });
 
 function installNote(overrides: Partial<DecryptedNote> = {}): DecryptedNote {

@@ -499,6 +499,34 @@ textarea {
   padding: 18px;
 }
 
+.editor-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.editor-title-input {
+  flex: 1;
+  font-size: 1.25rem;
+  font-weight: 700;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--text);
+}
+
+.editor-title-input:focus-visible {
+  outline: 3px solid var(--brand-strong);
+  outline-offset: 2px;
+}
+
+.editor-save-status {
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .editor-history-controls {
   justify-content: flex-end;
 }

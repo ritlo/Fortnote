@@ -25,23 +25,13 @@ import {
   isAttachmentMimeCompatible
 } from "../lib/attachmentMedia";
 import type { DecryptedNote, NotesView } from "../store/appStore";
-import { sectionRuntimeKey, useAppStore } from "../store/appStore";
-import { AttachmentPanel } from "./AttachmentPanel";
-import { SharingPanel } from "./SharingPanel";
-import { SectionNavigator } from "./SectionNavigator";
-import type { SectionActions } from "../hooks/useSectionActions";
+import { useAppStore } from "../store/appStore";
 
 interface NoteEditorProps {
-  canDeleteAttachments: boolean;
   folders: FolderSummary[];
   notesView: NotesView;
-  selectedAttachments: AttachmentSummary[];
   selectedNote: DecryptedNote | null;
-  sectionActions?: SectionActions;
-  downloadSelectedAttachment: (attachment: AttachmentSummary) => Promise<void>;
-  removeSelectedAttachment: (attachmentId: string) => Promise<void>;
   resolveAttachmentUrl: (url: string) => Promise<string>;
-  retrySectionLoad?: (() => void) | undefined;
   updateSelectedNote: (
     patch: Partial<Pick<DecryptedNote, "folderId" | "title">>
   ) => void;
@@ -159,7 +149,6 @@ function restoreDevelopmentUndoManager(editor: BlockNoteEditor<BlockSchema>): vo
   if (!undoManager || !doc) {
     return;
   }
-  // BlockNote 0.51/y-prosemirror 1.3 destroys this manager during StrictMode replay.
   undoManager.trackedOrigins.add(undoManager);
   doc.on("afterTransaction", undoManager.afterTransactionHandler);
 }
@@ -235,46 +224,19 @@ export function FortnoteFilePanel({ blockId }: FilePanelProps) {
 }
 
 export function NoteEditor({
-  canDeleteAttachments,
   folders,
   notesView,
-  selectedAttachments,
   selectedNote,
-  sectionActions,
-  downloadSelectedAttachment,
-  removeSelectedAttachment,
-  resolveAttachmentUrl,
-  retrySectionLoad,
   updateSelectedNote,
+  resolveAttachmentUrl,
   uploadSelectedAttachment
 }: NoteEditorProps) {
   const canEdit =
     selectedNote?.role !== undefined &&
     selectedNote.role !== "viewer" &&
     notesView !== "trash";
-  const canMove = selectedNote?.role === "owner" && notesView !== "trash";
-  const setLocalPresenceState = useAppStore((state) => state.setLocalPresenceState);
-  const selectedSectionId = useAppStore((state) =>
-    state.selectedSectionByNote[selectedNote?.id ?? ""] ?? null
-  );
-  const selectedSection = useAppStore((state) =>
-    selectedNote && selectedSectionId
-      ? state.loadedSections[sectionRuntimeKey(selectedNote.id, selectedSectionId)]
-      : undefined
-  );
-  const sectionIndex = useAppStore((state) =>
-    selectedNote ? state.sectionIndexes[selectedNote.id] : undefined
-  );
-
-  function markEditing() {
-    if (canEdit) {
-      setLocalPresenceState("editing");
-    }
-  }
-
-  function markIdle() {
-    setLocalPresenceState("idle");
-  }
+  const realtimeStatus = useAppStore((state) => state.realtimeStatus);
+  const status = useAppStore((state) => state.status);
 
   if (!selectedNote) {
     return (
@@ -285,149 +247,43 @@ export function NoteEditor({
     );
   }
 
+  const saveLabel = status === "Ready" || status === "Note encrypted and saved"
+    ? "Saved and synchronized"
+    : status === "Note shared"
+      ? "Saved and synchronized"
+      : status === "Save conflict"
+        ? "Changes need review"
+        : status === "Save failed"
+          ? "Save failed"
+          : realtimeStatus === "disconnected"
+            ? "Offline — changes kept on this device"
+            : "Saving…";
+
   return (
     <div className="editor-column">
-      <FileText size={20} />
-      <label>
-        Folder
-        <select
-          value={selectedNote.folderId ?? ""}
-          disabled={!canMove}
-          onChange={(event) => {
-            updateSelectedNote({ folderId: event.target.value || null });
-          }}
-        >
-          <option value="">All notes</option>
-          {folders.map((folder) => (
-            <option key={folder.id} value={folder.id}>
-              {folder.parentFolderId ? "  " : ""}
-              {folder.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Title
+      <div className="editor-title-row">
+        <label className="visually-hidden" htmlFor="note-title-input">Title</label>
         <input
+          id="note-title-input"
+          className="editor-title-input"
           value={selectedNote.title}
           disabled={!canEdit}
-          onBlur={markIdle}
           onChange={(event) => {
-            markEditing();
-            const title = event.target.value;
-            updateSelectedNote({ title });
+            updateSelectedNote({ title: event.target.value });
           }}
-          onFocus={markEditing}
         />
-      </label>
-      {selectedNote.rootSectionId && !selectedNote.legacyContentAvailable ? (
-        <SectionNavigator
-          canEdit={canEdit}
-          noteId={selectedNote.id}
-          {...(sectionActions
-            ? {
-                onCopy: (sectionId: string) => {
-                  void sectionActions.copySectionToNext(sectionId);
-                },
-                onCreate: () => {
-                  void sectionActions.createSection();
-                },
-                onDelete: (sectionId: string) => {
-                  void sectionActions.deleteSection(sectionId);
-                },
-                onMerge: (sectionId: string) => {
-                  void sectionActions.mergeSectionWithNext(sectionId);
-                },
-                onMove: (sectionId: string, direction: -1 | 1) => {
-                  void sectionActions.moveSection(sectionId, direction);
-                },
-                onSplit: (sectionId: string) => {
-                  void sectionActions.splitSection(sectionId);
-                }
-              }
-            : {})}
-          onRetry={retrySectionLoad}
-        />
-      ) : null}
-      <div className="block-editor" onBlurCapture={markIdle} onFocusCapture={markEditing}>
-        {selectedNote.legacyContentAvailable && !selectedNote.legacyBodyLoaded ? (
-          sectionIndex?.status === "error" ? (
-            <div role="alert" className="section-loading-status">
-              {sectionIndex.error ?? "Legacy encrypted note could not open"}
-              <button type="button" disabled={!retrySectionLoad} onClick={retrySectionLoad}>
-                Retry
-              </button>
-            </div>
-          ) : (
-            <div aria-live="polite" className="section-loading-status">
-              Migrating encrypted note…
-            </div>
-          )
-        ) : notesView === "trash" ? (
-          selectedNote.legacyContentAvailable ? (
-            <CollaborativeBlockNoteField
-              key={`${selectedNote.id}:root:${String(selectedNote.keyEpoch)}:trash`}
-              canEdit={false}
-              resolveAttachmentUrl={resolveAttachmentUrl}
-              selectedNote={selectedNote}
-              sectionId="root"
-              uploadSelectedAttachment={uploadSelectedAttachment}
-            />
-          ) : (
-            <div className="section-loading-status">
-              Restore this note to open its encrypted sections.
-            </div>
-          )
-        ) : selectedNote.legacyContentAvailable || !selectedNote.rootSectionId ? (
-          <CollaborativeBlockNoteField
-            key={`${selectedNote.id}:root:${String(selectedNote.keyEpoch)}:${canEdit ? "edit" : "view"}`}
-            canEdit={canEdit}
-            resolveAttachmentUrl={resolveAttachmentUrl}
-            selectedNote={selectedNote}
-            sectionId="root"
-            uploadSelectedAttachment={uploadSelectedAttachment}
-          />
-        ) : !selectedSectionId || selectedSection?.status === "loading" ? (
-          <div aria-live="polite" className="section-loading-status">
-            Loading section…
-          </div>
-        ) : selectedSection?.status === "error" ? (
-          <div role="alert" className="section-loading-status">
-            {selectedSection.error ?? "Encrypted section could not load"}
-          </div>
-        ) : selectedSection?.status === "ready" ? (
-          <CollaborativeBlockNoteField
-            key={`${selectedNote.id}:${selectedSectionId}:${String(selectedNote.keyEpoch)}:${canEdit ? "edit" : "view"}`}
-            canEdit={canEdit}
-            resolveAttachmentUrl={resolveAttachmentUrl}
-            selectedNote={selectedNote}
-            sectionId={selectedSectionId}
-            uploadSelectedAttachment={uploadSelectedAttachment}
-          />
-        ) : (
-          <div aria-live="polite" className="section-loading-status">
-            Opening encrypted note…
-          </div>
-        )}
+        <span className="editor-save-status" aria-live="polite">{saveLabel}</span>
       </div>
-      <label>
-        Attach encrypted file
-        <input
-          type="file"
-          disabled={!canEdit}
-          onChange={(event) => {
-            void uploadSelectedAttachment(event.target.files?.[0]);
-            event.target.value = "";
-          }}
+      <div className="block-editor">
+        <CollaborativeBlockNoteField
+          key={`${selectedNote.id}:root:${String(selectedNote.keyEpoch)}:${canEdit ? "edit" : "view"}`}
+          canEdit={canEdit}
+          resolveAttachmentUrl={resolveAttachmentUrl}
+          selectedNote={selectedNote}
+          sectionId="root"
+          uploadSelectedAttachment={uploadSelectedAttachment}
         />
-      </label>
-      <AttachmentPanel
-        canDeleteAttachments={canDeleteAttachments}
-        downloadSelectedAttachment={downloadSelectedAttachment}
-        removeSelectedAttachment={removeSelectedAttachment}
-        selectedAttachments={selectedAttachments}
-      />
-      <SharingPanel selectedNote={selectedNote} disabled={notesView === "trash"} />
+      </div>
     </div>
   );
 }

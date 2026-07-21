@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { AttachmentSummary, FolderSummary, User } from "../api";
 import type { DecryptedNote, NotesView } from "../store/appStore";
 import type { SectionActions } from "../hooks/useSectionActions";
@@ -5,7 +6,8 @@ import { EditorHeader } from "./EditorHeader";
 import { NoteEditor } from "./NoteEditor";
 import { SettingsPanel } from "./SettingsPanel";
 import type { CollaborationState } from "../lib/collaborationState";
-import { RecoveryPanel, type RecoveryCallbacks } from "./RecoveryPanel";
+import { type RecoveryCallbacks } from "./RecoveryPanel";
+import { RecoveryDialog } from "./RecoveryDialog";
 
 interface EditorPaneProps {
   collaborationState: CollaborationState;
@@ -15,18 +17,13 @@ interface EditorPaneProps {
   newPassword: string;
   notesView: NotesView;
   recoverySecret: string | null;
-  retrySectionLoad?: (() => void) | undefined;
-  selectedAttachments: AttachmentSummary[];
   selectedNote: DecryptedNote | null;
-  sectionActions: SectionActions;
   user: User;
   changePassword: () => Promise<void>;
   cleanupSharingKeys: () => Promise<void>;
   deleteSelectedForever: () => Promise<void>;
-  downloadSelectedAttachment: (attachment: AttachmentSummary) => Promise<void>;
   lockVault: () => void;
   moveSelectedToTrash: () => Promise<void>;
-  removeSelectedAttachment: (attachmentId: string) => Promise<void>;
   resolveAttachmentUrl: (url: string) => Promise<string>;
   restoreSelectedNote: () => Promise<void>;
   rotateRecoveryKey: () => Promise<void>;
@@ -46,18 +43,13 @@ export function EditorPane({
   newPassword,
   notesView,
   recoverySecret,
-  retrySectionLoad,
-  selectedAttachments,
   selectedNote,
-  sectionActions,
   user,
   changePassword,
   cleanupSharingKeys,
   deleteSelectedForever,
-  downloadSelectedAttachment,
   lockVault,
   moveSelectedToTrash,
-  removeSelectedAttachment,
   resolveAttachmentUrl,
   restoreSelectedNote,
   rotateRecoveryKey,
@@ -66,10 +58,7 @@ export function EditorPane({
   updateSelectedNote,
   uploadSelectedAttachment
 }: EditorPaneProps) {
-  const canDeleteAttachments =
-    selectedNote?.role !== undefined &&
-    selectedNote.role !== "viewer" &&
-    notesView !== "trash";
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
 
   return (
     <section className="editor-pane">
@@ -80,11 +69,19 @@ export function EditorPane({
         lockVault={lockVault}
         moveSelectedToTrash={moveSelectedToTrash}
         notesView={notesView}
+        recoveryCallbacks={recoveryCallbacks}
+        recoveryOpen={recoveryOpen}
         restoreSelectedNote={restoreSelectedNote}
         selectedNote={selectedNote}
+        setRecoveryOpen={setRecoveryOpen}
         user={user}
       />
-      <RecoveryPanel state={collaborationState} callbacks={recoveryCallbacks} />
+      <RecoveryDialog
+        state={collaborationState}
+        callbacks={recoveryCallbacks}
+        open={recoveryOpen}
+        onClose={() => { setRecoveryOpen(false); }}
+      />
       {notesView === "settings" ? (
         <SettingsPanel
           changePassword={changePassword}
@@ -97,16 +94,10 @@ export function EditorPane({
         />
       ) : (
         <NoteEditor
-          canDeleteAttachments={canDeleteAttachments}
-          downloadSelectedAttachment={downloadSelectedAttachment}
           folders={folders}
           notesView={notesView}
-          removeSelectedAttachment={removeSelectedAttachment}
           resolveAttachmentUrl={resolveAttachmentUrl}
-          retrySectionLoad={retrySectionLoad}
-          selectedAttachments={selectedAttachments}
           selectedNote={selectedNote}
-          sectionActions={sectionActions}
           updateSelectedNote={updateSelectedNote}
           uploadSelectedAttachment={uploadSelectedAttachment}
         />

@@ -3,7 +3,9 @@ import { useEffect, useState } from "react";
 import type { DecryptedNote, NotesView } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
 import type { CollaborationState } from "../lib/collaborationState";
+import { AlertTriangle } from "lucide-react";
 import { CollaborationStatus } from "./CollaborationStatus";
+import type { RecoveryCallbacks } from "./RecoveryPanel";
 
 interface EditorHeaderProps {
   collaborationState?: CollaborationState;
@@ -14,7 +16,10 @@ interface EditorHeaderProps {
   deleteSelectedForever: () => Promise<void>;
   lockVault: () => void;
   moveSelectedToTrash: () => Promise<void>;
+  recoveryCallbacks?: RecoveryCallbacks;
+  recoveryOpen?: boolean;
   restoreSelectedNote: () => Promise<void>;
+  setRecoveryOpen?: (open: boolean) => void;
 }
 
 export function EditorHeader({
@@ -26,7 +31,10 @@ export function EditorHeader({
   deleteSelectedForever,
   lockVault,
   moveSelectedToTrash,
-  restoreSelectedNote
+  recoveryCallbacks: _recoveryCallbacks,
+  recoveryOpen: _recoveryOpen,
+  restoreSelectedNote,
+  setRecoveryOpen
 }: EditorHeaderProps) {
   const canDelete = selectedNote?.role === "owner";
   const presenceByNote = useAppStore((state) => state.presenceByNote);
@@ -37,6 +45,7 @@ export function EditorHeader({
     : [];
   const presenceSummary = formatPresenceSummary(presence);
   const [now, setNow] = useState(Date.now());
+  const hasRecoveryActions = (collaborationState?.actions.length ?? 0) > 0;
 
   useEffect(() => {
     if (!selectedNote || presence.length > 0 || notesView === "settings") {
@@ -63,16 +72,20 @@ export function EditorHeader({
             ? "Vault settings"
             : selectedNote?.title ?? "No note selected"}
         </h2>
-        <p>
-          {user.username} ·{" "}
-          {keyMaterialVersion
-            ? `key material v${String(keyMaterialVersion)}`
-            : "root key in memory only"}
-        </p>
         {presenceSummary ? <p className="presence-summary">{presenceSummary}</p> : null}
         {lastSaved ? <p className="last-saved">{lastSaved}</p> : null}
         {collaborationState ? <CollaborationStatus state={collaborationState} /> : null}
       </div>
+      {hasRecoveryActions && notesView !== "settings" ? (
+        <button
+          className="text-button"
+          type="button"
+          onClick={() => { setRecoveryOpen?.(true); }}
+          aria-label="Open recovery actions"
+        >
+          <AlertTriangle size={16} /> Recovery
+        </button>
+      ) : null}
       {notesView === "settings" ? (
         <div className="action-row">
           <button

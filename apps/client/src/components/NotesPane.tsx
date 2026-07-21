@@ -129,22 +129,20 @@ export function NotesPane({
                   <span>{String(note.contentLength)} encrypted bytes</span>
                 </button>
                 {noteMatches.length > 0 ? (
-                  <ul className="search-match-list" aria-label={`Section matches in ${note.title}`}>
+                  <ul className="search-match-list" aria-label={`Matches in ${note.title}`}>
                     {noteMatches.map((match, position) => (
                       <li key={`${match.sectionId}:${match.blockId}`}>
                         <button
                           className="search-match"
                           type="button"
-                          data-section-target={match.sectionId}
-                          aria-label={`Open matching section ${String(position + 1)} of ${String(
+                          aria-label={`Search result ${String(position + 1)} of ${String(
                             noteMatches.length
-                          )} in ${note.title}: ${match.excerpt || "Matching encrypted section"}`}
+                          )} in ${note.title}: ${match.excerpt || "Matching content"}`}
                           onClick={() => {
                             selectSearchMatch(match);
                           }}
                         >
-                          <span>Open matching section</span>
-                          <small>{match.excerpt || "Matching encrypted section"}</small>
+                          <span>{match.excerpt || "Matching content"}</span>
                         </button>
                       </li>
                     ))}

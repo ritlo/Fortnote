@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PresenceUser } from "../api";
 import type { DecryptedNote } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
+import type { CollaborationAction } from "../lib/collaborationState";
 import { EditorHeader, formatLastSaved, formatPresenceSummary } from "./EditorHeader";
 
 afterEach(() => {
@@ -79,11 +80,51 @@ describe("EditorHeader role affordances", () => {
   });
 });
 
+describe("EditorHeader recovery trigger", () => {
+  it("shows recovery button when collaboration state has actions", () => {
+    const collaborationState = {
+      actions: ["retry" as CollaborationAction],
+      announcement: "assertive" as const,
+      draftRetained: false,
+      editing: false,
+      id: "error",
+      label: "Error",
+      saved: false,
+      synchronized: false
+    };
+    renderHeader({ collaborationState });
+    expect(screen.getByRole("button", { name: "Open recovery actions" })).toBeTruthy();
+  });
+
+  it("does not show recovery button when no actions exist", () => {
+    const collaborationState = {
+      actions: [],
+      announcement: "none" as const,
+      draftRetained: false,
+      editing: false,
+      id: "saved",
+      label: "Saved and synchronized",
+      saved: true,
+      synchronized: true
+    };
+    renderHeader({ collaborationState });
+    expect(screen.queryByRole("button", { name: "Open recovery actions" })).toBeNull();
+  });
+});
+
+describe("EditorHeader simplified display", () => {
+  it("does not show key material version text", () => {
+    renderHeader();
+    expect(screen.queryByText(/key material/)).toBeNull();
+    expect(screen.queryByText(/root key in memory/)).toBeNull();
+  });
+});
+
 function renderHeader(overrides: Partial<Parameters<typeof EditorHeader>[0]> = {}) {
   return render(
     createElement(EditorHeader, {
       deleteSelectedForever: vi.fn(),
-      keyMaterialVersion: 1,
+      keyMaterialVersion: null,
       lockVault: vi.fn(),
       moveSelectedToTrash: vi.fn(),
       notesView: "notes",

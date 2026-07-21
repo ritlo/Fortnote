@@ -251,7 +251,6 @@ describe("protected note search", () => {
       result.current.selectSearchMatch(match);
     });
     expect(useAppStore.getState().selectedNoteId).toBe("note_1");
-    expect(useAppStore.getState().selectedSectionByNote.note_1).toBe("section-a");
   });
 
   it("extracts stable block IDs and text without duplicating nested blocks", () => {
@@ -368,6 +367,45 @@ describe("capacity state", () => {
       saved: false,
       synchronized: false
     });
+  });
+});
+
+describe("ordered content regression fixtures", () => {
+  it("retains stable selected note with encrypted multi-section content", () => {
+    useAppStore.setState({
+      notes: [note({ id: "note_1" }), note({ id: "note_2" })],
+      notesView: "notes",
+      selectedNoteId: "note_1"
+    });
+    const { result } = renderHook(() => useNoteViewModel());
+    expect(result.current.selectedNote?.id).toBe("note_1");
+    expect(result.current.selectedNote?.contentLength).toBe(0);
+  });
+
+  it("preserves empty note state without section exposure", () => {
+    useAppStore.setState({
+      notes: [],
+      notesView: "notes",
+      selectedNoteId: null
+    });
+    const { result } = renderHook(() => useNoteViewModel());
+    expect(result.current.selectedNote).toBeNull();
+    expect(result.current.filteredNotes).toEqual([]);
+  });
+
+  it("keeps legacy content flag visible in the view model", () => {
+    useAppStore.setState({
+      notes: [note({
+        legacyContentAvailable: true,
+        legacyBodyLoaded: true,
+        rootSectionId: null
+      })],
+      notesView: "notes",
+      selectedNoteId: "note_1"
+    });
+    const { result } = renderHook(() => useNoteViewModel());
+    expect(result.current.selectedNote?.legacyContentAvailable).toBe(true);
+    expect(result.current.selectedNote?.legacyBodyLoaded).toBe(true);
   });
 });
 

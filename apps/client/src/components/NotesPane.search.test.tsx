@@ -55,7 +55,7 @@ describe("NotesPane protected search", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Retry indexing" }));
     fireEvent.click(screen.getByRole("button", {
-      name: /Open matching section.*Needle in encrypted section/u
+      name: /Search result 1 of 1.*Needle in encrypted section/u
     }));
     expect(retrySearchIndex).toHaveBeenCalledOnce();
     expect(selectSearchMatch).toHaveBeenCalledWith(match);

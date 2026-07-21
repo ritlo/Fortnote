@@ -86,7 +86,6 @@ export function AppShell() {
         changePassword={authActions.changePassword}
         cleanupSharingKeys={authActions.cleanupSharingKeys}
         deleteSelectedForever={noteActions.deleteSelectedForever}
-        downloadSelectedAttachment={attachmentActions.downloadSelectedAttachment}
         folders={folders}
         keyMaterialVersion={keyMaterialVersion}
         lockVault={authActions.lockVault}
@@ -95,15 +94,11 @@ export function AppShell() {
         notesView={notesView}
         recoveryCallbacks={recoveryCallbacks}
         recoverySecret={recoverySecret}
-        removeSelectedAttachment={attachmentActions.removeSelectedAttachment}
         resolveAttachmentUrl={attachmentActions.resolveAttachmentUrl}
-        retrySectionLoad={sectionData.retry}
         restoreSelectedNote={noteActions.restoreSelectedNote}
         rotateRecoveryKey={authActions.rotateRecoveryKey}
         rotateSharingKey={authActions.rotateSharingKey}
-        selectedAttachments={noteView.selectedAttachments}
         selectedNote={noteView.selectedNote}
-        sectionActions={sectionActions}
         setNewPassword={setNewPassword}
         updateSelectedNote={noteActions.updateSelectedNote}
         uploadSelectedAttachment={attachmentActions.uploadSelectedAttachment}

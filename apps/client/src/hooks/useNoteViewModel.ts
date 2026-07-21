@@ -358,7 +358,6 @@ export function useNoteViewModel() {
   }, []);
   const selectSearchMatch = useCallback((match: SearchMatch) => {
     const state = useAppStore.getState();
-    state.setSelectedSection(match.noteId, match.sectionId);
     state.setSelectedNoteId(match.noteId);
   }, []);
 
