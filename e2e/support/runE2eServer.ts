@@ -12,6 +12,9 @@ const serverEnvironment = {
   COOKIE_SECURE: process.env.COOKIE_SECURE ?? "false",
   DATABASE_PATH: process.env.DATABASE_PATH ?? "data/e2e.sqlite",
   DATA_DIR: process.env.DATA_DIR ?? "data/e2e-attachments",
+  AUTH_IP_RATE_LIMIT_MAX_ATTEMPTS: process.env.AUTH_IP_RATE_LIMIT_MAX_ATTEMPTS ?? "1000",
+  AUTH_ACCOUNT_RATE_LIMIT_MAX_ATTEMPTS:
+    process.env.AUTH_ACCOUNT_RATE_LIMIT_MAX_ATTEMPTS ?? "1000",
   PORT: process.env.API_PORT ?? process.env.PORT ?? "3001"
 };
 const serverHealthUrl = `http://127.0.0.1:${serverEnvironment.PORT}/api/health`;

@@ -225,12 +225,12 @@ export function createAuthRouter(context: AppContext): Router {
   const router = Router();
   const preAuthIpRateLimit = createRateLimiter({
     key: (request) => request.ip ?? "unknown",
-    maxAttempts: 60,
+    maxAttempts: context.config.authIpRateLimitMaxAttempts,
     windowMs: 5 * 60 * 1000
   });
   const preAuthAccountRateLimit = createRateLimiter({
     key: accountRateLimitKey,
-    maxAttempts: 20,
+    maxAttempts: context.config.authAccountRateLimitMaxAttempts,
     windowMs: 5 * 60 * 1000
   });
   const preAuthRateLimits = [preAuthIpRateLimit, preAuthAccountRateLimit];

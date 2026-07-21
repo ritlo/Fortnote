@@ -15,6 +15,8 @@ export interface ServerConfig {
   contentUploadExpiryMs: number;
   sessionIdleTimeoutMs: number;
   sessionAbsoluteTimeoutMs: number;
+  authIpRateLimitMaxAttempts: number;
+  authAccountRateLimitMaxAttempts: number;
   historyPageMaxItems: number;
   historyPageMaxBytes: number;
 }
@@ -44,6 +46,16 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       env,
       "SESSION_ABSOLUTE_TIMEOUT_MS",
       24 * HOUR_MS
+    ),
+    authIpRateLimitMaxAttempts: positiveInteger(
+      env,
+      "AUTH_IP_RATE_LIMIT_MAX_ATTEMPTS",
+      60
+    ),
+    authAccountRateLimitMaxAttempts: positiveInteger(
+      env,
+      "AUTH_ACCOUNT_RATE_LIMIT_MAX_ATTEMPTS",
+      20
     ),
     historyPageMaxItems: positiveInteger(env, "HISTORY_PAGE_MAX_ITEMS", 128),
     historyPageMaxBytes: positiveInteger(env, "HISTORY_PAGE_MAX_BYTES", 4 * MIB)
