@@ -21,11 +21,13 @@ import {
   releaseCrdtSection,
   replaceCrdtSectionOrder,
   requiresContentTransfer,
+  retryCrdtSection,
   seedLegacyCrdtSection,
   setCrdtTransport,
   snapshotReadyCrdtSection,
   subscribeCrdtSectionChanges,
   waitForCrdtSectionDurable,
+  type ReceivedBinaryCrdtMessage,
   type ScopedEncryptedCrdtMessage
 } from "./crdt";
 
@@ -941,6 +943,40 @@ describe("CRDT collaboration", () => {
     vi.mocked(decryptCrdtMessage).mockResolvedValueOnce(Y.encodeStateAsUpdate(new Y.Doc()));
     await receiveCrdtUpdate(corrupt);
     await expect(finishCrdtSync(current.id, 1, true)).resolves.toBeUndefined();
+  });
+
+  it("rewinds a failed history sequence before retrying a section", async () => {
+    const current = note();
+    const subscribe = vi.fn();
+    setCrdtTransport({ discard: vi.fn(), send: vi.fn(), subscribe });
+    openCrdtSection(current, "root");
+    await finishCrdtSync(current.id, current.keyEpoch, false, "root");
+    vi.mocked(decryptCrdtMessage).mockRejectedValueOnce(new Error("bad cipher"));
+
+    const corrupt: ReceivedBinaryCrdtMessage = {
+      type: "crdt-binary",
+      formatVersion: 2,
+      kind: "update",
+      updateId: crypto.randomUUID(),
+      noteId: current.id,
+      sectionId: "root",
+      cryptoOwnerId: current.cryptoOwnerId,
+      expectedKeyEpoch: current.keyEpoch,
+      nonce: "nonce",
+      cipherLength: 1,
+      serverSequence: 5,
+      cipher: Uint8Array.of(1)
+    };
+    await expect(receiveCrdtUpdate(corrupt)).rejects.toThrow("bad cipher");
+
+    subscribe.mockClear();
+    expect(retryCrdtSection(current.id, "root", current.keyEpoch)).toBe(4);
+
+    expect(subscribe).toHaveBeenCalledWith(current.id, "root", current.keyEpoch, 4);
+    expect(getCrdtProvider(current.id, current.keyEpoch, "root").isSynced).toBe(false);
+    await expect(ensureCrdtHistoryReadable(current.id, "root")).rejects.toThrow(
+      "synchronizing"
+    );
   });
 
   it("blocks key rotation checkpoints while history is undecryptable", async () => {

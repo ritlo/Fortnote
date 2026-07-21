@@ -231,22 +231,19 @@ export function retryCrdtSection(
   noteId: string,
   sectionId: string,
   keyEpoch: number
-): void {
+): number | null {
   const binding = bindings.get(bindingKey(noteId, sectionId));
   if (
     binding?.keyEpoch !== keyEpoch ||
     binding.failedUpdateIds.size === 0
   ) {
-    return;
+    return null;
   }
   const failedSequences = [...binding.failedUpdateIds]
     .map((updateId) => binding.receivedServerSequences.get(updateId))
     .filter((sequence): sequence is number => sequence !== undefined);
   if (failedSequences.length > 0) {
-    binding.observedServerSequence = Math.min(
-      binding.observedServerSequence,
-      Math.max(0, Math.min(...failedSequences) - 1)
-    );
+    binding.observedServerSequence = Math.max(0, Math.min(...failedSequences) - 1);
   }
   for (const updateId of binding.failedUpdateIds) {
     binding.pendingUpdateIds.delete(updateId);
@@ -259,6 +256,7 @@ export function retryCrdtSection(
   if (note) {
     transport?.subscribe(note.id, sectionId, keyEpoch, binding.observedServerSequence);
   }
+  return binding.observedServerSequence;
 }
 
 export function seedLegacyCrdtSection(
