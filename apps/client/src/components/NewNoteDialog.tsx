@@ -23,7 +23,7 @@ export function NewNoteDialog({ folders, open, onClose, onCreate }: NewNoteDialo
     }
   }, [open]);
 
-  async function handleSubmit(event: React.FormEvent) {
+  async function handleSubmit(event: React.SyntheticEvent) {
     event.preventDefault();
     setSubmitting(true);
     try {
@@ -46,13 +46,13 @@ export function NewNoteDialog({ folders, open, onClose, onCreate }: NewNoteDialo
       aria-labelledby="new-note-dialog-title"
       onClose={handleClose}
     >
-      <form method="dialog" onSubmit={handleSubmit}>
+      <form method="dialog" onSubmit={(e) => { void handleSubmit(e); }}>
         <h3 id="new-note-dialog-title">New note</h3>
         <label>
           Folder
           <select
             value={selectedFolderId}
-            onChange={(e) => setSelectedFolderId(e.target.value)}
+            onChange={(e) => { setSelectedFolderId(e.target.value); }}
             disabled={submitting}
           >
             <option value="">No folder</option>

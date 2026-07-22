@@ -636,7 +636,7 @@ describe("moveNoteToFolder", () => {
     act(() => {
       result.current.moveNoteToFolder("note_2", "folder-2");
     });
-    act(() => vi.advanceTimersByTime(500));
+    act(() => { vi.advanceTimersByTime(500); });
 
     expect(mocks.updateNote).not.toHaveBeenCalled();
   });

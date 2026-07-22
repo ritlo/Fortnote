@@ -27,7 +27,7 @@ describe("SharingDialog", () => {
     expect(screen.getByText("Share note")).toBeTruthy();
   });
 
-  it("calls onClose when close button clicked", async () => {
+  it("calls onClose when close button clicked", () => {
     const onClose = vi.fn();
     render(<SharingDialog selectedNote={note()} open={true} onClose={onClose} />);
     fireEvent.click(screen.getByRole("button", { name: "Close sharing dialog" }));

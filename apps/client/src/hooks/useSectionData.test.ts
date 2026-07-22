@@ -369,7 +369,7 @@ describe("useSectionData", () => {
     await waitFor(() => {
       expect(mocks.migrateLegacyNote).toHaveBeenCalled();
     });
-    await act(async () => {
+    act(() => {
       useAppStore.getState().setSectionIndex(current.id, {
         noteId: current.id,
         status: "ready",
@@ -381,7 +381,7 @@ describe("useSectionData", () => {
     expect(index?.orderedSectionIds).toEqual(["section-1", "section-2"]);
   });
 
-  it("handles empty section index without exposing navigation", async () => {
+  it("handles empty section index without exposing navigation", () => {
     const current = installNote();
     useAppStore.getState().setSectionIndex(current.id, {
       noteId: current.id,

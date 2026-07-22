@@ -201,7 +201,7 @@ export function useNoteViewModel() {
     const userId = user.id;
     const vaultRootKey = rootKey;
 
-    void (async () => {
+    const searchTask = (async () => {
       setSearchSession(null);
       setSearchCoverage(null);
       setSearchIndexError(null);
@@ -250,7 +250,8 @@ export function useNoteViewModel() {
         );
       }
       setSearchIndexStatus("ready");
-    })().catch((error: unknown) => {
+    })();
+    void searchTask.catch((error: unknown) => {
       if (
         controller.signal.aborted ||
         !useAppStore.getState().isCurrentRequest(requestScope, requestToken)
@@ -265,7 +266,10 @@ export function useNoteViewModel() {
     return () => {
       controller.abort();
       useAppStore.getState().finishRequest(requestScope, requestToken);
-      database?.close();
+      void searchTask.then(
+        () => { database?.close(); },
+        () => { database?.close(); }
+      );
     };
   }, [normalizedSearch, rootKey, searchRetryVersion, searchableNotesSignature, user]);
 

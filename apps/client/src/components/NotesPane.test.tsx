@@ -92,7 +92,7 @@ describe("NotesPane new note dialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "New note" }));
     fireEvent.change(screen.getByLabelText("Folder"), { target: { value: "folder-1" } });
     fireEvent.click(screen.getByText("Create"));
-    await vi.waitFor(() => expect(addNote).toHaveBeenCalledWith("folder-1"));
+    await vi.waitFor(() => { expect(addNote).toHaveBeenCalledWith("folder-1"); });
   });
 });
 
@@ -106,12 +106,12 @@ interface NotesPaneTestOverrides {
 function renderNotesPane(overrides: NotesPaneTestOverrides = {}) {
   return render(
     <NotesPane
-      addNote={overrides.addNote !== undefined ? overrides.addNote : vi.fn()}
+      addNote={overrides.addNote ?? vi.fn()}
       error={null}
-      filteredNotes={overrides.filteredNotes !== undefined ? overrides.filteredNotes : [note()]}
+      filteredNotes={overrides.filteredNotes ?? [note()]}
       folders={folders}
-      moveNoteToFolder={overrides.moveNoteToFolder !== undefined ? overrides.moveNoteToFolder : vi.fn()}
-      notesView={overrides.notesView !== undefined ? overrides.notesView : "notes"}
+      moveNoteToFolder={overrides.moveNoteToFolder ?? vi.fn()}
+      notesView={overrides.notesView ?? "notes"}
       realtimeStatus="connected"
       recoverySecret={null}
       retrySearchIndex={vi.fn()}

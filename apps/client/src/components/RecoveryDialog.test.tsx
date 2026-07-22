@@ -6,14 +6,12 @@ import { deriveCollaborationState, defaultCollaborationDimensions } from "../lib
 import { RecoveryDialog } from "./RecoveryDialog";
 import type { RecoveryCallbacks } from "./RecoveryPanel";
 
-if (!HTMLDialogElement.prototype.showModal) {
-  HTMLDialogElement.prototype.showModal = function () {
-    this.open = true;
-  };
-  HTMLDialogElement.prototype.close = function () {
-    this.open = false;
-  };
-}
+HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) {
+  this.open = true;
+});
+HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
+  this.open = false;
+});
 
 afterEach(cleanup);
 

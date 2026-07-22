@@ -26,7 +26,6 @@ interface EditorHeaderProps {
 
 export function EditorHeader({
   collaborationState,
-  keyMaterialVersion,
   notesView,
   selectedNote,
   user,
@@ -34,8 +33,6 @@ export function EditorHeader({
   deleteSelectedForever,
   lockVault,
   moveSelectedToTrash,
-  recoveryCallbacks: _recoveryCallbacks,
-  recoveryOpen: _recoveryOpen,
   restoreSelectedNote,
   setRecoveryOpen,
   onShare

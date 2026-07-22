@@ -33,7 +33,7 @@ describe("NewNoteDialog", () => {
 
   it("shows no folders option as default", () => {
     render(<NewNoteDialog folders={folders} open={true} onClose={vi.fn()} onCreate={vi.fn()} />);
-    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    const select = screen.getByRole<HTMLSelectElement>("combobox");
     expect(select.value).toBe("");
   });
 
@@ -67,8 +67,8 @@ describe("NewNoteDialog", () => {
 
     fireEvent.click(screen.getByText("Create"));
     expect(screen.getByText("Creating...")).toBeTruthy();
-    expect((screen.getByRole("combobox") as HTMLSelectElement).disabled).toBe(true);
-    expect((screen.getByText("Cancel") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole<HTMLSelectElement>("combobox").disabled).toBe(true);
+    expect(screen.getByText("Cancel").getAttribute("disabled")).not.toBeNull();
     resolveCreate();
   });
 
@@ -80,7 +80,7 @@ describe("NewNoteDialog", () => {
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "folder-1" } });
     rerender(<NewNoteDialog folders={folders} open={false} onClose={onClose} onCreate={vi.fn()} />);
     rerender(<NewNoteDialog folders={folders} open={true} onClose={onClose} onCreate={vi.fn()} />);
-    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    const select = screen.getByRole<HTMLSelectElement>("combobox");
     expect(select.value).toBe("");
   });
 });

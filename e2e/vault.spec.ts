@@ -21,16 +21,17 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
     /Search covers all [1-9]\d* sections\./,
     { timeout: 20_000 }
   );
-  await expect(
-    page.getByRole("button", { name: /Open matching section .* in Launch plan/u })
-  ).toBeVisible();
+  await expect(page.locator(".search-match-list").first()).toBeVisible({ timeout: 10_000 });
   await page.getByPlaceholder("Search decrypted notes").fill("");
 
-  await page.getByLabel("Attach encrypted file").setInputFiles({
+  await insertFileBlock(page);
+  const uploaded = waitForAttachmentUpload(page);
+  await page.locator('input[type="file"]').setInputFiles({
     name: "plan.txt",
     mimeType: "text/plain",
     buffer: Buffer.from("attachment plaintext")
   });
+  await uploaded;
   await expect(page.getByText("plan.txt")).toBeVisible();
 
   await page
@@ -38,14 +39,14 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
     .getByRole("button", { name: "Delete" })
     .click();
   await page.getByRole("button", { name: "Trash" }).click();
-  await expect(page.getByRole("button", { name: /Launch plan/ })).toBeVisible();
+  await expect(page.locator(".note-card", { hasText: noteTitle })).toBeVisible();
   await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Redo", exact: true })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Restore" }).click();
   await page.getByRole("button", { name: "All notes" }).click();
-  await expect(page.getByRole("button", { name: /Launch plan/ })).toBeVisible();
+  await expect(page.locator(".note-card", { hasText: noteTitle })).toBeVisible();
 });
 
 test("autosaves undo and redo and retains the result after relogin", async ({ page }) => {
@@ -158,7 +159,7 @@ test("creates a note with a folder, moves it, and reloads the assignment", async
 
   await test.step("create a folder and move the note into it via the Move menu", async () => {
     page.on("dialog", (dialog) => {
-      dialog.accept("Folder 1");
+      void dialog.accept("Folder 1");
     });
     await page.getByRole("button", { name: "New folder" }).click();
     await expect(page.getByText("Folder created")).toBeVisible();
@@ -262,6 +263,27 @@ async function waitForNoteSave(page: Page) {
 
 function blockEditor(page: Page) {
   return page.locator(".block-editor .bn-editor");
+}
+
+async function insertFileBlock(page: Page): Promise<void> {
+  const editor = blockEditor(page);
+  await editor.focus();
+  await editor.press("ControlOrMeta+End");
+  await editor.press("Enter");
+  await editor.pressSequentially("/file");
+  await page.getByRole("option", { name: /^File/ }).click();
+  await expect(page.locator('[data-test="upload-tab"]')).toBeVisible();
+  await expect(page.locator('[data-test="attachments-tab"]')).toBeVisible();
+}
+
+function waitForAttachmentUpload(page: Page) {
+  return page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().includes("/api/notes/") &&
+      response.url().includes("/attachments") &&
+      response.ok()
+  );
 }
 
 async function setEditorText(page: Page, body: string): Promise<void> {

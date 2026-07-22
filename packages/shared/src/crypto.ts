@@ -112,7 +112,7 @@ export async function hkdfSha256(
     salt.length === 0 ? new Uint8Array(32) : salt
   );
   const output = new Uint8Array(length);
-  let previous = new Uint8Array() as Uint8Array<ArrayBufferLike>;
+  let previous = new Uint8Array() as Uint8Array;
   let offset = 0;
   for (let counter = 1; offset < length; counter += 1) {
     const message = new Uint8Array(previous.length + info.length + 1);

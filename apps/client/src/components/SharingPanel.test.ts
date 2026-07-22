@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { cleanup } from "@testing-library/react";
 import type { DecryptedNote } from "../store/appStore";
 import { useAppStore } from "../store/appStore";

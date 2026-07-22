@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, render, screen } from "@testing-library/react";
-import { StrictMode, type ComponentType, type ReactNode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { CollaborationAction } from "../lib/collaborationState";
 import type { DecryptedNote } from "../store/appStore";

@@ -29,7 +29,7 @@ export function RecoveryDialog({ state, callbacks, open, onClose }: RecoveryDial
     if (!el) return;
     const handler = () => { onClose(); };
     el.addEventListener("close", handler);
-    return () => el.removeEventListener("close", handler);
+    return () => { el.removeEventListener("close", handler); };
   }, [onClose]);
 
   if (!open && !ref.current?.open) return null;

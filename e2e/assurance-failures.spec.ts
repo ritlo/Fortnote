@@ -40,7 +40,7 @@ test("retains offline work through reconnect and ignores a delayed old-note save
     }
     await route.continue();
   });
-  await page.getByLabel("Title").fill(`${first} delayed`);
+  await page.getByRole("textbox", { name: "Title" }).fill(`${first} delayed`);
   await expect.poll(() => delayed !== null).toBe(true);
   await openNote(page, second);
   await delayed!.continue();
@@ -48,7 +48,7 @@ test("retains offline work through reconnect and ignores a delayed old-note save
     "Saved and synchronized",
     { timeout: 30_000 }
   );
-  await expect(page.getByLabel("Title")).toHaveValue(second);
+  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(second);
 });
 
 test("distinguishes local and server quota while retaining the visible draft", async ({ page }) => {
@@ -114,9 +114,9 @@ test("preserves conflict, undecryptable, stale-epoch, and terminally rejected wo
     }
     await route.continue();
   });
-  await page.getByLabel("Title").fill(`${title} conflict`);
+  await page.getByRole("textbox", { name: "Title" }).fill(`${title} conflict`);
   await expect(page.getByRole("alert")).toContainText("Changes need review");
-  await expect(page.getByLabel("Title")).toHaveValue(`${title} conflict`);
+  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(`${title} conflict`);
   await expectRecoveryActions(page, ["Review draft", "Encrypted export", "Reapply"]);
   await page.unroute("**/api/notes/*");
 
@@ -148,6 +148,7 @@ test("preserves conflict, undecryptable, stale-epoch, and terminally rejected wo
   await expect(page.getByRole("alert")).toContainText("This note cannot be decrypted");
   await expectRecoveryActions(page, ["Retry", "Repair access"]);
   await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await page.getByRole("button", { name: "Close recovery dialog" }).click();
   await expect(blockEditor(page)).toBeVisible({ timeout: 15_000 });
 
   for (const failure of [
@@ -193,7 +194,7 @@ test("keeps viewer and trash read-only, reports rotation abort, then removes rev
     await ownerPage.getByRole("button", { name: "Trash", exact: true }).click();
     await openNote(ownerPage, title);
     await expect(ownerPage.locator(".collaboration-status")).toContainText("In trash — view only");
-    await expect(ownerPage.getByLabel("Title")).toBeDisabled();
+    await expect(ownerPage.getByRole("textbox", { name: "Title" })).toBeDisabled();
     await ownerPage.getByRole("button", { name: "Restore" }).click();
     await ownerPage.getByRole("button", { name: "All notes", exact: true }).click();
     await openNote(ownerPage, title);
@@ -210,6 +211,7 @@ test("keeps viewer and trash read-only, reports rotation abort, then removes rev
     await revokeMember(ownerPage, viewer.username, false);
     await expect(ownerPage.getByRole("alert")).toContainText("Access change not completed");
     await expectRecoveryActions(ownerPage, ["Try again", "Review access"]);
+    await ownerPage.getByRole("button", { name: "Close recovery dialog" }).click();
 
     await revokeMember(ownerPage, viewer.username, true);
     await expect(viewerPage.getByRole("alert")).toContainText("You no longer have access");
@@ -238,12 +240,14 @@ async function signIn(page: Page, account: AssuranceAccount): Promise<void> {
 }
 
 async function createNote(page: Page, title: string): Promise<void> {
-  await page.getByLabel("New note").click();
-  await expect(page.getByLabel("Title")).toHaveValue("Untitled note");
+  await page.getByRole("button", { name: "New note" }).click();
+  await page.getByRole("button", { name: "Create" }).click();
+  const titleInput = page.getByRole("textbox", { name: "Title" });
+  await expect(titleInput).toHaveValue("Untitled note");
   const saved = page.waitForResponse((response) =>
     response.request().method() === "PUT" && response.url().includes("/api/notes/") && response.ok()
   );
-  await page.getByLabel("Title").fill(title);
+  await titleInput.fill(title);
   await saved;
   await waitForCrdtDurability(page);
   await expect(page.getByRole("button", { name: titlePattern(title) })).toBeVisible();
@@ -253,27 +257,39 @@ async function openNote(page: Page, title: string): Promise<void> {
   const note = page.getByRole("button", { name: titlePattern(title) });
   await expect(note).toBeVisible({ timeout: 15_000 });
   await note.click();
-  await expect(page.getByLabel("Title")).toHaveValue(title);
+  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(title);
 }
 
 async function shareNote(page: Page, username: string, role: "editor" | "viewer"): Promise<void> {
-  await page.getByLabel("Collaborator username").fill(username);
-  await page.getByLabel("Collaborator role").selectOption(role);
   await page.getByRole("button", { name: "Share note" }).click();
+  const dialog = page.getByRole("dialog", { name: "Share note" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Collaborator username").fill(username);
+  await dialog.getByLabel("Collaborator role").selectOption(role);
+  await dialog.getByRole("button", { name: "Share note" }).click();
   const trust = page.getByRole("button", { name: "Trust key" });
   await expect(trust).toBeVisible();
   await page.getByLabel("I independently verified this exact key").check();
   await trust.click();
   await expect(page.locator(".membership-list li", { hasText: username })).toContainText(role);
+  await page.getByRole("button", { name: "Close sharing dialog" }).click();
+  await expect(dialog).not.toBeVisible();
 }
 
 async function revokeMember(page: Page, username: string, success: boolean): Promise<void> {
+  const dialog = page.getByRole("dialog", { name: "Share note" });
+  if (!(await dialog.isVisible())) {
+    await page.getByRole("button", { name: "Share note" }).click();
+    await expect(dialog).toBeVisible();
+  }
   const response = page.waitForResponse((candidate) =>
     candidate.request().method() === "POST" && candidate.url().includes("/key-rotation")
   );
-  await page.locator(".membership-list li", { hasText: username })
+  await dialog.locator(".membership-list li", { hasText: username })
     .getByRole("button", { name: "Revoke" }).click();
   expect((await response).ok()).toBe(success);
+  await page.getByRole("button", { name: "Close sharing dialog" }).click();
+  await expect(dialog).not.toBeVisible();
 }
 
 async function waitForSharingKey(page: Page): Promise<void> {
@@ -332,9 +348,10 @@ async function safeError(route: Route, status: number, code: string, message: st
 }
 
 async function expectRecoveryActions(page: Page, labels: string[]): Promise<void> {
-  const recovery = page.getByRole("region", { name: "Recovery actions" });
-  await expect(recovery).toBeVisible();
-  await expect(recovery.getByRole("button")).toHaveText(labels);
+  await page.getByRole("button", { name: "Open recovery actions" }).click();
+  const dialog = page.getByRole("dialog", { name: "Recovery actions" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button")).toHaveText(["Close", ...labels]);
 }
 
 async function expectNoSeriousAxeViolations(page: Page): Promise<void> {
@@ -349,5 +366,5 @@ function blockEditor(page: Page) {
 }
 
 function titlePattern(title: string): RegExp {
-  return new RegExp(title.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u");
+  return new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`, "u");
 }

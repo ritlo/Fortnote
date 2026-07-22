@@ -51,19 +51,12 @@ export function NotesPane({
 }: NotesPaneProps) {
   const [newNoteDialogOpen, setNewNoteDialogOpen] = useState(false);
 
-  function handleNoteDrop(event: React.DragEvent, targetFolderId: string | null) {
-    const noteId = event.dataTransfer.getData("text/note-id");
-    if (noteId) {
-      moveNoteToFolder(noteId, targetFolderId);
-    }
-  }
-
   return (
     <section className="notes-pane">
       <NewNoteDialog
         folders={folders}
         open={newNoteDialogOpen}
-        onClose={() => setNewNoteDialogOpen(false)}
+        onClose={() => { setNewNoteDialogOpen(false); }}
         onCreate={async (folderId) => {
           await addNote(folderId);
           setNewNoteDialogOpen(false);
@@ -269,7 +262,7 @@ function NoteListItem({
             className="text-button"
             type="button"
             aria-label={`Move ${note.title} to folder`}
-            onClick={() => setShowMove(!showMove)}
+            onClick={() => { setShowMove(!showMove); }}
           >
             {showMove ? "Cancel" : "Move"}
           </button>
@@ -280,7 +273,7 @@ function NoteListItem({
                   key={f.id}
                   type="button"
                   role="menuitem"
-                  onClick={() => handleMoveSelect(f.id)}
+                  onClick={() => { handleMoveSelect(f.id); }}
                 >
                   {f.name}
                 </button>

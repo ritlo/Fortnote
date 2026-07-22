@@ -253,6 +253,36 @@ describe("protected note search", () => {
     expect(useAppStore.getState().selectedNoteId).toBe("note_1");
   });
 
+  it("closes the search database after in-flight discovery settles", async () => {
+    let resolveSections!: (value: { sections: never[] }) => void;
+    mocks.listNoteSections.mockImplementation(() => new Promise((resolve) => {
+      resolveSections = resolve;
+    }));
+    useAppStore.setState({
+      notes: [note({ rootSectionId: "section-a" })],
+      notesView: "notes",
+      rootKey: new Uint8Array(32),
+      search: "",
+      user: { id: "alice", username: "alice" }
+    });
+
+    const view = renderHook(() => useNoteViewModel());
+    await waitFor(() => {
+      expect(mocks.openFortnoteIndexedDb).toHaveBeenCalledOnce();
+    });
+
+    view.unmount();
+    expect(mocks.closeDatabase).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveSections({ sections: [] });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mocks.closeDatabase).toHaveBeenCalledOnce();
+    });
+  });
+
   it("extracts stable block IDs and text without duplicating nested blocks", () => {
     expect(searchBlocksFromSnapshot(sectionSnapshot())).toEqual([
       { blockId: "block-a", text: "Needle body" },

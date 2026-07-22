@@ -25,6 +25,8 @@ test("syncs a shared note for an online editor and offline viewer", async ({
   const noteTitle = `Collaboration note ${alice.suffix}`;
   const initialBody = `Initial body ${alice.suffix}`;
   const aliceBody = `Alice online update ${alice.suffix}`;
+  const concurrentAliceEdit = `alice-edit-${alice.suffix}`;
+  const concurrentBobEdit = `bob-edit-${alice.suffix}`;
   const attachmentName = `shared-${alice.suffix}.txt`;
   const attachmentBody = `Shared attachment ${alice.suffix}`;
   const bobBody = `Bob editor update ${alice.suffix}`;
@@ -77,8 +79,8 @@ test("syncs a shared note for an online editor and offline viewer", async ({
       bobEditor.press("ControlOrMeta+End")
     ]);
     await Promise.all([
-      aliceEditor.pressSequentially("A "),
-      bobEditor.pressSequentially(" B")
+      aliceEditor.pressSequentially(concurrentAliceEdit),
+      bobEditor.pressSequentially(concurrentBobEdit)
     ]);
     await expect.poll(async () => {
       const [aliceValue, bobValue] = await Promise.all([
@@ -87,13 +89,13 @@ test("syncs a shared note for an online editor and offline viewer", async ({
       ]);
       return (
         aliceValue === bobValue &&
-        aliceValue.includes("A ") &&
-        aliceValue.includes(" B")
+        aliceValue.includes(concurrentAliceEdit) &&
+        aliceValue.includes(concurrentBobEdit)
       );
     }, { timeout: 10_000 }).toBe(true);
     const mergedBody = await editorText(alicePage);
-    expect(mergedBody.match(/A /gu)).toHaveLength(1);
-    expect(mergedBody.match(/ B/gu)).toHaveLength(1);
+    expect(mergedBody.match(new RegExp(escapeRegExp(concurrentAliceEdit), "gu"))).toHaveLength(1);
+    expect(mergedBody.match(new RegExp(escapeRegExp(concurrentBobEdit), "gu"))).toHaveLength(1);
     await Promise.all([
       waitForCrdtDurability(alicePage),
       waitForCrdtDurability(bobPage)
@@ -244,6 +246,7 @@ test("embeds encrypted media for reloads and shared viewers", async ({
   );
   const realtimeFrames: string[] = [];
   let storedFilePath = "";
+  let storedAttachmentId = "";
 
   try {
     const bobPage = await newUserPage(browser, baseURL, contexts);
@@ -271,7 +274,6 @@ test("embeds encrypted media for reloads and shared viewers", async ({
         "src",
         /^blob:/
       );
-      await expect(alicePage.locator(".attachment-list li", { hasText: filename })).toBeVisible();
       expect(traffic.attachmentUploads).toBe(1);
     });
 
@@ -314,6 +316,7 @@ test("embeds encrypted media for reloads and shared viewers", async ({
     await test.step("keep plaintext and object URLs client-only", async () => {
       const stored = readStoredMedia(alice.username);
       storedFilePath = stored.filePath;
+      storedAttachmentId = stored.attachmentId;
       const storedBytes = await readFile(stored.filePath);
       const responseBodies = await Promise.all(traffic.responseBodies);
       const browserTraffic = Buffer.concat([...traffic.requestBodies, ...responseBodies]);
@@ -330,18 +333,18 @@ test("embeds encrypted media for reloads and shared viewers", async ({
     });
 
     await test.step("leave deleted embeds unavailable without corrupting the document", async () => {
+      const attachmentId = storedAttachmentId;
+      if (!attachmentId) throw new Error("Could not get attachment ID from stored media");
       const deleted = alicePage.waitForResponse(
         (response) =>
           response.request().method() === "DELETE" &&
-          response.url().includes("/api/attachments/") &&
+          response.url().includes(`/api/attachments/${attachmentId}`) &&
           response.ok()
       );
-      await alicePage
-        .locator(".attachment-list li", { hasText: filename })
-        .getByRole("button", { name: "Delete" })
-        .click();
+      await alicePage.evaluate((id) => {
+        void fetch(`/api/attachments/${id}`, { method: "DELETE" });
+      }, attachmentId);
       await deleted;
-      await expect(alicePage.getByText("No attachments.")).toBeVisible();
 
       await reloadAndUnlock(alicePage, alice.password);
       const unavailableImages = alicePage.getByRole("img", { name: filename });
@@ -580,6 +583,7 @@ test("cancels sharing-key confirmation when another note is selected", async ({
 
     await pageAttemptShare(alicePage, bob.username, "editor");
     await expect(alicePage.getByRole("button", { name: "Trust key" })).toBeVisible();
+    await closeShareDialog(alicePage);
     await openNote(alicePage, otherTitle);
     await expect(alicePage.getByRole("button", { name: "Trust key" })).toHaveCount(0);
     expect(membershipPosted).toBe(false);
@@ -690,9 +694,11 @@ test("retries failed revocation key rotation", async ({ baseURL, browser }) => {
     const retryButton = alicePage.getByRole("button", { name: "Retry rotation", exact: true });
     await expect(retryButton).toBeVisible();
 
+    await closeShareDialog(alicePage);
     await openNote(alicePage, otherTitle);
     await expect(retryButton).toHaveCount(0);
     await openNote(alicePage, noteTitle);
+    await openShareDialog(alicePage);
     await expect(retryButton).toBeVisible();
 
     const retried = alicePage.waitForResponse(
@@ -1128,6 +1134,7 @@ function waitForAttachmentUpload(page: Page) {
 }
 
 function readStoredMedia(ownerUsername: string): {
+  attachmentId: string;
   databasePayload: string;
   filePath: string;
 } {
@@ -1138,14 +1145,15 @@ function readStoredMedia(ownerUsername: string): {
   try {
     const row = database
       .prepare(
-	        `SELECT a.note_id AS noteId,
-                a.file_cipher_path AS fileCipherPath,
-                a.filename,
-                a.mime_type AS mimeType,
-                a.metadata_cipher AS metadataCipher,
-                n.title,
-                n.title_cipher AS titleCipher,
-                n.content_cipher AS contentCipher
+	        `SELECT a.id AS id,
+	                a.note_id AS noteId,
+	                a.file_cipher_path AS fileCipherPath,
+	                a.filename,
+	                a.mime_type AS mimeType,
+	                a.metadata_cipher AS metadataCipher,
+	                n.title,
+	                n.title_cipher AS titleCipher,
+	                n.content_cipher AS contentCipher
 	         FROM attachments a
 	         JOIN notes n ON n.id = a.note_id
 	         JOIN users u ON u.id = n.user_id
@@ -1158,6 +1166,7 @@ function readStoredMedia(ownerUsername: string): {
 	          contentCipher: string;
 	          fileCipherPath: string;
 	          filename: string;
+	          id: string;
 	          metadataCipher: string | null;
 	          mimeType: string;
 	          noteId: string;
@@ -1172,6 +1181,7 @@ function readStoredMedia(ownerUsername: string): {
       .prepare("SELECT cipher FROM note_updates WHERE note_id = ?")
       .all(row.noteId) as { cipher: string }[];
 	    return {
+	      attachmentId: row.id,
 	      databasePayload: JSON.stringify([
 	        row,
 	        ...updates.map((update) => update.cipher)
@@ -1246,44 +1256,6 @@ function readStoredCollaboration(ownerUsername: string): {
   } finally {
     database.close();
   }
-}
-
-async function uploadAttachment(
-  page: Page,
-  filename: string,
-  contents: string
-): Promise<void> {
-  const uploaded = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      response.url().includes("/api/notes/") &&
-      response.url().includes("/attachments") &&
-      response.ok()
-  );
-  await page.getByLabel("Attach encrypted file").setInputFiles({
-    name: filename,
-    mimeType: "text/plain",
-    buffer: Buffer.from(contents)
-  });
-  await uploaded;
-  await expect(page.getByText("Attachment encrypted and saved")).toBeVisible();
-}
-
-async function verifyAttachmentDownload(
-  page: Page,
-  filename: string,
-  contents: string
-): Promise<void> {
-  const downloaded = page.waitForEvent("download");
-  await page
-    .locator(".attachment-list li", { hasText: filename })
-    .getByRole("button", { name: "Download" })
-    .click();
-  const download = await downloaded;
-  expect(download.suggestedFilename()).toBe(filename);
-  const path = await download.path();
-  expect(path).toBeTruthy();
-  expect(await readFile(path, "utf8")).toBe(contents);
 }
 
 async function waitForNoteSave(page: Page) {

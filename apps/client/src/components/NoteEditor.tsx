@@ -244,6 +244,7 @@ export function NoteEditor({
       </div>
     );
   }
+  const sectionId = selectedNote.rootSectionId ?? "root";
 
   const saveLabel = status === "Ready" || status === "Note encrypted and saved"
     ? "Saved and synchronized"
@@ -278,7 +279,7 @@ export function NoteEditor({
           canEdit={canEdit}
           resolveAttachmentUrl={resolveAttachmentUrl}
           selectedNote={selectedNote}
-          sectionId="root"
+          sectionId={sectionId}
           uploadSelectedAttachment={uploadSelectedAttachment}
         />
       </div>

@@ -187,7 +187,7 @@ export async function createLargeNoteThroughEditor(
       response.ok(),
     { timeout: 30_000 }
   );
-  await page.getByLabel("Title").fill(title);
+  await page.getByRole("textbox", { name: "Title" }).fill(title);
   await titleSaved;
   await expect(page.getByRole("button", { name: titlePattern(title) })).toBeVisible();
   await signInLargeNoteUser(page, account);

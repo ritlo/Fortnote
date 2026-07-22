@@ -141,10 +141,17 @@ describe("NoteEditor simplified editor", () => {
     expect(screen.getByTestId("block-note").getAttribute("data-editable")).toBe("true");
   });
 
+  it("binds protected notes to their encrypted root section", () => {
+    renderEditor(note({ rootSectionId: "root-section" }));
+
+    expect(mocks.getFragment).toHaveBeenCalledWith("note-1", 1, "root-section");
+    expect(mocks.getProvider).toHaveBeenCalledWith("note-1", 1, "root-section");
+  });
+
   it("renders read-only for viewer role", () => {
     renderEditor(note({ role: "viewer" }));
     expect(screen.getByTestId("block-note").getAttribute("data-editable")).toBe("false");
-    expect((screen.getByRole("textbox", { name: "Title" }) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole<HTMLInputElement>("textbox", { name: "Title" })).disabled).toBe(true);
   });
 
   it("shows compact save/sync state", () => {
@@ -169,7 +176,7 @@ describe("NoteEditor simplified editor", () => {
   });
 
   it("does not expose section controls", () => {
-    const { container } = renderEditor(note());
+    renderEditor(note());
     expect(screen.queryByLabelText("Note sections")).toBeNull();
     expect(screen.queryByText("Add section")).toBeNull();
     expect(screen.queryByText("Section 1 of 2")).toBeNull();

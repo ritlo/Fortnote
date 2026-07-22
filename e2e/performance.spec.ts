@@ -147,7 +147,7 @@ test.describe("controlled production performance", () => {
             response.request().method() === "PUT" &&
             response.url().includes(`/api/notes/${dataset.noteId}`) && response.ok()
           );
-          await ownerPage.getByLabel("Title").fill(currentTitle);
+          await ownerPage.getByRole("textbox", { name: "Title" }).fill(currentTitle);
           await saved;
           await expect(ownerPage.locator(".collaboration-status"))
             .toContainText("Saved and synchronized");
@@ -246,7 +246,7 @@ async function createOrdinaryNote(page: Page, title: string): Promise<void> {
   const saved = page.waitForResponse((response) =>
     response.request().method() === "PUT" && response.url().includes("/api/notes/") && response.ok()
   );
-  await page.getByLabel("Title").fill(title);
+  await page.getByRole("textbox", { name: "Title" }).fill(title);
   await saved;
 }
 
@@ -254,7 +254,7 @@ async function openOrdinaryNote(page: Page, title: string): Promise<void> {
   const card = page.getByRole("button", { name: new RegExp(title, "u") });
   await expect(card).toBeVisible({ timeout: 30_000 });
   await card.click();
-  await expect(page.getByLabel("Title")).toHaveValue(title);
+  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(title);
   await expect(page.locator(".block-editor .bn-editor")).toBeVisible();
 }
 
