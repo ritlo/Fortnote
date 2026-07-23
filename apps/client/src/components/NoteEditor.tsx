@@ -87,6 +87,40 @@ function CollaborativeBlockNoteField({
     restoreDevelopmentUndoManager(editor);
   }, [editor]);
 
+  const setError = useAppStore((state) => state.setError);
+  const setNotes = useAppStore((state) => state.setNotes);
+  const setStatus = useAppStore((state) => state.setStatus);
+
+  useEffect(() => {
+    if (!canEdit) {
+      return;
+    }
+    const handleSaveState = (state?: unknown) => {
+      if (state === "saving") {
+        setError(null);
+        setStatus("Saving encrypted note");
+        return;
+      }
+      if (state === "failed") {
+        setStatus("Save failed");
+        return;
+      }
+      if (state !== "saved") {
+        return;
+      }
+      const updatedAt = new Date().toISOString();
+      setNotes((notes) => notes.map((note) =>
+        note.id === selectedNote.id ? { ...note, updatedAt } : note
+      ));
+      setError(null);
+      setStatus("Ready");
+    };
+    provider.on("save-state", handleSaveState);
+    return () => {
+      provider.off("save-state", handleSaveState);
+    };
+  }, [canEdit, provider, selectedNote.id, setError, setNotes, setStatus]);
+
   useEffect(() => {
     updateCrdtNote(selectedNote);
   }, [selectedNote]);
@@ -126,9 +160,11 @@ function CollaborativeBlockNoteField({
           restoreDevelopmentUndoManager(editor);
         }}
       >
-        <BlockNoteView editor={editor} editable={canEdit} filePanel={false}>
-          {canEdit ? <FilePanelController filePanel={FortnoteFilePanel} /> : null}
-        </BlockNoteView>
+        <div className="blocknote-surface" data-theme="light">
+          <BlockNoteView editor={editor} editable={canEdit} filePanel={false}>
+            {canEdit ? <FilePanelController filePanel={FortnoteFilePanel} /> : null}
+          </BlockNoteView>
+        </div>
       </div>
     </>
   );

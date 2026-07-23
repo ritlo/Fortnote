@@ -249,6 +249,15 @@ textarea {
   gap: 3px;
 }
 
+.nav-label {
+  margin: 10px 10px 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .folder-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 30px 30px;
@@ -306,6 +315,58 @@ textarea {
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
   background: #f9faf8;
+}
+
+.editor-header {
+  min-height: 56px;
+  background: var(--panel);
+}
+
+.editor-header-status {
+  min-width: 0;
+}
+
+.editor-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.editor-overflow {
+  position: relative;
+}
+
+.editor-action-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 180px;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  box-shadow: 0 10px 24px rgb(24 33 27 / 14%);
+}
+
+.editor-action-menu button {
+  border: 0;
+  border-radius: 5px;
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.editor-action-menu button:hover:not(:disabled) {
+  background: #e8f4f2;
+}
+
+.editor-action-menu button.danger {
+  color: var(--danger);
 }
 
 .action-row {
@@ -527,65 +588,42 @@ textarea {
   white-space: nowrap;
 }
 
+.blocknote-surface {
+  color-scheme: light;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.blocknote-surface .bn-container,
+.blocknote-surface .bn-editor,
+.blocknote-surface .bn-block-content {
+  color: var(--text);
+  background: var(--panel);
+}
+
+.blocknote-surface .bn-container {
+  min-height: 420px;
+}
+
+.blocknote-surface .bn-editor {
+  padding: 18px 22px 28px;
+}
+
+.blocknote-surface .bn-block-content {
+  line-height: 1.55;
+}
+
+.blocknote-surface [data-content-type="file"],
+.blocknote-surface [data-content-type="image"] {
+  border-color: #b9dad5;
+  background: #f7fbfa;
+}
+
 .editor-history-controls {
   justify-content: flex-end;
-}
-
-.section-navigator {
-  display: grid;
-  gap: 10px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 10px;
-  background: #f9faf8;
-}
-
-.section-navigator ol {
-  display: flex;
-  gap: 8px;
-  margin: 0;
-  padding: 0 0 4px;
-  overflow-x: auto;
-  list-style: none;
-}
-
-.section-navigator li {
-  flex: 0 0 auto;
-  display: grid;
-  gap: 3px;
-}
-
-.section-navigator li button {
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 7px 10px;
-  background: white;
-}
-
-.section-navigator li button[aria-current="page"] {
-  border-color: #88bdb5;
-  background: #e8f4f2;
-  color: var(--brand-strong);
-  font-weight: 800;
-}
-
-.section-position {
-  font-weight: 800;
-}
-
-.section-navigator progress {
-  width: 100%;
-  accent-color: var(--brand);
-}
-
-.section-boundary-status {
-  color: var(--muted);
-  font-size: 11px;
-  text-align: center;
-}
-
-.section-actions {
-  flex-wrap: wrap;
 }
 
 .settings-panel {
@@ -781,7 +819,6 @@ textarea {
     min-width: 0;
   }
 
-  .section-actions button,
   .recovery-panel button {
     flex: 1 1 auto;
   }
@@ -835,24 +872,72 @@ dialog h3 {
 }
 
 .note-actions {
-  margin-top: 6px;
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
+  margin-top: -40px;
+  margin-right: 7px;
+  margin-bottom: 12px;
+  pointer-events: none;
+}
+
+.note-menu-button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  pointer-events: auto;
+}
+
+.note-menu-button:hover,
+.note-menu-button[aria-expanded="true"] {
+  border-color: var(--line);
+  background: #f7fbfa;
+  color: var(--text);
+}
+
+.note-context-menu {
+  position: absolute;
+  z-index: 3;
+  top: 34px;
+  right: 0;
+  min-width: 150px;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  box-shadow: 0 10px 24px rgb(24 33 27 / 14%);
+  pointer-events: auto;
+}
+
+.note-context-menu > button,
+.move-folder-list button {
+  border: 0;
+  border-radius: 5px;
+  padding: 7px 9px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.note-context-menu > button:hover,
+.move-folder-list button:hover {
+  background: #e8f4f2;
 }
 
 .move-folder-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.move-folder-list button {
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 5px 9px;
-  background: white;
-  font-size: 12px;
+  display: grid;
+  gap: 2px;
+  margin: 3px 0 0;
+  border-top: 1px solid var(--line);
+  padding-top: 3px;
 }
 
 .drop-target-over {

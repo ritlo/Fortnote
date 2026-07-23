@@ -415,6 +415,55 @@ describe("CRDT collaboration", () => {
     unsubscribe();
   });
 
+  it("reports local content saves through the provider lifecycle", async () => {
+    const current = note({
+      rootSectionId: "00000000-0000-4000-8000-000000000002"
+    });
+    let finishDelivery!: () => void;
+    const delivered = new Promise<void>((resolve) => {
+      finishDelivery = resolve;
+    });
+    const sendDurably = vi.fn()
+      .mockReturnValueOnce({
+        durable: Promise.resolve(),
+        delivered: Promise.resolve()
+      })
+      .mockReturnValue({
+        durable: Promise.resolve(),
+        delivered
+      });
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      sendDurably,
+      subscribe: vi.fn()
+    });
+    const section = openCrdtSection(current, current.rootSectionId ?? "root");
+    await finishCrdtSync(
+      current.id,
+      current.keyEpoch,
+      false,
+      current.rootSectionId ?? "root"
+    );
+    const states: unknown[] = [];
+    section.provider.on("save-state", (state) => {
+      states.push(state);
+    });
+
+    section.provider.doc.transact(() => {
+      replaceBlockNoteFragment(
+        section.provider.doc.getXmlFragment(FRAGMENT_KEY),
+        "Edited content"
+      );
+    });
+
+    expect(states).toEqual(["saving"]);
+    finishDelivery();
+    await vi.waitFor(() => {
+      expect(states).toEqual(["saving", "saved"]);
+    });
+  });
+
   it("resubscribes each section after its highest reconciled server sequence", async () => {
     const current = note();
     const firstSubscribe = vi.fn();

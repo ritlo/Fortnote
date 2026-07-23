@@ -775,7 +775,7 @@ describe("notes and folders routes", () => {
     expect(membership).toBeUndefined();
   });
 
-  it("prevents cross-user note reads and folder assignment", async () => {
+	  it("prevents cross-user note reads and folder assignment", async () => {
     const app = createTestApp();
     const alice = await registerAgent(app, "alice_notes");
     const bob = await registerAgent(app, "bob_notes");
@@ -794,14 +794,47 @@ describe("notes and folders routes", () => {
 
     await bob.get(`/api/notes/${String(created.body.id)}`).expect(404);
 
-    await bob
+	    await bob
+	      .post("/api/notes")
+	      .set(csrfHeaders())
+	      .send(notePayload(folder.body.id as string))
+	      .expect(400);
+	  });
+
+  it("rejects invalid and deleted folder targets for note metadata", async () => {
+    const app = createTestApp();
+    const agent = await registerAgent(app, "folder_target_validation_user");
+    const invalidFolderId = crypto.randomUUID();
+
+    await agent
       .post("/api/notes")
       .set(csrfHeaders())
-      .send(notePayload(folder.body.id as string))
+      .send({ ...protectedNotePayload(), folderId: invalidFolderId })
+      .expect(400);
+
+    const folder = await agent
+      .post("/api/folders")
+      .set(csrfHeaders())
+      .send({ name: "Temporary" })
+      .expect(201);
+    const created = await agent
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(protectedNotePayload())
+      .expect(201);
+
+    await agent
+      .delete(`/api/folders/${String(folder.body.id)}`)
+      .set(csrfHeaders())
+      .expect(204);
+    await agent
+      .put(`/api/notes/${String(created.body.id)}`)
+      .set(csrfHeaders())
+      .send({ folderId: folder.body.id, rootVersion: 1, keyEpoch: 1 })
       .expect(400);
   });
 
-  it("requires an active owner membership to read notes", async () => {
+	  it("requires an active owner membership to read notes", async () => {
     const app = createTestApp();
     const agent = await registerAgent(app, "membership_user");
     const created = await agent

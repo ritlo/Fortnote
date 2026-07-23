@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PresenceUser } from "../api";
@@ -70,13 +70,18 @@ describe("EditorHeader last-saved feedback", () => {
 describe("EditorHeader role affordances", () => {
   it("allows only owners to delete active notes", () => {
     renderHeader({ selectedNote: { ...note(), role: "viewer" } });
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Delete" }).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More note actions" }));
+    expect(screen.getByRole<HTMLButtonElement>("menuitem", { name: "Move to trash" }).disabled).toBe(true);
   });
 
   it("allows only owners to restore or permanently delete trash notes", () => {
     renderHeader({ notesView: "trash", selectedNote: { ...note(), role: "viewer", isDeleted: true } });
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Restore" }).disabled).toBe(true);
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Delete forever" }).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete forever" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More note actions" }));
+    expect(screen.getByRole<HTMLButtonElement>("menuitem", { name: "Restore" }).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>("menuitem", { name: "Delete forever" }).disabled).toBe(true);
   });
 });
 
@@ -93,7 +98,9 @@ describe("EditorHeader recovery trigger", () => {
       synchronized: false
     };
     renderHeader({ collaborationState });
-    expect(screen.getByRole("button", { name: "Open recovery actions" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open recovery actions" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More note actions" }));
+    expect(screen.getByRole("menuitem", { name: "Open recovery actions" })).toBeTruthy();
   });
 
   it("does not show recovery button when no actions exist", () => {
@@ -145,6 +152,12 @@ describe("EditorHeader Share action", () => {
     expect(screen.getByRole("button", { name: "Share note" })).toBeTruthy();
     expect(screen.getByText(/^Last saved/)).toBeTruthy();
   });
+
+  it("keeps the note title in the document instead of duplicating it in the top bar", () => {
+    renderHeader({ canShare: true });
+    expect(screen.queryByRole("heading", { name: "Title" })).toBeNull();
+    expect(screen.getByRole("banner").className).toContain("editor-header");
+  });
 });
 
 describe("EditorHeader simplified display", () => {
@@ -160,7 +173,6 @@ function renderHeader(overrides: Partial<Parameters<typeof EditorHeader>[0]> = {
     createElement(EditorHeader, {
       canShare: true,
       deleteSelectedForever: vi.fn(),
-      keyMaterialVersion: null,
       lockVault: vi.fn(),
       moveSelectedToTrash: vi.fn(),
       notesView: "notes",

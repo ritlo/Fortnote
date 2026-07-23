@@ -558,6 +558,22 @@ function getOrCreateBinding(
     ) {
       const delivery = broadcastUpdate(created, update);
       trackPendingBroadcast(created, delivery.durable);
+      created.provider.emit("save-state", "saving");
+      void delivery.delivered.then(
+        () => {
+          if (
+            isActiveBinding(created) &&
+            created.pendingBroadcasts.size === 0
+          ) {
+            created.provider.emit("save-state", "saved");
+          }
+        },
+        () => {
+          if (isActiveBinding(created)) {
+            created.provider.emit("save-state", "failed");
+          }
+        }
+      );
       void delivery.delivered.catch(() => undefined);
     }
     notifyCrdtSectionChange(created);

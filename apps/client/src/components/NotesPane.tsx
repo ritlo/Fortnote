@@ -1,9 +1,9 @@
-import { Plus, Search } from "lucide-react";
+import { MoreHorizontal, Plus, Search } from "lucide-react";
 import type { FolderSummary } from "../api";
 import type { SearchCoverage, SearchMatch } from "../lib/searchIndex";
 import type { SearchIndexStatus } from "../hooks/useNoteViewModel";
 import type { DecryptedNote, NotesView, RealtimeStatus } from "../store/appStore";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NewNoteDialog } from "./NewNoteDialog";
 
 interface NotesPaneProps {
@@ -21,7 +21,7 @@ interface NotesPaneProps {
   selectedNoteId: string | null;
   status: string;
   addNote: (folderId?: string | null) => Promise<void>;
-  moveNoteToFolder: (noteId: string, folderId: string | null) => void;
+  moveNoteToFolder: (noteId: string, folderId: string | null) => Promise<void>;
   retrySearchIndex: () => void;
   selectSearchMatch: (match: SearchMatch) => void;
   setSearch: (value: string) => void;
@@ -115,7 +115,7 @@ export function NotesPane({
       {recoverySecret ? (
         <p className="recovery-code">Recovery key: {recoverySecret}</p>
       ) : null}
-      <ul className="note-list" aria-label="Notes and matching sections">
+      <ul className="note-list" aria-label="Notes">
         {filteredNotes.length === 0 ? (
           <li className="empty-state">
             {notesView === "trash"
@@ -138,7 +138,9 @@ export function NotesPane({
                 selectedNoteId={selectedNoteId}
                 noteMatches={noteMatches}
                 onSelect={setSelectedNoteId}
-                onMove={moveNoteToFolder}
+                onMove={async (noteId, folderId) => {
+                  await moveNoteToFolder(noteId, folderId);
+                }}
                 onSearchSelect={selectSearchMatch}
               />
             );
@@ -194,14 +196,12 @@ function searchCoverageLabel(
   status: SearchIndexStatus
 ): string {
   if (status === "discovering" || !coverage) {
-    return "Preparing protected search coverage…";
+    return "Preparing search…";
   }
   if (status === "ready" && coverage.complete) {
-    return `Search covers all ${String(coverage.totalSections)} sections.`;
+    return "Search is ready.";
   }
-  return `Searching indexed sections — more results may appear (${String(
-    coverage.indexedSections
-  )} of ${String(coverage.totalSections)}).`;
+  return "Searching more note content — more results may appear.";
 }
 
 function NoteListItem({
@@ -220,10 +220,34 @@ function NoteListItem({
   selectedNoteId: string | null;
   noteMatches: SearchMatch[];
   onSelect: (id: string) => void;
-  onMove: (noteId: string, folderId: string | null) => void;
+  onMove: (noteId: string, folderId: string | null) => Promise<void>;
   onSearchSelect: (match: SearchMatch) => void;
 }) {
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const [showMove, setShowMove] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const canManageNote = notesView === "notes" && note.role !== "viewer";
+  const folderName = folders.find((folder) => folder.id === note.folderId)?.name ?? "All notes";
+
+  useEffect(() => {
+    if (!contextMenuOpen) {
+      return;
+    }
+    const firstMenuItem = menuRef.current?.querySelector<HTMLButtonElement>(
+      "button[role='menuitem']"
+    );
+    firstMenuItem?.focus();
+    function handleOutsideClick(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        closeMenu();
+      }
+    }
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+    };
+  }, [contextMenuOpen]);
 
   function handleDragStart(event: React.DragEvent) {
     event.dataTransfer.setData("text/note-id", note.id);
@@ -231,8 +255,27 @@ function NoteListItem({
   }
 
   function handleMoveSelect(folderId: string) {
-    onMove(note.id, folderId);
+    void onMove(note.id, folderId);
+    closeMenu();
+  }
+
+  function closeMenu() {
+    setContextMenuOpen(false);
     setShowMove(false);
+    menuButtonRef.current?.focus();
+  }
+
+  function openMenu() {
+    if (canManageNote) {
+      setContextMenuOpen(true);
+    }
+  }
+
+  function handleCardKeyDown(event: React.KeyboardEvent) {
+    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+      event.preventDefault();
+      openMenu();
+    }
   }
 
   return (
@@ -240,10 +283,17 @@ function NoteListItem({
       key={note.id}
       draggable={notesView === "notes" && note.role !== "viewer"}
       onDragStart={handleDragStart}
+      onContextMenu={(event) => {
+        if (canManageNote) {
+          event.preventDefault();
+          openMenu();
+        }
+      }}
     >
       <button
         className={note.id === selectedNoteId ? "note-card active" : "note-card"}
         type="button"
+        onKeyDown={handleCardKeyDown}
         onClick={() => {
           onSelect(note.id);
         }}
@@ -254,30 +304,70 @@ function NoteListItem({
             <small className="role-badge">{roleLabel(note.role)}</small>
           ) : null}
         </span>
-        <span>{String(note.contentLength)} encrypted bytes</span>
+        <span className="note-meta">{formatNoteMetadata(note.updatedAt, folderName)}</span>
       </button>
-      {notesView === "notes" && note.role !== "viewer" ? (
+      {canManageNote ? (
         <div className="note-actions">
           <button
-            className="text-button"
+            ref={menuButtonRef}
+            className="note-menu-button"
             type="button"
-            aria-label={`Move ${note.title} to folder`}
-            onClick={() => { setShowMove(!showMove); }}
+            aria-label="Open note menu"
+            aria-haspopup="menu"
+            aria-expanded={contextMenuOpen}
+            onClick={() => {
+              if (contextMenuOpen) {
+                closeMenu();
+              } else {
+                openMenu();
+              }
+            }}
           >
-            {showMove ? "Cancel" : "Move"}
+            <MoreHorizontal size={18} aria-hidden="true" />
           </button>
-          {showMove ? (
-            <div className="move-folder-list" role="menu">
-              {folders.map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => { handleMoveSelect(f.id); }}
-                >
-                  {f.name}
-                </button>
-              ))}
+          {contextMenuOpen ? (
+            <div
+              ref={menuRef}
+              className="note-context-menu"
+              role="menu"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  closeMenu();
+                }
+              }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onSelect(note.id);
+                  closeMenu();
+                }}
+              >
+                Open note
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { setShowMove(true); }}
+              >
+                Move to folder
+              </button>
+              {showMove ? (
+                <div className="move-folder-list" role="menu">
+                  {folders.map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { handleMoveSelect(f.id); }}
+                    >
+                      {f.name}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -315,6 +405,18 @@ export function roleLabel(role: DecryptedNote["role"]): string {
     case "viewer":
       return "Viewer";
   }
+}
+
+function formatNoteMetadata(updatedAt: string, folderName: string): string {
+  const timestamp = Date.parse(updatedAt);
+  if (!Number.isFinite(timestamp)) {
+    return `Updated recently · ${folderName}`;
+  }
+  const days = Math.floor(Math.max(0, Date.now() - timestamp) / 86_400_000);
+  const updatedLabel = days === 0
+    ? "Updated today"
+    : `Updated ${String(days)} ${days === 1 ? "day" : "days"} ago`;
+  return `${updatedLabel} · ${folderName}`;
 }
 
 function syncLabel(status: RealtimeStatus): string {

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import type { DecryptedNote } from "../store/appStore";
 import { SharingPanel } from "./SharingPanel";
 
@@ -6,9 +6,10 @@ interface SharingDialogProps {
   selectedNote: DecryptedNote | null;
   open: boolean;
   onClose: () => void;
+  returnFocusRef?: RefObject<HTMLButtonElement | null>;
 }
 
-export function SharingDialog({ selectedNote, open, onClose }: SharingDialogProps) {
+export function SharingDialog({ selectedNote, open, onClose, returnFocusRef }: SharingDialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -26,10 +27,13 @@ export function SharingDialog({ selectedNote, open, onClose }: SharingDialogProp
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const handler = () => { onClose(); };
+    const handler = () => {
+      onClose();
+      returnFocusRef?.current?.focus();
+    };
     el.addEventListener("close", handler);
     return () => { el.removeEventListener("close", handler); };
-  }, [onClose]);
+  }, [onClose, returnFocusRef]);
 
   if (!open && !ref.current?.open) return null;
 

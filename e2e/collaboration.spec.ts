@@ -536,11 +536,13 @@ test("removes a permanently deleted shared note after an offline client reconnec
     await openNote(bobPage, noteTitle);
 
     await bobPage.context().setOffline(true);
-    await alicePage.getByRole("button", { name: "Delete", exact: true }).click();
+    await alicePage.getByRole("button", { name: "More note actions" }).click();
+    await alicePage.getByRole("menuitem", { name: "Move to trash" }).click();
     await expect(alicePage.getByText("Note moved to trash")).toBeVisible();
     await alicePage.getByRole("button", { name: "Trash", exact: true }).click();
     await openNote(alicePage, noteTitle);
-    await alicePage.getByRole("button", { name: "Delete forever" }).click();
+    await alicePage.getByRole("button", { name: "More note actions" }).click();
+    await alicePage.getByRole("menuitem", { name: "Delete forever" }).click();
     await expect(alicePage.getByText("Note permanently deleted")).toBeVisible();
 
     await bobPage.context().setOffline(false);

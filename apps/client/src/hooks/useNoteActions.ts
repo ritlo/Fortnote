@@ -587,15 +587,29 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     }
   }
 
-  function moveNoteToFolder(noteId: string, folderId: string | null) {
+  async function moveNoteToFolder(noteId: string, folderId: string | null) {
     const state = useAppStore.getState();
     const note = state.notes.find((n) => n.id === noteId);
-    if (!note || note.folderId === folderId) return;
+    const validFolder = folderId === null || state.folders.some((folder) => folder.id === folderId);
+    if (
+      !note ||
+      note.role === "viewer" ||
+      state.notesView !== "notes" ||
+      !validFolder ||
+      note.folderId === folderId
+    ) {
+      return;
+    }
+    const previousFolderId = note.folderId;
     setNotes((current) =>
       current.map((n) => (n.id === noteId ? { ...n, folderId } : n))
     );
-    if (selectedNoteId === noteId) {
-      scheduleAutosave(noteId);
+    scheduleAutosave(noteId);
+    const saveResult = await drainAutosave(noteId);
+    if (saveResult === "failed" || saveResult === "conflict") {
+      setNotes((current) =>
+        current.map((n) => (n.id === noteId ? { ...n, folderId: previousFolderId } : n))
+      );
     }
   }
 

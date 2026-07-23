@@ -12,13 +12,24 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
   await createNote(page, noteTitle, "First encrypted body");
   await expect(page.locator(".editor-grid")).toHaveCount(0);
   await expectEditorToFillPane(page);
+  await expect(page.locator(".blocknote-surface")).toHaveAttribute("data-theme", "light");
+
+  const noteCard = page.locator(".note-card", { hasText: noteTitle });
+  await noteCard.click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Move to folder" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menuitem", { name: "Move to folder" })).toHaveCount(0);
+  await noteCard.focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(page.getByRole("menuitem", { name: "Move to folder" })).toBeVisible();
+  await page.keyboard.press("Escape");
 
   await page.setViewportSize({ width: 800, height: 800 });
   await expectEditorToFillPane(page);
 
   await page.getByPlaceholder("Search decrypted notes").fill("First encrypted body");
   await expect(page.locator(".search-coverage")).toContainText(
-    /Search covers all [1-9]\d* sections\./,
+    "Search is ready.",
     { timeout: 20_000 }
   );
   await expect(page.locator(".search-match-list").first()).toBeVisible({ timeout: 10_000 });
@@ -34,18 +45,17 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
   await uploaded;
   await expect(page.getByText("plan.txt")).toBeVisible();
 
-  await page
-    .locator(".editor-pane > .pane-header")
-    .getByRole("button", { name: "Delete" })
-    .click();
+  await page.getByRole("button", { name: "More note actions" }).click();
+  await page.getByRole("menuitem", { name: "Move to trash" }).click();
   await page.getByRole("button", { name: "Trash" }).click();
   await expect(page.locator(".note-card", { hasText: noteTitle })).toBeVisible();
   await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Redo", exact: true })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Restore" }).click();
-  await page.getByRole("button", { name: "All notes" }).click();
+  await page.getByRole("button", { name: "More note actions" }).click();
+  await page.getByRole("menuitem", { name: "Restore" }).click();
+  await page.getByRole("button", { name: "All notes", exact: true }).click();
   await expect(page.locator(".note-card", { hasText: noteTitle })).toBeVisible();
 });
 
@@ -163,9 +173,10 @@ test("creates a note with a folder, moves it, and reloads the assignment", async
     });
     await page.getByRole("button", { name: "New folder" }).click();
     await expect(page.getByText("Folder created")).toBeVisible();
-    await page.getByRole("button", { name: "Move" }).click();
+    await page.getByRole("button", { name: "Open note menu" }).click();
+    await page.getByRole("menuitem", { name: "Move to folder" }).click();
     await page.getByRole("menuitem", { name: "Folder 1" }).click();
-    await expect(page.getByText("Move")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open note menu" })).toBeVisible();
   });
 
   await test.step("reload and verify the note is still in the folder", async () => {
@@ -204,7 +215,7 @@ test("opens Share dialog from editor header, invites collaborator, and closes", 
   await expect(dialog).toBeVisible();
   await page.getByRole("button", { name: "Close sharing dialog" }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.getByRole("button", { name: "Share note" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Share note" })).toBeFocused();
 });
 
 async function register(

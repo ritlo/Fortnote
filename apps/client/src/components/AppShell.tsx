@@ -12,7 +12,6 @@ import { Sidebar } from "./Sidebar";
 
 export function AppShell() {
   const user = useAppStore((state) => state.user);
-  const keyMaterialVersion = useAppStore((state) => state.keyMaterialVersion);
   const newPassword = useAppStore((state) => state.newPassword);
   const folders = useAppStore((state) => state.folders);
   const notesView = useAppStore((state) => state.notesView);
@@ -89,7 +88,6 @@ export function AppShell() {
         changePassword={authActions.changePassword}
         cleanupSharingKeys={authActions.cleanupSharingKeys}
         deleteSelectedForever={noteActions.deleteSelectedForever}
-        keyMaterialVersion={keyMaterialVersion}
         lockVault={authActions.lockVault}
         moveSelectedToTrash={noteActions.moveSelectedToTrash}
         newPassword={newPassword}

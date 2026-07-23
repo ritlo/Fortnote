@@ -9,7 +9,7 @@ interface SidebarProps {
   notesView: NotesView;
   selectedFolderId: string | null;
   addFolder: (parentFolderId?: string | null) => Promise<void>;
-  moveNoteToFolder: (noteId: string, folderId: string | null) => void;
+  moveNoteToFolder: (noteId: string, folderId: string | null) => Promise<void>;
   openNotes: (folderId?: string | null) => void;
   openSharedNotes: () => void;
   openSettings: () => void;
@@ -76,10 +76,10 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       <div className="brand-row compact">
-        <div className="brand-mark">CN</div>
+        <div className="brand-mark">FN</div>
         <h1>Fortnote</h1>
       </div>
-      <DropTarget folderId={null} onDrop={(noteId: string) => { moveNoteToFolder(noteId, null); }}>
+      <DropTarget folderId={null} onDrop={(noteId: string) => { void moveNoteToFolder(noteId, null); }}>
         <button
           className={
             notesView === "notes" && selectedFolderId === null
@@ -101,21 +101,13 @@ export function Sidebar({
       >
         <Users size={17} /> Shared
       </button>
-      <button
-        className="nav-item"
-        type="button"
-        onClick={() => {
-          void addFolder();
-        }}
-      >
-        <Plus size={17} /> New folder
-      </button>
+      <div className="nav-label">Folders</div>
       <div className="folder-list">
         {folders
           .filter((folder) => folder.parentFolderId === null)
           .map((folder) => (
             <div key={folder.id}>
-              <DropTarget folderId={folder.id} onDrop={(noteId: string) => { moveNoteToFolder(noteId, folder.id); }}>
+              <DropTarget folderId={folder.id} onDrop={(noteId: string) => { void moveNoteToFolder(noteId, folder.id); }}>
                 <div className="folder-row">
                   <button
                     className={
@@ -155,7 +147,7 @@ export function Sidebar({
               {folders
                 .filter((child) => child.parentFolderId === folder.id)
                 .map((child) => (
-                  <DropTarget key={child.id} folderId={child.id} onDrop={(noteId: string) => { moveNoteToFolder(noteId, child.id); }}>
+                  <DropTarget key={child.id} folderId={child.id} onDrop={(noteId: string) => { void moveNoteToFolder(noteId, child.id); }}>
                     <div className="folder-row child">
                       <button
                         className={
@@ -186,6 +178,15 @@ export function Sidebar({
             </div>
           ))}
       </div>
+      <button
+        className="nav-item"
+        type="button"
+        onClick={() => {
+          void addFolder();
+        }}
+      >
+        <Plus size={17} /> New folder
+      </button>
       <button
         className={notesView === "trash" ? "nav-item active" : "nav-item"}
         type="button"

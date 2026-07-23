@@ -190,12 +190,14 @@ test("keeps viewer and trash read-only, reports rotation abort, then removes rev
     await expect(viewerPage.locator(".collaboration-status")).toContainText("View only");
     await expect(blockEditor(viewerPage)).toHaveAttribute("contenteditable", "false");
 
-    await ownerPage.getByRole("button", { name: "Delete", exact: true }).click();
+    await ownerPage.getByRole("button", { name: "More note actions" }).click();
+    await ownerPage.getByRole("menuitem", { name: "Move to trash" }).click();
     await ownerPage.getByRole("button", { name: "Trash", exact: true }).click();
     await openNote(ownerPage, title);
     await expect(ownerPage.locator(".collaboration-status")).toContainText("In trash — view only");
     await expect(ownerPage.getByRole("textbox", { name: "Title" })).toBeDisabled();
-    await ownerPage.getByRole("button", { name: "Restore" }).click();
+    await ownerPage.getByRole("button", { name: "More note actions" }).click();
+    await ownerPage.getByRole("menuitem", { name: "Restore" }).click();
     await ownerPage.getByRole("button", { name: "All notes", exact: true }).click();
     await openNote(ownerPage, title);
 
@@ -348,7 +350,8 @@ async function safeError(route: Route, status: number, code: string, message: st
 }
 
 async function expectRecoveryActions(page: Page, labels: string[]): Promise<void> {
-  await page.getByRole("button", { name: "Open recovery actions" }).click();
+  await page.getByRole("button", { name: "More note actions" }).click();
+  await page.getByRole("menuitem", { name: "Open recovery actions" }).click();
   const dialog = page.getByRole("dialog", { name: "Recovery actions" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("button")).toHaveText(["Close", ...labels]);

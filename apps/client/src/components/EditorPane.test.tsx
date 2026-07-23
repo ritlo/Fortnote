@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { StrictMode, type ReactNode } from "react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { CollaborationAction } from "../lib/collaborationState";
@@ -84,9 +84,8 @@ describe("EditorPane composition", () => {
     };
     renderEditorPane({ collaborationState });
 
-    act(() => {
-      screen.getByRole("button", { name: "Open recovery actions" }).click();
-    });
+    fireEvent.click(screen.getByRole("button", { name: "More note actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open recovery actions" }));
     expect(screen.getByRole("dialog", { hidden: true })).toBeTruthy();
   });
 
@@ -100,7 +99,6 @@ describe("EditorPane composition", () => {
       <StrictMode>
         <EditorPane
           collaborationState={{ actions: [], announcement: "none", draftRetained: false, editing: false, id: "idle", label: "Ready", saved: true, synchronized: true }}
-          keyMaterialVersion={null}
           newPassword=""
           notesView="notes"
           recoverySecret={null}
@@ -136,7 +134,6 @@ function renderEditorPane(overrides: Partial<Parameters<typeof EditorPane>[0]> =
   return render(
     <EditorPane
       collaborationState={{ actions: [], announcement: "none", draftRetained: false, editing: false, id: "idle", label: "Ready", saved: true, synchronized: true }}
-      keyMaterialVersion={null}
       newPassword=""
       notesView="notes"
       recoverySecret={null}

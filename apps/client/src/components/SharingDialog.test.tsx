@@ -47,6 +47,27 @@ describe("SharingDialog", () => {
     });
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("returns focus to the Share trigger when closed", () => {
+    const shareTrigger = document.createElement("button");
+    document.body.append(shareTrigger);
+    shareTrigger.focus();
+    const returnFocusRef = { current: shareTrigger };
+    render(
+      <SharingDialog
+        selectedNote={note()}
+        open={true}
+        onClose={vi.fn()}
+        returnFocusRef={returnFocusRef}
+      />
+    );
+
+    act(() => {
+      screen.getByRole("dialog", { hidden: true }).dispatchEvent(new Event("close"));
+    });
+    expect(document.activeElement).toBe(shareTrigger);
+    shareTrigger.remove();
+  });
 });
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {

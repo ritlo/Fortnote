@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { AttachmentSummary, User } from "../api";
 import type { DecryptedNote, NotesView } from "../store/appStore";
 import { EditorHeader } from "./EditorHeader";
@@ -12,7 +12,6 @@ import { SharingDialog } from "./SharingDialog";
 interface EditorPaneProps {
   collaborationState: CollaborationState;
   recoveryCallbacks: RecoveryCallbacks;
-  keyMaterialVersion: number | null;
   newPassword: string;
   notesView: NotesView;
   recoverySecret: string | null;
@@ -37,7 +36,6 @@ interface EditorPaneProps {
 export function EditorPane({
   collaborationState,
   recoveryCallbacks,
-  keyMaterialVersion,
   newPassword,
   notesView,
   recoverySecret,
@@ -58,6 +56,7 @@ export function EditorPane({
 }: EditorPaneProps) {
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [sharingOpen, setSharingOpen] = useState(false);
+  const shareButtonRef = useRef<HTMLButtonElement>(null);
   const canShare =
     selectedNote !== null &&
     selectedNote.role !== "viewer" &&
@@ -70,11 +69,11 @@ export function EditorPane({
         canShare={canShare}
         collaborationState={collaborationState}
         deleteSelectedForever={deleteSelectedForever}
-        keyMaterialVersion={keyMaterialVersion}
         lockVault={lockVault}
         moveSelectedToTrash={moveSelectedToTrash}
         notesView={notesView}
         onShare={() => { setSharingOpen(true); }}
+        shareButtonRef={shareButtonRef}
         recoveryCallbacks={recoveryCallbacks}
         recoveryOpen={recoveryOpen}
         restoreSelectedNote={restoreSelectedNote}
@@ -92,6 +91,7 @@ export function EditorPane({
         selectedNote={selectedNote}
         open={sharingOpen}
         onClose={() => { setSharingOpen(false); }}
+        returnFocusRef={shareButtonRef}
       />
       {notesView === "settings" ? (
         <SettingsPanel

@@ -68,6 +68,10 @@ beforeEach(() => {
   mocks.loadNotes.mockResolvedValue(undefined);
   useAppStore.setState({
     error: null,
+    folders: [
+      { id: "folder-1", name: "Work", parentFolderId: null, createdAt: "", updatedAt: "" },
+      { id: "folder-2", name: "Personal", parentFolderId: null, createdAt: "", updatedAt: "" }
+    ],
     notes: [note()],
     notesView: "notes",
     rootKey: new Uint8Array([1]),
@@ -594,23 +598,23 @@ describe("note save conflict handling", () => {
 });
 
 describe("moveNoteToFolder", () => {
-  it("updates the note folder id in state", () => {
+  it("updates the note folder id in state", async () => {
     useAppStore.setState({ notes: [note()] });
     const { result } = renderHook(() => useNoteActions(note()));
 
-    act(() => {
-      result.current.moveNoteToFolder("note_1", "folder-1");
+    await act(async () => {
+      await result.current.moveNoteToFolder("note_1", "folder-1");
     });
 
     expect(useAppStore.getState().notes[0]?.folderId).toBe("folder-1");
   });
 
-  it("skips update when folder id is unchanged", () => {
+  it("skips update when folder id is unchanged", async () => {
     useAppStore.setState({ notes: [note({ folderId: "folder-1" })] });
     const { result } = renderHook(() => useNoteActions(note({ folderId: "folder-1" })));
 
-    act(() => {
-      result.current.moveNoteToFolder("note_1", "folder-1");
+    await act(async () => {
+      await result.current.moveNoteToFolder("note_1", "folder-1");
     });
 
     expect(useAppStore.getState().notes[0]?.folderId).toBe("folder-1");
@@ -621,24 +625,49 @@ describe("moveNoteToFolder", () => {
     useAppStore.setState({ notes: [note()], selectedNoteId: "note_1" });
     const { result } = renderHook(() => useNoteActions(note()));
 
-    act(() => {
-      result.current.moveNoteToFolder("note_1", "folder-2");
+    await act(async () => {
+      await result.current.moveNoteToFolder("note_1", "folder-2");
     });
     await act(async () => vi.advanceTimersByTimeAsync(500));
 
     expect(mocks.updateNote).toHaveBeenCalledOnce();
   });
 
-  it("does not schedule autosave for non-selected notes", () => {
+  it("persists folder changes for non-selected notes", async () => {
     useAppStore.setState({ notes: [note(), note({ id: "note_2", title: "Second" })], selectedNoteId: "note_1" });
     const { result } = renderHook(() => useNoteActions(note()));
 
-    act(() => {
-      result.current.moveNoteToFolder("note_2", "folder-2");
+    await act(async () => {
+      await result.current.moveNoteToFolder("note_2", "folder-2");
     });
-    act(() => { vi.advanceTimersByTime(500); });
+    await waitForAssertion(() => {
+      expect(mocks.updateNote).toHaveBeenCalledWith("note_2", expect.objectContaining({ folderId: "folder-2" }));
+    });
+  });
 
+  it("ignores invalid folder targets without changing the note", async () => {
+    useAppStore.setState({ notes: [note()], selectedNoteId: "note_1" });
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    await act(async () => {
+      await result.current.moveNoteToFolder("note_1", "missing-folder");
+    });
+
+    expect(useAppStore.getState().notes[0]?.folderId).toBeNull();
     expect(mocks.updateNote).not.toHaveBeenCalled();
+  });
+
+  it("rolls back a local folder move when saving fails", async () => {
+    mocks.updateNote.mockRejectedValueOnce(new Error("offline"));
+    useAppStore.setState({ notes: [note()], selectedNoteId: "note_1" });
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    await act(async () => {
+      await result.current.moveNoteToFolder("note_1", "folder-2");
+    });
+
+    expect(useAppStore.getState().notes[0]?.folderId).toBeNull();
+    expect(mocks.updateNote).toHaveBeenCalledOnce();
   });
 });
 

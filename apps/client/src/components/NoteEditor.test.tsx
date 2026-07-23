@@ -139,6 +139,7 @@ describe("NoteEditor simplified editor", () => {
     renderEditor(note());
     expect(screen.getByTestId("block-note")).toBeTruthy();
     expect(screen.getByTestId("block-note").getAttribute("data-editable")).toBe("true");
+    expect(screen.getByTestId("block-note").closest(".blocknote-surface")).toBeTruthy();
   });
 
   it("binds protected notes to their encrypted root section", () => {
@@ -158,6 +159,31 @@ describe("NoteEditor simplified editor", () => {
     useAppStore.setState({ status: "Ready" });
     renderEditor(note());
     expect(screen.getByText("Saved and synchronized")).toBeTruthy();
+  });
+
+  it("updates editor status and last-saved metadata after content is delivered", () => {
+    const originalUpdatedAt = "2026-07-15T00:00:00.000Z";
+    const current = note({ updatedAt: originalUpdatedAt });
+    useAppStore.setState({
+      notes: [current],
+      status: "Ready"
+    });
+    renderEditor(current);
+    const saveStateHandler = mocks.provider.on.mock.calls.find(
+      ([event]) => event === "save-state"
+    )?.[1] as ((state: "saving" | "saved") => void) | undefined;
+
+    expect(saveStateHandler).toBeTypeOf("function");
+    act(() => {
+      saveStateHandler?.("saving");
+    });
+    expect(screen.getByText("Saving…")).toBeTruthy();
+
+    act(() => {
+      saveStateHandler?.("saved");
+    });
+    expect(screen.getByText("Saved and synchronized")).toBeTruthy();
+    expect(useAppStore.getState().notes[0]?.updatedAt).not.toBe(originalUpdatedAt);
   });
 
   it("shows conflict state", () => {

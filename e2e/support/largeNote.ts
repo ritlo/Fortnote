@@ -419,7 +419,7 @@ export async function searchAllSectionsWithoutRepeatTransfer(
   const search = page.getByLabel("Search notes");
   await search.fill(marker);
   await expect(page.getByRole("status").filter({ hasText: "Search" })).toContainText(
-    `Search covers all ${String(expectedSections)} sections.`,
+    "Search is ready.",
     { timeout: 10 * 60_000 }
   );
   const match = page.getByRole("button", { name: "Open matching section" });
@@ -433,7 +433,7 @@ export async function searchAllSectionsWithoutRepeatTransfer(
   await search.fill("");
   await search.fill(marker);
   await expect(page.getByRole("status").filter({ hasText: "Search" })).toContainText(
-    `Search covers all ${String(expectedSections)} sections.`
+    "Search is ready."
   );
   await expect(page.getByRole("button", { name: "Open matching section" })).toBeVisible();
   expect(traffic.historySectionIds).toHaveLength(historyCount);

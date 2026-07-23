@@ -32,6 +32,14 @@ describe("NotesPane role labels", () => {
 });
 
 describe("NotesPane drag and move", () => {
+  it("uses human note metadata instead of encrypted byte counts", () => {
+    renderNotesPane({ filteredNotes: [note({ contentLength: 1024, folderId: "folder-1" })] });
+    expect(screen.getByText(/Updated/)).toBeTruthy();
+    expect(screen.getByText(/Updated .*Work/)).toBeTruthy();
+    expect(screen.queryByText(/encrypted bytes/)).toBeNull();
+    expect(screen.getByRole("list", { name: "Notes" })).toBeTruthy();
+  });
+
   it("renders note cards as draggable", () => {
     renderNotesPane({ filteredNotes: [note()] });
     const items = screen.getAllByRole("listitem");
@@ -53,28 +61,42 @@ describe("NotesPane drag and move", () => {
 
   it("does not render move button for viewer notes", () => {
     renderNotesPane({ filteredNotes: [note({ role: "viewer" })] });
-    expect(screen.queryByText("Move")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open note menu" })).toBeNull();
   });
 
-  it("shows move button for owner notes", () => {
+  it("shows a note actions menu for owner notes", () => {
     renderNotesPane({ filteredNotes: [note()] });
-    expect(screen.getByText("Move")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open note menu" })).toBeTruthy();
   });
 
-  it("opens folder list on Move click and calls moveNoteToFolder", () => {
+  it("opens folder list from the note actions menu and calls moveNoteToFolder", () => {
     const moveNoteToFolder = vi.fn();
     renderNotesPane({ filteredNotes: [note({ id: "note-move" })], moveNoteToFolder });
-    fireEvent.click(screen.getByText("Move"));
+    fireEvent.click(screen.getByRole("button", { name: "Open note menu" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to folder" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Work" }));
     expect(moveNoteToFolder).toHaveBeenCalledWith("note-move", "folder-1");
   });
 
-  it("hides folder list on Cancel", () => {
+  it("opens the note actions menu on right click", () => {
+    renderNotesPane({ filteredNotes: [note()] });
+    fireEvent.contextMenu(screen.getByText("Title"));
+    expect(screen.getByRole("menu")).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Move to folder" })).toBeTruthy();
+  });
+
+  it("opens the note actions menu with the context-menu key", () => {
+    renderNotesPane({ filteredNotes: [note()] });
+    fireEvent.keyDown(screen.getByText("Title"), { key: "ContextMenu" });
+    expect(screen.getByRole("menu")).toBeTruthy();
+  });
+
+  it("closes the note actions menu on Escape", () => {
     renderNotesPane({ filteredNotes: [note({ id: "hide-cancel" })] });
-    const toggle = screen.getByRole("button", { name: /^Move/ });
+    const toggle = screen.getByRole("button", { name: "Open note menu" });
     fireEvent.click(toggle);
-    expect(screen.getByRole("menuitem", { name: "Work" })).toBeTruthy();
-    fireEvent.click(toggle);
+    expect(screen.getByRole("menuitem", { name: "Move to folder" })).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
     expect(screen.queryByRole("menuitem")).toBeNull();
   });
 });
@@ -99,7 +121,7 @@ describe("NotesPane new note dialog", () => {
 interface NotesPaneTestOverrides {
   addNote?: () => Promise<void>;
   filteredNotes?: DecryptedNote[];
-  moveNoteToFolder?: (noteId: string, folderId: string | null) => void;
+  moveNoteToFolder?: (noteId: string, folderId: string | null) => Promise<void>;
   notesView?: "notes" | "shared" | "trash" | "settings";
 }
 
@@ -110,7 +132,7 @@ function renderNotesPane(overrides: NotesPaneTestOverrides = {}) {
       error={null}
       filteredNotes={overrides.filteredNotes ?? [note()]}
       folders={folders}
-      moveNoteToFolder={overrides.moveNoteToFolder ?? vi.fn()}
+      moveNoteToFolder={overrides.moveNoteToFolder ?? (() => Promise.resolve())}
       notesView={overrides.notesView ?? "notes"}
       realtimeStatus="connected"
       recoverySecret={null}
