@@ -7,6 +7,7 @@ import type { ServerConfig } from "../config.js";
 
 const STORAGE_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ORPHAN_GRACE_MS = 60 * 60 * 1000;
 
 export function attachmentPath(config: ServerConfig, storageId: string): string {
   validateStorageId(storageId);
@@ -95,7 +96,11 @@ export function removeOrphanedEncryptedAttachments(
       STORAGE_ID_PATTERN.test(entry.name) &&
       !referencedStorageIds.has(entry.name)
     ) {
-      fs.unlinkSync(attachmentPath(config, entry.name));
+      const file = attachmentPath(config, entry.name);
+      if (Date.now() - fs.statSync(file).mtimeMs < ORPHAN_GRACE_MS) {
+        continue;
+      }
+      fs.unlinkSync(file);
     }
   }
 }
