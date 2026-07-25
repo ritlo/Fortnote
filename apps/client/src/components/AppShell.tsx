@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useAttachmentActions } from "../hooks/useAttachmentActions";
 import { useAuthActions } from "../hooks/useAuthActions";
 import { useNoteActions } from "../hooks/useNoteActions";
@@ -6,6 +7,7 @@ import { useSectionData } from "../hooks/useSectionData";
 import { useSectionActions } from "../hooks/useSectionActions";
 import { useRecoveryActions } from "../hooks/useRecoveryActions";
 import { useAppStore } from "../store/appStore";
+import { AttachmentDialog } from "./AttachmentDialog";
 import { EditorPane } from "./EditorPane";
 import { NotesPane } from "./NotesPane";
 import { Sidebar } from "./Sidebar";
@@ -22,6 +24,7 @@ export function AppShell() {
   const error = useAppStore((state) => state.error);
   const status = useAppStore((state) => state.status);
   const realtimeStatus = useAppStore((state) => state.realtimeStatus);
+  const attachmentsByNote = useAppStore((state) => state.attachmentsByNote);
   const setNewPassword = useAppStore((state) => state.setNewPassword);
   const setNotesView = useAppStore((state) => state.setNotesView);
   const setSelectedFolderId = useAppStore((state) => state.setSelectedFolderId);
@@ -38,6 +41,33 @@ export function AppShell() {
   const authActions = useAuthActions();
   const noteActions = useNoteActions(noteView.selectedNote);
   const attachmentActions = useAttachmentActions(noteView.selectedNote);
+  const [attachmentDialogNote, setAttachmentDialogNote] = useState<typeof noteView.selectedNote>(null);
+  const [attachmentDialogLoading, setAttachmentDialogLoading] = useState(false);
+  const [attachmentDialogError, setAttachmentDialogError] = useState<string | null>(null);
+  const attachmentDialogActions = useAttachmentActions(attachmentDialogNote);
+
+  useEffect(() => {
+    if (!attachmentDialogNote) {
+      setAttachmentDialogLoading(false);
+      setAttachmentDialogError(null);
+      return;
+    }
+    setAttachmentDialogLoading(true);
+    setAttachmentDialogError(null);
+    void attachmentDialogActions.loadAttachments(attachmentDialogNote.id)
+      .catch((loadError: unknown) => {
+        setAttachmentDialogError(
+          loadError instanceof Error ? loadError.message : "Unable to load attachments"
+        );
+      })
+      .finally(() => { setAttachmentDialogLoading(false); });
+  }, [attachmentDialogActions.loadAttachments, attachmentDialogNote]);
+
+  function openAttachmentDialog(note: typeof noteView.selectedNote) {
+    if (!note) return;
+    setSelectedNoteId(note.id);
+    setAttachmentDialogNote(note);
+  }
 
   if (!user) {
     return null;
@@ -69,6 +99,7 @@ export function AppShell() {
         folders={folders}
         moveNoteToFolder={noteActions.moveNoteToFolder}
         notesView={notesView}
+        openAttachments={openAttachmentDialog}
         recoverySecret={recoverySecret}
         retrySearchIndex={noteView.retrySearchIndex}
         search={search}
@@ -103,6 +134,23 @@ export function AppShell() {
         updateSelectedNote={noteActions.updateSelectedNote}
         uploadSelectedAttachment={attachmentActions.uploadSelectedAttachment}
         user={user}
+      />
+      <AttachmentDialog
+        attachments={attachmentDialogNote ? attachmentsByNote[attachmentDialogNote.id] : undefined}
+        canDelete={
+          attachmentDialogNote !== null &&
+          attachmentDialogNote.role !== "viewer" &&
+          notesView !== "trash" &&
+          !attachmentDialogNote.isDeleted
+        }
+        downloadAttachment={attachmentDialogActions.downloadSelectedAttachment}
+        error={attachmentDialogError}
+        loading={attachmentDialogLoading}
+        noteTitle={attachmentDialogNote?.title ?? "Note"}
+        onClose={() => { setAttachmentDialogNote(null); }}
+        open={attachmentDialogNote !== null}
+        removeAttachment={attachmentDialogActions.removeSelectedAttachment}
+        resolveAttachmentUrl={attachmentDialogActions.resolveAttachmentUrl}
       />
     </main>
   );

@@ -275,6 +275,18 @@ test("embeds encrypted media for reloads and shared viewers", async ({
         /^blob:/
       );
       expect(traffic.attachmentUploads).toBe(1);
+
+      const noteCard = alicePage.locator(".note-card", { hasText: noteTitle });
+      await noteCard.click({ button: "right" });
+      await alicePage.getByRole("menuitem", { name: "Attachments" }).click();
+      const attachmentDialog = alicePage.getByRole("dialog", {
+        name: `Attachments for ${noteTitle}`
+      });
+      await expect(attachmentDialog).toBeVisible();
+      await attachmentDialog.getByRole("button", { name: filename, exact: true }).click();
+      await expect(attachmentDialog.getByRole("img", { name: `Preview of ${filename}` }))
+        .toBeVisible();
+      await attachmentDialog.getByRole("button", { name: "Close attachments" }).click();
     });
 
     await test.step("reuse the attachment without another upload", async () => {

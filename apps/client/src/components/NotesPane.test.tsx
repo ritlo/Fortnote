@@ -61,7 +61,9 @@ describe("NotesPane drag and move", () => {
 
   it("does not render move button for viewer notes", () => {
     renderNotesPane({ filteredNotes: [note({ role: "viewer" })] });
-    expect(screen.queryByRole("button", { name: "Open note menu" })).toBeNull();
+    fireEvent.contextMenu(screen.getByText("Title"));
+    expect(screen.getByRole("menuitem", { name: "Attachments" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Move to folder" })).toBeNull();
   });
 
   it("shows a note actions menu for owner notes", () => {
@@ -82,7 +84,16 @@ describe("NotesPane drag and move", () => {
     renderNotesPane({ filteredNotes: [note()] });
     fireEvent.contextMenu(screen.getByText("Title"));
     expect(screen.getByRole("menu")).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Attachments" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Move to folder" })).toBeTruthy();
+  });
+
+  it("opens the attachment dialog for the note from its actions menu", () => {
+    const openAttachments = vi.fn();
+    renderNotesPane({ filteredNotes: [note({ id: "note-attachments" })], openAttachments });
+    fireEvent.contextMenu(screen.getByText("Title"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Attachments" }));
+    expect(openAttachments).toHaveBeenCalledWith(expect.objectContaining({ id: "note-attachments" }));
   });
 
   it("opens the note actions menu with the context-menu key", () => {
@@ -123,6 +134,7 @@ interface NotesPaneTestOverrides {
   filteredNotes?: DecryptedNote[];
   moveNoteToFolder?: (noteId: string, folderId: string | null) => Promise<void>;
   notesView?: "notes" | "shared" | "trash" | "settings";
+  openAttachments?: (note: DecryptedNote) => void;
 }
 
 function renderNotesPane(overrides: NotesPaneTestOverrides = {}) {
@@ -134,6 +146,7 @@ function renderNotesPane(overrides: NotesPaneTestOverrides = {}) {
       folders={folders}
       moveNoteToFolder={overrides.moveNoteToFolder ?? (() => Promise.resolve())}
       notesView={overrides.notesView ?? "notes"}
+      openAttachments={overrides.openAttachments ?? vi.fn()}
       realtimeStatus="connected"
       recoverySecret={null}
       retrySearchIndex={vi.fn()}

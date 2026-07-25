@@ -22,6 +22,7 @@ interface NotesPaneProps {
   status: string;
   addNote: (folderId?: string | null) => Promise<void>;
   moveNoteToFolder: (noteId: string, folderId: string | null) => Promise<void>;
+  openAttachments: (note: DecryptedNote) => void;
   retrySearchIndex: () => void;
   selectSearchMatch: (match: SearchMatch) => void;
   setSearch: (value: string) => void;
@@ -44,6 +45,7 @@ export function NotesPane({
   status,
   addNote,
   moveNoteToFolder,
+  openAttachments,
   retrySearchIndex,
   selectSearchMatch,
   setSearch,
@@ -141,6 +143,7 @@ export function NotesPane({
                 onMove={async (noteId, folderId) => {
                   await moveNoteToFolder(noteId, folderId);
                 }}
+                onOpenAttachments={openAttachments}
                 onSearchSelect={selectSearchMatch}
               />
             );
@@ -212,6 +215,7 @@ function NoteListItem({
   noteMatches,
   onSelect,
   onMove,
+  onOpenAttachments,
   onSearchSelect
 }: {
   note: DecryptedNote;
@@ -221,6 +225,7 @@ function NoteListItem({
   noteMatches: SearchMatch[];
   onSelect: (id: string) => void;
   onMove: (noteId: string, folderId: string | null) => Promise<void>;
+  onOpenAttachments: (note: DecryptedNote) => void;
   onSearchSelect: (match: SearchMatch) => void;
 }) {
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -228,6 +233,7 @@ function NoteListItem({
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const canManageNote = notesView === "notes" && note.role !== "viewer";
+  const canOpenNoteMenu = notesView === "notes" || notesView === "shared";
   const folderName = folders.find((folder) => folder.id === note.folderId)?.name ?? "All notes";
 
   useEffect(() => {
@@ -266,7 +272,7 @@ function NoteListItem({
   }
 
   function openMenu() {
-    if (canManageNote) {
+    if (canOpenNoteMenu) {
       setContextMenuOpen(true);
     }
   }
@@ -284,7 +290,7 @@ function NoteListItem({
       draggable={notesView === "notes" && note.role !== "viewer"}
       onDragStart={handleDragStart}
       onContextMenu={(event) => {
-        if (canManageNote) {
+        if (canOpenNoteMenu) {
           event.preventDefault();
           openMenu();
         }
@@ -306,7 +312,7 @@ function NoteListItem({
         </span>
         <span className="note-meta">{formatNoteMetadata(note.updatedAt, folderName)}</span>
       </button>
-      {canManageNote ? (
+      {canOpenNoteMenu ? (
         <div className="note-actions">
           <button
             ref={menuButtonRef}
@@ -350,10 +356,22 @@ function NoteListItem({
               <button
                 type="button"
                 role="menuitem"
-                onClick={() => { setShowMove(true); }}
+                onClick={() => {
+                  onOpenAttachments(note);
+                  closeMenu();
+                }}
               >
-                Move to folder
+                Attachments
               </button>
+              {canManageNote ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { setShowMove(true); }}
+                >
+                  Move to folder
+                </button>
+              ) : null}
               {showMove ? (
                 <div className="move-folder-list" role="menu">
                   {folders.map((f) => (

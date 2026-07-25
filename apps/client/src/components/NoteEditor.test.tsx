@@ -318,18 +318,28 @@ describe("NoteEditor inline attachment states", () => {
     expect(screen.getByTestId("embed-tab")).toBeTruthy();
   });
 
-  it("shows compatible attachments in the file panel attachments tab", () => {
+  it("lets the BlockNote file panel insert an existing compatible attachment", () => {
     useAppStore.setState({
       attachmentsByNote: {
         "note-1": [
-          attachment({ filename: "photo.png", mimeType: "image/png" }),
-          attachment({ filename: "screenshot.jpeg", mimeType: "image/jpeg" })
+          attachment({ filename: "photo.png", mimeType: "image/png", id: "00000000-0000-4000-8000-000000000001" }),
+          attachment({ filename: "notes.txt", mimeType: "text/plain", id: "00000000-0000-4000-8000-000000000002" })
         ]
       }
     });
     renderEditor(note());
-    expect(screen.getByText("photo.png")).toBeTruthy();
-    expect(screen.getByText("screenshot.jpeg")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "photo.png" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "notes.txt" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "photo.png" }));
+    expect(mocks.editor.updateBlock).toHaveBeenCalledWith(
+      "media-block",
+      expect.objectContaining({
+        props: {
+          name: "photo.png",
+          url: "fortnote-attachment:00000000-0000-4000-8000-000000000001"
+        }
+      })
+    );
   });
 
   it("does not render file panel controller in read-only mode", () => {

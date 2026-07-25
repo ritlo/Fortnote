@@ -45,6 +45,14 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
   await uploaded;
   await expect(page.getByText("plan.txt")).toBeVisible();
 
+  await noteCard.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Attachments" }).click();
+  const attachmentDialog = page.getByRole("dialog", { name: `Attachments for ${noteTitle}` });
+  await expect(attachmentDialog).toBeVisible();
+  await attachmentDialog.getByRole("button", { name: "plan.txt", exact: true }).click();
+  await expect(attachmentDialog.getByText("Preview is ready to download.")).toBeVisible();
+  await attachmentDialog.getByRole("button", { name: "Close attachments" }).click();
+
   await page.getByRole("button", { name: "More note actions" }).click();
   await page.getByRole("menuitem", { name: "Move to trash" }).click();
   await page.getByRole("button", { name: "Trash" }).click();

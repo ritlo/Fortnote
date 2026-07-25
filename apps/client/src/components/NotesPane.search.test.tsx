@@ -26,6 +26,7 @@ describe("NotesPane protected search", () => {
         folders={[]}
         moveNoteToFolder={vi.fn()}
         notesView="notes"
+        openAttachments={vi.fn()}
         realtimeStatus="connected"
         recoverySecret={null}
         retrySearchIndex={retrySearchIndex}

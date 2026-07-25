@@ -121,7 +121,12 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
   );
 
   useEffect(() => {
-    if (!selectedNoteId || attachmentsByNote[selectedNoteId]) {
+    if (
+      !selectedNote ||
+      !selectedNoteId ||
+      selectedNote.id !== selectedNoteId ||
+      attachmentsByNote[selectedNoteId]
+    ) {
       return;
     }
 
@@ -328,9 +333,9 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
     [loadAttachments]
   );
 
-  async function removeSelectedAttachment(attachmentId: string) {
+  async function removeSelectedAttachment(attachmentId: string): Promise<boolean> {
     if (!selectedNote || !canWriteSelectedAttachment(selectedNote)) {
-      return;
+      return false;
     }
 
     setError(null);
@@ -339,16 +344,19 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
       await deleteAttachment(attachmentId);
       await refreshAttachments(selectedNote.id);
       setStatus("Attachment deleted");
+      return true;
     } catch (deleteError) {
       setStatus("Attachment failed");
       setError(
         deleteError instanceof Error ? deleteError.message : "Unable to delete attachment"
       );
+      return false;
     }
   }
 
   return {
     downloadSelectedAttachment,
+    loadAttachments,
     removeSelectedAttachment,
     resolveAttachmentUrl,
     uploadSelectedAttachment
