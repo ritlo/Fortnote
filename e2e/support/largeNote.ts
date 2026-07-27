@@ -110,6 +110,7 @@ export async function registerLargeNoteUser(
   await page.getByRole("button", { name: "Create an account" }).click();
   await page.getByLabel("Account handle").fill(account.username);
   await page.getByLabel("Account password").fill(account.password);
+  await page.getByLabel("Confirm password").fill(account.password);
   await page.getByRole("button", { name: "Create encrypted vault" }).click();
   await expect(page.getByText("Signed in and decrypted")).toBeVisible();
   await expect(page.getByText("Sync connected")).toBeVisible({ timeout: 30_000 });

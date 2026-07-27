@@ -111,6 +111,7 @@ test("recovers a vault with the saved recovery key", async ({ page }) => {
   await page.getByLabel("Account handle").fill(account.username);
   await page.getByLabel("Recovery key").fill(recoveryKey);
   await page.getByLabel("New account password").fill(recoveredPassword);
+  await page.getByLabel("Confirm new password").fill(recoveredPassword);
   await page.getByRole("button", { name: "Recover and decrypt" }).click();
 
   await expect(page.getByText("Recovered and decrypted")).toBeVisible();
@@ -235,6 +236,7 @@ async function register(
   await page.getByRole("button", { name: "Create an account" }).click();
   await page.getByLabel("Account handle").fill(username);
   await page.getByLabel("Account password").fill(password);
+  await page.getByLabel("Confirm password").fill(password);
   await page.getByRole("button", { name: "Create encrypted vault" }).click();
   await expect(page.getByText("Signed in and decrypted")).toBeVisible();
 

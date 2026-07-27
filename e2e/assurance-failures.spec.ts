@@ -228,6 +228,7 @@ async function register(page: Page, account: AssuranceAccount): Promise<void> {
   await page.getByRole("button", { name: "Create an account" }).click();
   await page.getByLabel("Account handle").fill(account.username);
   await page.getByLabel("Account password").fill(account.password);
+  await page.getByLabel("Confirm password").fill(account.password);
   await page.getByRole("button", { name: "Create encrypted vault" }).click();
   await expect(page.getByText("Signed in and decrypted")).toBeVisible();
 }

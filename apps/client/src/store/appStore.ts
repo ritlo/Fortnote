@@ -559,6 +559,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   resetVaultState: (nextStatus) => {
     set({
+      authMode: "login",
       rootKey: null,
       keyMaterialVersion: null,
       notes: [],

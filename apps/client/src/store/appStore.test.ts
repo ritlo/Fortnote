@@ -8,6 +8,14 @@ describe("collaboration event store", () => {
     useAppStore.getState().resetVaultState("test reset");
   });
 
+  it("returns to the login screen after a vault reset", () => {
+    useAppStore.getState().setAuthMode("recover");
+
+    useAppStore.getState().resetVaultState("Signed out");
+
+    expect(useAppStore.getState().authMode).toBe("login");
+  });
+
   it("deduplicates replayed events while keeping the latest cursor", () => {
     const first = collaborationEvent({ cursor: 3, eventId: "event_3" });
     const duplicate = collaborationEvent({ cursor: 3, eventId: "event_3" });
