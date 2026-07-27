@@ -272,7 +272,15 @@ export function AuthScreen() {
   const error = useAppStore((state) => state.error);
   const status = useAppStore((state) => state.status);
   const setAuthMode = useAppStore((state) => state.setAuthMode);
+  const setError = useAppStore((state) => state.setError);
+  const setStatus = useAppStore((state) => state.setStatus);
   const { copyRecoverySecret } = useAuthActions();
+
+  function selectAuthMode(mode: AuthMode) {
+    setAuthMode(mode);
+    setError(null);
+    setStatus("Signed out");
+  }
 
   return (
     <main className="auth-screen">
@@ -285,7 +293,7 @@ export function AuthScreen() {
           </div>
         </div>
 
-        <AuthNavigation authMode={authMode} onSelect={setAuthMode} />
+        <AuthNavigation authMode={authMode} onSelect={selectAuthMode} />
         {authMode === "login" ? (
           <LoginForm />
         ) : authMode === "register" ? (

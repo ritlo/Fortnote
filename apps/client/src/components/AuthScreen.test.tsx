@@ -58,6 +58,19 @@ describe("AuthScreen account identity", () => {
     expect(screen.getByLabelText("Confirm new password")).toBeTruthy();
   });
 
+  it("clears stale auth feedback when switching forms", () => {
+    useAppStore.setState({
+      error: "Invalid username or password",
+      status: "Auth failed"
+    });
+    render(<AuthScreen />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Create an account" }));
+
+    expect(screen.queryByText("Invalid username or password")).toBeNull();
+    expect(screen.getByText("Signed out")).toBeTruthy();
+  });
+
   it("rejects registration when passwords do not match", () => {
     render(<AuthScreen />);
     fireEvent.click(screen.getByRole("button", { name: "Create an account" }));
