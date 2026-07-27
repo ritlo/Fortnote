@@ -38,24 +38,24 @@ describe("AuthScreen account identity", () => {
   it("shows only the login form initially", () => {
     render(<AuthScreen />);
 
-    expect(screen.getByRole("heading", { name: "Sign in" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Account password")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Recovery key")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("New account password")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Confirm password")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(screen.getByLabelText("Account password")).toBeTruthy();
+    expect(screen.queryByLabelText("Recovery key")).toBeNull();
+    expect(screen.queryByLabelText("New account password")).toBeNull();
+    expect(screen.queryByLabelText("Confirm password")).toBeNull();
   });
 
   it("switches between separate login, register, and recover forms", () => {
     render(<AuthScreen />);
 
     fireEvent.click(screen.getByRole("button", { name: "Create an account" }));
-    expect(screen.getByRole("heading", { name: "Register" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Confirm password")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Register" })).toBeTruthy();
+    expect(screen.getByLabelText("Confirm password")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Recover access" }));
-    expect(screen.getByRole("heading", { name: "Recover account" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Recovery key")).toBeInTheDocument();
-    expect(screen.getByLabelText("Confirm new password")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recover account" })).toBeTruthy();
+    expect(screen.getByLabelText("Recovery key")).toBeTruthy();
+    expect(screen.getByLabelText("Confirm new password")).toBeTruthy();
   });
 
   it("rejects registration when passwords do not match", () => {
