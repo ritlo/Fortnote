@@ -107,7 +107,7 @@ test("recovers a vault with the saved recovery key", async ({ page }) => {
 
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("button", { name: "Lock vault" }).click();
-  await page.getByRole("button", { name: "Recover" }).click();
+  await page.getByRole("button", { name: "Recover access" }).click();
   await page.getByLabel("Account handle").fill(account.username);
   await page.getByLabel("Recovery key").fill(recoveryKey);
   await page.getByLabel("New account password").fill(recoveredPassword);
@@ -232,7 +232,7 @@ async function register(
   password: string
 ): Promise<string> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Register" }).click();
+  await page.getByRole("button", { name: "Create an account" }).click();
   await page.getByLabel("Account handle").fill(username);
   await page.getByLabel("Account password").fill(password);
   await page.getByRole("button", { name: "Create encrypted vault" }).click();

@@ -107,7 +107,7 @@ export async function registerLargeNoteUser(
   account: LargeNoteAccount
 ): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Register" }).click();
+  await page.getByRole("button", { name: "Create an account" }).click();
   await page.getByLabel("Account handle").fill(account.username);
   await page.getByLabel("Account password").fill(account.password);
   await page.getByRole("button", { name: "Create encrypted vault" }).click();

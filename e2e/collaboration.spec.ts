@@ -862,7 +862,7 @@ async function restartManagedE2eServer(): Promise<boolean> {
 
 async function register(page: Page, username: string, password: string): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Register" }).click();
+  await page.getByRole("button", { name: "Create an account" }).click();
   await page.getByLabel("Account handle").fill(username);
   await page.getByLabel("Account password").fill(password);
   await page.getByRole("button", { name: "Create encrypted vault" }).click();

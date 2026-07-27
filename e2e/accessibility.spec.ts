@@ -9,7 +9,7 @@ import {
 test("auth and empty vault expose names, keyboard focus, and clean axe results", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Register" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create an account" })).toBeVisible();
   await expect(page.getByLabel("Account handle")).toBeVisible();
   await expect(page.getByLabel("Account password")).toBeVisible();
   await expectAxeClean(page);
@@ -170,7 +170,7 @@ test("rotation progress, repair, and revoked states remain accessible", async ({
 
 async function register(page: Page, username: string, password: string): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Register" }).click();
+  await page.getByRole("button", { name: "Create an account" }).click();
   await page.getByLabel("Account handle").fill(username);
   await page.getByLabel("Account password").fill(password);
   await page.getByRole("button", { name: "Create encrypted vault" }).click();
