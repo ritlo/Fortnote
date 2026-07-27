@@ -133,8 +133,7 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
       );
       for (const target of loadedTargetsRef.current.values()) {
         if (target.noteId === note.id) {
-          void releaseTarget(target, setLoadedSection);
-          loadedTargetsRef.current.delete(sectionRuntimeKey(target.noteId, target.sectionId));
+          void releaseTarget(target, setLoadedSection, loadedTargetsRef.current);
         }
       }
     };
@@ -227,8 +226,7 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
     );
     for (const [key, previous] of loadedTargetsRef.current) {
       if (previous.noteId === note.id && !targetKeys.has(key)) {
-        loadedTargetsRef.current.delete(key);
-        void releaseTarget(previous, setLoadedSection);
+        void releaseTarget(previous, setLoadedSection, loadedTargetsRef.current);
       }
     }
 
@@ -466,9 +464,13 @@ async function initializeSectionIfNeeded(
 
 async function releaseTarget(
   target: LoadedTarget,
-  setLoadedSection: ReturnType<typeof useAppStore.getState>["setLoadedSection"]
+  setLoadedSection: ReturnType<typeof useAppStore.getState>["setLoadedSection"],
+  loadedTargets?: Map<string, LoadedTarget>
 ): Promise<void> {
   const key = sectionRuntimeKey(target.noteId, target.sectionId);
+  if (loadedTargets && loadedTargets.get(key) !== target) {
+    return;
+  }
   const current = useAppStore.getState().loadedSections[key];
   if (current) {
     setLoadedSection({ ...current, status: "releasing" });
@@ -479,7 +481,11 @@ async function releaseTarget(
     target.keyEpoch,
     target.generation
   );
+  if (loadedTargets && loadedTargets.get(key) !== target) {
+    return;
+  }
   if (released) {
+    loadedTargets?.delete(key);
     setLoadedSection(null, key);
   } else if (current) {
     setLoadedSection({

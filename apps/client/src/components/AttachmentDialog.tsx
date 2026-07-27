@@ -30,6 +30,7 @@ export function AttachmentDialog({
 }: AttachmentDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   const [selectedAttachmentId, setSelectedAttachmentId] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -40,6 +41,8 @@ export function AttachmentDialog({
     const dialog = dialogRef.current;
     if (!dialog) return;
     if (open && !dialog.open) {
+      returnFocusRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
       dialog.showModal();
       closeButtonRef.current?.focus();
     } else if (!open && dialog.open) {
@@ -53,6 +56,8 @@ export function AttachmentDialog({
     const handleClose = () => {
       setSelectedAttachmentId(null);
       onClose();
+      returnFocusRef.current?.focus();
+      returnFocusRef.current = null;
     };
     dialog.addEventListener("close", handleClose);
     return () => { dialog.removeEventListener("close", handleClose); };
@@ -96,6 +101,13 @@ export function AttachmentDialog({
 
   async function handleDelete() {
     if (!selectedAttachment || deleting) return;
+    if (
+      !window.confirm(
+        `Delete attachment "${selectedAttachment.filename}"? This cannot be undone.`
+      )
+    ) {
+      return;
+    }
     setDeleting(true);
     try {
       const deleted = await removeAttachment(selectedAttachment.id);
@@ -129,7 +141,7 @@ export function AttachmentDialog({
           className="icon-button"
           type="button"
           aria-label="Close attachments"
-          onClick={onClose}
+          onClick={() => { dialogRef.current?.close(); }}
         >
           <X size={18} aria-hidden="true" />
         </button>

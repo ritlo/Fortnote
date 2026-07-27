@@ -11,6 +11,7 @@ HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement)
 });
 HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) {
   this.open = false;
+  this.dispatchEvent(new Event("close"));
 });
 
 afterEach(cleanup);
@@ -32,6 +33,26 @@ describe("RecoveryDialog", () => {
     renderDialog(true, onClose);
     fireEvent.click(screen.getByRole("button", { name: "Close recovery dialog" }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("returns focus to the trigger after closing", () => {
+    const trigger = document.createElement("button");
+    document.body.append(trigger);
+    trigger.focus();
+    const onClose = vi.fn();
+    const view = renderDialog(true, onClose);
+
+    view.rerender(
+      <RecoveryDialog
+        state={deriveCollaborationState(defaultCollaborationDimensions)}
+        callbacks={recoveryCallbacks()}
+        open={false}
+        onClose={onClose}
+      />
+    );
+
+    expect(document.activeElement).toBe(trigger);
+    trigger.remove();
   });
 
   it("renders recovery actions from collaboration state", () => {

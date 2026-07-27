@@ -12,11 +12,14 @@ interface RecoveryDialogProps {
 export function RecoveryDialog({ state, callbacks, open, onClose }: RecoveryDialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     if (open && !el.open) {
+      returnFocusRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
       el.showModal();
       closeButtonRef.current?.focus();
     } else if (!open && el.open) {
@@ -27,7 +30,11 @@ export function RecoveryDialog({ state, callbacks, open, onClose }: RecoveryDial
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const handler = () => { onClose(); };
+    const handler = () => {
+      onClose();
+      returnFocusRef.current?.focus();
+      returnFocusRef.current = null;
+    };
     el.addEventListener("close", handler);
     return () => { el.removeEventListener("close", handler); };
   }, [onClose]);
@@ -47,7 +54,7 @@ export function RecoveryDialog({ state, callbacks, open, onClose }: RecoveryDial
             ref={closeButtonRef}
             type="button"
             className="text-button"
-            onClick={onClose}
+            onClick={() => { ref.current?.close(); }}
             aria-label="Close recovery dialog"
           >
             Close

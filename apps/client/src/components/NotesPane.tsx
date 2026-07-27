@@ -20,7 +20,7 @@ interface NotesPaneProps {
   searchMatches: SearchMatch[];
   selectedNoteId: string | null;
   status: string;
-  addNote: (folderId?: string | null) => Promise<void>;
+  addNote: (folderId?: string | null) => Promise<boolean | undefined>;
   moveNoteToFolder: (noteId: string, folderId: string | null) => Promise<void>;
   openAttachments: (note: DecryptedNote) => void;
   retrySearchIndex: () => void;
@@ -60,8 +60,10 @@ export function NotesPane({
         open={newNoteDialogOpen}
         onClose={() => { setNewNoteDialogOpen(false); }}
         onCreate={async (folderId) => {
-          await addNote(folderId);
-          setNewNoteDialogOpen(false);
+          const created = await addNote(folderId);
+          if (created !== false) {
+            setNewNoteDialogOpen(false);
+          }
         }}
       />
       <header className="pane-header">
@@ -260,7 +262,7 @@ function NoteListItem({
     event.dataTransfer.effectAllowed = "move";
   }
 
-  function handleMoveSelect(folderId: string) {
+  function handleMoveSelect(folderId: string | null) {
     void onMove(note.id, folderId);
     closeMenu();
   }
@@ -336,10 +338,34 @@ function NoteListItem({
               ref={menuRef}
               className="note-context-menu"
               role="menu"
+              aria-orientation="vertical"
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   event.preventDefault();
                   closeMenu();
+                  return;
+                }
+                const items = Array.from(
+                  event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                    "button[role='menuitem']:not(:disabled)"
+                  )
+                );
+                const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+                if (items.length === 0 || currentIndex < 0) {
+                  return;
+                }
+                const nextIndex = event.key === "ArrowDown"
+                  ? (currentIndex + 1) % items.length
+                  : event.key === "ArrowUp"
+                    ? (currentIndex - 1 + items.length) % items.length
+                    : event.key === "Home"
+                      ? 0
+                      : event.key === "End"
+                        ? items.length - 1
+                        : -1;
+                if (nextIndex >= 0) {
+                  event.preventDefault();
+                  items[nextIndex]?.focus();
                 }
               }}
             >
@@ -374,6 +400,13 @@ function NoteListItem({
               ) : null}
               {showMove ? (
                 <div className="move-folder-list" role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { handleMoveSelect(null); }}
+                  >
+                    All notes
+                  </button>
                   {folders.map((f) => (
                     <button
                       key={f.id}

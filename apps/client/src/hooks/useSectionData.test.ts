@@ -262,6 +262,41 @@ describe("useSectionData", () => {
     });
   });
 
+  it("does not let a stale release remove a section reopened during navigation", async () => {
+    const current = installNote();
+    const release = deferred<boolean>();
+    mocks.releaseCrdtSection.mockImplementation(
+      (_noteId: string, sectionId: string) =>
+        sectionId === "section-1" ? release.promise : Promise.resolve(true)
+    );
+    const view = renderHook(() => useSectionData(current));
+    await waitFor(() => {
+      expect(sectionState(current.id, "section-1")?.status).toBe("ready");
+    });
+
+    act(() => {
+      useAppStore.getState().setSelectedSection(current.id, "section-3");
+    });
+    await waitFor(() => {
+      expect(sectionState(current.id, "section-1")?.status).toBe("releasing");
+    });
+
+    act(() => {
+      useAppStore.getState().setSelectedSection(current.id, "section-1");
+    });
+    await waitFor(() => {
+      expect(sectionState(current.id, "section-1")?.status).toBe("ready");
+    });
+
+    await act(async () => {
+      release.resolve(true);
+      await release.promise;
+    });
+
+    expect(sectionState(current.id, "section-1")?.status).toBe("ready");
+    view.unmount();
+  });
+
   it("does not commit a stale requested section after navigation changes", async () => {
     const current = installNote();
     renderHook(() => useSectionData(current));

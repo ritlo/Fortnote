@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import type { FolderSummary } from "../api";
 import { NewNoteDialog } from "./NewNoteDialog";
 
@@ -60,6 +61,35 @@ describe("NewNoteDialog", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("returns focus to the trigger after closing", () => {
+    const trigger = document.createElement("button");
+    document.body.append(trigger);
+    trigger.focus();
+    const onClose = vi.fn();
+    const onCreate = vi.fn();
+    const view = render(
+      <NewNoteDialog
+        folders={folders}
+        open={true}
+        onClose={onClose}
+        onCreate={onCreate}
+      />
+    );
+    screen.getByRole("combobox").focus();
+
+    view.rerender(
+      <NewNoteDialog
+        folders={folders}
+        open={false}
+        onClose={onClose}
+        onCreate={onCreate}
+      />
+    );
+
+    expect(document.activeElement).toBe(trigger);
+    trigger.remove();
+  });
+
   it("disables controls while submitting", () => {
     let resolveCreate!: () => void;
     const onCreate = vi.fn(() => new Promise<void>((resolve) => { resolveCreate = resolve; }));
@@ -82,5 +112,37 @@ describe("NewNoteDialog", () => {
     rerender(<NewNoteDialog folders={folders} open={true} onClose={onClose} onCreate={vi.fn()} />);
     const select = screen.getByRole<HTMLSelectElement>("combobox");
     expect(select.value).toBe("");
+  });
+
+  it("restores focus after a note is created and the controlled dialog closes", async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => { setOpen(true); }}>New note trigger</button>
+          <NewNoteDialog
+            folders={folders}
+            open={open}
+            onClose={() => { setOpen(false); }}
+            onCreate={async (folderId) => {
+              await onCreate(folderId);
+              setOpen(false);
+            }}
+          />
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const trigger = screen.getByRole("button", { name: "New note trigger" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith(null);
+      expect(document.activeElement).toBe(trigger);
+    });
   });
 });

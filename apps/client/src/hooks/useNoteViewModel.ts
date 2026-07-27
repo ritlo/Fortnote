@@ -363,6 +363,7 @@ export function useNoteViewModel() {
   const selectSearchMatch = useCallback((match: SearchMatch) => {
     const state = useAppStore.getState();
     state.setSelectedNoteId(match.noteId);
+    state.setSelectedSection(match.noteId, match.sectionId);
   }, []);
 
   return {

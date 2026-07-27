@@ -556,7 +556,7 @@ textarea {
   border-left: 3px solid #b9dad5;
   padding: 7px 9px;
   background: #f7fbfa;
-  color: var(--ink);
+  color: var(--text);
   text-align: left;
 }
 

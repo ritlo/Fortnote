@@ -25,6 +25,15 @@ export function SettingsPanel({
   const setError = useAppStore((state) => state.setError);
   const setStatus = useAppStore((state) => state.setStatus);
   const [sharingFingerprint, setSharingFingerprint] = useState<string | null>(null);
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const passwordsMismatch =
+    passwordConfirmation.length > 0 && newPassword !== passwordConfirmation;
+
+  useEffect(() => {
+    if (!newPassword) {
+      setPasswordConfirmation("");
+    }
+  }, [newPassword]);
 
   useEffect(() => {
     let isActive = true;
@@ -68,16 +77,30 @@ export function SettingsPanel({
           New password
           <input
             type="password"
+            autoComplete="new-password"
             value={newPassword}
             onChange={(event) => {
               setNewPassword(event.target.value);
             }}
           />
         </label>
+        <label>
+          Confirm new password
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={passwordConfirmation}
+            onChange={(event) => {
+              setPasswordConfirmation(event.target.value);
+            }}
+            aria-invalid={passwordsMismatch}
+          />
+        </label>
+        {passwordsMismatch ? <p className="error" role="alert">Passwords do not match</p> : null}
         <button
           className="primary"
           type="button"
-          disabled={!newPassword.trim()}
+          disabled={!newPassword.trim() || newPassword !== passwordConfirmation}
           onClick={() => {
             void changePassword();
           }}

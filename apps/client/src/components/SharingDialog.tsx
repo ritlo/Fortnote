@@ -50,7 +50,7 @@ export function SharingDialog({ selectedNote, open, onClose, returnFocusRef }: S
             ref={closeButtonRef}
             type="button"
             className="text-button"
-            onClick={onClose}
+            onClick={() => { ref.current?.close(); }}
             aria-label="Close sharing dialog"
           >
             Close

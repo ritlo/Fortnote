@@ -35,6 +35,13 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("AuthScreen account identity", () => {
+  it("uses the Fortnote brand mark", () => {
+    render(<AuthScreen />);
+
+    expect(screen.getByText("FN")).toBeTruthy();
+    expect(screen.queryByText("CN")).toBeNull();
+  });
+
   it("shows only the login form initially", () => {
     render(<AuthScreen />);
 

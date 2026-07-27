@@ -201,6 +201,13 @@ describe("NoteEditor simplified editor", () => {
     expect(screen.getByText("Offline — changes kept on this device")).toBeTruthy();
   });
 
+  it("does not claim synchronization when ready status is offline", () => {
+    useAppStore.setState({ realtimeStatus: "disconnected", status: "Ready" });
+    renderEditor(note());
+    expect(screen.getByText("Offline — changes kept on this device")).toBeTruthy();
+    expect(screen.queryByText("Saved and synchronized")).toBeNull();
+  });
+
   it("does not expose section controls", () => {
     renderEditor(note());
     expect(screen.queryByLabelText("Note sections")).toBeNull();

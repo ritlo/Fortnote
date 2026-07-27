@@ -251,6 +251,7 @@ describe("protected note search", () => {
       result.current.selectSearchMatch(match);
     });
     expect(useAppStore.getState().selectedNoteId).toBe("note_1");
+    expect(useAppStore.getState().selectedSectionByNote.note_1).toBe("section-a");
   });
 
   it("closes the search database after in-flight discovery settles", async () => {

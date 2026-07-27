@@ -80,6 +80,30 @@ describe("NotesPane drag and move", () => {
     expect(moveNoteToFolder).toHaveBeenCalledWith("note-move", "folder-1");
   });
 
+  it("can move a note back to All notes from the actions menu", () => {
+    const moveNoteToFolder = vi.fn();
+    renderNotesPane({ filteredNotes: [note({ id: "note-root" })], moveNoteToFolder });
+    fireEvent.click(screen.getByRole("button", { name: "Open note menu" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to folder" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "All notes" }));
+    expect(moveNoteToFolder).toHaveBeenCalledWith("note-root", null);
+  });
+
+  it("supports keyboard navigation in the note actions menu", () => {
+    renderNotesPane({ filteredNotes: [note()] });
+    fireEvent.click(screen.getByRole("button", { name: "Open note menu" }));
+    const menu = screen.getByRole("menu");
+    const items = screen.getAllByRole("menuitem");
+    expect(document.activeElement).toBe(items[0]);
+
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(menu, { key: "Home" });
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(menu, { key: "End" });
+    expect(document.activeElement).toBe(items[items.length - 1]);
+  });
+
   it("opens the note actions menu on right click", () => {
     renderNotesPane({ filteredNotes: [note()] });
     fireEvent.contextMenu(screen.getByText("Title"));
@@ -127,10 +151,22 @@ describe("NotesPane new note dialog", () => {
     fireEvent.click(screen.getByText("Create"));
     await vi.waitFor(() => { expect(addNote).toHaveBeenCalledWith("folder-1"); });
   });
+
+  it("keeps the new-note dialog open when creation reports a failure", async () => {
+    const addNote = vi.fn().mockResolvedValue(false);
+    renderNotesPane({ addNote });
+    fireEvent.click(screen.getByRole("button", { name: "New note" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await vi.waitFor(() => {
+      expect(addNote).toHaveBeenCalledWith(null);
+      expect(screen.getByRole("dialog", { hidden: true })).toBeTruthy();
+    });
+  });
 });
 
 interface NotesPaneTestOverrides {
-  addNote?: () => Promise<void>;
+  addNote?: () => Promise<boolean | undefined>;
   filteredNotes?: DecryptedNote[];
   moveNoteToFolder?: (noteId: string, folderId: string | null) => Promise<void>;
   notesView?: "notes" | "shared" | "trash" | "settings";

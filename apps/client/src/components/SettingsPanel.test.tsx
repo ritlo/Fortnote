@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fingerprintPublicSharingKey } from "../lib/sharingKeyTrust";
 import { useAppStore } from "../store/appStore";
 import { SettingsPanel } from "./SettingsPanel";
@@ -17,6 +17,8 @@ beforeEach(() => {
     status: "Ready"
   });
 });
+
+afterEach(cleanup);
 
 describe("SettingsPanel sharing fingerprint", () => {
   it("displays and copies the current account fingerprint", async () => {
@@ -49,5 +51,53 @@ describe("SettingsPanel sharing fingerprint", () => {
     });
     expect(screen.getByText(/independent channel/i)).not.toBeNull();
     expect(screen.getByText(/key version 3/i)).not.toBeNull();
+  });
+});
+
+describe("SettingsPanel password change", () => {
+  it("does not submit when password confirmation does not match", () => {
+    const changePassword = vi.fn();
+    render(
+      <SettingsPanel
+        changePassword={changePassword}
+        cleanupSharingKeys={vi.fn()}
+        newPassword="new-secret"
+        recoverySecret={null}
+        rotateRecoveryKey={vi.fn()}
+        rotateSharingKey={vi.fn()}
+        setNewPassword={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Confirm new password"), {
+      target: { value: "different-secret" }
+    });
+
+    expect(screen.getByText("Passwords do not match")).not.toBeNull();
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Change password" }).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+    expect(changePassword).not.toHaveBeenCalled();
+  });
+
+  it("submits when password confirmation matches", () => {
+    const changePassword = vi.fn();
+    render(
+      <SettingsPanel
+        changePassword={changePassword}
+        cleanupSharingKeys={vi.fn()}
+        newPassword="new-secret"
+        recoverySecret={null}
+        rotateRecoveryKey={vi.fn()}
+        rotateSharingKey={vi.fn()}
+        setNewPassword={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Confirm new password"), {
+      target: { value: "new-secret" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+
+    expect(changePassword).toHaveBeenCalledOnce();
   });
 });

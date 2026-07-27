@@ -286,7 +286,7 @@ export function AuthScreen() {
     <main className="auth-screen">
       <section className="auth-panel">
         <div className="brand-row">
-          <div className="brand-mark">CN</div>
+          <div className="brand-mark">FN</div>
           <div>
             <h1>Fortnote</h1>
             <p>One password signs in and decrypts your vault locally.</p>
@@ -302,7 +302,7 @@ export function AuthScreen() {
           <RecoverForm />
         )}
 
-        {error ? <p className="error">{error}</p> : null}
+        {error ? <p className="error" role="alert">{error}</p> : null}
         <p
           className="muted"
           role={status.toLowerCase().includes("handle repair") ? "alert" : undefined}

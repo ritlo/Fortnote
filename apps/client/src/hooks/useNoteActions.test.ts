@@ -6,28 +6,33 @@ import type { DecryptedNote } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
 
 const mocks = vi.hoisted(() => ({
+  createNote: vi.fn(),
+  createProtectedNoteDraftV2: vi.fn(),
   deleteNote: vi.fn(),
+  deleteFolder: vi.fn(),
   editCrdtNote: vi.fn(() => true),
   encrypt: vi.fn(),
   encryptNoteKey: vi.fn(),
+  loadFolders: vi.fn(),
   loadNotes: vi.fn(),
+  permanentlyDeleteNote: vi.fn(),
   updateNote: vi.fn()
 }));
 
 vi.mock("../api", () => ({
   createFolder: vi.fn(),
-  createNote: vi.fn(),
-  deleteFolder: vi.fn(),
+  createNote: mocks.createNote,
+  deleteFolder: mocks.deleteFolder,
   deleteNote: mocks.deleteNote,
   isApiRequestError: (error: unknown) =>
     typeof error === "object" && error !== null && "code" in error,
-  permanentlyDeleteNote: vi.fn(),
+  permanentlyDeleteNote: mocks.permanentlyDeleteNote,
   restoreNote: vi.fn(),
   updateNote: mocks.updateNote
 }));
 
 vi.mock("../cryptoClient", () => ({
-  createProtectedNoteDraftV2: vi.fn(),
+  createProtectedNoteDraftV2: mocks.createProtectedNoteDraftV2,
   encryptFolderNameV2: vi.fn(),
   encryptNoteKeyEnvelopeV2: mocks.encryptNoteKey,
   encryptNoteTitleV2: mocks.encrypt,
@@ -36,7 +41,7 @@ vi.mock("../cryptoClient", () => ({
 
 vi.mock("./useAppData", () => ({
   loadDecryptedNotes: mocks.loadNotes,
-  loadFolders: vi.fn()
+  loadFolders: mocks.loadFolders
 }));
 
 vi.mock("../realtime/crdt", () => ({
@@ -58,6 +63,22 @@ beforeEach(() => {
     formatVersion: 2,
     nonce: "protected-note-key-nonce"
   });
+  mocks.createProtectedNoteDraftV2.mockResolvedValue({
+    encryptedNoteKey: "encrypted-note-key",
+    id: "new-note",
+    noteKey: new Uint8Array([1, 2, 3]),
+    noteKeyNonce: "note-key-nonce",
+    rootSectionId: "root",
+    titleCipher: "title-cipher",
+    titleNonce: "title-nonce"
+  });
+  mocks.createNote.mockResolvedValue({
+    id: "new-note",
+    keyEpoch: 1,
+    rootSectionId: "root",
+    rootVersion: 1,
+    version: 1
+  });
   mocks.updateNote.mockResolvedValue({
     id: "note_1",
     rootVersion: 2,
@@ -65,7 +86,10 @@ beforeEach(() => {
     updatedAt: "2026-07-02T00:00:01.000Z"
   });
   mocks.deleteNote.mockResolvedValue(undefined);
+  mocks.deleteFolder.mockResolvedValue(undefined);
   mocks.loadNotes.mockResolvedValue(undefined);
+  mocks.loadFolders.mockResolvedValue(undefined);
+  mocks.permanentlyDeleteNote.mockResolvedValue(undefined);
   useAppStore.setState({
     error: null,
     folders: [
@@ -83,10 +107,22 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   useAppStore.getState().resetVaultState("reset");
 });
 
 describe("note autosave", () => {
+  it("keeps an explicit No folder choice instead of falling back to the active folder", async () => {
+    useAppStore.setState({ selectedFolderId: "folder-1" });
+    const { result } = renderHook(() => useNoteActions(null));
+
+    await act(async () => result.current.addNote(null));
+
+    expect(mocks.createNote).toHaveBeenCalledWith(
+      expect.objectContaining({ folderId: null })
+    );
+  });
+
   it("coalesces real changes and encrypts the latest snapshot after 500 ms", async () => {
     const { result } = renderHook(() => useNoteActions(note()));
 
@@ -189,6 +225,86 @@ describe("note autosave", () => {
     expect(mocks.updateNote.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.deleteNote.mock.invocationCallOrder[0] ?? 0
     );
+  });
+
+  it("selects the next note from the active folder after moving a note to trash", async () => {
+    const current = note({ id: "note-current", folderId: "folder-1" });
+    const outsideFolder = note({ id: "note-outside", folderId: "folder-2" });
+    const nextInFolder = note({ id: "note-next", folderId: "folder-1" });
+    useAppStore.setState({
+      notes: [current, outsideFolder, nextInFolder],
+      selectedFolderId: "folder-1",
+      selectedNoteId: current.id
+    });
+    const { result } = renderHook(() => useNoteActions(current));
+
+    await act(async () => result.current.moveSelectedToTrash());
+
+    expect(useAppStore.getState().selectedNoteId).toBe(nextInFolder.id);
+  });
+
+  it("selects the next visible note when moving the selected note out of its folder", async () => {
+    const current = note({ id: "note-current", folderId: "folder-1" });
+    const nextInFolder = note({ id: "note-next", folderId: "folder-1" });
+    useAppStore.setState({
+      notes: [current, nextInFolder],
+      selectedFolderId: "folder-1",
+      selectedNoteId: current.id
+    });
+    const { result } = renderHook(() => useNoteActions(current));
+
+    await act(async () => result.current.moveNoteToFolder(current.id, null));
+
+    expect(useAppStore.getState().selectedNoteId).toBe(nextInFolder.id);
+  });
+
+  it("reloads notes after confirming folder deletion", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const current = note({ id: "note-in-folder", folderId: "folder-1" });
+    useAppStore.setState({
+      folders: [{ id: "folder-1", name: "Work", parentFolderId: null, createdAt: "", updatedAt: "" }],
+      notes: [current],
+      selectedFolderId: "folder-1"
+    });
+    const { result } = renderHook(() => useNoteActions(current));
+
+    await act(async () => result.current.removeFolder("folder-1"));
+
+    expect(confirm).toHaveBeenCalledWith(
+      'Delete folder "Work"? Notes will move to its parent or All notes.'
+    );
+    expect(mocks.deleteFolder).toHaveBeenCalledWith("folder-1");
+    expect(mocks.loadNotes).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "alice" }),
+      expect.any(Uint8Array),
+      false,
+      { preserveSelection: true }
+    );
+    expect(useAppStore.getState().selectedFolderId).toBeNull();
+  });
+
+  it("does not delete a folder when confirmation is declined", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { result } = renderHook(() => useNoteActions(note()));
+
+    await act(async () => result.current.removeFolder("folder-1"));
+
+    expect(mocks.deleteFolder).not.toHaveBeenCalled();
+  });
+
+  it("requires confirmation before permanently deleting a note", async () => {
+    useAppStore.setState({
+      notes: [],
+      trashNotes: [note({ id: "trash-note", isDeleted: true })],
+      notesView: "trash",
+      selectedNoteId: "trash-note"
+    });
+    const { result } = renderHook(() => useNoteActions(note({ id: "trash-note", isDeleted: true })));
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    await act(async () => result.current.deleteSelectedForever());
+
+    expect(mocks.permanentlyDeleteNote).not.toHaveBeenCalled();
   });
 
   it("serializes saves and follows an in-flight save with the latest draft", async () => {

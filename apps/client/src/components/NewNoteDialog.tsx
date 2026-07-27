@@ -10,6 +10,7 @@ interface NewNoteDialogProps {
 
 export function NewNoteDialog({ folders, open, onClose, onCreate }: NewNoteDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -17,6 +18,8 @@ export function NewNoteDialog({ folders, open, onClose, onCreate }: NewNoteDialo
     const el = dialogRef.current;
     if (!el) return;
     if (open && !el.open) {
+      returnFocusRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
       el.showModal();
     } else if (!open && el.open) {
       el.close();
@@ -34,10 +37,10 @@ export function NewNoteDialog({ folders, open, onClose, onCreate }: NewNoteDialo
   }
 
   function handleClose() {
-    if (!submitting) {
-      setSelectedFolderId("");
-      onClose();
-    }
+    setSelectedFolderId("");
+    onClose();
+    returnFocusRef.current?.focus();
+    returnFocusRef.current = null;
   }
 
   return (
@@ -45,6 +48,11 @@ export function NewNoteDialog({ folders, open, onClose, onCreate }: NewNoteDialo
       ref={dialogRef}
       aria-labelledby="new-note-dialog-title"
       onClose={handleClose}
+      onCancel={(event) => {
+        if (submitting) {
+          event.preventDefault();
+        }
+      }}
     >
       <form method="dialog" onSubmit={(e) => { void handleSubmit(e); }}>
         <h3 id="new-note-dialog-title">New note</h3>
@@ -62,7 +70,11 @@ export function NewNoteDialog({ folders, open, onClose, onCreate }: NewNoteDialo
           </select>
         </label>
         <div className="dialog-actions">
-          <button type="button" onClick={handleClose} disabled={submitting}>
+          <button
+            type="button"
+            onClick={() => { dialogRef.current?.close(); }}
+            disabled={submitting}
+          >
             Cancel
           </button>
           <button type="submit" disabled={submitting}>

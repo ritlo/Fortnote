@@ -282,17 +282,15 @@ export function NoteEditor({
   }
   const sectionId = selectedNote.rootSectionId ?? "root";
 
-  const saveLabel = status === "Ready" || status === "Note encrypted and saved"
-    ? "Saved and synchronized"
-    : status === "Note shared"
-      ? "Saved and synchronized"
-      : status === "Save conflict"
-        ? "Changes need review"
-        : status === "Save failed"
-          ? "Save failed"
-          : realtimeStatus === "disconnected"
-            ? "Offline — changes kept on this device"
-            : "Saving…";
+  const saveLabel = status === "Save conflict"
+    ? "Changes need review"
+    : status === "Save failed"
+      ? "Save failed"
+      : realtimeStatus === "disconnected"
+        ? "Offline — changes kept on this device"
+        : status === "Ready" || status === "Note encrypted and saved" || status === "Note shared"
+          ? "Saved and synchronized"
+          : "Saving…";
 
   return (
     <div className="editor-column">

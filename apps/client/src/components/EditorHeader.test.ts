@@ -47,6 +47,12 @@ describe("EditorHeader last-saved feedback", () => {
     );
   });
 
+  it("falls back when the saved timestamp is invalid", () => {
+    expect(formatLastSaved("not-a-date", Date.parse("2026-07-15T00:00:05.000Z"))).toBe(
+      "Last saved recently"
+    );
+  });
+
   it("refreshes each second and hides only the relative label for collaborators", () => {
     vi.useFakeTimers();
     vi.setSystemTime("2026-07-15T00:00:05.000Z");
@@ -165,6 +171,35 @@ describe("EditorHeader simplified display", () => {
     renderHeader();
     expect(screen.queryByText(/key material/)).toBeNull();
     expect(screen.queryByText(/root key in memory/)).toBeNull();
+  });
+});
+
+describe("EditorHeader menu keyboard behavior", () => {
+  it("focuses the first action and moves through menu items with the keyboard", () => {
+    renderHeader({
+      collaborationState: {
+        actions: ["retry"],
+        announcement: "polite",
+        draftRetained: false,
+        editing: false,
+        id: "recoverable",
+        label: "Recovery needed",
+        saved: false,
+        synchronized: false
+      }
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "More note actions" }));
+    const menu = screen.getByRole("menu");
+    const items = screen.getAllByRole("menuitem");
+    expect(document.activeElement).toBe(items[0]);
+
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(menu, { key: "Home" });
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(menu, { key: "End" });
+    expect(document.activeElement).toBe(items[1]);
   });
 });
 

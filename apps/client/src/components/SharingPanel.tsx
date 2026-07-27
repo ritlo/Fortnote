@@ -254,6 +254,13 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     if (selectedNote?.role !== "owner" || member.role === "owner" || !rootKey) {
       return;
     }
+    if (
+      !window.confirm(
+        `Revoke access for ${member.username}? They will lose access after encrypted keys rotate.`
+      )
+    ) {
+      return;
+    }
     const note = selectedNote;
     const vaultRootKey = rootKey;
 

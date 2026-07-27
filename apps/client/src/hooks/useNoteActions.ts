@@ -28,6 +28,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
   const rootKey = useAppStore((state) => state.rootKey);
   const notes = useAppStore((state) => state.notes);
   const trashNotes = useAppStore((state) => state.trashNotes);
+  const folders = useAppStore((state) => state.folders);
   const selectedFolderId = useAppStore((state) => state.selectedFolderId);
   const selectedNoteId = useAppStore((state) => state.selectedNoteId);
   const setNotes = useAppStore((state) => state.setNotes);
@@ -59,14 +60,14 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
     []
   );
 
-  async function addNote(chosenFolderId?: string | null) {
+  async function addNote(chosenFolderId?: string | null): Promise<boolean> {
     if (!user || !rootKey) {
-      return;
+      return false;
     }
 
     const sessionUserId = user.id;
     const sessionRootKey = rootKey;
-    const targetFolderId = chosenFolderId ?? selectedFolderId;
+    const targetFolderId = chosenFolderId === undefined ? selectedFolderId : chosenFolderId;
     setError(null);
     setStatus("Encrypting note");
     try {
@@ -76,7 +77,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         title: "Untitled note"
       });
       if (!isCurrentSession(sessionUserId, sessionRootKey)) {
-        return;
+        return false;
       }
       const created = await createNote({
         id: draft.id,
@@ -90,7 +91,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         noteKeyFormatVersion: 2
       });
       if (!isCurrentSession(sessionUserId, sessionRootKey)) {
-        return;
+        return false;
       }
       // Fence any note-list request that started before this local create while
       // keeping the new editor responsive. The response merges the local note
@@ -120,15 +121,17 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       setNotes((current) => [note, ...current.filter((candidate) => candidate.id !== note.id)]);
       setSelectedNoteId(note.id);
       setStatus("Note encrypted and saved");
+      return true;
     } catch (noteError) {
       if (!isCurrentSession(sessionUserId, sessionRootKey)) {
-        return;
+        return false;
       }
       reportOperationFailure(
         noteError,
         noteError instanceof Error ? noteError.message : "Unable to create note",
         "Save failed"
       );
+      return false;
     }
   }
 
@@ -493,12 +496,24 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
   }
 
   async function removeFolder(folderId: string) {
+    const folder = folders.find(({ id }) => id === folderId);
+    const folderName = folder?.name ?? "this folder";
+    if (
+      !window.confirm(
+        `Delete folder "${folderName}"? Notes will move to its parent or All notes.`
+      )
+    ) {
+      return;
+    }
     setError(null);
     try {
       await deleteFolder(folderId);
       await loadFolders();
       if (selectedFolderId === folderId) {
         setSelectedFolderId(null);
+      }
+      if (user && rootKey) {
+        await loadDecryptedNotes(user, rootKey, false, { preserveSelection: true });
       }
       setStatus("Folder deleted");
     } catch (folderError) {
@@ -544,7 +559,13 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       setError(null);
       await deleteNote(selectedNote.id);
       setNotes((current) => current.filter((note) => note.id !== selectedNote.id));
-      setSelectedNoteId(notes.find((note) => note.id !== selectedNote.id)?.id ?? null);
+      const activeFolderId = useAppStore.getState().selectedFolderId;
+      const nextVisibleNote = useAppStore.getState().notes.find(
+        (note) =>
+          note.id !== selectedNote.id &&
+          (activeFolderId === null || note.folderId === activeFolderId)
+      );
+      setSelectedNoteId(nextVisibleNote?.id ?? null);
       setStatus("Note moved to trash");
     } catch (deleteError) {
       setStatus("Delete failed");
@@ -571,6 +592,13 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
 
   async function deleteSelectedForever() {
     if (!selectedNote) {
+      return;
+    }
+    if (
+      !window.confirm(
+        `Permanently delete "${selectedNote.title}"? This cannot be undone.`
+      )
+    ) {
       return;
     }
 
@@ -610,6 +638,20 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       setNotes((current) =>
         current.map((n) => (n.id === noteId ? { ...n, folderId: previousFolderId } : n))
       );
+      return;
+    }
+    const latestState = useAppStore.getState();
+    if (
+      latestState.selectedNoteId === noteId &&
+      latestState.notesView === "notes" &&
+      latestState.selectedFolderId !== null &&
+      folderId !== latestState.selectedFolderId
+    ) {
+      const nextVisibleNote = latestState.notes.find(
+        (candidate) =>
+          candidate.id !== noteId && candidate.folderId === latestState.selectedFolderId
+      );
+      setSelectedNoteId(nextVisibleNote?.id ?? null);
     }
   }
 

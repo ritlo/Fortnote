@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   cleanupRetiredSharingKeys,
   getAuthKdfParams,
@@ -78,8 +78,13 @@ export function useAuthActions() {
   const setError = useAppStore((state) => state.setError);
   const setStatus = useAppStore((state) => state.setStatus);
   const resetVaultState = useAppStore((state) => state.resetVaultState);
+  const authSubmissionRef = useRef(false);
 
   async function submitAuth() {
+    if (authSubmissionRef.current) {
+      return;
+    }
+    authSubmissionRef.current = true;
     setError(null);
     setRecoverySecret(null);
     setStatus("Deriving keys");
@@ -205,6 +210,8 @@ export function useAuthActions() {
     } catch (authError) {
       setStatus("Auth failed");
       setError(authError instanceof Error ? authError.message : "Unable to sign in");
+    } finally {
+      authSubmissionRef.current = false;
     }
   }
 

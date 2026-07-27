@@ -116,6 +116,46 @@ beforeEach(() => {
 });
 
 describe("useAuthActions identity lifecycle", () => {
+  it("ignores duplicate auth submissions while the first is in flight", async () => {
+    let resolveKdf!: (value: {
+      authKdfSalt: string;
+      authKdfOpsLimit: number;
+      authKdfMemLimit: number;
+      authKdfVersion: number;
+      vaultKdfSalt: string;
+      vaultKdfOpsLimit: number;
+      vaultKdfMemLimit: number;
+      vaultKdfVersion: number;
+    }) => void;
+    mocks.getAuthKdfParams.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveKdf = resolve; })
+    );
+    const { result } = renderHook(() => useAuthActions());
+
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = result.current.submitAuth();
+      second = result.current.submitAuth();
+    });
+    expect(mocks.getAuthKdfParams).toHaveBeenCalledOnce();
+
+    resolveKdf({
+      authKdfSalt: "salt",
+      authKdfOpsLimit: 4,
+      authKdfMemLimit: 67_108_864,
+      authKdfVersion: 1,
+      vaultKdfSalt: "salt",
+      vaultKdfOpsLimit: 4,
+      vaultKdfMemLimit: 67_108_864,
+      vaultKdfVersion: 1
+    });
+    await act(async () => {
+      await Promise.all([first, second]);
+    });
+    expect(mocks.login).toHaveBeenCalledOnce();
+  });
+
   it("renews login using the normalized canonical handle", async () => {
     const { result } = renderHook(() => useAuthActions());
 

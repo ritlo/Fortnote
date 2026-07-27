@@ -85,6 +85,15 @@ export function EditorHeader({
     };
   }, [overflowOpen]);
 
+  useEffect(() => {
+    if (!overflowOpen) {
+      return;
+    }
+    overflowRef.current
+      ?.querySelector<HTMLButtonElement>("button[role='menuitem']:not(:disabled)")
+      ?.focus();
+  }, [overflowOpen]);
+
   const lastSaved = selectedNote && presence.length === 0 && notesView !== "settings"
     ? formatLastSaved(selectedNote.updatedAt, now)
     : "";
@@ -136,10 +145,34 @@ export function EditorHeader({
               <div
                 className="editor-action-menu"
                 role="menu"
+                aria-orientation="vertical"
                 onKeyDown={(event) => {
                   if (event.key === "Escape") {
                     event.preventDefault();
                     closeOverflow();
+                    return;
+                  }
+                  const items = Array.from(
+                    event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                      "button[role='menuitem']:not(:disabled)"
+                    )
+                  );
+                  const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+                  if (items.length === 0 || currentIndex < 0) {
+                    return;
+                  }
+                  const nextIndex = event.key === "ArrowDown"
+                    ? (currentIndex + 1) % items.length
+                    : event.key === "ArrowUp"
+                      ? (currentIndex - 1 + items.length) % items.length
+                      : event.key === "Home"
+                        ? 0
+                        : event.key === "End"
+                          ? items.length - 1
+                          : -1;
+                  if (nextIndex >= 0) {
+                    event.preventDefault();
+                    items[nextIndex]?.focus();
                   }
                 }}
               >
@@ -205,7 +238,11 @@ export function EditorHeader({
 }
 
 export function formatLastSaved(updatedAt: string, now = Date.now()): string {
-  const seconds = Math.max(0, Math.floor((now - Date.parse(updatedAt)) / 1000));
+  const savedAt = Date.parse(updatedAt);
+  if (!Number.isFinite(savedAt) || !Number.isFinite(now)) {
+    return "Last saved recently";
+  }
+  const seconds = Math.max(0, Math.floor((now - savedAt) / 1000));
   if (seconds < 60) {
     return `Last saved ${String(seconds)} seconds ago`;
   }
