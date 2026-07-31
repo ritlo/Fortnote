@@ -1,0 +1,23 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM"],
+    "noEmit": true,
+    "paths": {
+      "@client/*": ["../apps/client/src/*"],
+      "@server/*": ["../apps/server/src/*"],
+      "@shared/*": ["../packages/shared/src/*"]
+    },
+    "types": ["node", "vite/client"]
+  },
+  "include": [
+    "./client/**/*.ts",
+    "./client/**/*.tsx",
+    "./server/**/*.ts",
+    "./shared/**/*.ts",
+    "./vitest.config.ts"
+  ]
+}

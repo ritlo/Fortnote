@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run src"
+    "test": "pnpm --dir ../.. exec vitest run --config tests/vitest.config.ts tests/shared"
   },
   "dependencies": {
     "libsodium-wrappers-sumo": "^0.8.4"
