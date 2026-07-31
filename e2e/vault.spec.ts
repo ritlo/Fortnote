@@ -67,6 +67,27 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
   await expect(page.locator(".note-card", { hasText: noteTitle })).toBeVisible();
 });
 
+test("keeps sibling panes aligned with tall editor content", async ({ page }) => {
+  const account = uniqueAccount("tall-editor");
+
+  await register(page, account.username, account.password);
+  await page.setViewportSize({ width: 1280, height: 500 });
+  await createNote(page, `Tall note ${account.suffix}`, "line 0");
+
+  const editor = blockEditor(page);
+  await editor.click();
+  await editor.press("ControlOrMeta+A");
+  await editor.pressSequentially("line 0");
+  for (let line = 1; line < 40; line += 1) {
+    await editor.press("Enter");
+    await editor.pressSequentially(`line ${String(line)}`);
+  }
+  await expect(editor).toContainText("line 39");
+  await waitForCrdtDurability(page);
+
+  await expectPanesToMatchEditorContent(page);
+});
+
 test("autosaves undo and redo and retains the result after relogin", async ({ page }) => {
   const account = uniqueAccount("undo-redo");
   const suffix = ` undo-redo-${account.suffix}`;
@@ -269,6 +290,20 @@ async function expectEditorToFillPane(page: Page): Promise<void> {
   expect(pane).toBeTruthy();
   expect(column).toBeTruthy();
   expect(Math.abs(pane!.width - column!.width)).toBeLessThanOrEqual(1);
+}
+
+async function expectPanesToMatchEditorContent(page: Page): Promise<void> {
+  const editorBottom = await page.locator(".editor-column").evaluate((element) =>
+    element.getBoundingClientRect().bottom
+  );
+  expect(editorBottom).toBeGreaterThan(page.viewportSize()!.height);
+
+  for (const selector of [".sidebar", ".notes-pane", ".editor-pane"]) {
+    const paneBottom = await page.locator(selector).evaluate((element) =>
+      element.getBoundingClientRect().bottom
+    );
+    expect(paneBottom).toBeGreaterThanOrEqual(editorBottom - 1);
+  }
 }
 
 async function waitForNoteSave(page: Page) {
