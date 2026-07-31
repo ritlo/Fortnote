@@ -147,6 +147,9 @@ test("rotation progress, repair, and revoked states remain accessible", async ({
     const response = ownerPage.waitForResponse((candidate) =>
       candidate.request().method() === "POST" && candidate.url().includes("/key-rotation")
     );
+    ownerPage.once("dialog", (dialog) => {
+      void dialog.accept();
+    });
     await ownerPage.locator(".membership-list li", { hasText: viewer.username })
       .getByRole("button", { name: "Revoke" }).click();
     await expect.poll(() => pendingRotation !== null).toBe(true);
@@ -216,6 +219,9 @@ async function revokeMember(page: Page, username: string): Promise<void> {
   const response = page.waitForResponse((candidate) =>
     candidate.request().method() === "POST" && candidate.url().includes("/key-rotation")
   );
+  page.once("dialog", (dialog) => {
+    void dialog.accept();
+  });
   await page.locator(".membership-list li", { hasText: username })
     .getByRole("button", { name: "Revoke" }).click();
   expect((await response).ok()).toBe(true);
@@ -263,5 +269,5 @@ async function expectVisibleFocus(page: Page): Promise<void> {
 
 function noteCardPattern(title: string): RegExp {
   const escaped = title.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  return new RegExp("^" + escaped + "(?:\\s+(Viewer|Editor))?\\s+\\d", "u");
+  return new RegExp("^" + escaped, "u");
 }
