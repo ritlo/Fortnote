@@ -67,7 +67,7 @@ test("distinguishes local and server quota while retaining the visible draft", a
   );
   await expect(page.getByRole("alert")).toHaveCount(1);
   await expect(blockEditor(page)).toContainText(localText);
-  await expectRecoveryActions(page, ["Retry", "Encrypted export", "Split section", "Clean up"]);
+  await expectRecoveryActions(page, ["Retry", "Encrypted export", "Clean up"]);
   const localLatency = await page.evaluate(() => {
     const failureAt = (window as Window & { __fortnoteOutboxFailureAt?: number })
       .__fortnoteOutboxFailureAt;
