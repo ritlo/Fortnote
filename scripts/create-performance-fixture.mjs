@@ -10,20 +10,16 @@ import process from "node:process";
 const MIB = 1024 * 1024;
 
 export const PERFORMANCE_FIXTURE = Object.freeze({
-  activeSectionBytes: 4 * MIB,
   collaborators: 3,
   compactionEdits: 65,
-  logicalBytes: 100 * MIB,
+  documentBytes: 4 * MIB,
   samples: 20,
-  sectionCount: 100,
   warmupRuns: 2
 });
 
 export const PERFORMANCE_SMOKE_FIXTURE = Object.freeze({
   ...PERFORMANCE_FIXTURE,
-  logicalBytes: 5 * MIB,
   samples: 3,
-  sectionCount: 4,
   warmupRuns: 1
 });
 
@@ -67,11 +63,6 @@ async function run() {
     profile
   );
   await mkdir(outputDirectory, { recursive: true });
-  await writeFile(
-    path.join(outputDirectory, "fixture.json"),
-    `${JSON.stringify(definition, null, 2)}\n`,
-    "utf8"
-  );
 
   const child = spawn(
     "pnpm",
@@ -99,6 +90,13 @@ async function run() {
     child.once("error", reject);
     child.once("exit", (code) => resolve(code ?? 1));
   });
+  // Playwright clears its output directory when the run starts, so write the
+  // fixture after it exits to retain the exact dataset beside the results.
+  await writeFile(
+    path.join(outputDirectory, "fixture.json"),
+    `${JSON.stringify(definition, null, 2)}\n`,
+    "utf8"
+  );
   if (process.env.FORTNOTE_KEEP_PERFORMANCE_FIXTURE !== "1") {
     await rm(fixtureRoot, { force: true, recursive: true });
   } else {

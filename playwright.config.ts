@@ -19,6 +19,7 @@ export default defineConfig({
     {
       name: "chromium",
       testIgnore: ["accessibility.spec.ts", "performance.spec.ts"],
+      workers: 1,
       use: { ...devices["Desktop Chrome"] }
     },
     {

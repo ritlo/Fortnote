@@ -1,6 +1,4 @@
-export const REQUIRED_ASSURANCE_COMMANDS: readonly string[];
-
-export function verifyAssuranceSummary(summary: string, root: string): string[];
+export function verifyAssuranceArtifacts(root: string): string[];
 
 export function findMutationSurvivor(value: unknown): object | undefined;
 

@@ -10,12 +10,10 @@ export interface PerformanceFixtureDefinition {
     owner: PerformanceAccount;
     viewer: PerformanceAccount;
   };
-  activeSectionBytes: number;
   collaborators: number;
   compactionEdits: number;
-  logicalBytes: number;
+  documentBytes: number;
   samples: number;
-  sectionCount: number;
   seed: string;
   title: string;
   warmupRuns: number;

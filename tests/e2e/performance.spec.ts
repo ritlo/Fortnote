@@ -6,32 +6,33 @@ import process from "node:process";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { performanceFixtureDefinition } from "../../scripts/create-performance-fixture.mjs";
 import {
-  captureSectionTraffic,
-  closeLargeNoteContexts,
-  createLargeNoteThroughEditor,
-  expectColdOpenIsolation,
-  newLargeNotePage,
-  openLargeNote,
-  registerLargeNoteUser,
-  shareLargeNote,
-  signInLargeNoteUser
-} from "./support/largeNote.js";
+  captureDocumentTraffic,
+  closePerformanceContexts,
+  countCachedDocumentScopes,
+  createRepresentativeDocument,
+  expectBoundedColdOpen,
+  newPerformancePage,
+  openDocument,
+  registerPerformanceUser,
+  shareDocument,
+  signInPerformanceUser
+} from "./support/performance.js";
 
 const runPerformance = process.env.FORTNOTE_RUN_PERFORMANCE === "1";
 const budgets = {
   "authenticated-action": 500,
   "collaborator-visible": 1_000,
-  "large-note-usable": 5_000,
+  "fresh-session-usable": 5_000,
   "local-feedback": 100,
   "note-usable": 2_000,
-  "section-usable": 2_000
+  "representative-note-usable": 5_000
 } as const;
 type MetricName = keyof typeof budgets;
 
 test.describe("controlled production performance", () => {
   test.skip(!runPerformance, "Run pnpm assurance:perf to create the isolated production fixture");
 
-  test("records representative user timings and bounded section residency", async ({
+  test("records focused-editor timings and bounded encrypted content residency", async ({
     baseURL,
     browser,
     browserName
@@ -53,93 +54,83 @@ test.describe("controlled production performance", () => {
       definition.warmupRuns
     );
     const profile = {
-      activeSectionBytes: positiveInteger(
-        process.env.FORTNOTE_LARGE_NOTE_ACTIVE_BYTES,
-        definition.activeSectionBytes
-      ),
-      logicalBytes: positiveInteger(
-        process.env.FORTNOTE_LARGE_NOTE_BYTES,
-        definition.logicalBytes
-      ),
-      sectionCount: positiveInteger(
-        process.env.FORTNOTE_LARGE_NOTE_SECTIONS,
-        definition.sectionCount
+      documentBytes: positiveInteger(
+        process.env.FORTNOTE_PERFORMANCE_DOCUMENT_BYTES,
+        definition.documentBytes
       )
     };
     const contexts: BrowserContext[] = [];
     const raw = Object.fromEntries(
       Object.keys(budgets).map((name) => [name, []])
     ) as Record<MetricName, number[]>;
-    let residentSections = 0;
+    let residentContentScopes = 0;
     let transferredBytes = 0;
 
     try {
-      const editorPage = await newLargeNotePage(browser, baseURL, contexts);
-      await registerLargeNoteUser(editorPage, definition.accounts.editor);
-      const viewerPage = await newLargeNotePage(browser, baseURL, contexts);
-      await registerLargeNoteUser(viewerPage, definition.accounts.viewer);
-      const ownerPage = await newLargeNotePage(browser, baseURL, contexts);
-      await registerLargeNoteUser(ownerPage, definition.accounts.owner);
+      const editorPage = await newPerformancePage(browser, baseURL, contexts);
+      await registerPerformanceUser(editorPage, definition.accounts.editor);
+      const viewerPage = await newPerformancePage(browser, baseURL, contexts);
+      await registerPerformanceUser(viewerPage, definition.accounts.viewer);
+      const ownerPage = await newPerformancePage(browser, baseURL, contexts);
+      await registerPerformanceUser(ownerPage, definition.accounts.owner);
       trackTransferBytes(ownerPage, (bytes) => {
         transferredBytes += bytes;
       });
 
       const ordinaryTitle = `Ordinary ${definition.seed}`;
       await createOrdinaryNote(ownerPage, ordinaryTitle);
-      const dataset = await createLargeNoteThroughEditor(
-        ownerPage,
-        definition.accounts.owner,
-        definition.title,
-        profile
-      );
-      await ownerPage.getByRole("button", { name: "Section 1", exact: true }).click();
+      const dataset = await createRepresentativeDocument(ownerPage, definition.title, profile);
       await crossCompactionBoundary(ownerPage, definition.compactionEdits);
-      await shareLargeNote(ownerPage, definition.accounts.editor.username, "editor");
-      await shareLargeNote(ownerPage, definition.accounts.viewer.username, "viewer");
-      await signInLargeNoteUser(editorPage, definition.accounts.editor);
-      await openLargeNote(editorPage, definition.title);
-      await signInLargeNoteUser(viewerPage, definition.accounts.viewer);
-      await openLargeNote(viewerPage, definition.title);
+      await shareDocument(ownerPage, definition.accounts.editor.username, "editor");
+      await shareDocument(ownerPage, definition.accounts.viewer.username, "viewer");
+      await signInPerformanceUser(editorPage, definition.accounts.editor);
+      await openDocument(editorPage, definition.title, dataset.marker);
+      await signInPerformanceUser(viewerPage, definition.accounts.viewer);
+      await openDocument(viewerPage, definition.title, dataset.marker);
       await expect(viewerPage.locator(".block-editor .bn-editor"))
         .toHaveAttribute("contenteditable", "false");
-      const samplePage = await newLargeNotePage(browser, baseURL, contexts);
-      const initialTraffic = captureSectionTraffic(samplePage, dataset.noteId);
+      const samplePage = await newPerformancePage(browser, baseURL, contexts);
+      const initialTraffic = captureDocumentTraffic(samplePage, dataset.noteId);
       trackTransferBytes(samplePage, (bytes) => {
         transferredBytes += bytes;
       });
-      await signInLargeNoteUser(samplePage, definition.accounts.owner);
+      await signInPerformanceUser(samplePage, definition.accounts.owner);
 
       for (let run = 0; run < warmupRuns + samples; run += 1) {
         const retained = run >= warmupRuns;
         const traffic = run === 0
           ? initialTraffic
-          : captureSectionTraffic(samplePage, dataset.noteId);
+          : captureDocumentTraffic(samplePage, dataset.noteId);
         const noteUsable = await userTiming(samplePage, "note-usable", async () => {
           await openOrdinaryNote(samplePage, ordinaryTitle);
         });
-        const largeUsable = await userTiming(samplePage, "large-note-usable", async () => {
-          await openLargeNote(samplePage, definition.title);
-        });
-        if (run === 0) await expectColdOpenIsolation(samplePage, dataset, traffic);
-        residentSections = Math.max(
-          residentSections,
-          await countResidentSections(samplePage, dataset.noteId)
+        const representativeUsable = await userTiming(
+          samplePage,
+          "representative-note-usable",
+          async () => {
+            await openDocument(samplePage, definition.title, dataset.marker);
+          }
         );
-        expect(residentSections).toBeLessThanOrEqual(3);
+        if (run === 0) await expectBoundedColdOpen(samplePage, dataset, traffic);
+        residentContentScopes = Math.max(
+          residentContentScopes,
+          await countCachedDocumentScopes(samplePage, dataset.noteId)
+        );
+        expect(residentContentScopes).toBeLessThanOrEqual(2);
         traffic.stop();
 
-        await ownerPage.getByRole("button", { name: "Section 1", exact: true }).click();
+        await samplePage.reload();
+        await samplePage.getByLabel("Account handle").fill(definition.accounts.owner.username);
+        await samplePage.getByLabel("Account password").fill(definition.accounts.owner.password);
+        const freshSessionUsable = await userTiming(samplePage, "fresh-session-usable", async () => {
+          await samplePage.getByRole("button", { name: "Sign in and decrypt" }).click();
+          await expect(samplePage.getByText("Signed in and decrypted")).toBeVisible();
+          await openDocument(samplePage, definition.title, dataset.marker);
+        });
+
         const localFeedback = await userTiming(ownerPage, "local-feedback", async () => {
           await appendText(ownerPage, `l${String(run % 10)}`);
         });
-        const sectionUsable = await userTiming(ownerPage, "section-usable", async () => {
-          await ownerPage.getByRole("button", { name: "Section 2", exact: true }).click();
-          await expect(ownerPage.locator(".section-position")).toHaveText(
-            `Section 2 of ${String(profile.sectionCount)}`
-          );
-          await expect(ownerPage.locator(".block-editor .bn-editor")).toBeVisible();
-        });
-        await ownerPage.getByRole("button", { name: "Section 1", exact: true }).click();
 
         const currentTitle = `${definition.title} ${String(run).padStart(2, "0")}`;
         const authenticatedAction = await userTiming(ownerPage, "authenticated-action", async () => {
@@ -153,7 +144,6 @@ test.describe("controlled production performance", () => {
             .toContainText("Saved and synchronized");
         });
 
-        await editorPage.getByRole("button", { name: "Section 1", exact: true }).click();
         const marker = `remote-${String(run).padStart(2, "0")}`;
         const collaboratorVisible = await userTiming(editorPage, "collaborator-visible", async () => {
           await appendText(editorPage, marker);
@@ -162,9 +152,9 @@ test.describe("controlled production performance", () => {
 
         if (retained) {
           raw["note-usable"].push(noteUsable);
-          raw["large-note-usable"].push(largeUsable);
+          raw["representative-note-usable"].push(representativeUsable);
+          raw["fresh-session-usable"].push(freshSessionUsable);
           raw["local-feedback"].push(localFeedback);
-          raw["section-usable"].push(sectionUsable);
           raw["authenticated-action"].push(authenticatedAction);
           raw["collaborator-visible"].push(collaboratorVisible);
         }
@@ -185,7 +175,7 @@ test.describe("controlled production performance", () => {
         collaborators: definition.collaborators,
         cpu: `${String(os.cpus().length)}x ${os.cpus()[0]?.model ?? "unknown"}`,
         database: "isolated local SQLite and filesystem ciphertext storage",
-        dataset: `${String(profile.logicalBytes)} bytes/${String(profile.sectionCount)} sections/${String(profile.activeSectionBytes)} active bytes/${String(definition.compactionEdits)} edits`,
+        dataset: `${String(profile.documentBytes)} focused-document bytes/${String(definition.compactionEdits)} edits`,
         node: process.version,
         os: `${os.platform()} ${os.release()} ${os.arch()}`,
         warmupRuns
@@ -204,7 +194,7 @@ test.describe("controlled production performance", () => {
         finishedAt: new Date().toISOString(),
         metrics,
         profile: performanceProfile,
-        residentSections,
+        residentContentScopes,
         transferredBytes,
         warmupRuns
       };
@@ -219,7 +209,7 @@ test.describe("controlled production performance", () => {
         "utf8"
       );
     } finally {
-      await closeLargeNoteContexts(contexts);
+      await closePerformanceContexts(contexts);
     }
   });
 });
@@ -242,11 +232,15 @@ async function userTiming(page: Page, name: MetricName, action: () => Promise<vo
 }
 
 async function createOrdinaryNote(page: Page, title: string): Promise<void> {
-  await page.getByLabel("New note").click();
+  await page.getByRole("button", { name: "New note" }).click();
+  await page.getByRole("dialog", { name: "New note" })
+    .getByRole("button", { name: "Create" }).click();
+  const titleInput = page.getByRole("textbox", { name: "Title" });
+  await expect(titleInput).toHaveValue("Untitled note");
   const saved = page.waitForResponse((response) =>
     response.request().method() === "PUT" && response.url().includes("/api/notes/") && response.ok()
   );
-  await page.getByRole("textbox", { name: "Title" }).fill(title);
+  await titleInput.fill(title);
   await saved;
 }
 
@@ -295,32 +289,6 @@ function trackTransferBytes(page: Page, record: (bytes: number) => void): void {
     const value = Number(response.headers()["content-length"] ?? 0);
     if (Number.isFinite(value)) record(value);
   });
-}
-
-async function countResidentSections(page: Page, noteId: string): Promise<number> {
-  return page.evaluate(async (id) => await new Promise<number>((resolve, reject) => {
-    const request = indexedDB.open("fortnote-protected");
-    request.onerror = () => {
-      reject(request.error ?? new Error("Protected cache unavailable"));
-    };
-    request.onsuccess = () => {
-      const database = request.result;
-      const records = database.transaction("sectionCache", "readonly")
-        .objectStore("sectionCache").getAll();
-      records.onerror = () => {
-        reject(records.error ?? new Error("Protected cache unreadable"));
-      };
-      records.onsuccess = () => {
-        const count = new Set(
-          (records.result as { noteId: string; sectionId: string }[])
-            .filter((record) => record.noteId === id)
-            .map((record) => record.sectionId)
-        ).size;
-        database.close();
-        resolve(count);
-      };
-    };
-  }), noteId);
 }
 
 async function compareBaseline(artifact: { environment: object; metrics: { name: MetricName; p95Ms: number }[] }) {

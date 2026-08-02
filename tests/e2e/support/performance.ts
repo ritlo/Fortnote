@@ -9,64 +9,49 @@ import {
 } from "@playwright/test";
 
 export const MIB = 1024 * 1024;
-export const REPRESENTATIVE_LARGE_NOTE = {
-  activeSectionBytes: 4 * MIB,
-  logicalBytes: 100 * MIB,
-  sectionCount: 100
+export const REPRESENTATIVE_DOCUMENT = {
+  documentBytes: 4 * MIB
 } as const;
 
 const CONTENT_COMMIT = /\/api\/content\/uploads\/[^/]+\/commit$/u;
 const CONTENT_DOWNLOAD = /\/api\/content\/manifests\/[^/]+\/chunks\/\d+$/u;
 const GENERATED_EDIT_MAX_BYTES = MIB;
 
-export interface LargeNoteAccount {
+export interface PerformanceAccount {
   password: string;
   suffix: string;
   username: string;
 }
 
-export interface LargeNoteProfile {
-  activeSectionBytes: number;
-  logicalBytes: number;
-  sectionCount: number;
+export interface RepresentativeDocumentProfile {
+  documentBytes: number;
 }
 
-export interface LargeNoteDataset {
-  activeMarker: string;
-  distantMarker: string;
+export interface RepresentativeDocumentDataset {
+  contentScopeId: string;
+  marker: string;
   noteId: string;
-  sectionIds: string[];
 }
 
-export interface SectionTrafficCapture {
+export interface DocumentTrafficCapture {
   chunkDownloads: string[];
-  historySectionIds: string[];
-  subscribedSectionIds: string[];
+  historyScopeIds: string[];
+  subscribedScopeIds: string[];
   stop(): void;
 }
 
-export function largeNoteProfileFromEnvironment(
+export function representativeDocumentProfileFromEnvironment(
   environment: NodeJS.ProcessEnv = process.env
-): LargeNoteProfile {
-  const sectionCount = positiveInteger(
-    environment.FORTNOTE_LARGE_NOTE_SECTIONS,
-    REPRESENTATIVE_LARGE_NOTE.sectionCount
-  );
-  const logicalBytes = positiveInteger(
-    environment.FORTNOTE_LARGE_NOTE_BYTES,
-    REPRESENTATIVE_LARGE_NOTE.logicalBytes
-  );
-  const activeSectionBytes = positiveInteger(
-    environment.FORTNOTE_LARGE_NOTE_ACTIVE_BYTES,
-    Math.min(REPRESENTATIVE_LARGE_NOTE.activeSectionBytes, logicalBytes)
-  );
-  if (sectionCount < 4 || logicalBytes < activeSectionBytes + sectionCount - 1) {
-    throw new Error("Large-note profile needs at least four non-empty sections");
-  }
-  return { activeSectionBytes, logicalBytes, sectionCount };
+): RepresentativeDocumentProfile {
+  return {
+    documentBytes: positiveInteger(
+      environment.FORTNOTE_DOCUMENT_BYTES,
+      REPRESENTATIVE_DOCUMENT.documentBytes
+    )
+  };
 }
 
-export function uniqueLargeNoteAccount(prefix: string): LargeNoteAccount {
+export function uniquePerformanceAccount(prefix: string): PerformanceAccount {
   const suffix = crypto.randomUUID().slice(0, 8);
   return {
     password: `Fortnote-${suffix}-password`,
@@ -75,7 +60,7 @@ export function uniqueLargeNoteAccount(prefix: string): LargeNoteAccount {
   };
 }
 
-export async function newLargeNotePage(
+export async function newPerformancePage(
   browser: Browser,
   baseURL: string | undefined,
   contexts: BrowserContext[]
@@ -86,25 +71,13 @@ export async function newLargeNotePage(
   return context.newPage();
 }
 
-export async function closeLargeNoteContexts(contexts: BrowserContext[]): Promise<void> {
+export async function closePerformanceContexts(contexts: BrowserContext[]): Promise<void> {
   await Promise.all(contexts.splice(0).map(async (context) => context.close()));
 }
 
-export async function closeLargeNotePage(
+export async function registerPerformanceUser(
   page: Page,
-  contexts: BrowserContext[]
-): Promise<void> {
-  const context = page.context();
-  await context.close();
-  const position = contexts.indexOf(context);
-  if (position >= 0) {
-    contexts.splice(position, 1);
-  }
-}
-
-export async function registerLargeNoteUser(
-  page: Page,
-  account: LargeNoteAccount
+  account: PerformanceAccount
 ): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: "Create an account" }).click();
@@ -117,9 +90,9 @@ export async function registerLargeNoteUser(
   await waitForSharingKey(page);
 }
 
-export async function signInLargeNoteUser(
+export async function signInPerformanceUser(
   page: Page,
-  account: LargeNoteAccount
+  account: PerformanceAccount
 ): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -148,39 +121,31 @@ export function captureJsonControlRequests(page: Page) {
   };
 }
 
-export async function createLargeNoteThroughEditor(
+export async function createRepresentativeDocument(
   page: Page,
-  account: LargeNoteAccount,
   title: string,
-  profile: LargeNoteProfile
-): Promise<LargeNoteDataset> {
-  const failedResponses: string[] = [];
-  const captureFailure = (response: { ok(): boolean; status(): number; url(): string }) => {
-    if (!response.ok()) {
-      failedResponses.push(`${String(response.status())} ${response.url()}`);
-    }
-  };
-  page.on("response", captureFailure);
+  profile: RepresentativeDocumentProfile
+): Promise<RepresentativeDocumentDataset> {
   const created = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
       new URL(response.url()).pathname === "/api/notes" &&
       response.ok()
   );
-  await page.getByLabel("New note").click();
-  const note = await (await created).json() as { id: string };
-  try {
-    await expect(sectionPosition(page)).toHaveText("Section 1 of 1", { timeout: 30_000 });
-  } catch (error) {
-    throw new Error(
-      `New note section initialization failed (${failedResponses.join(", ") || "no failed HTTP response"})`,
-      { cause: error }
-    );
-  } finally {
-    page.off("response", captureFailure);
+  await page.getByRole("button", { name: "New note" }).click();
+  await page.getByRole("dialog", { name: "New note" })
+    .getByRole("button", { name: "Create" }).click();
+  const note = await (await created).json() as {
+    id: string;
+    rootSectionId: string | null;
+  };
+  if (!note.rootSectionId) {
+    throw new Error("New focused document did not receive a content scope");
   }
-  await expect(blockEditor(page)).toBeVisible();
 
+  const titleInput = page.getByRole("textbox", { name: "Title" });
+  await expect(titleInput).toHaveValue("Untitled note", { timeout: 30_000 });
+  await expect(blockEditor(page)).toBeVisible({ timeout: 30_000 });
   const titleSaved = page.waitForResponse(
     (response) =>
       response.request().method() === "PUT" &&
@@ -188,66 +153,60 @@ export async function createLargeNoteThroughEditor(
       response.ok(),
     { timeout: 30_000 }
   );
-  await page.getByRole("textbox", { name: "Title" }).fill(title);
+  await titleInput.fill(title);
   await titleSaved;
   await expect(page.getByRole("button", { name: titlePattern(title) })).toBeVisible();
-  await signInLargeNoteUser(page, account);
-  await openLargeNote(page, title);
 
-  const sizes = sectionPayloadSizes(profile);
-  const activeMarker = `active-${crypto.randomUUID()}`;
-  const distantMarker = `distant-${crypto.randomUUID()}`;
-  await replaceEditorWithGeneratedText(page, sizes[0], sectionPrefix(0, activeMarker));
-
-  for (let section = 1; section < profile.sectionCount; section += 1) {
-    await page.getByRole("button", { name: "Add section" }).click();
-    await expect(sectionPosition(page)).toHaveText(
-      `Section ${String(section + 1)} of ${String(section + 1)}`,
-      { timeout: 60_000 }
-    );
-    const marker = section === profile.sectionCount - 1
-      ? distantMarker
-      : `body-${String(section)}`;
-    await replaceEditorWithGeneratedText(page, sizes[section], sectionPrefix(section, marker));
-  }
-
-  const sectionIds = await listSectionIds(page, note.id);
-  expect(sectionIds).toHaveLength(profile.sectionCount);
-  return { activeMarker, distantMarker, noteId: note.id, sectionIds };
+  const marker = `focused-document-${crypto.randomUUID()}`;
+  await replaceEditorWithGeneratedText(page, profile.documentBytes, `${marker} `);
+  return { contentScopeId: note.rootSectionId, marker, noteId: note.id };
 }
 
-export async function shareLargeNote(
+export async function shareDocument(
   page: Page,
   username: string,
   role: "editor" | "viewer" = "editor"
 ): Promise<void> {
-  await page.getByLabel("Collaborator username").fill(username);
-  await page.getByLabel("Collaborator role").selectOption(role);
   await page.getByRole("button", { name: "Share note" }).click();
-  const member = page.locator(".membership-list li", { hasText: username });
-  const trust = page.getByRole("checkbox", {
+  const dialog = page.getByRole("dialog", { name: "Share note" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Collaborator username").fill(username);
+  await dialog.getByLabel("Collaborator role").selectOption(role);
+  await dialog.getByRole("button", { name: "Share note" }).click();
+
+  const member = dialog.locator(".membership-list li", { hasText: username });
+  const trust = dialog.getByRole("checkbox", {
     name: "I independently verified this exact key"
   });
   await expect(trust.or(member)).toBeVisible({ timeout: 30_000 });
   if (await trust.isVisible()) {
     await trust.check();
-    await page.getByRole("button", { name: "Trust key" }).click();
+    await dialog.getByRole("button", { name: "Trust key" }).click();
   }
   await expect(member).toContainText(role, { timeout: 30_000 });
+  await dialog.getByRole("button", { name: "Close sharing dialog" }).click();
+  await expect(dialog).not.toBeVisible();
 }
 
-export async function openLargeNote(page: Page, title: string): Promise<void> {
+export async function openDocument(
+  page: Page,
+  title: string,
+  marker?: string
+): Promise<void> {
   const card = page.getByRole("button", { name: titlePattern(title) });
   await expect(card).toBeVisible({ timeout: 30_000 });
   await card.click();
-  await expect(sectionPosition(page)).toContainText(/^Section 1 of /u, { timeout: 30_000 });
+  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(titlePattern(title));
   await expect(blockEditor(page)).toBeVisible({ timeout: 30_000 });
+  if (marker) {
+    await expect(blockEditor(page)).toContainText(marker, { timeout: 30_000 });
+  }
 }
 
-export function captureSectionTraffic(page: Page, noteId: string): SectionTrafficCapture {
-  const historySectionIds: string[] = [];
+export function captureDocumentTraffic(page: Page, noteId: string): DocumentTrafficCapture {
+  const historyScopeIds: string[] = [];
   const chunkDownloads: string[] = [];
-  const subscribedSectionIds: string[] = [];
+  const subscribedScopeIds: string[] = [];
   const historyPattern = new RegExp(
     `/api/notes/${escapeRegExp(noteId)}/sections/([^/]+)/history$`,
     "u"
@@ -256,21 +215,16 @@ export function captureSectionTraffic(page: Page, noteId: string): SectionTraffi
     const url = new URL(request.url());
     const history = historyPattern.exec(url.pathname);
     if (history?.[1]) {
-      historySectionIds.push(decodeURIComponent(history[1]));
+      historyScopeIds.push(decodeURIComponent(history[1]));
     }
-    if (
-      request.method() === "GET" &&
-      CONTENT_DOWNLOAD.exec(url.pathname)
-    ) {
+    if (request.method() === "GET" && CONTENT_DOWNLOAD.test(url.pathname)) {
       chunkDownloads.push(url.pathname);
     }
   };
   page.on("request", listener);
   page.on("websocket", (socket) => {
     socket.on("framesent", ({ payload }) => {
-      if (typeof payload !== "string") {
-        return;
-      }
+      if (typeof payload !== "string") return;
       try {
         const message = JSON.parse(payload) as {
           noteId?: string;
@@ -282,51 +236,44 @@ export function captureSectionTraffic(page: Page, noteId: string): SectionTraffi
           message.noteId === noteId &&
           typeof message.sectionId === "string"
         ) {
-          subscribedSectionIds.push(message.sectionId);
+          subscribedScopeIds.push(message.sectionId);
         }
       } catch {
-        // Binary and non-control frames are irrelevant to subscription residency.
+        // Binary and non-control frames are irrelevant to content residency.
       }
     });
   });
   return {
     chunkDownloads,
-    historySectionIds,
-    subscribedSectionIds,
+    historyScopeIds,
+    subscribedScopeIds,
     stop() {
       page.off("request", listener);
     }
   };
 }
 
-export async function expectColdOpenIsolation(
+export async function expectBoundedColdOpen(
   page: Page,
-  dataset: LargeNoteDataset,
-  traffic: SectionTrafficCapture
+  dataset: RepresentativeDocumentDataset,
+  traffic: DocumentTrafficCapture
 ): Promise<void> {
-  const allowed = new Set(["root", dataset.sectionIds[0], dataset.sectionIds[1]]);
-  await expect(page.locator('nav[aria-label="Note sections"] li').nth(1)).toContainText("Ready", {
-    timeout: 30_000
-  });
-  expect([...new Set(traffic.historySectionIds)].every((sectionId) => allowed.has(sectionId))).toBe(true);
-  expect([...new Set(traffic.subscribedSectionIds)].every((sectionId) => allowed.has(sectionId))).toBe(true);
-  expect(new Set(traffic.subscribedSectionIds)).toEqual(allowed);
-  const readyPositions = await page
-    .locator('nav[aria-label="Note sections"] li')
-    .evaluateAll((items) => items.flatMap((item, index) =>
-      item.textContent.includes("Ready") ? [index] : []
-    ));
-  expect(readyPositions.every((position) => position <= 1)).toBe(true);
-  await expect(blockEditor(page)).toContainText(dataset.activeMarker);
-  await expect(page.getByText(dataset.distantMarker, { exact: false })).toHaveCount(0);
+  await expect(blockEditor(page)).toContainText(dataset.marker, { timeout: 30_000 });
+  const allowed = new Set(["root", dataset.contentScopeId]);
+  expect([...new Set(traffic.historyScopeIds)].every((scopeId) => allowed.has(scopeId))).toBe(true);
+  expect([...new Set(traffic.subscribedScopeIds)].every((scopeId) => allowed.has(scopeId))).toBe(true);
+  expect(traffic.subscribedScopeIds).toContain(dataset.contentScopeId);
+  const cachedScopeIds = await readCachedContentScopeIds(page, dataset.noteId);
+  expect(cachedScopeIds.every((scopeId) => allowed.has(scopeId))).toBe(true);
+}
 
-  const cachedSectionIds = await readCachedSectionIds(page, dataset.noteId);
-  expect(cachedSectionIds.every((sectionId) => allowed.has(sectionId))).toBe(true);
+export async function countCachedDocumentScopes(page: Page, noteId: string): Promise<number> {
+  return new Set(await readCachedContentScopeIds(page, noteId)).size;
 }
 
 export async function appendWithRecoverableChunkFault(
   page: Page,
-  account: LargeNoteAccount,
+  account: PerformanceAccount,
   title: string,
   mode: "interrupt" | "corrupt"
 ): Promise<string> {
@@ -362,8 +309,8 @@ export async function appendWithRecoverableChunkFault(
   await page.unroute("**/api/content/uploads/*/chunks/*", handler);
 
   const committed = page.waitForResponse(isSuccessfulContentCommit, { timeout: 120_000 });
-  await signInLargeNoteUser(page, account);
-  await openLargeNote(page, title);
+  await signInPerformanceUser(page, account);
+  await openDocument(page, title);
   await committed;
   await expect(blockEditor(page)).toContainText(marker, { timeout: 60_000 });
   return marker;
@@ -371,7 +318,7 @@ export async function appendWithRecoverableChunkFault(
 
 export async function exerciseServerQuotaPressure(
   page: Page,
-  account: LargeNoteAccount,
+  account: PerformanceAccount,
   title: string
 ): Promise<string> {
   const marker = `quota-${crypto.randomUUID()}`;
@@ -398,147 +345,49 @@ export async function exerciseServerQuotaPressure(
   await hit;
   await expect(blockEditor(page)).toContainText(marker);
   await expect(page.locator(".pane-error")).toContainText(
-    "Server storage is full; encrypted work remains queued.",
+    "Encrypted changes remain on this device until server storage is available.",
     { timeout: 30_000 }
   );
   await page.unroute("**/api/content/uploads", handler);
 
   const committed = page.waitForResponse(isSuccessfulContentCommit, { timeout: 120_000 });
-  await signInLargeNoteUser(page, account);
-  await openLargeNote(page, title);
+  await signInPerformanceUser(page, account);
+  await openDocument(page, title);
   await committed;
   await expect(blockEditor(page)).toContainText(marker, { timeout: 60_000 });
   return marker;
 }
 
-export async function searchAllSectionsWithoutRepeatTransfer(
-  page: Page,
-  marker: string,
-  expectedSections: number,
-  traffic: SectionTrafficCapture
-): Promise<void> {
-  const search = page.getByLabel("Search notes");
-  await search.fill(marker);
-  await expect(page.getByRole("status").filter({ hasText: "Search" })).toContainText(
-    "Search is ready.",
-    { timeout: 10 * 60_000 }
-  );
-  const match = page.getByRole("button", { name: "Open matching section" });
-  await expect(match).toBeVisible();
-  await match.click();
-  await expect(blockEditor(page)).toContainText(marker, { timeout: 30_000 });
-
-  const historyCount = traffic.historySectionIds.length;
-  const chunkCount = traffic.chunkDownloads.length;
-  const subscriptionCount = traffic.subscribedSectionIds.length;
-  await search.fill("");
-  await search.fill(marker);
-  await expect(page.getByRole("status").filter({ hasText: "Search" })).toContainText(
-    "Search is ready."
-  );
-  await expect(page.getByRole("button", { name: "Open matching section" })).toBeVisible();
-  expect(traffic.historySectionIds).toHaveLength(historyCount);
-  expect(traffic.chunkDownloads).toHaveLength(chunkCount);
-  expect(traffic.subscribedSectionIds).toHaveLength(subscriptionCount);
-}
-
 export async function exerciseIndependentOfflineEdits(input: {
   ownerPage: Page;
   collaboratorPage: Page;
-  distantPosition: number;
 }): Promise<void> {
   const ownerMarker = `owner-independent-${crypto.randomUUID()}`;
   const collaboratorMarker = `offline-independent-${crypto.randomUUID()}`;
-  await input.ownerPage
-    .getByRole("button", { name: "Section 1", exact: true })
-    .click();
-  await expect(blockEditor(input.ownerPage)).toBeVisible();
-
   await input.collaboratorPage.context().setOffline(true);
   await appendSmallEditorText(input.collaboratorPage, collaboratorMarker);
-  await expect(blockEditor(input.collaboratorPage)).toContainText(collaboratorMarker);
   await appendSmallEditorText(input.ownerPage, ownerMarker);
-  await expect(blockEditor(input.ownerPage)).toContainText(ownerMarker);
   await expect(blockEditor(input.ownerPage)).not.toContainText(collaboratorMarker);
 
   await input.collaboratorPage.context().setOffline(false);
-  await expect(input.collaboratorPage.locator(".sync-pill")).toContainText("Live", {
+  await expect(input.collaboratorPage.locator(".sync-pill")).toContainText("Sync connected", {
     timeout: 30_000
   });
-  await input.ownerPage
-    .getByRole("button", {
-      name: `Section ${String(input.distantPosition)}`,
-      exact: true
-    })
-    .click();
   await expect(blockEditor(input.ownerPage)).toContainText(collaboratorMarker, {
     timeout: 60_000
   });
-  await input.collaboratorPage
-    .getByRole("button", { name: "Section 1", exact: true })
-    .click();
   await expect(blockEditor(input.collaboratorPage)).toContainText(ownerMarker, {
     timeout: 60_000
   });
 }
 
-export async function exerciseSectionOperations(
-  page: Page,
-  initialSectionCount: number
-): Promise<void> {
-  await page.getByRole("button", { name: "Add section" }).click();
-  await expect(page.locator('nav[aria-label="Note sections"] li')).toHaveCount(
-    initialSectionCount + 1,
-    { timeout: 60_000 }
-  );
-  await replaceSmallEditorText(page, "Operations block one");
-  await blockEditor(page).press("End");
-  await blockEditor(page).press("Enter");
-  await blockEditor(page).pressSequentially("Operations block two");
-
-  await page.getByRole("button", { name: "Split section" }).click();
-  await expect(page.locator('nav[aria-label="Note sections"] li')).toHaveCount(
-    initialSectionCount + 2,
-    { timeout: 60_000 }
-  );
-  const beforeMove = await sectionPosition(page).textContent();
-  await page.getByRole("button", { name: "Move up" }).click();
-  await expect(sectionPosition(page)).not.toHaveText(beforeMove ?? "", { timeout: 60_000 });
-
-  await page.getByRole("button", { name: "Merge with next" }).click();
-  await expect(page.locator('nav[aria-label="Note sections"] li')).toHaveCount(
-    initialSectionCount + 1,
-    { timeout: 60_000 }
-  );
-  await page.getByRole("button", { name: "Delete section" }).click();
-  await expect(page.locator('nav[aria-label="Note sections"] li')).toHaveCount(
-    initialSectionCount,
-    { timeout: 60_000 }
-  );
-}
-
 export async function expectStoredLogicalSize(page: Page, minimumBytes: number): Promise<void> {
   const quota = await page.evaluate(async () => {
     const response = await fetch("/api/content/quota", { credentials: "include" });
-    if (!response.ok) {
-      throw new Error("Storage quota could not be inspected");
-    }
+    if (!response.ok) throw new Error("Storage quota could not be inspected");
     return await response.json() as { usedBytes: number };
   });
   expect(quota.usedBytes).toBeGreaterThanOrEqual(minimumBytes);
-}
-
-function sectionPayloadSizes(profile: LargeNoteProfile): number[] {
-  const remaining = profile.logicalBytes - profile.activeSectionBytes;
-  const ordinaryCount = profile.sectionCount - 1;
-  const quotient = Math.floor(remaining / ordinaryCount);
-  const remainder = remaining % ordinaryCount;
-  return [
-    profile.activeSectionBytes,
-    ...Array.from({ length: ordinaryCount }, (_, index) =>
-      quotient + (index < remainder ? 1 : 0)
-    )
-  ];
 }
 
 async function replaceEditorWithGeneratedText(
@@ -582,30 +431,18 @@ async function injectGeneratedEditorText(
   const inserted = await page.evaluate(({ byteLength, textPrefix, replaceExisting }) => {
     const editor = document.querySelector<HTMLElement>(".block-editor .bn-editor");
     const selection = window.getSelection();
-    if (!editor || !selection) {
-      return false;
-    }
+    if (!editor || !selection) return false;
     const range = document.createRange();
     range.selectNodeContents(editor);
-    if (!replaceExisting) {
-      range.collapse(false);
-    }
+    if (!replaceExisting) range.collapse(false);
     selection.removeAllRanges();
     selection.addRange(range);
     const text = textPrefix + "x".repeat(byteLength - textPrefix.length);
-    // Chromium still exposes this editing command; using it here drives the real
-    // contenteditable input path without embedding the generated text in traces.
+    // Chromium still exposes this command; it drives the real contenteditable input path.
     // eslint-disable-next-line @typescript-eslint/no-deprecated
     return document.execCommand("insertText", false, text);
   }, { byteLength: bytes, textPrefix: prefix, replaceExisting: replace });
   expect(inserted).toBe(true);
-}
-
-async function replaceSmallEditorText(page: Page, text: string): Promise<void> {
-  const editor = blockEditor(page);
-  await editor.click();
-  await editor.press("ControlOrMeta+A");
-  await editor.pressSequentially(text);
 }
 
 async function appendSmallEditorText(page: Page, text: string): Promise<void> {
@@ -613,20 +450,10 @@ async function appendSmallEditorText(page: Page, text: string): Promise<void> {
   await editor.focus();
   await editor.press("ControlOrMeta+End");
   await editor.pressSequentially(` ${text}`);
+  await expect(editor).toContainText(text);
 }
 
-async function listSectionIds(page: Page, noteId: string): Promise<string[]> {
-  return page.evaluate(async (id) => {
-    const response = await fetch(`/api/notes/${id}/sections`, { credentials: "include" });
-    if (!response.ok) {
-      throw new Error("Section metadata could not be read");
-    }
-    const payload = await response.json() as { sections: { id: string }[] };
-    return payload.sections.map((section) => section.id);
-  }, noteId);
-}
-
-async function readCachedSectionIds(page: Page, noteId: string): Promise<string[]> {
+async function readCachedContentScopeIds(page: Page, noteId: string): Promise<string[]> {
   return page.evaluate(async (id) => await new Promise<string[]>((resolve, reject) => {
     const request = indexedDB.open("fortnote-protected");
     request.onerror = () => {
@@ -634,18 +461,18 @@ async function readCachedSectionIds(page: Page, noteId: string): Promise<string[
     };
     request.onsuccess = () => {
       const database = request.result;
-      const transaction = database.transaction("sectionCache", "readonly");
-      const records = transaction.objectStore("sectionCache").getAll();
+      const records = database.transaction("sectionCache", "readonly")
+        .objectStore("sectionCache").getAll();
       records.onerror = () => {
         database.close();
         reject(records.error ?? new Error("Protected cache could not be read"));
       };
       records.onsuccess = () => {
-        const sectionIds = (records.result as { noteId: string; sectionId: string }[])
+        const scopeIds = (records.result as { noteId: string; sectionId: string }[])
           .filter((record) => record.noteId === id)
           .map((record) => record.sectionId);
         database.close();
-        resolve(sectionIds);
+        resolve(scopeIds);
       };
     };
   }), noteId);
@@ -668,14 +495,6 @@ function blockEditor(page: Page) {
   return page.locator(".block-editor .bn-editor");
 }
 
-function sectionPosition(page: Page) {
-  return page.locator(".section-position");
-}
-
-function sectionPrefix(section: number, marker: string): string {
-  return `fortnote-large-section-${String(section + 1).padStart(3, "0")} ${marker} `;
-}
-
 function titlePattern(title: string): RegExp {
   return new RegExp(escapeRegExp(title), "u");
 }
@@ -687,7 +506,7 @@ function escapeRegExp(value: string): string {
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = value === undefined ? fallback : Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error("Large-note profile values must be positive integers");
+    throw new Error("Document profile values must be positive integers");
   }
   return parsed;
 }

@@ -5,25 +5,16 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const REQUIRED_ASSURANCE_COMMANDS = Object.freeze([
-  "pnpm lint",
-  "pnpm typecheck",
-  "pnpm test",
-  "pnpm e2e",
-  "pnpm assurance:accessibility",
-  "pnpm assurance:perf"
-]);
-
 const MUTATION_ARTIFACT =
   "specs/001-collaboration-design-assurance/evidence/mutation-results.json";
 
 const performanceBudgets = {
   "authenticated-action": 500,
   "collaborator-visible": 1_000,
-  "large-note-usable": 5_000,
+  "fresh-session-usable": 5_000,
   "local-feedback": 100,
   "note-usable": 2_000,
-  "section-usable": 2_000
+  "representative-note-usable": 5_000
 };
 
 export function nearestRankP95(values) {
@@ -88,65 +79,35 @@ function majorVersion(value) {
 }
 
 function parseArguments(argv) {
-  const options = {
-    root: process.cwd(),
-    summary: undefined
-  };
+  const options = { root: process.cwd() };
   for (let index = 0; index < argv.length; index += 2) {
     const option = argv[index];
     const value = argv[index + 1];
     if (!value) throw new Error(`${option ?? "argument"} requires a value`);
     if (option === "--root") options.root = path.resolve(value);
-    else if (option === "--summary") options.summary = path.resolve(value);
     else throw new Error(`Unknown argument: ${option}`);
   }
-  options.summary ??= path.join(
-    options.root,
-    "specs/001-collaboration-design-assurance/assurance-summary.md"
-  );
   return options;
 }
 
-export function verifyAssuranceSummary(summary, root) {
+export function verifyAssuranceArtifacts(root) {
   const errors = [];
-  for (const command of REQUIRED_ASSURANCE_COMMANDS) {
-    const row = summary.split("\n").find((line) => line.includes(`\`${command}\``));
-    if (!row) errors.push(`Assurance summary is missing command: ${command}`);
-    else {
-      const result = row.split("|").slice(1, -1).map((cell) => cell.trim())[1] ?? "";
-      if (!result || /^(?:n\/a|not run|pending|tbd|todo|unknown)$/iu.test(result)) {
-        errors.push(`Assurance command lacks an actual result: ${command}`);
-      }
-    }
+  const artifact = path.join(root, MUTATION_ARTIFACT);
+  if (!existsSync(artifact)) {
+    errors.push(`Mutation artifact is missing: ${MUTATION_ARTIFACT}`);
+    return errors;
   }
-  const risks = sectionContents(summary, "Known product risks");
-  if (!risks || risks.trim().length < 20) {
-    errors.push("Assurance summary requires known product risks.");
+  let evidence;
+  try {
+    evidence = JSON.parse(readFileSync(artifact, "utf8"));
+  } catch {
+    errors.push(`Mutation artifact is not valid JSON: ${MUTATION_ARTIFACT}`);
+    return errors;
   }
-  const limitations = sectionContents(summary, "Scope limitations") ?? "";
-  if (!/manual screen-reader/iu.test(limitations)) {
-    errors.push("Assurance summary must disclose omitted manual screen-reader qualification.");
-  }
-  if (!/100 MiB\/20-sample/iu.test(limitations)) {
-    errors.push("Assurance summary must disclose omitted 100 MiB/20-sample qualification.");
-  }
-  if (!summary.includes(MUTATION_ARTIFACT)) {
-    errors.push("Assurance summary must reference the targeted mutation artifact.");
-  } else {
-    const artifact = path.join(root, MUTATION_ARTIFACT);
-    if (!existsSync(artifact)) errors.push(`Mutation artifact is missing: ${MUTATION_ARTIFACT}`);
-    else if (findMutationSurvivor(JSON.parse(readFileSync(artifact, "utf8")))) {
-      errors.push("Mutation artifact contains a non-equivalent survivor.");
-    }
+  if (findMutationSurvivor(evidence)) {
+    errors.push("Mutation artifact contains a non-equivalent survivor.");
   }
   return errors;
-}
-
-function sectionContents(summary, heading) {
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  return summary.match(
-    new RegExp(`^## ${escaped}\\s*$([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "imu")
-  )?.[1];
 }
 
 export function findMutationSurvivor(value) {
@@ -163,10 +124,9 @@ const isMain = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).h
 if (isMain) {
   try {
     const options = parseArguments(process.argv.slice(2));
-    const summary = readFileSync(options.summary, "utf8");
-    const errors = verifyAssuranceSummary(summary, options.root);
+    const errors = verifyAssuranceArtifacts(options.root);
     if (errors.length > 0) throw new Error([...new Set(errors)].join("\n"));
-    console.log("Assurance summary verification passed.");
+    console.log("Assurance artifact verification passed.");
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

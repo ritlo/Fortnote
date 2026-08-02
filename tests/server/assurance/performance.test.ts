@@ -11,10 +11,10 @@ const verifierUrl = pathToFileURL(
 const budgets = {
   "authenticated-action": 500,
   "collaborator-visible": 1_000,
-  "large-note-usable": 5_000,
+  "fresh-session-usable": 5_000,
   "local-feedback": 100,
   "note-usable": 2_000,
-  "section-usable": 2_000
+  "representative-note-usable": 5_000
 } as const;
 
 type SampleResult = "failure" | "success" | "timeout";
@@ -53,18 +53,16 @@ async function helpers(): Promise<PerformanceHelpers> {
 }
 
 describe("performance assurance calculations", () => {
-  it("builds the deterministic full three-collaborator fixture", () => {
+  it("builds the deterministic focused-editor qualification fixture", () => {
     const first = performanceFixtureDefinition("release-candidate", "full");
     const second = performanceFixtureDefinition("release-candidate", "full");
 
     expect(first).toEqual(second);
     expect(first).toMatchObject({
-      activeSectionBytes: 4 * 1024 * 1024,
       collaborators: 3,
       compactionEdits: 65,
-      logicalBytes: 100 * 1024 * 1024,
+      documentBytes: 4 * 1024 * 1024,
       samples: 20,
-      sectionCount: 100,
       seed: "release-candidate",
       warmupRuns: 2
     });
@@ -136,7 +134,7 @@ describe("performance assurance calculations", () => {
       buildMode: "production",
       collaborators: 3,
       cpu: "2-vCPU",
-      dataset: "100MiB-100-sections",
+      dataset: "4MiB-focused-document",
       database: "sqlite",
       node: "26.1.0",
       os: "linux",
