@@ -119,7 +119,7 @@ describe("EditorPane composition", () => {
           recoveryCallbacks={{
             cleanup: vi.fn(), copy: vi.fn(), discard: vi.fn(), encryptedExport: vi.fn(),
             reapply: vi.fn(), repairAccess: vi.fn(), retry: vi.fn(), reviewAccess: vi.fn(),
-            reviewDraft: vi.fn(), splitSection: vi.fn(), tryAgain: vi.fn()
+            reviewDraft: vi.fn(), tryAgain: vi.fn()
           }}
         />
       </StrictMode>
@@ -154,7 +154,7 @@ function renderEditorPane(overrides: Partial<Parameters<typeof EditorPane>[0]> =
       recoveryCallbacks={{
         cleanup: vi.fn(), copy: vi.fn(), discard: vi.fn(), encryptedExport: vi.fn(),
         reapply: vi.fn(), repairAccess: vi.fn(), retry: vi.fn(), reviewAccess: vi.fn(),
-        reviewDraft: vi.fn(), splitSection: vi.fn(), tryAgain: vi.fn()
+        reviewDraft: vi.fn(), tryAgain: vi.fn()
       }}
       {...overrides}
     />

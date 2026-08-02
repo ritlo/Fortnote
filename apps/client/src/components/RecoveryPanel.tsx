@@ -10,7 +10,6 @@ export interface RecoveryCallbacks {
   retry: () => void | Promise<void>;
   reviewAccess: () => void | Promise<void>;
   reviewDraft: () => void | Promise<void>;
-  splitSection: () => void | Promise<void>;
   tryAgain: () => void | Promise<void>;
 }
 
@@ -29,7 +28,6 @@ const actions: Record<CollaborationAction, [string, keyof RecoveryCallbacks]> = 
   retry: ["Retry", "retry"],
   "review-access": ["Review access", "reviewAccess"],
   "review-draft": ["Review draft", "reviewDraft"],
-  "split-section": ["Split section", "splitSection"],
   "try-again": ["Try again", "tryAgain"]
 };
 

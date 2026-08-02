@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EncryptedOutboxRecord } from "@client/lib/indexedDb";
 import { recoverableDraftId, useAppStore, type DecryptedNote, type RetainedSectionDraft } from "@client/store/appStore";
 import { useRecoveryActions } from "@client/hooks/useRecoveryActions";
-import type { SectionActions } from "@client/hooks/useSectionActions";
 
 const mocks = vi.hoisted(() => ({
   close: vi.fn(),
@@ -105,10 +104,7 @@ describe("useRecoveryActions", () => {
 });
 
 function renderRecoveryActions() {
-  const sectionActions = {
-    splitSection: vi.fn(() => Promise.resolve())
-  } as unknown as SectionActions;
-  return renderHook(() => useRecoveryActions(note, sectionActions, vi.fn()));
+  return renderHook(() => useRecoveryActions(note, vi.fn()));
 }
 
 function currentDraft() {

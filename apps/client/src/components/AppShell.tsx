@@ -4,7 +4,6 @@ import { useAuthActions } from "../hooks/useAuthActions";
 import { useNoteActions } from "../hooks/useNoteActions";
 import { useNoteViewModel } from "../hooks/useNoteViewModel";
 import { useSectionData } from "../hooks/useSectionData";
-import { useSectionActions } from "../hooks/useSectionActions";
 import { useRecoveryActions } from "../hooks/useRecoveryActions";
 import { useAppStore } from "../store/appStore";
 import { AttachmentDialog } from "./AttachmentDialog";
@@ -32,10 +31,8 @@ export function AppShell() {
   const setSearch = useAppStore((state) => state.setSearch);
   const noteView = useNoteViewModel();
   const sectionData = useSectionData(noteView.selectedNote);
-  const sectionActions = useSectionActions(noteView.selectedNote);
   const recoveryCallbacks = useRecoveryActions(
     noteView.selectedNote,
-    sectionActions,
     sectionData.retry
   );
   const authActions = useAuthActions();

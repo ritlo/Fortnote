@@ -113,7 +113,6 @@ function recoveryCallbacks(): RecoveryCallbacks {
     retry: vi.fn(),
     reviewAccess: vi.fn(),
     reviewDraft: vi.fn(),
-    splitSection: vi.fn(),
     tryAgain: vi.fn()
   };
 }

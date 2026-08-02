@@ -392,7 +392,7 @@ describe("capacity state", () => {
     const { result } = renderHook(() => useNoteViewModel());
 
     expect(result.current.collaborationState).toMatchObject({
-      actions: ["retry", "encrypted-export", "split-section", "cleanup"],
+      actions: ["retry", "encrypted-export", "cleanup"],
       id: "local-full",
       label: "Local storage full — changes need attention",
       saved: false,

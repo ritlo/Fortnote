@@ -8,7 +8,6 @@ export type CollaborationAction =
   | "retry"
   | "review-access"
   | "review-draft"
-  | "split-section"
   | "try-again";
 
 export interface CollaborationDimensions {
@@ -63,9 +62,9 @@ function pickState(
 ): Omit<CollaborationState, "draftRetained" | "saved" | "synchronized"> {
   if (value.access === "removed") return state("removed", "You no longer have access", "alert", false);
   if (value.protection === "undecryptable") return state("undecryptable", "This note cannot be decrypted", "alert", false, ["retry", "repair-access"]);
-  if (value.recovery === "reviewing") return state("reviewing", "Review retained encrypted draft", "alert", false, ["copy", "encrypted-export", "reapply", "split-section", "discard"]);
+  if (value.recovery === "reviewing") return state("reviewing", "Review retained encrypted draft", "alert", false, ["copy", "encrypted-export", "reapply", "discard"]);
   if (value.recovery === "divergent" || value.recovery === "conflict") return state("review", "Changes need review", "alert", false, ["review-draft", "encrypted-export", "reapply"]);
-  if (value.durability === "local-full") return state("local-full", "Local storage full — changes need attention", "alert", editable, ["retry", "encrypted-export", "split-section", "cleanup"]);
+  if (value.durability === "local-full") return state("local-full", "Local storage full — changes need attention", "alert", editable, ["retry", "encrypted-export", "cleanup"]);
   if (value.durability === "server-full") return state("server-full", "Server storage full — changes kept on this device", "alert", editable, ["retry", "encrypted-export"]);
   if (value.protection === "stale") return state("stale", "Access changed — refreshing protection", "assertive", false);
   if (value.protection === "preparing") return state("rotation-preparing", "Securing access — editing paused", "assertive", false, ["retry", "review-access"]);
@@ -74,7 +73,7 @@ function pickState(
   if (value.access === "trash") return state("trash", "In trash — view only", "polite", false);
   if (value.access === "viewer") return state("viewer", "View only", "polite", false);
   if (value.section === "opening") return state("opening", "Opening encrypted note…", "polite", false);
-  if (value.section === "loading" || value.section === "unavailable") return state("section-loading", "Loading section…", "polite", false, ["retry"]);
+  if (value.section === "loading" || value.section === "unavailable") return state("section-loading", "Loading encrypted note…", "polite", false, ["retry"]);
   if (value.connection === "offline") return state("offline", "Offline — changes kept on this device", "assertive", editable);
   if (value.connection === "reconnecting") return state("reconnecting", "Reconnecting…", "polite", editable);
   if (value.durability === "memory") return state("preserving", "Preserving changes…", "polite", editable);

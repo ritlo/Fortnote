@@ -99,7 +99,6 @@ export type RecoverableDraftState =
   | "reviewing"
   | "reapplied"
   | "exported"
-  | "split"
   | "discarded";
 
 export interface RecoverableSectionDraft {
@@ -627,7 +626,6 @@ function isRecoverableDraftTransition(
       (next === "reapplied" ||
         next === "exported" ||
         next === "reviewing" ||
-        next === "split" ||
         next === "discarded"))
   );
 }

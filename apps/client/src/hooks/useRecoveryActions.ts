@@ -5,11 +5,9 @@ import { openFortnoteIndexedDb, type EncryptedOutboxRecord } from "../lib/indexe
 import { createCrdtSectionInitializationManifest, waitForCrdtSectionDurable } from "../realtime/crdt";
 import { useAppStore, type DecryptedNote, type RecoverableSectionDraft } from "../store/appStore";
 import type { RecoveryCallbacks } from "../components/RecoveryPanel";
-import type { SectionActions } from "./useSectionActions";
 
 export function useRecoveryActions(
   note: DecryptedNote | null,
-  sectionActions: SectionActions,
   retry: () => void
 ): RecoveryCallbacks {
   const draft = useAppStore((state) => note
@@ -36,7 +34,7 @@ export function useRecoveryActions(
     };
     const resolveDraft = async (
       current: RecoverableSectionDraft,
-      state: "reapplied" | "split" | "discarded"
+      state: "reapplied" | "discarded"
     ) => {
       await withDatabase(async (database) => database.deleteOutboxFence(current));
       useAppStore.getState().setRecoverableDraftState(current.id, state);
@@ -80,16 +78,9 @@ export function useRecoveryActions(
         useAppStore.getState().setSelectedSection(draft.noteId, draft.sectionId);
         useAppStore.getState().setRecoverableDraftState(draft.id, "reviewing");
       },
-      splitSection: () => run(async (current) => {
-        assertCurrentEditableDraft(note, current);
-        await sectionActions.splitSection(current.sectionId);
-        const splitError = useAppStore.getState().error;
-        if (splitError) throw new Error(splitError);
-        await resolveDraft(current, "split");
-      }),
       tryAgain: retry
     };
-  }, [draft, note, retry, sectionActions]);
+  }, [draft, note, retry]);
 }
 
 async function withDatabase<T>(operation: (database: Awaited<ReturnType<typeof openFortnoteIndexedDb>>) => Promise<T>): Promise<T> {
