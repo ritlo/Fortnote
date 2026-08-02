@@ -22,7 +22,7 @@ describe("deriveCollaborationState", () => {
     [{ access: "viewer" }, "View only", "polite"],
     [{ access: "trash" }, "In trash — view only", "polite"],
     [{ section: "opening" }, "Opening encrypted note…", "polite"],
-    [{ section: "loading" }, "Loading section…", "polite"],
+    [{ section: "loading" }, "Loading encrypted note…", "polite"],
     [{ connection: "offline", durability: "pending" }, "Offline — changes kept on this device", "assertive"],
     [{ connection: "reconnecting", durability: "pending" }, "Reconnecting…", "polite"],
     [{ durability: "memory" }, "Preserving changes…", "polite"],
@@ -46,7 +46,7 @@ describe("deriveCollaborationState", () => {
   it("offers only the recovery actions appropriate to retained work", () => {
     expect(derive({ durability: "local-full", draftRetained: true })).toEqual({
       announcement: "alert",
-      actions: ["retry", "encrypted-export", "split-section", "cleanup"],
+      actions: ["retry", "encrypted-export", "cleanup"],
       draftRetained: true,
       editing: true,
       id: "local-full",
@@ -69,6 +69,14 @@ describe("deriveCollaborationState", () => {
       "encrypted-export",
       "reapply"
     ]);
+  });
+
+  it("never exposes internal section operations", () => {
+    for (const recovery of ["none", "divergent", "reviewing", "conflict", "error"] as const) {
+      for (const durability of ["clean", "local-full", "server-full"] as const) {
+        expect(derive({ durability, recovery }).actions).not.toContain("split-section");
+      }
+    }
   });
 
   it("never claims saved from a socket alone or while visible work is retained", () => {

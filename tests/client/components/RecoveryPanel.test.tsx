@@ -8,24 +8,22 @@ import { RecoveryPanel, type RecoveryCallbacks } from "@client/components/Recove
 afterEach(cleanup);
 
 describe("RecoveryPanel", () => {
-  it("offers retry, encrypted export, split, and cleanup for local storage pressure", () => {
+  it("offers recovery without exposing internal section controls", () => {
     const callbacks = recoveryCallbacks();
     renderPanel({ durability: "local-full", draftRetained: true }, callbacks);
 
     expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual([
       "Retry",
       "Encrypted export",
-      "Split section",
       "Clean up"
     ]);
     click("Retry");
     click("Encrypted export");
-    click("Split section");
     click("Clean up");
     expect(callbacks.retry).toHaveBeenCalledOnce();
     expect(callbacks.encryptedExport).toHaveBeenCalledOnce();
-    expect(callbacks.splitSection).toHaveBeenCalledOnce();
     expect(callbacks.cleanup).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: /section/iu })).toBeNull();
   });
 
   it("offers review, export, and reapply while retaining a divergent draft", () => {
