@@ -88,6 +88,32 @@ test("keeps sibling panes aligned with tall editor content", async ({ page }) =>
   await expectPanesToMatchEditorContent(page);
 });
 
+test("wraps long editor lines within the editor column", async ({ page }) => {
+  const account = uniqueAccount("wide-editor");
+  const longLine = `line-${"x".repeat(300)}`;
+
+  await register(page, account.username, account.password);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await createNote(page, `Wide note ${account.suffix}`, "short line");
+  await setEditorText(page, longLine);
+  await expect(blockEditor(page)).toContainText(longLine);
+
+  const layout = await page.locator(".blocknote-surface").evaluate((surface) => {
+    const column = surface.closest(".editor-column");
+    const inlineContent = surface.querySelector<HTMLElement>(".bn-inline-content");
+    if (!column || !inlineContent) throw new Error("Editor layout is incomplete");
+    return {
+      columnWidth: column.getBoundingClientRect().width,
+      inlineClientWidth: inlineContent.clientWidth,
+      inlineScrollWidth: inlineContent.scrollWidth,
+      surfaceWidth: surface.getBoundingClientRect().width
+    };
+  });
+
+  expect(layout.surfaceWidth).toBeLessThanOrEqual(layout.columnWidth + 1);
+  expect(layout.inlineScrollWidth).toBeLessThanOrEqual(layout.inlineClientWidth + 1);
+});
+
 test("autosaves undo and redo and retains the result after relogin", async ({ page }) => {
   const account = uniqueAccount("undo-redo");
   const suffix = ` undo-redo-${account.suffix}`;

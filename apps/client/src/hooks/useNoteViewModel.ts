@@ -169,14 +169,16 @@ export function useNoteViewModel() {
     : [];
 
   const filteredNotes = useMemo(() => {
-    if (!normalizedSearch) {
-      return viewNotes;
-    }
     const matchingNoteIds = new Set(searchMatches.map((match) => match.noteId));
-    return viewNotes.filter(
-      (note) =>
-        normalizeSearch(note.title).includes(normalizedSearch) ||
-        matchingNoteIds.has(note.id)
+    const visibleNotes = !normalizedSearch
+      ? viewNotes
+      : viewNotes.filter(
+          (note) =>
+            normalizeSearch(note.title).includes(normalizedSearch) ||
+            matchingNoteIds.has(note.id)
+        );
+    return [...visibleNotes].sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt)
     );
   }, [normalizedSearch, searchMatches, viewNotes]);
 

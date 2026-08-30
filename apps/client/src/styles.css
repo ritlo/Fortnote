@@ -635,6 +635,10 @@ textarea {
   line-height: 1.55;
 }
 
+.blocknote-surface .bn-inline-content {
+  overflow-wrap: anywhere;
+}
+
 .blocknote-surface [data-content-type="file"],
 .blocknote-surface [data-content-type="image"] {
   border-color: #b9dad5;

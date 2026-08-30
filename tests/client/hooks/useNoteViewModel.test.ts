@@ -109,6 +109,27 @@ describe("notesForView", () => {
   });
 });
 
+describe("note ordering", () => {
+  it("shows the most recently updated note first", () => {
+    useAppStore.setState({
+      notes: [
+        note({ id: "oldest", updatedAt: "2026-07-01T00:00:00.000Z" }),
+        note({ id: "newest", updatedAt: "2026-07-03T00:00:00.000Z" }),
+        note({ id: "middle", updatedAt: "2026-07-02T00:00:00.000Z" })
+      ],
+      notesView: "notes"
+    });
+
+    const { result } = renderHook(() => useNoteViewModel());
+
+    expect(result.current.filteredNotes.map((candidate) => candidate.id)).toEqual([
+      "newest",
+      "middle",
+      "oldest"
+    ]);
+  });
+});
+
 describe("protected note search", () => {
   it("discovers coverage without downloading section bodies before a search", async () => {
     mocks.listNoteSections.mockResolvedValue({
