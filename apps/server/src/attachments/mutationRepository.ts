@@ -66,6 +66,10 @@ export interface DeleteAttachmentInput {
   clientInstanceId?: string;
 }
 
+export type DeleteAttachmentOutcome =
+  | { kind: "deleted"; cursor: number }
+  | { kind: "not-found" };
+
 export interface AttachmentMutationRepository {
   reserve(
     input: ReserveAttachmentUploadInput
@@ -74,7 +78,7 @@ export interface AttachmentMutationRepository {
     input: CommitAttachmentUploadInput
   ): Promise<CommitAttachmentUploadOutcome>;
   release(ownerUserId: string, size: number): Promise<void>;
-  delete(input: DeleteAttachmentInput): Promise<number>;
+  delete(input: DeleteAttachmentInput): Promise<DeleteAttachmentOutcome>;
 }
 
 type SqliteDatabase = BetterSQLite3Database<typeof schema>;
@@ -296,12 +300,21 @@ export class SqliteAttachmentMutationRepository
     return Promise.resolve();
   }
 
-  delete(input: DeleteAttachmentInput): Promise<number> {
-    const cursor = this.orm.transaction((transaction) => {
-      transaction
+  delete(input: DeleteAttachmentInput): Promise<DeleteAttachmentOutcome> {
+    const outcome = this.orm.transaction((transaction) => {
+      const deleted = transaction
         .delete(schema.attachments)
-        .where(eq(schema.attachments.id, input.attachmentId))
+        .where(
+          and(
+            eq(schema.attachments.id, input.attachmentId),
+            eq(schema.attachments.noteId, input.noteId),
+            eq(schema.attachments.userId, input.ownerUserId)
+          )
+        )
         .run();
+      if (deleted.changes !== 1) {
+        return { kind: "not-found" as const };
+      }
       transaction
         .update(schema.storageAccounts)
         .set({
@@ -310,7 +323,7 @@ export class SqliteAttachmentMutationRepository
         })
         .where(eq(schema.storageAccounts.userId, input.ownerUserId))
         .run();
-      return transaction
+      const cursor = transaction
         .insert(schema.noteEvents)
         .values({
           eventId: randomUUID(),
@@ -327,7 +340,8 @@ export class SqliteAttachmentMutationRepository
         })
         .returning({ cursor: schema.noteEvents.cursor })
         .get().cursor;
+      return { kind: "deleted" as const, cursor };
     });
-    return Promise.resolve(cursor);
+    return Promise.resolve(outcome);
   }
 }

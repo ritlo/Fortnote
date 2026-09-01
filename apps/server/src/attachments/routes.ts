@@ -305,7 +305,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
     }
 
     const clientInstanceId = requestClientInstanceId(request);
-    const cursor = await context.db.attachmentMutations.delete({
+    const outcome = await context.db.attachmentMutations.delete({
       attachmentId: attachment.id,
       noteId: attachment.noteId,
       ownerUserId: attachment.userId,
@@ -314,7 +314,11 @@ export function createAttachmentsRouter(context: AppContext): Router {
       noteVersion: access.version,
       ...(clientInstanceId ? { clientInstanceId } : {})
     });
-    publishEventCursor(context, cursor);
+    if (outcome.kind === "not-found") {
+      sendApiError(response, "not_found", "Attachment not found");
+      return;
+    }
+    publishEventCursor(context, outcome.cursor);
     try {
       await context.db.attachmentStorage.delete(attachment.storageKey);
     } catch (error) {

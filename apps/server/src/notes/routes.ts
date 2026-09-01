@@ -4,9 +4,15 @@ import { z } from "zod";
 import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
-import { requireSession } from "../auth/session.js";
-import { canEditNote, canOwnNote, canReadNote, getNoteAccess } from "./access.js";
-import { writeRequestEvent } from "./events.js";
+import { requireSession, requireSessionAsync } from "../auth/session.js";
+import {
+  canEditNote,
+  canOwnNote,
+  canReadNote,
+  getNoteAccess,
+  getNoteAccessAsync
+} from "./access.js";
+import { requestClientInstanceId, writeRequestEvent } from "./events.js";
 import {
   compareAndSetSectionInitialization,
   createNoteSection,
@@ -1569,138 +1575,106 @@ export function createNotesRouter(context: AppContext): Router {
     });
   });
 
-  router.delete("/:id", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.delete("/:id", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
 
-    const access = getNoteAccess(context, request.params.id, session.userId);
+    const access = await getNoteAccessAsync(
+      context,
+      request.params.id,
+      session.userId
+    );
     if (!canOwnNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
 
-    const cursor = context.db.orm.transaction((tx) => {
-      tx.update(schema.notes)
-        .set({
-          isDeleted: true,
-          deletedAt: sql`CURRENT_TIMESTAMP`,
-          updatedAt: sql`CURRENT_TIMESTAMP`
-        })
-        .where(and(
-          eq(schema.notes.id, access.noteId),
-          eq(schema.notes.userId, session.userId)
-        ))
-        .run();
-      return writeRequestEvent(context, request, {
-        noteId: access.noteId,
-        actorUserId: session.userId,
-        eventType: "note.deleted",
-        noteVersion: access.version
-      }, tx);
+    const clientInstanceId = requestClientInstanceId(request);
+    const cursor = await context.db.noteLifecycle.setDeleted({
+      noteId: access.noteId,
+      ownerUserId: session.userId,
+      actorUserId: session.userId,
+      noteVersion: access.version,
+      deleted: true,
+      ...(clientInstanceId ? { clientInstanceId } : {})
     });
+    if (cursor === null) {
+      sendApiError(response, "not_found", "Note not found");
+      return;
+    }
     publishEventCursors(context, [cursor]);
 
     response.status(204).send();
   });
 
-  router.post("/:id/restore", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.post("/:id/restore", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
 
-    const access = getNoteAccess(context, request.params.id, session.userId);
+    const access = await getNoteAccessAsync(
+      context,
+      request.params.id,
+      session.userId
+    );
     if (!canOwnNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
 
-    const cursor = context.db.orm.transaction((tx) => {
-      tx.update(schema.notes)
-        .set({ isDeleted: false, deletedAt: null, updatedAt: sql`CURRENT_TIMESTAMP` })
-        .where(and(
-          eq(schema.notes.id, access.noteId),
-          eq(schema.notes.userId, session.userId)
-        ))
-        .run();
-      return writeRequestEvent(context, request, {
-        noteId: access.noteId,
-        actorUserId: session.userId,
-        eventType: "note.restored",
-        noteVersion: access.version
-      }, tx);
+    const clientInstanceId = requestClientInstanceId(request);
+    const cursor = await context.db.noteLifecycle.setDeleted({
+      noteId: access.noteId,
+      ownerUserId: session.userId,
+      actorUserId: session.userId,
+      noteVersion: access.version,
+      deleted: false,
+      ...(clientInstanceId ? { clientInstanceId } : {})
     });
+    if (cursor === null) {
+      sendApiError(response, "not_found", "Note not found");
+      return;
+    }
     publishEventCursors(context, [cursor]);
 
     response.json({ id: access.noteId });
   });
 
   router.delete("/:id/permanent", async (request, response) => {
-    const session = requireSession(context.db, request, response);
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
 
-    const access = getNoteAccess(context, request.params.id, session.userId);
+    const access = await getNoteAccessAsync(
+      context,
+      request.params.id,
+      session.userId
+    );
     if (!canOwnNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
 
-    const rows = context.db.orm
-      .select({
-        storageKey: schema.attachments.storageKey,
-        size: schema.attachments.size
-      })
-      .from(schema.attachments)
-      .where(and(
-        eq(schema.attachments.noteId, access.noteId),
-        eq(schema.attachments.userId, session.userId)
-      ))
-      .all();
-
-    const memberRows = context.db.orm
-      .select({ userId: schema.noteMemberships.userId })
-      .from(schema.noteMemberships)
-      .where(and(
-        eq(schema.noteMemberships.noteId, access.noteId),
-        eq(schema.noteMemberships.status, "active")
-      ))
-      .all();
-
-    const cursor = context.db.orm.transaction((tx) => {
-      const attachmentBytes = rows.reduce((total, row) => total + row.size, 0);
-      tx.delete(schema.notes)
-        .where(and(
-          eq(schema.notes.id, access.noteId),
-          eq(schema.notes.userId, session.userId)
-        ))
-        .run();
-      if (attachmentBytes > 0) {
-        tx.update(schema.storageAccounts)
-          .set({
-            usedBytes: sql`MAX(${schema.storageAccounts.usedBytes} - ${attachmentBytes}, 0)`,
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(eq(schema.storageAccounts.userId, session.userId))
-          .run();
-      }
-      return writeRequestEvent(context, request, {
-        noteId: access.noteId,
-        actorUserId: session.userId,
-        eventType: "note.permanently_deleted",
-        noteVersion: access.version,
-        payloadMetadata: {
-          visibleUserIds: memberRows.map((row) => row.userId)
-        }
-      }, tx);
+    const clientInstanceId = requestClientInstanceId(request);
+    const outcome = await context.db.noteLifecycle.permanentlyDelete({
+      noteId: access.noteId,
+      ownerUserId: session.userId,
+      actorUserId: session.userId,
+      noteVersion: access.version,
+      ...(clientInstanceId ? { clientInstanceId } : {})
     });
-    publishEventCursors(context, [cursor]);
+    if (!outcome) {
+      sendApiError(response, "not_found", "Note not found");
+      return;
+    }
+    publishEventCursors(context, [outcome.cursor]);
     await Promise.all(
-      rows.map((row) =>
-        context.db.attachmentStorage.delete(row.storageKey).catch((error: unknown) => {
+      outcome.storageKeys.map((storageKey) =>
+        context.db.attachmentStorage.delete(storageKey).catch((error: unknown) => {
           console.error("Unable to delete attachment ciphertext", error);
         })
       )

@@ -9,6 +9,7 @@ import type {
   CommitAttachmentUploadInput,
   CommitAttachmentUploadOutcome,
   DeleteAttachmentInput,
+  DeleteAttachmentOutcome,
   ReserveAttachmentUploadInput
 } from "./mutationRepository.js";
 
@@ -228,11 +229,30 @@ export class PostgresAttachmentMutationRepository
       .where(eq(schema.storageAccounts.userId, ownerUserId));
   }
 
-  delete(input: DeleteAttachmentInput): Promise<number> {
+  delete(input: DeleteAttachmentInput): Promise<DeleteAttachmentOutcome> {
     return this.orm.transaction(async (transaction) => {
-      await transaction
+      const notes = await transaction
+        .select({ id: schema.notes.id })
+        .from(schema.notes)
+        .where(eq(schema.notes.id, input.noteId))
+        .limit(1)
+        .for("update");
+      if (!notes[0]) {
+        return { kind: "not-found" as const };
+      }
+      const deleted = await transaction
         .delete(schema.attachments)
-        .where(eq(schema.attachments.id, input.attachmentId));
+        .where(
+          and(
+            eq(schema.attachments.id, input.attachmentId),
+            eq(schema.attachments.noteId, input.noteId),
+            eq(schema.attachments.userId, input.ownerUserId)
+          )
+        )
+        .returning({ id: schema.attachments.id });
+      if (deleted.length !== 1) {
+        return { kind: "not-found" as const };
+      }
       await transaction
         .update(schema.storageAccounts)
         .set({
@@ -260,7 +280,7 @@ export class PostgresAttachmentMutationRepository
       if (!event) {
         throw new Error("Attachment event insert did not return a cursor");
       }
-      return event.cursor;
+      return { kind: "deleted" as const, cursor: event.cursor };
     });
   }
 }
