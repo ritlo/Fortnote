@@ -407,7 +407,7 @@ async function putChunkDuringMutation(
   const user = db.sqlite
     .prepare("SELECT id FROM users WHERE username = ?")
     .get(username) as { id: string };
-  const token = createSession(db, user.id);
+  const token = await createSession(db, user.id);
   const server = createServer(app);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");

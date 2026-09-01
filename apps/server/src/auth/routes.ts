@@ -10,9 +10,10 @@ import { sendApiError } from "../http/errors.js";
 import {
   clearSessionCookie,
   createSession,
+  createSqliteSessionInTransaction,
   deleteSession,
-  deleteUserSessions,
-  findSession,
+  deleteSqliteUserSessionsInTransaction,
+  findSessionAsync,
   readSessionToken,
   setSessionCookie
 } from "./session.js";
@@ -356,7 +357,7 @@ export function createAuthRouter(context: AppContext): Router {
       return;
     }
 
-    const token = createSession(context.db, userId);
+    const token = await createSession(context.db, userId);
     setSessionCookie(response, token, context.config.cookieSecure);
     response.status(201).json(
       accountResponse({
@@ -395,7 +396,7 @@ export function createAuthRouter(context: AppContext): Router {
       return;
     }
 
-    const token = createSession(context.db, identity.id);
+    const token = await createSession(context.db, identity.id);
     setSessionCookie(response, token, context.config.cookieSecure);
     response.json(accountResponse(identity));
   });
@@ -482,9 +483,13 @@ export function createAuthRouter(context: AppContext): Router {
           throw new KeyMaterialVersionConflict();
         }
 
-        const revokedSessionIds = deleteUserSessions(context.db, row.id, tx);
+        const revokedSessionIds = deleteSqliteUserSessionsInTransaction(
+          context.db,
+          row.id,
+          tx
+        );
         return {
-          token: createSession(context.db, row.id, tx),
+          token: createSqliteSessionInTransaction(context.db, row.id, tx),
           revokedSessionIds
         };
       });
@@ -504,9 +509,9 @@ export function createAuthRouter(context: AppContext): Router {
     response.json(accountResponse(identity));
   });
 
-  router.post("/logout", (request, response) => {
+  router.post("/logout", async (request, response) => {
     const token = readSessionToken(request.get("cookie"));
-    const sessionId = deleteSession(context.db, token);
+    const sessionId = await deleteSession(context.db, token);
     if (sessionId) {
       context.realtime?.closeSession(sessionId);
     }
@@ -514,8 +519,11 @@ export function createAuthRouter(context: AppContext): Router {
     response.status(204).send();
   });
 
-  router.put("/handle", (request, response) => {
-    const session = findSession(context.db, readSessionToken(request.get("cookie")));
+  router.put("/handle", async (request, response) => {
+    const session = await findSessionAsync(
+      context.db,
+      readSessionToken(request.get("cookie"))
+    );
     if (!session) {
       sendApiError(response, "unauthorized", "Not signed in");
       return;
@@ -558,8 +566,11 @@ export function createAuthRouter(context: AppContext): Router {
     );
   });
 
-  router.get("/me", (request, response) => {
-    const session = findSession(context.db, readSessionToken(request.get("cookie")));
+  router.get("/me", async (request, response) => {
+    const session = await findSessionAsync(
+      context.db,
+      readSessionToken(request.get("cookie"))
+    );
     if (!session) {
       sendApiError(response, "unauthorized", "Not signed in");
       return;

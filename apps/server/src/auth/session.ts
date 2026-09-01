@@ -21,8 +21,15 @@ export function hashToken(token: string): string {
 
 export function createSession(
   db: AppDb,
+  userId: string
+): Promise<string> {
+  return db.sessions.create(userId);
+}
+
+export function createSqliteSessionInTransaction(
+  db: AppDb,
   userId: string,
-  orm: Pick<AppDb["orm"], "insert"> = db.orm
+  orm: Pick<AppDb["orm"], "insert">
 ): string {
   const token = randomBytes(32).toString("base64url");
   const now = Date.now();
@@ -68,6 +75,14 @@ export function readSessionToken(cookieHeader: string | undefined): string | nul
   return match ? decodeURIComponent(match.slice(SESSION_COOKIE.length + 1)) : null;
 }
 
+export function findSessionAsync(
+  db: AppDb,
+  token: string | null
+): Promise<SessionRecord | null> {
+  return db.sessions.find(token);
+}
+
+/** SQLite-only compatibility path for routes not yet migrated to async repositories. */
 export function findSession(db: AppDb, token: string | null): SessionRecord | null {
   if (!token) {
     return null;
@@ -111,23 +126,14 @@ export function findSession(db: AppDb, token: string | null): SessionRecord | nu
   };
 }
 
-export function deleteSession(db: AppDb, token: string | null): string | null {
-  if (!token) {
-    return null;
-  }
-
-  const row = db.orm
-    .delete(schema.sessions)
-    .where(eq(schema.sessions.sessionHash, hashToken(token)))
-    .returning({ id: schema.sessions.id })
-    .get();
-  return row?.id ?? null;
+export function deleteSession(db: AppDb, token: string | null): Promise<string | null> {
+  return db.sessions.delete(token);
 }
 
-export function deleteUserSessions(
+export function deleteSqliteUserSessionsInTransaction(
   db: AppDb,
   userId: string,
-  orm: Pick<AppDb["orm"], "delete"> = db.orm
+  orm: Pick<AppDb["orm"], "delete">
 ): string[] {
   const rows = orm
     .delete(schema.sessions)
@@ -162,6 +168,7 @@ export function isSessionActive(db: AppDb, sessionId: string): boolean {
   return Boolean(row);
 }
 
+/** SQLite-only compatibility path for authenticated routes awaiting async conversion. */
 export function requireSession(
   db: AppDb,
   request: Request,
@@ -173,5 +180,21 @@ export function requireSession(
     return null;
   }
 
+  return session;
+}
+
+export async function requireSessionAsync(
+  db: AppDb,
+  request: Request,
+  response: Response
+): Promise<SessionRecord | null> {
+  const session = await findSessionAsync(
+    db,
+    readSessionToken(request.get("cookie"))
+  );
+  if (!session) {
+    sendApiError(response, "unauthorized", "Not signed in");
+    return null;
+  }
   return session;
 }

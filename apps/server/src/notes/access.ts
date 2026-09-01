@@ -46,6 +46,14 @@ export function getNoteAccess(
     .get() as NoteAccess | undefined;
 }
 
+export function getNoteAccessAsync(
+  context: AppContext,
+  noteId: string,
+  userId: string
+): Promise<NoteAccess | undefined> {
+  return context.db.noteAccess.find(noteId, userId);
+}
+
 export function canReadNote(access: NoteAccess | undefined): access is NoteAccess {
   return access?.status === "active";
 }

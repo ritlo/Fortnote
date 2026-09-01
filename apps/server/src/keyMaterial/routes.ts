@@ -3,8 +3,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
 import {
-  createSession,
-  deleteUserSessions,
+  createSqliteSessionInTransaction,
+  deleteSqliteUserSessionsInTransaction,
   requireSession,
   setSessionCookie
 } from "../auth/session.js";
@@ -213,9 +213,17 @@ export function createKeyMaterialRouter(context: AppContext): Router {
         if (!newAuthVerifierHash) {
           return { replacementToken: null, revokedSessionIds: [] as string[] };
         }
-        const revokedSessionIds = deleteUserSessions(context.db, session.userId, tx);
+        const revokedSessionIds = deleteSqliteUserSessionsInTransaction(
+          context.db,
+          session.userId,
+          tx
+        );
         return {
-          replacementToken: createSession(context.db, session.userId, tx),
+          replacementToken: createSqliteSessionInTransaction(
+            context.db,
+            session.userId,
+            tx
+          ),
           revokedSessionIds
         };
       });

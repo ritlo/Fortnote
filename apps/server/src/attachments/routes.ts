@@ -2,7 +2,7 @@ import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { LIMITS } from "@fortnote/shared";
-import { requireSession } from "../auth/session.js";
+import { requireSessionAsync } from "../auth/session.js";
 import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
@@ -10,7 +10,11 @@ import {
   AttachmentCiphertextSizeError,
   safeDisplayFilename
 } from "./storage.js";
-import { canEditNote, canReadNote, getNoteAccess } from "../notes/access.js";
+import {
+  canEditNote,
+  canReadNote,
+  getNoteAccessAsync
+} from "../notes/access.js";
 import { writeRequestEvent } from "../notes/events.js";
 
 const uploadAttachmentBaseSchema = z.object({
@@ -179,7 +183,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
   const router = Router();
 
   router.post("/notes/:noteId/attachments", async (request, response) => {
-    const session = requireSession(context.db, request, response);
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -401,13 +405,17 @@ export function createAttachmentsRouter(context: AppContext): Router {
     }
   });
 
-  router.get("/notes/:noteId/attachments", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.get("/notes/:noteId/attachments", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
 
-    const access = getNoteAccess(context, request.params.noteId, session.userId);
+    const access = await getNoteAccessAsync(
+      context,
+      request.params.noteId,
+      session.userId
+    );
     if (!canReadNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
@@ -443,7 +451,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
   });
 
   router.get("/attachments/:id", async (request, response) => {
-    const session = requireSession(context.db, request, response);
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -453,7 +461,11 @@ export function createAttachmentsRouter(context: AppContext): Router {
       sendApiError(response, "not_found", "Attachment not found");
       return;
     }
-    const access = getNoteAccess(context, attachment.noteId, session.userId);
+    const access = await getNoteAccessAsync(
+      context,
+      attachment.noteId,
+      session.userId
+    );
     if (!canReadNote(access)) {
       sendApiError(response, "not_found", "Attachment not found");
       return;
@@ -473,7 +485,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
   });
 
   router.delete("/attachments/:id", async (request, response) => {
-    const session = requireSession(context.db, request, response);
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -483,7 +495,11 @@ export function createAttachmentsRouter(context: AppContext): Router {
       sendApiError(response, "not_found", "Attachment not found");
       return;
     }
-    const access = getNoteAccess(context, attachment.noteId, session.userId);
+    const access = await getNoteAccessAsync(
+      context,
+      attachment.noteId,
+      session.userId
+    );
     if (!canEditNote(access)) {
       sendApiError(response, "not_found", "Attachment not found");
       return;
