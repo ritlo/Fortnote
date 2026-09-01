@@ -1,43 +1,166 @@
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { getConfig } from "@server/config.js";
 
-describe("server configuration", () => {
-  it("keeps JSON control bounded while exposing independent content limits", () => {
-    const config = getConfig({});
+const temporaryDirectories: string[] = [];
 
-    expect(config.jsonControlMaxBytes).toBe(1024 * 1024);
-    expect(config.realtimeFrameMaxBytes).toBe(256 * 1024);
-    expect(config.contentChunkMaxBytes).toBe(256 * 1024);
-    expect(config.storageQuotaBytes).toBe(10 * 1024 * 1024 * 1024);
-    expect(config.maintenanceBatchSize).toBe(100);
-    expect(config.contentUploadExpiryMs).toBe(24 * 60 * 60 * 1000);
-    expect(config.sessionIdleTimeoutMs).toBe(30 * 60 * 1000);
-    expect(config.sessionAbsoluteTimeoutMs).toBe(24 * 60 * 60 * 1000);
-    expect(config.authIpRateLimitMaxAttempts).toBe(60);
-    expect(config.authAccountRateLimitMaxAttempts).toBe(20);
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+describe("server configuration", () => {
+  it("loads safe defaults when no configuration file exists", () => {
+    const cwd = temporaryDirectory();
+    const config = getConfig({}, { cwd });
+
+    expect(config).toMatchObject({
+      port: 3001,
+      host: "0.0.0.0",
+      database: {
+        provider: "sqlite",
+        path: path.join(cwd, "data/fortnote.sqlite")
+      },
+      dataDir: path.join(cwd, "data/attachments"),
+      cookieSecure: true,
+      allowedOrigin: "http://localhost:5173",
+      jsonControlMaxBytes: 1024 * 1024,
+      realtimeFrameMaxBytes: 256 * 1024,
+      contentChunkMaxBytes: 256 * 1024,
+      storageQuotaBytes: 10 * 1024 * 1024 * 1024,
+      maintenanceBatchSize: 100,
+      contentUploadExpiryMs: 24 * 60 * 60 * 1000,
+      sessionIdleTimeoutMs: 30 * 60 * 1000,
+      sessionAbsoluteTimeoutMs: 24 * 60 * 60 * 1000,
+      authIpRateLimitMaxAttempts: 60,
+      authAccountRateLimitMaxAttempts: 20,
+      historyPageMaxItems: 128,
+      historyPageMaxBytes: 4 * 1024 * 1024
+    });
   });
 
-  it("parses explicit operational capacity without creating a per-note limit", () => {
-    const config = getConfig({
-      CONTENT_CHUNK_MAX_BYTES: "131072",
-      CONTENT_UPLOAD_EXPIRY_MS: "3600000",
-      AUTH_ACCOUNT_RATE_LIMIT_MAX_ATTEMPTS: "40",
-      AUTH_IP_RATE_LIMIT_MAX_ATTEMPTS: "120",
-      MAINTENANCE_BATCH_SIZE: "25",
-      REALTIME_FRAME_MAX_BYTES: "65536",
-      SESSION_ABSOLUTE_TIMEOUT_MS: "7200000",
-      STORAGE_QUOTA_BYTES: "21474836480"
-    });
+  it("loads config.yaml and resolves data paths relative to it", () => {
+    const cwd = temporaryDirectory();
+    writeFileSync(path.join(cwd, "config.yaml"), `
+server:
+  port: 4100
+  host: 127.0.0.1
+  cookieSecure: false
+  allowedOrigin: http://127.0.0.1:5173
+database:
+  provider: sqlite
+  path: state/fortnote.sqlite
+localstorage:
+  dataDir: state/attachments
+  quotaBytes: 2048
+  maintenanceBatchSize: 25
+  uploadExpiryMs: 3600000
+limits:
+  jsonControlMaxBytes: 524288
+  realtimeFrameMaxBytes: 65536
+  contentChunkMaxBytes: 131072
+  historyPageMaxItems: 64
+  historyPageMaxBytes: 2097152
+sessions:
+  idleTimeoutMs: 60000
+  absoluteTimeoutMs: 7200000
+auth:
+  ipRateLimitMaxAttempts: 120
+  accountRateLimitMaxAttempts: 40
+`);
 
-    expect(config.contentChunkMaxBytes).toBe(131072);
-    expect(config.contentUploadExpiryMs).toBe(3600000);
-    expect(config.authAccountRateLimitMaxAttempts).toBe(40);
-    expect(config.authIpRateLimitMaxAttempts).toBe(120);
-    expect(config.maintenanceBatchSize).toBe(25);
-    expect(config.realtimeFrameMaxBytes).toBe(65536);
-    expect(config.sessionAbsoluteTimeoutMs).toBe(7200000);
-    expect(config.storageQuotaBytes).toBe(21474836480);
-    expect("noteMaxBytes" in config).toBe(false);
+    const config = getConfig({}, { cwd });
+
+    expect(config).toMatchObject({
+      port: 4100,
+      host: "127.0.0.1",
+      database: {
+        provider: "sqlite",
+        path: path.join(cwd, "state/fortnote.sqlite")
+      },
+      dataDir: path.join(cwd, "state/attachments"),
+      cookieSecure: false,
+      allowedOrigin: "http://127.0.0.1:5173",
+      jsonControlMaxBytes: 524288,
+      realtimeFrameMaxBytes: 65536,
+      contentChunkMaxBytes: 131072,
+      storageQuotaBytes: 2048,
+      maintenanceBatchSize: 25,
+      contentUploadExpiryMs: 3600000,
+      sessionIdleTimeoutMs: 60000,
+      sessionAbsoluteTimeoutMs: 7200000,
+      authIpRateLimitMaxAttempts: 120,
+      authAccountRateLimitMaxAttempts: 40,
+      historyPageMaxItems: 64,
+      historyPageMaxBytes: 2097152
+    });
+  });
+
+  it("finds the root configuration from a nested working directory", () => {
+    const cwd = temporaryDirectory();
+    const nested = path.join(cwd, "apps/server");
+    writeFileSync(path.join(cwd, "config.yaml"), "server:\n  port: 4300\n");
+    mkdirSync(nested, { recursive: true });
+
+    expect(getConfig({}, { cwd: nested }).port).toBe(4300);
+  });
+
+  it("applies environment overrides after YAML values", () => {
+    const cwd = temporaryDirectory();
+    writeFileSync(path.join(cwd, "settings.yaml"), `
+server:
+  port: 4100
+database:
+  provider: sqlite
+  path: yaml.sqlite
+localstorage:
+  quotaBytes: 2048
+`);
+
+    const config = getConfig(
+      {
+        FORTNOTE_CONFIG: "settings.yaml",
+        PORT: "4200",
+        DATABASE_PATH: "environment.sqlite",
+        STORAGE_QUOTA_BYTES: "4096"
+      },
+      { cwd }
+    );
+
+    expect(config.port).toBe(4200);
+    expect(config.database.path).toBe(path.join(cwd, "environment.sqlite"));
+    expect(config.storageQuotaBytes).toBe(4096);
+  });
+
+  it("rejects unsupported database providers", () => {
+    const cwd = temporaryDirectory();
+    writeFileSync(path.join(cwd, "config.yaml"), `
+database:
+  provider: postgres
+`);
+
+    expect(() => getConfig({}, { cwd })).toThrow(/database\.provider/iu);
+  });
+
+  it("rejects malformed YAML and unknown settings", () => {
+    const cwd = temporaryDirectory();
+    writeFileSync(path.join(cwd, "config.yaml"), "unknownSetting: true\n");
+
+    expect(() => getConfig({}, { cwd })).toThrow(/Invalid configuration/iu);
+
+    writeFileSync(path.join(cwd, "config.yaml"), "server: [\n");
+    expect(() => getConfig({}, { cwd })).toThrow(/Could not parse/iu);
+  });
+
+  it("rejects a missing explicitly selected configuration file", () => {
+    const cwd = temporaryDirectory();
+
+    expect(() => getConfig({ FORTNOTE_CONFIG: "missing.yaml" }, { cwd })).toThrow(
+      /Configuration file not found/iu
+    );
   });
 
   it.each([
@@ -50,6 +173,13 @@ describe("server configuration", () => {
     ["SESSION_ABSOLUTE_TIMEOUT_MS", "0"],
     ["STORAGE_QUOTA_BYTES", "9007199254740992"]
   ])("rejects unsafe %s values", (name, value) => {
-    expect(() => getConfig({ [name]: value })).toThrow(`Invalid ${name}`);
+    const cwd = temporaryDirectory();
+    expect(() => getConfig({ [name]: value }, { cwd })).toThrow(`Invalid ${name}`);
   });
 });
+
+function temporaryDirectory(): string {
+  const directory = mkdtempSync(path.join(tmpdir(), "fortnote-config-test-"));
+  temporaryDirectories.push(directory);
+  return directory;
+}

@@ -1,0 +1,31 @@
+# Safe defaults for local development. Environment variables override these values.
+server:
+  host: 0.0.0.0
+  port: 3001
+  allowedOrigin: http://localhost:5173
+  cookieSecure: true
+
+database:
+  provider: sqlite
+  path: data/fortnote.sqlite
+
+localstorage:
+  dataDir: data/attachments
+  quotaBytes: 10737418240
+  maintenanceBatchSize: 100
+  uploadExpiryMs: 86400000
+
+limits:
+  jsonControlMaxBytes: 1048576
+  realtimeFrameMaxBytes: 262144
+  contentChunkMaxBytes: 262144
+  historyPageMaxItems: 128
+  historyPageMaxBytes: 4194304
+
+sessions:
+  idleTimeoutMs: 1800000
+  absoluteTimeoutMs: 86400000
+
+auth:
+  ipRateLimitMaxAttempts: 60
+  accountRateLimitMaxAttempts: 20

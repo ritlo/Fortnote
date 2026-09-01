@@ -17,7 +17,7 @@ export function createTestApp(
     ...getConfig({}),
     port: 0,
     host: "127.0.0.1",
-    databasePath: ":memory:",
+    database: { provider: "sqlite" as const, path: ":memory:" },
     dataDir,
     cookieSecure: false,
     allowedOrigin: "http://localhost:5173",

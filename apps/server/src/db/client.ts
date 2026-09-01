@@ -8,8 +8,8 @@ import * as schema from "./schema.js";
 import { runMigrations } from "./migrations.js";
 
 export function createDb(config: ServerConfig) {
-  fs.mkdirSync(path.dirname(config.databasePath), { recursive: true });
-  const sqlite = new Database(config.databasePath);
+  fs.mkdirSync(path.dirname(config.database.path), { recursive: true });
+  const sqlite = new Database(config.database.path);
   sqlite.pragma("foreign_keys = ON");
   runMigrations(sqlite);
   const orm = drizzle(sqlite, { schema });

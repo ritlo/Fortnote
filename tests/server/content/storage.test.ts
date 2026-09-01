@@ -286,7 +286,11 @@ describe("encrypted content chunk storage", () => {
 function testConfig(): ServerConfig {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fortnote-content-test-"));
   cleanupDirectories.push(dataDir);
-  return { ...getConfig({}), dataDir, databasePath: ":memory:" };
+  return {
+    ...getConfig({}),
+    dataDir,
+    database: { provider: "sqlite", path: ":memory:" }
+  };
 }
 
 function digest(bytes: Buffer): string {

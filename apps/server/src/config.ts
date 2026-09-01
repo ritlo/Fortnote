@@ -1,9 +1,64 @@
+import fs from "node:fs";
 import path from "node:path";
+import { parseDocument } from "yaml";
+import { z } from "zod";
+
+const KIB = 1024;
+const MIB = 1024 * KIB;
+const GIB = 1024 * MIB;
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+
+const positiveIntegerSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const serverSchema = z.strictObject({
+  port: positiveIntegerSchema.default(3001),
+  host: z.string().min(1).default("0.0.0.0"),
+  cookieSecure: z.boolean().default(true),
+  allowedOrigin: z.string().min(1).default("http://localhost:5173")
+});
+const databaseSchema = z.strictObject({
+  provider: z.literal("sqlite").default("sqlite"),
+  path: z.string().min(1).default("data/fortnote.sqlite")
+});
+const localStorageSchema = z.strictObject({
+  dataDir: z.string().min(1).default("data/attachments"),
+  quotaBytes: positiveIntegerSchema.default(10 * GIB),
+  maintenanceBatchSize: positiveIntegerSchema.default(100),
+  uploadExpiryMs: positiveIntegerSchema.default(24 * HOUR_MS)
+});
+const limitsSchema = z.strictObject({
+  jsonControlMaxBytes: positiveIntegerSchema.default(MIB),
+  realtimeFrameMaxBytes: positiveIntegerSchema.default(256 * KIB),
+  contentChunkMaxBytes: positiveIntegerSchema.default(256 * KIB),
+  historyPageMaxItems: positiveIntegerSchema.default(128),
+  historyPageMaxBytes: positiveIntegerSchema.default(4 * MIB)
+});
+const sessionsSchema = z.strictObject({
+  idleTimeoutMs: positiveIntegerSchema.default(30 * MINUTE_MS),
+  absoluteTimeoutMs: positiveIntegerSchema.default(24 * HOUR_MS)
+});
+const authSchema = z.strictObject({
+  ipRateLimitMaxAttempts: positiveIntegerSchema.default(60),
+  accountRateLimitMaxAttempts: positiveIntegerSchema.default(20)
+});
+const configFileSchema = z.strictObject({
+  server: serverSchema.prefault({}),
+  database: databaseSchema.prefault({}),
+  localstorage: localStorageSchema.prefault({}),
+  limits: limitsSchema.prefault({}),
+  sessions: sessionsSchema.prefault({}),
+  auth: authSchema.prefault({})
+});
+
+export interface SqliteDatabaseConfig {
+  provider: "sqlite";
+  path: string;
+}
 
 export interface ServerConfig {
   port: number;
   host: string;
-  databasePath: string;
+  database: SqliteDatabaseConfig;
   dataDir: string;
   cookieSecure: boolean;
   allowedOrigin: string;
@@ -21,56 +76,194 @@ export interface ServerConfig {
   historyPageMaxBytes: number;
 }
 
-const KIB = 1024;
-const MIB = 1024 * KIB;
-const GIB = 1024 * MIB;
-const MINUTE_MS = 60 * 1000;
-const HOUR_MS = 60 * MINUTE_MS;
+export interface ConfigLoadOptions {
+  cwd?: string;
+  configPath?: string;
+}
 
-export function getConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
+export function getConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  options: ConfigLoadOptions = {}
+): ServerConfig {
+  const cwd = path.resolve(options.cwd ?? process.cwd());
+  const explicitConfigPath = options.configPath ?? env.FORTNOTE_CONFIG;
+  const configPath = explicitConfigPath
+    ? path.resolve(cwd, explicitConfigPath)
+    : findConfigFile(cwd);
+  if (explicitConfigPath && (configPath === undefined || !fs.existsSync(configPath))) {
+    throw new Error(`Configuration file not found: ${explicitConfigPath}`);
+  }
+
+  const fileConfig = parseConfigFile(configPath);
+  const baseDirectory = configPath ? path.dirname(configPath) : cwd;
+  const databaseProvider = env.DATABASE_PROVIDER ?? fileConfig.database.provider;
+  if (databaseProvider !== "sqlite") {
+    throw new Error("Invalid DATABASE_PROVIDER: expected sqlite");
+  }
+
   return {
-    port: positiveInteger(env, "PORT", 3001),
-    host: env.HOST ?? "0.0.0.0",
-    databasePath: env.DATABASE_PATH ?? "data/fortnote.sqlite",
-    dataDir: env.DATA_DIR ?? "data/attachments",
-    cookieSecure: env.COOKIE_SECURE !== "false",
-    allowedOrigin: env.ALLOWED_ORIGIN ?? "http://localhost:5173",
-    jsonControlMaxBytes: MIB,
-    realtimeFrameMaxBytes: positiveInteger(env, "REALTIME_FRAME_MAX_BYTES", 256 * KIB),
-    contentChunkMaxBytes: positiveInteger(env, "CONTENT_CHUNK_MAX_BYTES", 256 * KIB),
-    storageQuotaBytes: positiveInteger(env, "STORAGE_QUOTA_BYTES", 10 * GIB),
-    maintenanceBatchSize: positiveInteger(env, "MAINTENANCE_BATCH_SIZE", 100),
-    contentUploadExpiryMs: positiveInteger(env, "CONTENT_UPLOAD_EXPIRY_MS", 24 * HOUR_MS),
-    sessionIdleTimeoutMs: positiveInteger(env, "SESSION_IDLE_TIMEOUT_MS", 30 * MINUTE_MS),
-    sessionAbsoluteTimeoutMs: positiveInteger(
+    port: environmentPositiveInteger(env, "PORT", fileConfig.server.port),
+    host: env.HOST ?? fileConfig.server.host,
+    database: {
+      provider: databaseProvider,
+      path: resolveConfiguredPath(
+        baseDirectory,
+        env.DATABASE_PATH ?? fileConfig.database.path,
+        true
+      )
+    },
+    dataDir: resolveConfiguredPath(
+      baseDirectory,
+      env.DATA_DIR ?? fileConfig.localstorage.dataDir
+    ),
+    cookieSecure: environmentBoolean(
+      env,
+      "COOKIE_SECURE",
+      fileConfig.server.cookieSecure
+    ),
+    allowedOrigin: env.ALLOWED_ORIGIN ?? fileConfig.server.allowedOrigin,
+    jsonControlMaxBytes: environmentPositiveInteger(
+      env,
+      "JSON_CONTROL_MAX_BYTES",
+      fileConfig.limits.jsonControlMaxBytes
+    ),
+    realtimeFrameMaxBytes: environmentPositiveInteger(
+      env,
+      "REALTIME_FRAME_MAX_BYTES",
+      fileConfig.limits.realtimeFrameMaxBytes
+    ),
+    contentChunkMaxBytes: environmentPositiveInteger(
+      env,
+      "CONTENT_CHUNK_MAX_BYTES",
+      fileConfig.limits.contentChunkMaxBytes
+    ),
+    storageQuotaBytes: environmentPositiveInteger(
+      env,
+      "STORAGE_QUOTA_BYTES",
+      fileConfig.localstorage.quotaBytes
+    ),
+    maintenanceBatchSize: environmentPositiveInteger(
+      env,
+      "MAINTENANCE_BATCH_SIZE",
+      fileConfig.localstorage.maintenanceBatchSize
+    ),
+    contentUploadExpiryMs: environmentPositiveInteger(
+      env,
+      "CONTENT_UPLOAD_EXPIRY_MS",
+      fileConfig.localstorage.uploadExpiryMs
+    ),
+    sessionIdleTimeoutMs: environmentPositiveInteger(
+      env,
+      "SESSION_IDLE_TIMEOUT_MS",
+      fileConfig.sessions.idleTimeoutMs
+    ),
+    sessionAbsoluteTimeoutMs: environmentPositiveInteger(
       env,
       "SESSION_ABSOLUTE_TIMEOUT_MS",
-      24 * HOUR_MS
+      fileConfig.sessions.absoluteTimeoutMs
     ),
-    authIpRateLimitMaxAttempts: positiveInteger(
+    authIpRateLimitMaxAttempts: environmentPositiveInteger(
       env,
       "AUTH_IP_RATE_LIMIT_MAX_ATTEMPTS",
-      60
+      fileConfig.auth.ipRateLimitMaxAttempts
     ),
-    authAccountRateLimitMaxAttempts: positiveInteger(
+    authAccountRateLimitMaxAttempts: environmentPositiveInteger(
       env,
       "AUTH_ACCOUNT_RATE_LIMIT_MAX_ATTEMPTS",
-      20
+      fileConfig.auth.accountRateLimitMaxAttempts
     ),
-    historyPageMaxItems: positiveInteger(env, "HISTORY_PAGE_MAX_ITEMS", 128),
-    historyPageMaxBytes: positiveInteger(env, "HISTORY_PAGE_MAX_BYTES", 4 * MIB)
+    historyPageMaxItems: environmentPositiveInteger(
+      env,
+      "HISTORY_PAGE_MAX_ITEMS",
+      fileConfig.limits.historyPageMaxItems
+    ),
+    historyPageMaxBytes: environmentPositiveInteger(
+      env,
+      "HISTORY_PAGE_MAX_BYTES",
+      fileConfig.limits.historyPageMaxBytes
+    )
   };
 }
 
 export function resolveDataPath(config: ServerConfig, value: string): string {
-  return path.resolve(process.cwd(), value.startsWith("/") ? value : config.dataDir, value);
+  return path.resolve(value.startsWith("/") ? value : config.dataDir, value);
 }
 
-function positiveInteger(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+function findConfigFile(startDirectory: string): string | undefined {
+  let directory = startDirectory;
+  for (;;) {
+    const candidate = path.join(directory, "config.yaml");
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) {
+      return undefined;
+    }
+    directory = parent;
+  }
+}
+
+function parseConfigFile(configPath: string | undefined): z.infer<typeof configFileSchema> {
+  let input: unknown = {};
+  if (configPath) {
+    const document = parseDocument(fs.readFileSync(configPath, "utf8"));
+    if (document.errors.length > 0) {
+      throw new Error(
+        `Could not parse ${configPath}: ${document.errors.map(({ message }) => message).join("; ")}`
+      );
+    }
+    input = document.toJS() ?? {};
+  }
+
+  const parsed = configFileSchema.safeParse(input);
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "configuration"}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`Invalid configuration${configPath ? ` in ${configPath}` : ""}: ${detail}`);
+  }
+  return parsed.data;
+}
+
+function resolveConfiguredPath(
+  baseDirectory: string,
+  value: string,
+  allowMemoryDatabase = false
+): string {
+  if (allowMemoryDatabase && value === ":memory:") {
+    return value;
+  }
+  return path.resolve(baseDirectory, value);
+}
+
+function environmentPositiveInteger(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: number
+): number {
   const raw = env[name];
   const value = raw === undefined ? fallback : Number(raw);
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`Invalid ${name}`);
   }
   return value;
+}
+
+function environmentBoolean(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: boolean
+): boolean {
+  const raw = env[name];
+  if (raw === undefined) {
+    return fallback;
+  }
+  if (raw === "true") {
+    return true;
+  }
+  if (raw === "false") {
+    return false;
+  }
+  throw new Error(`Invalid ${name}`);
 }

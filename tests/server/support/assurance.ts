@@ -17,7 +17,10 @@ export function createAssuranceServerFixture(overrides: Partial<ServerConfig> = 
     ...getConfig({}),
     port: 0,
     host: "127.0.0.1",
-    databasePath: path.join(fixtureDir, "assurance.sqlite"),
+    database: {
+      provider: "sqlite",
+      path: path.join(fixtureDir, "assurance.sqlite")
+    },
     dataDir: path.join(fixtureDir, "ciphertext"),
     cookieSecure: false,
     allowedOrigin: "http://localhost:5173",

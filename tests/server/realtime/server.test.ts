@@ -1462,7 +1462,7 @@ async function createRealtimeTestServer(
   const config = {
     ...getConfig(),
     port: 0,
-    databasePath,
+    database: { provider: "sqlite" as const, path: databasePath },
     ...(historyPageMaxItems === undefined ? {} : { historyPageMaxItems })
   };
   const db = createDb(config);
