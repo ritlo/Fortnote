@@ -1,6 +1,6 @@
 import argon2 from "argon2";
 import { createHmac, randomBytes as nodeRandomBytes } from "node:crypto";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { Router, type Request, type RequestHandler } from "express";
 import { z } from "zod";
 import { DEFAULT_KDF } from "@fortnote/shared";
@@ -18,6 +18,7 @@ import {
   setSessionCookie
 } from "./session.js";
 import { accountDisplayName, canonicalizeHandle } from "./identity.js";
+import type { AccountIdentity } from "./accountRepository.js";
 
 const kdfParamsSchema = z.object({
   salt: z.string().min(16).max(128),
@@ -173,43 +174,14 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-interface AccountIdentity {
-  id: string;
-  username: string;
-  displayName: string | null;
-  canonicalHandle: string | null;
-  handleState: string;
-}
-
-function findAccountIdentity(context: AppContext, suppliedHandle: string): AccountIdentity | null {
-  const selection = {
-    id: schema.users.id,
-    username: schema.users.username,
-    displayName: schema.users.displayName,
-    canonicalHandle: schema.users.canonicalHandle,
-    handleState: schema.users.handleState
-  };
-  const canonicalHandle = canonicalizeHandle(suppliedHandle);
-  if (canonicalHandle) {
-    const canonical = context.db.orm
-      .select(selection)
-      .from(schema.users)
-      .where(eq(schema.users.canonicalHandle, canonicalHandle))
-      .get();
-    if (canonical) {
-      return canonical;
-    }
-  }
-  return context.db.orm
-    .select(selection)
-    .from(schema.users)
-    .where(
-      and(
-        isNull(schema.users.canonicalHandle),
-        eq(schema.users.username, suppliedHandle)
-      )
-    )
-    .get() ?? null;
+function findAccountIdentity(
+  context: AppContext,
+  suppliedHandle: string
+): Promise<AccountIdentity | null> {
+  return context.db.accounts.findIdentity(
+    suppliedHandle,
+    canonicalizeHandle(suppliedHandle)
+  );
 }
 
 function accountResponse(identity: AccountIdentity) {
@@ -236,66 +208,32 @@ export function createAuthRouter(context: AppContext): Router {
   });
   const preAuthRateLimits = [preAuthIpRateLimit, preAuthAccountRateLimit];
 
-  router.get("/kdf-params", ...preAuthRateLimits, (request, response) => {
+  router.get("/kdf-params", ...preAuthRateLimits, async (request, response) => {
     const username = usernameSchema.safeParse(request.query.username);
     if (!username.success) {
       sendApiError(response, "bad_request", "Username is required");
       return;
     }
 
-    const identity = findAccountIdentity(context, username.data);
-    const row = identity ? context.db.orm
-      .select({
-        authKdfSalt: schema.users.authKdfSalt,
-        authKdfOpsLimit: schema.users.authKdfOpsLimit,
-        authKdfMemLimit: schema.users.authKdfMemLimit,
-        authKdfVersion: schema.users.authKdfVersion,
-        vaultKdfSalt: schema.userKeyMaterial.kdfSalt,
-        vaultKdfOpsLimit: schema.userKeyMaterial.kdfOpsLimit,
-        vaultKdfMemLimit: schema.userKeyMaterial.kdfMemLimit,
-        vaultKdfVersion: schema.userKeyMaterial.kdfVersion
-      })
-      .from(schema.users)
-      .innerJoin(
-        schema.userKeyMaterial,
-        eq(schema.userKeyMaterial.userId, schema.users.id)
-      )
-      .where(eq(schema.users.id, identity.id))
-      .get() : null;
+    const identity = await findAccountIdentity(context, username.data);
+    const row = identity
+      ? await context.db.accounts.kdfParameters(identity.id)
+      : null;
 
     response.json(row ?? unknownUserKdfResponse(canonicalizeHandle(username.data) ?? username.data));
   });
 
-  router.get("/recovery-params", ...preAuthRateLimits, (request, response) => {
+  router.get("/recovery-params", ...preAuthRateLimits, async (request, response) => {
     const username = usernameSchema.safeParse(request.query.username);
     if (!username.success) {
       sendApiError(response, "bad_request", "Username is required");
       return;
     }
 
-    const identity = findAccountIdentity(context, username.data);
-    const row = identity ? context.db.orm
-      .select({
-        userId: schema.userKeyMaterial.userId,
-        recoveryEncryptedRootKey: schema.userKeyMaterial.recoveryEncryptedRootKey,
-        recoveryRootKeyNonce: schema.userKeyMaterial.recoveryRootKeyNonce,
-        recoveryRootKeyFormatVersion:
-          schema.userKeyMaterial.recoveryRootKeyFormatVersion,
-        recoveryRootKeyContextVersion:
-          schema.userKeyMaterial.recoveryRootKeyContextVersion,
-        recoveryKdfSalt: schema.userKeyMaterial.recoveryKdfSalt,
-        recoveryKdfOpsLimit: schema.userKeyMaterial.recoveryKdfOpsLimit,
-        recoveryKdfMemLimit: schema.userKeyMaterial.recoveryKdfMemLimit,
-        recoveryKdfVersion: schema.userKeyMaterial.recoveryKdfVersion,
-        keyMaterialVersion: schema.userKeyMaterial.keyMaterialVersion
-      })
-      .from(schema.users)
-      .innerJoin(
-        schema.userKeyMaterial,
-        eq(schema.userKeyMaterial.userId, schema.users.id)
-      )
-      .where(eq(schema.users.id, identity.id))
-      .get() : null;
+    const identity = await findAccountIdentity(context, username.data);
+    const row = identity
+      ? await context.db.accounts.recoveryParameters(identity.id)
+      : null;
 
     response.json(
       row ?? unknownUserRecoveryResponse(canonicalizeHandle(username.data) ?? username.data)
@@ -321,22 +259,19 @@ export function createAuthRouter(context: AppContext): Router {
     );
 
     try {
-      context.db.orm.transaction((tx) => {
-        tx.insert(schema.users).values({
+      await context.db.accounts.register({
+        user: {
           id: userId,
           username: canonicalHandle,
           displayName,
           canonicalHandle,
-          handleState: "active",
           authVerifierHash,
           authKdfSalt: parsed.data.authKdf.salt,
           authKdfOpsLimit: parsed.data.authKdf.opsLimit,
           authKdfMemLimit: parsed.data.authKdf.memLimit,
           authKdfVersion: parsed.data.authKdf.version
-        }).run();
-
-        tx.insert(schema.userKeyMaterial).values({
-          userId,
+        },
+        keyMaterial: {
           encryptedRootKey: parsed.data.encryptedRootKey,
           rootKeyNonce: parsed.data.rootKeyNonce,
           kdfSalt: parsed.data.vaultKdf.salt,
@@ -350,7 +285,7 @@ export function createAuthRouter(context: AppContext): Router {
           recoveryKdfOpsLimit: parsed.data.recoveryKdf.opsLimit,
           recoveryKdfMemLimit: parsed.data.recoveryKdf.memLimit,
           recoveryKdfVersion: parsed.data.recoveryKdf.version
-        }).run();
+        }
       });
     } catch {
       sendApiError(response, "conflict", "Username is already registered");
@@ -377,21 +312,17 @@ export function createAuthRouter(context: AppContext): Router {
       return;
     }
 
-    const identity = findAccountIdentity(context, parsed.data.username);
-    const row = identity
-      ? context.db.orm
-          .select({ authVerifierHash: schema.users.authVerifierHash })
-          .from(schema.users)
-          .where(eq(schema.users.id, identity.id))
-          .get()
+    const identity = await findAccountIdentity(context, parsed.data.username);
+    const authVerifierHash = identity
+      ? await context.db.accounts.authVerifierHash(identity.id)
       : null;
 
     const dummyVerifierHash = await DUMMY_AUTH_VERIFIER_HASH;
     const verifierMatches = await argon2.verify(
-      row?.authVerifierHash ?? dummyVerifierHash,
+      authVerifierHash ?? dummyVerifierHash,
       parsed.data.authVerifier
     );
-    if (!identity || !row || !verifierMatches) {
+    if (!identity || !authVerifierHash || !verifierMatches) {
       sendApiError(response, "unauthorized", "Invalid username or password");
       return;
     }
@@ -415,20 +346,10 @@ export function createAuthRouter(context: AppContext): Router {
       return;
     }
 
-    const identity = findAccountIdentity(context, parsed.data.username);
-    const row = identity ? context.db.orm
-      .select({
-        id: schema.users.id,
-        recoveryAuthVerifierHash: schema.userKeyMaterial.recoveryAuthVerifierHash,
-        keyMaterialVersion: schema.userKeyMaterial.keyMaterialVersion
-      })
-      .from(schema.users)
-      .innerJoin(
-        schema.userKeyMaterial,
-        eq(schema.userKeyMaterial.userId, schema.users.id)
-      )
-      .where(eq(schema.users.id, identity.id))
-      .get() : null;
+    const identity = await findAccountIdentity(context, parsed.data.username);
+    const row = identity
+      ? await context.db.accounts.recoveryVerifier(identity.id)
+      : null;
 
     const dummyVerifierHash = await DUMMY_AUTH_VERIFIER_HASH;
     const verifierMatches = await argon2.verify(
@@ -537,17 +458,11 @@ export function createAuthRouter(context: AppContext): Router {
       return;
     }
     try {
-      const result = context.db.orm
-        .update(schema.users)
-        .set({
-          username: canonicalHandle,
-          canonicalHandle,
-          handleState: "active",
-          updatedAt: sql`CURRENT_TIMESTAMP`
-        })
-        .where(and(eq(schema.users.id, session.userId), isNull(schema.users.canonicalHandle)))
-        .run();
-      if (result.changes !== 1) {
+      const activated = await context.db.accounts.activateHandle(
+        session.userId,
+        canonicalHandle
+      );
+      if (!activated) {
         sendApiError(response, "conflict", "Account handle is already active");
         return;
       }

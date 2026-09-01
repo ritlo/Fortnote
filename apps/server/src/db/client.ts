@@ -14,6 +14,7 @@ import { SqliteNoteAccessRepository } from "../notes/noteAccessRepository.js";
 import { SqliteNoteLifecycleRepository } from "../notes/lifecycleRepository.js";
 import { SqliteFolderRepository } from "../folders/repository.js";
 import { SqliteEventReplayRepository } from "../events/replay.js";
+import { SqliteAccountRepository } from "../auth/accountRepository.js";
 import * as schema from "./schema.js";
 import { runMigrations } from "./migrations.js";
 
@@ -45,6 +46,7 @@ export function createDb(config: ServerConfig) {
   const noteLifecycle = new SqliteNoteLifecycleRepository(orm);
   const folders = new SqliteFolderRepository(orm);
   const events = new SqliteEventReplayRepository(orm);
+  const accounts = new SqliteAccountRepository(orm);
   return {
     sqlite,
     orm,
@@ -56,6 +58,7 @@ export function createDb(config: ServerConfig) {
     noteLifecycle,
     folders,
     events,
+    accounts,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
     sessionAbsoluteTimeoutMs: config.sessionAbsoluteTimeoutMs
   };
