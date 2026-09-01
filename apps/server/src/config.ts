@@ -55,6 +55,12 @@ export interface SqliteDatabaseConfig {
   path: string;
 }
 
+export interface PostgresDatabaseConfig {
+  provider: "postgres";
+  url: string;
+  maxConnections: number;
+}
+
 export interface ServerConfig {
   port: number;
   host: string;

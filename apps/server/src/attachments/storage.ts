@@ -107,7 +107,7 @@ export function safeDisplayFilename(filename: string): boolean {
   );
 }
 
-function validateAttachmentSize(expectedBytes: number, maxBytes: number): void {
+export function validateAttachmentSize(expectedBytes: number, maxBytes: number): void {
   if (
     !Number.isSafeInteger(expectedBytes) ||
     expectedBytes < 0 ||
@@ -121,7 +121,7 @@ function validateAttachmentSize(expectedBytes: number, maxBytes: number): void {
   }
 }
 
-function validateStorageId(storageId: string): void {
+export function validateStorageId(storageId: string): void {
   if (!STORAGE_ID_PATTERN.test(storageId)) {
     throw new Error("Invalid attachment storage identity");
   }

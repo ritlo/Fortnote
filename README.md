@@ -55,6 +55,17 @@ services, persistent volumes, health checks, a read-only `config.yaml` mount, an
 through environment variables or Docker secrets. The committed configuration will continue to
 default to local SQLite and local filesystem storage for development.
 
+The PostgreSQL schema, migration history, and chunked attachment backend are now present. Runtime
+routes still use the SQLite database adapter while their synchronous database calls are converted
+to provider-neutral asynchronous repositories. For schema development, start the isolated
+PostgreSQL service and apply its migrations with:
+
+```sh
+docker compose -f compose.postgres.yaml up -d
+DATABASE_URL=postgresql://fortnote:fortnote-local@127.0.0.1:5432/fortnote \
+  pnpm --filter @fortnote/server db:migrate:postgres
+```
+
 ## Checks
 
 ```sh

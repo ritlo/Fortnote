@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1788286157080,
+      "tag": "0000_modern_king_bedlam",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788286261537,
+      "tag": "0001_folder_integrity",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788286642450,
+      "tag": "0002_odd_bloodstrike",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+CREATE UNIQUE INDEX "idx_users_canonical_handle" ON "users" USING btree ("canonical_handle") WHERE "users"."canonical_handle" IS NOT NULL;--> statement-breakpoint
+ALTER TABLE "attachment_object_chunks" ADD CONSTRAINT "attachment_object_chunks_nonempty_ciphertext" CHECK (octet_length("attachment_object_chunks"."ciphertext") > 0);--> statement-breakpoint
+ALTER TABLE "attachment_objects" ADD CONSTRAINT "attachment_objects_nonnegative_length" CHECK ("attachment_objects"."byte_length" >= 0);
