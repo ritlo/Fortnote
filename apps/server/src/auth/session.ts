@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { and, eq, gt, lte, or, sql } from "drizzle-orm";
 import type { Request, Response } from "express";
 import type { AppDb } from "../db/client.js";
@@ -24,23 +24,6 @@ export function createSession(
   userId: string
 ): Promise<string> {
   return db.sessions.create(userId);
-}
-
-export function createSqliteSessionInTransaction(
-  db: AppDb,
-  userId: string,
-  orm: Pick<AppDb["orm"], "insert">
-): string {
-  const token = randomBytes(32).toString("base64url");
-  const now = Date.now();
-  orm.insert(schema.sessions).values({
-    id: crypto.randomUUID(),
-    userId,
-    sessionHash: hashToken(token),
-    idleExpiresAt: new Date(now + db.sessionIdleTimeoutMs).toISOString(),
-    absoluteExpiresAt: new Date(now + db.sessionAbsoluteTimeoutMs).toISOString()
-  }).run();
-  return token;
 }
 
 export function setSessionCookie(
@@ -128,19 +111,6 @@ export function findSession(db: AppDb, token: string | null): SessionRecord | nu
 
 export function deleteSession(db: AppDb, token: string | null): Promise<string | null> {
   return db.sessions.delete(token);
-}
-
-export function deleteSqliteUserSessionsInTransaction(
-  db: AppDb,
-  userId: string,
-  orm: Pick<AppDb["orm"], "delete">
-): string[] {
-  const rows = orm
-    .delete(schema.sessions)
-    .where(eq(schema.sessions.userId, userId))
-    .returning({ id: schema.sessions.id })
-    .all();
-  return rows.map((row) => row.id);
 }
 
 export function deleteExpiredSessions(db: AppDb): number {

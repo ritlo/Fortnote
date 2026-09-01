@@ -1,14 +1,10 @@
 import argon2 from "argon2";
-import { and, eq, sql } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
 import {
-  createSqliteSessionInTransaction,
-  deleteSqliteUserSessionsInTransaction,
-  requireSession,
+  requireSessionAsync,
   setSessionCookie
 } from "../auth/session.js";
-import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 
@@ -36,42 +32,16 @@ const updateKeyMaterialSchema = z.object({
   keyMaterialVersion: z.number().int().positive()
 });
 
-class KeyMaterialVersionConflict extends Error {}
-
 export function createKeyMaterialRouter(context: AppContext): Router {
   const router = Router();
 
-  router.get("/", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.get("/", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
 
-    const row = context.db.orm
-      .select({
-        encryptedRootKey: schema.userKeyMaterial.encryptedRootKey,
-        rootKeyNonce: schema.userKeyMaterial.rootKeyNonce,
-        rootKeyFormatVersion: schema.userKeyMaterial.rootKeyFormatVersion,
-        rootKeyContextVersion: schema.userKeyMaterial.rootKeyContextVersion,
-        kdfSalt: schema.userKeyMaterial.kdfSalt,
-        kdfOpsLimit: schema.userKeyMaterial.kdfOpsLimit,
-        kdfMemLimit: schema.userKeyMaterial.kdfMemLimit,
-        kdfVersion: schema.userKeyMaterial.kdfVersion,
-        recoveryEncryptedRootKey: schema.userKeyMaterial.recoveryEncryptedRootKey,
-        recoveryRootKeyNonce: schema.userKeyMaterial.recoveryRootKeyNonce,
-        recoveryRootKeyFormatVersion:
-          schema.userKeyMaterial.recoveryRootKeyFormatVersion,
-        recoveryRootKeyContextVersion:
-          schema.userKeyMaterial.recoveryRootKeyContextVersion,
-        recoveryKdfSalt: schema.userKeyMaterial.recoveryKdfSalt,
-        recoveryKdfOpsLimit: schema.userKeyMaterial.recoveryKdfOpsLimit,
-        recoveryKdfMemLimit: schema.userKeyMaterial.recoveryKdfMemLimit,
-        recoveryKdfVersion: schema.userKeyMaterial.recoveryKdfVersion,
-        keyMaterialVersion: schema.userKeyMaterial.keyMaterialVersion
-      })
-      .from(schema.userKeyMaterial)
-      .where(eq(schema.userKeyMaterial.userId, session.userId))
-      .get();
+    const row = await context.db.accounts.keyMaterial(session.userId);
 
     if (!row) {
       sendApiError(response, "not_found", "Key material not found");
@@ -82,7 +52,7 @@ export function createKeyMaterialRouter(context: AppContext): Router {
   });
 
   router.put("/", async (request, response) => {
-    const session = requireSession(context.db, request, response);
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -90,22 +60,6 @@ export function createKeyMaterialRouter(context: AppContext): Router {
     const parsed = updateKeyMaterialSchema.safeParse(request.body);
     if (!parsed.success) {
       sendApiError(response, "bad_request", "Invalid key material payload");
-      return;
-    }
-
-    const current = context.db.orm
-      .select({ keyMaterialVersion: schema.userKeyMaterial.keyMaterialVersion })
-      .from(schema.userKeyMaterial)
-      .where(eq(schema.userKeyMaterial.userId, session.userId))
-      .get();
-
-    if (!current) {
-      sendApiError(response, "not_found", "Key material not found");
-      return;
-    }
-
-    if (current.keyMaterialVersion !== parsed.data.keyMaterialVersion) {
-      sendApiError(response, "conflict", "Key material version conflict");
       return;
     }
 
@@ -156,83 +110,43 @@ export function createKeyMaterialRouter(context: AppContext): Router {
       ? await argon2.hash(recoveryAuthVerifier)
       : null;
 
-    let sessionRotation: {
-      replacementToken: string | null;
-      revokedSessionIds: string[];
-    };
-    try {
-      sessionRotation = context.db.orm.transaction((tx) => {
-        if (authKdf && newAuthVerifierHash) {
-          tx.update(schema.users)
-            .set({
-              authVerifierHash: newAuthVerifierHash,
-              authKdfSalt: authKdf.salt,
-              authKdfOpsLimit: authKdf.opsLimit,
-              authKdfMemLimit: authKdf.memLimit,
-              authKdfVersion: authKdf.version,
-              updatedAt: sql`CURRENT_TIMESTAMP`
-            })
-            .where(eq(schema.users.id, session.userId))
-            .run();
-        }
-        const result = tx.update(schema.userKeyMaterial)
-          .set({
-            encryptedRootKey: parsed.data.encryptedRootKey,
-            rootKeyNonce: parsed.data.rootKeyNonce,
-            rootKeyFormatVersion: parsed.data.rootKeyFormatVersion ?? 1,
-            rootKeyContextVersion:
-              parsed.data.rootKeyContextVersion ?? current.keyMaterialVersion + 1,
-            kdfSalt: parsed.data.vaultKdf.salt,
-            kdfOpsLimit: parsed.data.vaultKdf.opsLimit,
-            kdfMemLimit: parsed.data.vaultKdf.memLimit,
-            kdfVersion: parsed.data.vaultKdf.version,
-            recoveryEncryptedRootKey,
-            recoveryRootKeyNonce,
-            recoveryRootKeyFormatVersion:
-              recoveryFieldCount === 4 ? (recoveryRootKeyFormatVersion ?? 1) : undefined,
-            recoveryRootKeyContextVersion:
-              recoveryFieldCount === 4
-                ? (recoveryRootKeyContextVersion ?? current.keyMaterialVersion + 1)
-                : undefined,
-            recoveryAuthVerifierHash: recoveryAuthVerifierHash ?? undefined,
-            recoveryKdfSalt: recoveryKdf?.salt,
-            recoveryKdfOpsLimit: recoveryKdf?.opsLimit,
-            recoveryKdfMemLimit: recoveryKdf?.memLimit,
-            recoveryKdfVersion: recoveryKdf?.version,
-            keyMaterialVersion: sql`${schema.userKeyMaterial.keyMaterialVersion} + 1`,
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(and(
-            eq(schema.userKeyMaterial.userId, session.userId),
-            eq(schema.userKeyMaterial.keyMaterialVersion, parsed.data.keyMaterialVersion)
-          ))
-          .run();
-        if (result.changes !== 1) {
-          throw new KeyMaterialVersionConflict();
-        }
-        if (!newAuthVerifierHash) {
-          return { replacementToken: null, revokedSessionIds: [] as string[] };
-        }
-        const revokedSessionIds = deleteSqliteUserSessionsInTransaction(
-          context.db,
-          session.userId,
-          tx
-        );
-        return {
-          replacementToken: createSqliteSessionInTransaction(
-            context.db,
-            session.userId,
-            tx
-          ),
-          revokedSessionIds
-        };
-      });
-    } catch (error) {
-      if (error instanceof KeyMaterialVersionConflict) {
-        sendApiError(response, "conflict", "Key material version conflict");
-        return;
-      }
-      throw error;
+    const nextVersion = parsed.data.keyMaterialVersion + 1;
+    const sessionRotation = await context.db.accounts.rotateKeyMaterial({
+      userId: session.userId,
+      expectedKeyMaterialVersion: parsed.data.keyMaterialVersion,
+      encryptedRootKey: parsed.data.encryptedRootKey,
+      rootKeyNonce: parsed.data.rootKeyNonce,
+      rootKeyFormatVersion: parsed.data.rootKeyFormatVersion ?? 1,
+      rootKeyContextVersion: parsed.data.rootKeyContextVersion ?? nextVersion,
+      vaultKdf: parsed.data.vaultKdf,
+      ...(authKdf && newAuthVerifierHash
+        ? { auth: { verifierHash: newAuthVerifierHash, kdf: authKdf } }
+        : {}),
+      ...(recoveryFieldCount === 4 &&
+      recoveryEncryptedRootKey &&
+      recoveryRootKeyNonce &&
+      recoveryAuthVerifierHash &&
+      recoveryKdf
+        ? {
+            recovery: {
+              encryptedRootKey: recoveryEncryptedRootKey,
+              rootKeyNonce: recoveryRootKeyNonce,
+              rootKeyFormatVersion: recoveryRootKeyFormatVersion ?? 1,
+              rootKeyContextVersion:
+                recoveryRootKeyContextVersion ?? nextVersion,
+              verifierHash: recoveryAuthVerifierHash,
+              kdf: recoveryKdf
+            }
+          }
+        : {})
+    });
+    if (sessionRotation.kind === "not-found") {
+      sendApiError(response, "not_found", "Key material not found");
+      return;
+    }
+    if (sessionRotation.kind === "conflict") {
+      sendApiError(response, "conflict", "Key material version conflict");
+      return;
     }
 
     for (const sessionId of sessionRotation.revokedSessionIds) {
@@ -242,7 +156,7 @@ export function createKeyMaterialRouter(context: AppContext): Router {
       setSessionCookie(response, sessionRotation.replacementToken, context.config.cookieSecure);
     }
 
-    response.json({ keyMaterialVersion: current.keyMaterialVersion + 1 });
+    response.json({ keyMaterialVersion: sessionRotation.keyMaterialVersion });
   });
 
   return router;

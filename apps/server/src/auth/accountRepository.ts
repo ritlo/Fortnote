@@ -97,6 +97,62 @@ export type RecoverAccountOutcome =
   | { kind: "recovered"; token: string; revokedSessionIds: string[] }
   | { kind: "conflict" };
 
+export interface KeyMaterialRecord {
+  encryptedRootKey: string;
+  rootKeyNonce: string;
+  rootKeyFormatVersion: number;
+  rootKeyContextVersion: number;
+  kdfSalt: string;
+  kdfOpsLimit: number;
+  kdfMemLimit: number;
+  kdfVersion: number;
+  recoveryEncryptedRootKey: string;
+  recoveryRootKeyNonce: string;
+  recoveryRootKeyFormatVersion: number;
+  recoveryRootKeyContextVersion: number;
+  recoveryKdfSalt: string;
+  recoveryKdfOpsLimit: number;
+  recoveryKdfMemLimit: number;
+  recoveryKdfVersion: number;
+  keyMaterialVersion: number;
+}
+
+interface KdfInput {
+  salt: string;
+  opsLimit: number;
+  memLimit: number;
+  version: number;
+}
+
+export interface RotateKeyMaterialInput {
+  userId: string;
+  expectedKeyMaterialVersion: number;
+  encryptedRootKey: string;
+  rootKeyNonce: string;
+  rootKeyFormatVersion: number;
+  rootKeyContextVersion: number;
+  vaultKdf: KdfInput;
+  auth?: { verifierHash: string; kdf: KdfInput };
+  recovery?: {
+    encryptedRootKey: string;
+    rootKeyNonce: string;
+    rootKeyFormatVersion: number;
+    rootKeyContextVersion: number;
+    verifierHash: string;
+    kdf: KdfInput;
+  };
+}
+
+export type RotateKeyMaterialOutcome =
+  | {
+      kind: "rotated";
+      keyMaterialVersion: number;
+      replacementToken: string | null;
+      revokedSessionIds: string[];
+    }
+  | { kind: "conflict" }
+  | { kind: "not-found" };
+
 export interface AccountRepository {
   findIdentity(
     suppliedHandle: string,
@@ -109,6 +165,10 @@ export interface AccountRepository {
   register(input: RegisterAccountInput): Promise<void>;
   activateHandle(userId: string, canonicalHandle: string): Promise<boolean>;
   recover(input: RecoverAccountInput): Promise<RecoverAccountOutcome>;
+  keyMaterial(userId: string): Promise<KeyMaterialRecord | null>;
+  rotateKeyMaterial(
+    input: RotateKeyMaterialInput
+  ): Promise<RotateKeyMaterialOutcome>;
 }
 
 type SqliteDatabase = BetterSQLite3Database<typeof schema>;
@@ -308,6 +368,140 @@ export class SqliteAccountRepository implements AccountRepository {
         })
         .run();
       return { kind: "recovered" as const, token, revokedSessionIds };
+    });
+    return Promise.resolve(outcome);
+  }
+
+  keyMaterial(userId: string): Promise<KeyMaterialRecord | null> {
+    const row = this.orm
+      .select({
+        encryptedRootKey: schema.userKeyMaterial.encryptedRootKey,
+        rootKeyNonce: schema.userKeyMaterial.rootKeyNonce,
+        rootKeyFormatVersion: schema.userKeyMaterial.rootKeyFormatVersion,
+        rootKeyContextVersion: schema.userKeyMaterial.rootKeyContextVersion,
+        kdfSalt: schema.userKeyMaterial.kdfSalt,
+        kdfOpsLimit: schema.userKeyMaterial.kdfOpsLimit,
+        kdfMemLimit: schema.userKeyMaterial.kdfMemLimit,
+        kdfVersion: schema.userKeyMaterial.kdfVersion,
+        recoveryEncryptedRootKey: schema.userKeyMaterial.recoveryEncryptedRootKey,
+        recoveryRootKeyNonce: schema.userKeyMaterial.recoveryRootKeyNonce,
+        recoveryRootKeyFormatVersion: schema.userKeyMaterial.recoveryRootKeyFormatVersion,
+        recoveryRootKeyContextVersion: schema.userKeyMaterial.recoveryRootKeyContextVersion,
+        recoveryKdfSalt: schema.userKeyMaterial.recoveryKdfSalt,
+        recoveryKdfOpsLimit: schema.userKeyMaterial.recoveryKdfOpsLimit,
+        recoveryKdfMemLimit: schema.userKeyMaterial.recoveryKdfMemLimit,
+        recoveryKdfVersion: schema.userKeyMaterial.recoveryKdfVersion,
+        keyMaterialVersion: schema.userKeyMaterial.keyMaterialVersion
+      })
+      .from(schema.userKeyMaterial)
+      .where(eq(schema.userKeyMaterial.userId, userId))
+      .get();
+    return Promise.resolve(row ?? null);
+  }
+
+  rotateKeyMaterial(
+    input: RotateKeyMaterialInput
+  ): Promise<RotateKeyMaterialOutcome> {
+    const outcome = this.orm.transaction((transaction) => {
+      const current = transaction
+        .select({ keyMaterialVersion: schema.userKeyMaterial.keyMaterialVersion })
+        .from(schema.userKeyMaterial)
+        .where(eq(schema.userKeyMaterial.userId, input.userId))
+        .get();
+      if (!current) {
+        return { kind: "not-found" as const };
+      }
+      if (current.keyMaterialVersion !== input.expectedKeyMaterialVersion) {
+        return { kind: "conflict" as const };
+      }
+
+      const updated = transaction
+        .update(schema.userKeyMaterial)
+        .set({
+          encryptedRootKey: input.encryptedRootKey,
+          rootKeyNonce: input.rootKeyNonce,
+          rootKeyFormatVersion: input.rootKeyFormatVersion,
+          rootKeyContextVersion: input.rootKeyContextVersion,
+          kdfSalt: input.vaultKdf.salt,
+          kdfOpsLimit: input.vaultKdf.opsLimit,
+          kdfMemLimit: input.vaultKdf.memLimit,
+          kdfVersion: input.vaultKdf.version,
+          ...(input.recovery
+            ? {
+                recoveryEncryptedRootKey: input.recovery.encryptedRootKey,
+                recoveryRootKeyNonce: input.recovery.rootKeyNonce,
+                recoveryRootKeyFormatVersion: input.recovery.rootKeyFormatVersion,
+                recoveryRootKeyContextVersion: input.recovery.rootKeyContextVersion,
+                recoveryAuthVerifierHash: input.recovery.verifierHash,
+                recoveryKdfSalt: input.recovery.kdf.salt,
+                recoveryKdfOpsLimit: input.recovery.kdf.opsLimit,
+                recoveryKdfMemLimit: input.recovery.kdf.memLimit,
+                recoveryKdfVersion: input.recovery.kdf.version
+              }
+            : {}),
+          keyMaterialVersion: sql`${schema.userKeyMaterial.keyMaterialVersion} + 1`,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(
+          and(
+            eq(schema.userKeyMaterial.userId, input.userId),
+            eq(
+              schema.userKeyMaterial.keyMaterialVersion,
+              input.expectedKeyMaterialVersion
+            )
+          )
+        )
+        .run();
+      if (updated.changes !== 1) {
+        return { kind: "conflict" as const };
+      }
+      if (!input.auth) {
+        return {
+          kind: "rotated" as const,
+          keyMaterialVersion: input.expectedKeyMaterialVersion + 1,
+          replacementToken: null,
+          revokedSessionIds: []
+        };
+      }
+
+      transaction
+        .update(schema.users)
+        .set({
+          authVerifierHash: input.auth.verifierHash,
+          authKdfSalt: input.auth.kdf.salt,
+          authKdfOpsLimit: input.auth.kdf.opsLimit,
+          authKdfMemLimit: input.auth.kdf.memLimit,
+          authKdfVersion: input.auth.kdf.version,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(eq(schema.users.id, input.userId))
+        .run();
+      const revokedSessionIds = transaction
+        .delete(schema.sessions)
+        .where(eq(schema.sessions.userId, input.userId))
+        .returning({ id: schema.sessions.id })
+        .all()
+        .map(({ id }) => id);
+      const replacementToken = randomBytes(32).toString("base64url");
+      const now = Date.now();
+      transaction
+        .insert(schema.sessions)
+        .values({
+          id: crypto.randomUUID(),
+          userId: input.userId,
+          sessionHash: hashToken(replacementToken),
+          idleExpiresAt: new Date(now + this.sessionIdleTimeoutMs).toISOString(),
+          absoluteExpiresAt: new Date(
+            now + this.sessionAbsoluteTimeoutMs
+          ).toISOString()
+        })
+        .run();
+      return {
+        kind: "rotated" as const,
+        keyMaterialVersion: input.expectedKeyMaterialVersion + 1,
+        replacementToken,
+        revokedSessionIds
+      };
     });
     return Promise.resolve(outcome);
   }
