@@ -6,6 +6,24 @@ import type { AppContext } from "../http/app.js";
 
 const clientInstanceIdSchema = z.uuid();
 
+export function requestClientInstanceId(request: Request): string | undefined {
+  const parsed = clientInstanceIdSchema.safeParse(
+    request.get("x-fortnote-client-id")
+  );
+  return parsed.success ? parsed.data : undefined;
+}
+
+export function serializedEventMetadata(
+  payloadMetadata: Record<string, unknown> | undefined,
+  clientInstanceId: string | undefined
+): string | null {
+  const metadata = {
+    ...payloadMetadata,
+    ...(clientInstanceId ? { clientInstanceId } : {})
+  };
+  return Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null;
+}
+
 export type NoteEventType =
   | "note.created"
   | "note.updated"
@@ -40,9 +58,7 @@ export function writeRequestEvent(
   input: WriteNoteEventInput,
   db: Pick<AppContext["db"]["orm"], "insert"> = context.db.orm
 ): number {
-  const parsedClientId = clientInstanceIdSchema.safeParse(
-    request.get("x-fortnote-client-id")
-  );
+  const requestClientId = requestClientInstanceId(request);
   const {
     noteId,
     actorUserId,
@@ -52,18 +68,14 @@ export function writeRequestEvent(
     resourceId,
     payloadMetadata,
     clientInstanceId
-  } = parsedClientId.success
-    ? { ...input, clientInstanceId: parsedClientId.data }
+  } = requestClientId
+    ? { ...input, clientInstanceId: requestClientId }
     : input;
   const resolvedResourceId = resourceId ?? noteId;
   if (!resolvedResourceId) {
     throw new Error("Event resourceId is required when noteId is null");
   }
 
-  const metadata = {
-    ...payloadMetadata,
-    ...(clientInstanceId ? { clientInstanceId } : {})
-  };
   return db
     .insert(schema.noteEvents)
     .values({
@@ -74,7 +86,7 @@ export function writeRequestEvent(
       actorUserId,
       eventType,
       noteVersion,
-      payloadMetadata: Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null
+      payloadMetadata: serializedEventMetadata(payloadMetadata, clientInstanceId)
     })
     .returning({ cursor: schema.noteEvents.cursor })
     .get().cursor;

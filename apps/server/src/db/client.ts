@@ -8,6 +8,7 @@ import {
   type AttachmentStorage
 } from "../attachments/storage.js";
 import { SqliteAttachmentMetadataRepository } from "../attachments/metadataRepository.js";
+import { SqliteAttachmentMutationRepository } from "../attachments/mutationRepository.js";
 import { SqliteSessionRepository } from "../auth/sessionRepository.js";
 import { SqliteNoteAccessRepository } from "../notes/noteAccessRepository.js";
 import * as schema from "./schema.js";
@@ -37,6 +38,7 @@ export function createDb(config: ServerConfig) {
   );
   const noteAccess = new SqliteNoteAccessRepository(orm);
   const attachmentMetadata = new SqliteAttachmentMetadataRepository(orm);
+  const attachmentMutations = new SqliteAttachmentMutationRepository(orm);
   return {
     sqlite,
     orm,
@@ -44,6 +46,7 @@ export function createDb(config: ServerConfig) {
     sessions,
     noteAccess,
     attachmentMetadata,
+    attachmentMutations,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
     sessionAbsoluteTimeoutMs: config.sessionAbsoluteTimeoutMs
   };
