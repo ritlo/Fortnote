@@ -13,7 +13,6 @@ import {
   readSessionToken,
   type SessionRecord
 } from "../auth/session.js";
-import { listVisibleEvents } from "../events/replay.js";
 import { allowedOriginAliases } from "../http/csrf.js";
 import type { AppContext } from "../http/app.js";
 import { RealtimeHub, sendJson, type RealtimeClient } from "./hub.js";
@@ -159,10 +158,15 @@ function connectClient(
       ...(crdtV2Enabled ? [CRDT_REALTIME_CAPABILITY_V2] : [])
     ]
   });
-  sendJson(socket, {
-    type: "replay",
-    events: listVisibleEvents(context, session.userId, after, 500)
-  });
+  void context.db.events
+    .listVisible(session.userId, after, 500)
+    .then((events) => {
+      sendJson(socket, { type: "replay", events });
+    })
+    .catch((error: unknown) => {
+      console.error("Unable to replay collaboration events", error);
+      socket.close(1011, "Unable to replay events");
+    });
 }
 
 function handleClientMessage(

@@ -11,7 +11,6 @@ import {
 import type { AppContext } from "../http/app.js";
 import * as schema from "../db/schema.js";
 import { deleteExpiredSessions, isSessionActive } from "../auth/session.js";
-import { listVisibleEvents } from "../events/replay.js";
 import { canEditNote, canReadNote, getNoteAccess } from "../notes/access.js";
 import type { RealtimePublisher } from "./types.js";
 import {
@@ -66,6 +65,7 @@ export class RealtimeHub implements RealtimePublisher {
   private readonly presenceTtlMs: number;
   private readonly presenceSweepInterval: ReturnType<typeof setInterval> | null;
   private readonly sessionSweepInterval: ReturnType<typeof setInterval> | null;
+  private eventPublishQueue: Promise<void> = Promise.resolve();
   private context: AppContext | null = null;
 
   constructor(options: RealtimeHubOptions = {}) {
@@ -162,9 +162,24 @@ export class RealtimeHub implements RealtimePublisher {
       return;
     }
 
+    this.eventPublishQueue = this.eventPublishQueue
+      .then(() => this.publishEventsAsync(cursors))
+      .catch((error: unknown) => {
+        console.error("Unable to publish collaboration events", error);
+      });
+  }
+
+  private async publishEventsAsync(cursors: number[]): Promise<void> {
+    if (!this.context) {
+      return;
+    }
     for (const cursor of cursors) {
       for (const [userId, clients] of this.activeClientsByUser()) {
-        const [event] = listVisibleEvents(this.context, userId, cursor - 1, 1);
+        const [event] = await this.context.db.events.listVisible(
+          userId,
+          cursor - 1,
+          1
+        );
         if (event?.cursor !== cursor) {
           continue;
         }

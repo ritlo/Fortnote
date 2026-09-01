@@ -1,14 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireSession } from "../auth/session.js";
+import { requireSessionAsync } from "../auth/session.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
-import {
-  acknowledgeVisibleEvents,
-  getAcknowledgedEventCursor,
-  listVisibleEvents,
-  pruneAcknowledgedEvents
-} from "./replay.js";
 
 const listEventsQuerySchema = z.object({
   after: z.coerce.number().int().nonnegative().default(0),
@@ -21,8 +15,8 @@ const acknowledgeEventsBodySchema = z.object({
 export function createEventsRouter(context: AppContext): Router {
   const router = Router();
 
-  router.get("/", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.get("/", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -33,22 +27,27 @@ export function createEventsRouter(context: AppContext): Router {
       return;
     }
 
-    response.json({
-      events: listVisibleEvents(context, session.userId, parsed.data.after, parsed.data.limit)
-    });
+    const events = await context.db.events.listVisible(
+      session.userId,
+      parsed.data.after,
+      parsed.data.limit
+    );
+    response.json({ events });
   });
 
-  router.get("/cursor", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.get("/cursor", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
 
-    response.json({ cursor: getAcknowledgedEventCursor(context, session.userId) });
+    response.json({
+      cursor: await context.db.events.acknowledgedCursor(session.userId)
+    });
   });
 
-  router.post("/ack", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.post("/ack", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -59,8 +58,8 @@ export function createEventsRouter(context: AppContext): Router {
       return;
     }
 
-    acknowledgeVisibleEvents(context, session.userId, parsed.data.cursor);
-    pruneAcknowledgedEvents(context, parsed.data.cursor);
+    await context.db.events.acknowledge(session.userId, parsed.data.cursor);
+    await context.db.events.prune(parsed.data.cursor);
     response.status(204).send();
   });
 
