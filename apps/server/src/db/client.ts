@@ -12,6 +12,7 @@ import { SqliteAttachmentMutationRepository } from "../attachments/mutationRepos
 import { SqliteSessionRepository } from "../auth/sessionRepository.js";
 import { SqliteNoteAccessRepository } from "../notes/noteAccessRepository.js";
 import { SqliteNoteLifecycleRepository } from "../notes/lifecycleRepository.js";
+import { SqliteFolderRepository } from "../folders/repository.js";
 import * as schema from "./schema.js";
 import { runMigrations } from "./migrations.js";
 
@@ -41,6 +42,7 @@ export function createDb(config: ServerConfig) {
   const attachmentMetadata = new SqliteAttachmentMetadataRepository(orm);
   const attachmentMutations = new SqliteAttachmentMutationRepository(orm);
   const noteLifecycle = new SqliteNoteLifecycleRepository(orm);
+  const folders = new SqliteFolderRepository(orm);
   return {
     sqlite,
     orm,
@@ -50,6 +52,7 @@ export function createDb(config: ServerConfig) {
     attachmentMetadata,
     attachmentMutations,
     noteLifecycle,
+    folders,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
     sessionAbsoluteTimeoutMs: config.sessionAbsoluteTimeoutMs
   };
