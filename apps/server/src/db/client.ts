@@ -7,6 +7,7 @@ import {
   LocalAttachmentStorage,
   type AttachmentStorage
 } from "../attachments/storage.js";
+import { SqliteAttachmentMetadataRepository } from "../attachments/metadataRepository.js";
 import { SqliteSessionRepository } from "../auth/sessionRepository.js";
 import { SqliteNoteAccessRepository } from "../notes/noteAccessRepository.js";
 import * as schema from "./schema.js";
@@ -35,12 +36,14 @@ export function createDb(config: ServerConfig) {
     config.sessionAbsoluteTimeoutMs
   );
   const noteAccess = new SqliteNoteAccessRepository(orm);
+  const attachmentMetadata = new SqliteAttachmentMetadataRepository(orm);
   return {
     sqlite,
     orm,
     attachmentStorage,
     sessions,
     noteAccess,
+    attachmentMetadata,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
     sessionAbsoluteTimeoutMs: config.sessionAbsoluteTimeoutMs
   };

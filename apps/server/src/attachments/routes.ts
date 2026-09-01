@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { LIMITS } from "@fortnote/shared";
@@ -43,11 +43,7 @@ function getAttachment(
   context: AppContext,
   attachmentId: string
 ) {
-  return context.db.orm
-    .select()
-    .from(schema.attachments)
-    .where(eq(schema.attachments.id, attachmentId))
-    .get();
+  return context.db.attachmentMetadata.find(attachmentId);
 }
 
 function publishEventCursor(context: AppContext, cursor: number): void {
@@ -421,25 +417,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
       return;
     }
 
-    const rows = context.db.orm
-      .select({
-        id: schema.attachments.id,
-        filename: schema.attachments.filename,
-        mimeType: schema.attachments.mimeType,
-        metadataCipher: schema.attachments.metadataCipher,
-        metadataNonce: schema.attachments.metadataNonce,
-        metadataFormatVersion: schema.attachments.metadataFormatVersion,
-        keyEpoch: schema.attachments.keyEpoch,
-        size: schema.attachments.size,
-        encryptedAttachmentKey: schema.attachments.encryptedAttachmentKey,
-        attachmentKeyNonce: schema.attachments.attachmentKeyNonce,
-        fileNonce: schema.attachments.fileNonce,
-        createdAt: schema.attachments.createdAt
-      })
-      .from(schema.attachments)
-      .where(eq(schema.attachments.noteId, access.noteId))
-      .orderBy(desc(schema.attachments.createdAt))
-      .all();
+    const rows = await context.db.attachmentMetadata.list(access.noteId);
 
     response.json({
       attachments: rows.map((row) => ({
@@ -456,7 +434,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
       return;
     }
 
-    const attachment = getAttachment(context, request.params.id);
+    const attachment = await getAttachment(context, request.params.id);
     if (!attachment) {
       sendApiError(response, "not_found", "Attachment not found");
       return;
@@ -490,7 +468,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
       return;
     }
 
-    const attachment = getAttachment(context, request.params.id);
+    const attachment = await getAttachment(context, request.params.id);
     if (!attachment) {
       sendApiError(response, "not_found", "Attachment not found");
       return;
