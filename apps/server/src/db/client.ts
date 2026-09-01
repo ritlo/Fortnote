@@ -17,6 +17,7 @@ import { SqliteEventReplayRepository } from "../events/replay.js";
 import { SqliteAccountRepository } from "../auth/accountRepository.js";
 import { SqliteSharingKeyRepository } from "../sharingKeys/repository.js";
 import { SqliteNoteQueryRepository } from "../notes/queryRepository.js";
+import { SqliteNoteMembershipRepository } from "../notes/membershipRepository.js";
 import * as schema from "./schema.js";
 import { runMigrations } from "./migrations.js";
 
@@ -55,6 +56,7 @@ export function createDb(config: ServerConfig) {
   );
   const sharingKeys = new SqliteSharingKeyRepository(orm);
   const noteQueries = new SqliteNoteQueryRepository(orm);
+  const noteMemberships = new SqliteNoteMembershipRepository(orm);
   return {
     sqlite,
     orm,
@@ -69,6 +71,7 @@ export function createDb(config: ServerConfig) {
     accounts,
     sharingKeys,
     noteQueries,
+    noteMemberships,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
     sessionAbsoluteTimeoutMs: config.sessionAbsoluteTimeoutMs
   };

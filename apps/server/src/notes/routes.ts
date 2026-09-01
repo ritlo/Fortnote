@@ -538,8 +538,8 @@ export function createNotesRouter(context: AppContext): Router {
     response.json({ memberships });
   });
 
-  router.post("/:id/memberships", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.post("/:id/memberships", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -550,110 +550,49 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const access = getNoteAccess(context, request.params.id, session.userId);
+    const access = await getNoteAccessAsync(context, request.params.id, session.userId);
     if (!canOwnNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
 
-    const recipient = context.db.orm
-      .select({ userId: schema.users.id, username: schema.users.username })
-      .from(schema.users)
-      .innerJoin(
-        schema.userSharingKeys,
-        eq(schema.userSharingKeys.userId, schema.users.id)
-      )
-      .where(and(
-        eq(schema.users.username, parsed.data.username),
-        eq(schema.userSharingKeys.sharingKeyVersion, parsed.data.sharingKeyVersion)
-      ))
-      .get();
-
-    if (!recipient) {
+    const clientInstanceId = requestClientInstanceId(request);
+    const outcome = await context.db.noteMemberships.invite({
+      noteId: access.noteId,
+      actorUserId: session.userId,
+      noteVersion: access.version,
+      username: parsed.data.username,
+      role: parsed.data.role,
+      sharingKeyVersion: parsed.data.sharingKeyVersion,
+      encryptedNoteKey: parsed.data.encryptedNoteKey,
+      formatVersion: parsed.data.formatVersion,
+      ...(clientInstanceId ? { clientInstanceId } : {})
+    });
+    if (outcome.status === "sharing_key_not_found") {
       sendApiError(response, "not_found", "Sharing key not found");
       return;
     }
-    if (recipient.userId === session.userId) {
+    if (outcome.status === "self") {
       sendApiError(response, "bad_request", "Cannot invite yourself");
       return;
     }
-
-    const existing = context.db.orm
-      .select({ role: schema.noteMemberships.role })
-      .from(schema.noteMemberships)
-      .where(and(
-        eq(schema.noteMemberships.noteId, access.noteId),
-        eq(schema.noteMemberships.userId, recipient.userId)
-      ))
-      .get();
-    if (existing?.role === "owner") {
+    if (outcome.status === "owner") {
       sendApiError(response, "bad_request", "Cannot replace note owner");
       return;
     }
-
-    const cursor = context.db.orm.transaction((tx) => {
-      tx.insert(schema.noteMemberships)
-        .values({
-          noteId: access.noteId,
-          userId: recipient.userId,
-          role: parsed.data.role,
-          status: "active"
-        })
-        .onConflictDoUpdate({
-          target: [schema.noteMemberships.noteId, schema.noteMemberships.userId],
-          set: {
-            role: parsed.data.role,
-            status: "active",
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          }
-        })
-        .run();
-      tx.insert(schema.noteKeyShares)
-        .values({
-          noteId: access.noteId,
-          recipientUserId: recipient.userId,
-          senderUserId: session.userId,
-          sharingKeyVersion: parsed.data.sharingKeyVersion,
-          encryptedNoteKey: parsed.data.encryptedNoteKey,
-          formatVersion: parsed.data.formatVersion
-        })
-        .onConflictDoUpdate({
-          target: [schema.noteKeyShares.noteId, schema.noteKeyShares.recipientUserId],
-          set: {
-            senderUserId: session.userId,
-            sharingKeyVersion: parsed.data.sharingKeyVersion,
-            encryptedNoteKey: parsed.data.encryptedNoteKey,
-            formatVersion: parsed.data.formatVersion,
-            createdAt: sql`CURRENT_TIMESTAMP`
-          }
-        })
-        .run();
-      return writeRequestEvent(context, request, {
-        noteId: access.noteId,
-        actorUserId: session.userId,
-        eventType: "membership.added",
-        noteVersion: access.version,
-        resourceType: "membership",
-        resourceId: `${access.noteId}:${recipient.userId}`,
-        payloadMetadata: {
-          membershipUserId: recipient.userId,
-          role: parsed.data.role
-        }
-      }, tx);
-    });
-    publishEventCursors(context, [cursor]);
+    publishEventCursors(context, [outcome.cursor]);
 
     response.status(201).json({
       noteId: access.noteId,
-      userId: recipient.userId,
-      username: recipient.username,
+      userId: outcome.userId,
+      username: outcome.username,
       role: parsed.data.role,
       status: "active"
     });
   });
 
-  router.patch("/:id/memberships/:userId", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.patch("/:id/memberships/:userId", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -664,7 +603,7 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const access = getNoteAccess(context, request.params.id, session.userId);
+    const access = await getNoteAccessAsync(context, request.params.id, session.userId);
     if (!canOwnNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
@@ -674,31 +613,14 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const updateCursor = context.db.orm.transaction((tx) => {
-      const result = tx.update(schema.noteMemberships)
-        .set({ role: parsed.data.role, updatedAt: sql`CURRENT_TIMESTAMP` })
-        .where(and(
-          eq(schema.noteMemberships.noteId, access.noteId),
-          eq(schema.noteMemberships.userId, request.params.userId),
-          ne(schema.noteMemberships.role, "owner"),
-          eq(schema.noteMemberships.status, "active")
-        ))
-        .run();
-      if (result.changes === 0) {
-        return null;
-      }
-      return writeRequestEvent(context, request, {
-        noteId: access.noteId,
-        actorUserId: session.userId,
-        eventType: "membership.role_updated",
-        noteVersion: access.version,
-        resourceType: "membership",
-        resourceId: `${access.noteId}:${request.params.userId}`,
-        payloadMetadata: {
-          membershipUserId: request.params.userId,
-          role: parsed.data.role
-        }
-      }, tx);
+    const clientInstanceId = requestClientInstanceId(request);
+    const updateCursor = await context.db.noteMemberships.updateRole({
+      noteId: access.noteId,
+      actorUserId: session.userId,
+      targetUserId: request.params.userId,
+      noteVersion: access.version,
+      role: parsed.data.role,
+      ...(clientInstanceId ? { clientInstanceId } : {})
     });
     if (updateCursor === null) {
       sendApiError(response, "not_found", "Membership not found");
@@ -714,13 +636,13 @@ export function createNotesRouter(context: AppContext): Router {
     });
   });
 
-  router.delete("/:id/memberships/:userId", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.delete("/:id/memberships/:userId", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
 
-    const access = getNoteAccess(context, request.params.id, session.userId);
+    const access = await getNoteAccessAsync(context, request.params.id, session.userId);
     if (!canOwnNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
@@ -730,36 +652,13 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const revokeCursor = context.db.orm.transaction((tx) => {
-      const result = tx.update(schema.noteMemberships)
-        .set({ status: "revoked", updatedAt: sql`CURRENT_TIMESTAMP` })
-        .where(and(
-          eq(schema.noteMemberships.noteId, access.noteId),
-          eq(schema.noteMemberships.userId, request.params.userId),
-          ne(schema.noteMemberships.role, "owner"),
-          ne(schema.noteMemberships.status, "revoked")
-        ))
-        .run();
-      if (result.changes === 0) {
-        return null;
-      }
-      tx.delete(schema.noteKeyShares)
-        .where(and(
-          eq(schema.noteKeyShares.noteId, access.noteId),
-          eq(schema.noteKeyShares.recipientUserId, request.params.userId)
-        ))
-        .run();
-      return writeRequestEvent(context, request, {
-        noteId: access.noteId,
-        actorUserId: session.userId,
-        eventType: "membership.revoked",
-        noteVersion: access.version,
-        resourceType: "membership",
-        resourceId: `${access.noteId}:${request.params.userId}`,
-        payloadMetadata: {
-          membershipUserId: request.params.userId
-        }
-      }, tx);
+    const clientInstanceId = requestClientInstanceId(request);
+    const revokeCursor = await context.db.noteMemberships.revoke({
+      noteId: access.noteId,
+      actorUserId: session.userId,
+      targetUserId: request.params.userId,
+      noteVersion: access.version,
+      ...(clientInstanceId ? { clientInstanceId } : {})
     });
     if (revokeCursor === null) {
       sendApiError(response, "not_found", "Membership not found");
