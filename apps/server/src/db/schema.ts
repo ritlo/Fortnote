@@ -318,7 +318,7 @@ export const attachments = sqliteTable("attachments", {
   size: integer("size").notNull(),
   encryptedAttachmentKey: text("encrypted_attachment_key").notNull(),
   attachmentKeyNonce: text("attachment_key_nonce").notNull(),
-  fileCipherPath: text("file_cipher_path").notNull(),
+  storageKey: text("file_cipher_path").notNull(),
   fileNonce: text("file_nonce").notNull(),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`)
 });

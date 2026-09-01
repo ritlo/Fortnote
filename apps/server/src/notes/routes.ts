@@ -5,7 +5,6 @@ import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { requireSession } from "../auth/session.js";
-import { deleteEncryptedAttachment } from "../attachments/storage.js";
 import { canEditNote, canOwnNote, canReadNote, getNoteAccess } from "./access.js";
 import { writeRequestEvent } from "./events.js";
 import {
@@ -1652,7 +1651,7 @@ export function createNotesRouter(context: AppContext): Router {
 
     const rows = context.db.orm
       .select({
-        fileCipherPath: schema.attachments.fileCipherPath,
+        storageKey: schema.attachments.storageKey,
         size: schema.attachments.size
       })
       .from(schema.attachments)
@@ -1701,7 +1700,7 @@ export function createNotesRouter(context: AppContext): Router {
     publishEventCursors(context, [cursor]);
     await Promise.all(
       rows.map((row) =>
-        deleteEncryptedAttachment(context.config, row.fileCipherPath).catch((error: unknown) => {
+        context.db.attachmentStorage.delete(row.storageKey).catch((error: unknown) => {
           console.error("Unable to delete attachment ciphertext", error);
         })
       )

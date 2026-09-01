@@ -8,10 +8,7 @@ import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import {
   AttachmentCiphertextSizeError,
-  deleteEncryptedAttachment,
-  readEncryptedAttachment,
-  safeDisplayFilename,
-  writeEncryptedAttachment
+  safeDisplayFilename
 } from "./storage.js";
 import { canEditNote, canReadNote, getNoteAccess } from "../notes/access.js";
 import { writeRequestEvent } from "../notes/events.js";
@@ -274,13 +271,12 @@ export function createAttachmentsRouter(context: AppContext): Router {
     const storageId = crypto.randomUUID();
     let committed = false;
     try {
-      await writeEncryptedAttachment(
-        context.config,
+      await context.db.attachmentStorage.write({
         storageId,
-        request,
-        payload.size,
-        LIMITS.maxAttachmentBytes
-      );
+        source: request,
+        expectedBytes: payload.size,
+        maxBytes: LIMITS.maxAttachmentBytes
+      });
       const outcome = context.db.orm.transaction((tx) => {
         const now = new Date().toISOString();
         const activeSession = tx
@@ -348,7 +344,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
           size: payload.size,
           encryptedAttachmentKey: payload.encryptedAttachmentKey,
           attachmentKeyNonce: payload.attachmentKeyNonce,
-          fileCipherPath: storageId,
+          storageKey: storageId,
           fileNonce: payload.fileNonce
         }).run();
         tx.update(schema.storageAccounts)
@@ -400,7 +396,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
           reservation.ownerUserId,
           payload.size
         );
-        await deleteEncryptedAttachment(context.config, storageId);
+        await context.db.attachmentStorage.delete(storageId);
       }
     }
   });
@@ -446,7 +442,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
     });
   });
 
-  router.get("/attachments/:id", (request, response) => {
+  router.get("/attachments/:id", async (request, response) => {
     const session = requireSession(context.db, request, response);
     if (!session) {
       return;
@@ -471,10 +467,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
       "x-fortnote-note-id": attachment.noteId,
       "x-fortnote-key-epoch": String(attachment.keyEpoch)
     });
-    const stream = readEncryptedAttachment(
-      context.config,
-      attachment.fileCipherPath
-    );
+    const stream = await context.db.attachmentStorage.read(attachment.storageKey);
     stream.on("error", () => response.destroy());
     stream.pipe(response);
   });
@@ -521,7 +514,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
     });
     publishEventCursor(context, cursor);
     try {
-      await deleteEncryptedAttachment(context.config, attachment.fileCipherPath);
+      await context.db.attachmentStorage.delete(attachment.storageKey);
     } catch (error) {
       console.error("Unable to delete attachment ciphertext", error);
     }

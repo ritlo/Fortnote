@@ -42,6 +42,19 @@ SQLite is currently the only supported database provider. The `database.provider
 is explicit so PostgreSQL can be added in a later stage without changing the configuration
 contract.
 
+## Storage and deployment roadmap
+
+The next persistence stage adds PostgreSQL for relational data and encrypted attachment
+chunks. Attachment chunks will use ordinary `bytea` rows rather than PostgreSQL large objects;
+this fits Fortnote's existing bounded, encrypted chunks and keeps backup and deletion behavior
+transactional. An S3-compatible attachment backend can be added later through the same storage
+interface.
+
+The long-term deployment target is Docker Compose with separate application and PostgreSQL
+services, persistent volumes, health checks, a read-only `config.yaml` mount, and secrets passed
+through environment variables or Docker secrets. The committed configuration will continue to
+default to local SQLite and local filesystem storage for development.
+
 ## Checks
 
 ```sh

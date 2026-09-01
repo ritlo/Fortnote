@@ -3,7 +3,10 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import type { ServerConfig } from "../config.js";
-import { removeOrphanedEncryptedAttachments } from "../attachments/storage.js";
+import {
+  LocalAttachmentStorage,
+  type AttachmentStorage
+} from "../attachments/storage.js";
 import * as schema from "./schema.js";
 import { runMigrations } from "./migrations.js";
 
@@ -13,19 +16,21 @@ export function createDb(config: ServerConfig) {
   sqlite.pragma("foreign_keys = ON");
   runMigrations(sqlite);
   const orm = drizzle(sqlite, { schema });
-  removeOrphanedEncryptedAttachments(
-    config,
+  const localAttachmentStorage = new LocalAttachmentStorage(config.dataDir);
+  localAttachmentStorage.removeOrphans(
     new Set(
       orm
-        .select({ fileCipherPath: schema.attachments.fileCipherPath })
+        .select({ storageKey: schema.attachments.storageKey })
         .from(schema.attachments)
         .all()
-        .map(({ fileCipherPath }) => fileCipherPath)
+        .map(({ storageKey }) => storageKey)
     )
   );
+  const attachmentStorage: AttachmentStorage = localAttachmentStorage;
   return {
     sqlite,
     orm,
+    attachmentStorage,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
     sessionAbsoluteTimeoutMs: config.sessionAbsoluteTimeoutMs
   };
