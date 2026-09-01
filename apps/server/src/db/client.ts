@@ -46,7 +46,11 @@ export function createDb(config: ServerConfig) {
   const noteLifecycle = new SqliteNoteLifecycleRepository(orm);
   const folders = new SqliteFolderRepository(orm);
   const events = new SqliteEventReplayRepository(orm);
-  const accounts = new SqliteAccountRepository(orm);
+  const accounts = new SqliteAccountRepository(
+    orm,
+    config.sessionIdleTimeoutMs,
+    config.sessionAbsoluteTimeoutMs
+  );
   return {
     sqlite,
     orm,

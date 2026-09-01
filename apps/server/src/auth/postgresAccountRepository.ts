@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "../db/postgres/schema.js";
@@ -6,9 +7,12 @@ import type {
   AccountRepository,
   KdfParametersRecord,
   RecoveryParametersRecord,
+  RecoverAccountInput,
+  RecoverAccountOutcome,
   RecoveryVerifierRecord,
   RegisterAccountInput
 } from "./accountRepository.js";
+import { hashToken } from "./session.js";
 
 type PostgresDatabase = NodePgDatabase<typeof schema>;
 
@@ -21,7 +25,11 @@ const identitySelection = {
 };
 
 export class PostgresAccountRepository implements AccountRepository {
-  constructor(private readonly orm: PostgresDatabase) {}
+  constructor(
+    private readonly orm: PostgresDatabase,
+    private readonly sessionIdleTimeoutMs: number,
+    private readonly sessionAbsoluteTimeoutMs: number
+  ) {}
 
   async findIdentity(
     suppliedHandle: string,
@@ -139,5 +147,69 @@ export class PostgresAccountRepository implements AccountRepository {
       .where(and(eq(schema.users.id, userId), isNull(schema.users.canonicalHandle)))
       .returning({ id: schema.users.id });
     return rows.length === 1;
+  }
+
+  recover(input: RecoverAccountInput): Promise<RecoverAccountOutcome> {
+    return this.orm.transaction(async (transaction) => {
+      const keyMaterialUpdate = await transaction
+        .update(schema.userKeyMaterial)
+        .set({
+          encryptedRootKey: input.encryptedRootKey,
+          rootKeyNonce: input.rootKeyNonce,
+          rootKeyFormatVersion: input.rootKeyFormatVersion,
+          rootKeyContextVersion: input.rootKeyContextVersion,
+          kdfSalt: input.vaultKdf.salt,
+          kdfOpsLimit: input.vaultKdf.opsLimit,
+          kdfMemLimit: input.vaultKdf.memLimit,
+          kdfVersion: input.vaultKdf.version,
+          keyMaterialVersion: sql`${schema.userKeyMaterial.keyMaterialVersion} + 1`,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(
+          and(
+            eq(schema.userKeyMaterial.userId, input.userId),
+            eq(
+              schema.userKeyMaterial.keyMaterialVersion,
+              input.expectedKeyMaterialVersion
+            )
+          )
+        )
+        .returning({ userId: schema.userKeyMaterial.userId });
+      if (keyMaterialUpdate.length !== 1) {
+        return { kind: "conflict" as const };
+      }
+
+      await transaction
+        .update(schema.users)
+        .set({
+          authVerifierHash: input.newAuthVerifierHash,
+          authKdfSalt: input.authKdf.salt,
+          authKdfOpsLimit: input.authKdf.opsLimit,
+          authKdfMemLimit: input.authKdf.memLimit,
+          authKdfVersion: input.authKdf.version,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(eq(schema.users.id, input.userId));
+      const revokedSessions = await transaction
+        .delete(schema.sessions)
+        .where(eq(schema.sessions.userId, input.userId))
+        .returning({ id: schema.sessions.id });
+      const token = randomBytes(32).toString("base64url");
+      const now = Date.now();
+      await transaction.insert(schema.sessions).values({
+        id: crypto.randomUUID(),
+        userId: input.userId,
+        sessionHash: hashToken(token),
+        idleExpiresAt: new Date(now + this.sessionIdleTimeoutMs).toISOString(),
+        absoluteExpiresAt: new Date(
+          now + this.sessionAbsoluteTimeoutMs
+        ).toISOString()
+      });
+      return {
+        kind: "recovered" as const,
+        token,
+        revokedSessionIds: revokedSessions.map(({ id }) => id)
+      };
+    });
   }
 }

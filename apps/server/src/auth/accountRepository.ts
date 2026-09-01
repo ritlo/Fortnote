@@ -1,6 +1,8 @@
+import { randomBytes } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "../db/schema.js";
+import { hashToken } from "./session.js";
 
 export interface AccountIdentity {
   id: string;
@@ -69,6 +71,32 @@ export interface RegisterAccountInput {
   };
 }
 
+export interface RecoverAccountInput {
+  userId: string;
+  expectedKeyMaterialVersion: number;
+  newAuthVerifierHash: string;
+  authKdf: {
+    salt: string;
+    opsLimit: number;
+    memLimit: number;
+    version: number;
+  };
+  vaultKdf: {
+    salt: string;
+    opsLimit: number;
+    memLimit: number;
+    version: number;
+  };
+  encryptedRootKey: string;
+  rootKeyNonce: string;
+  rootKeyFormatVersion: number;
+  rootKeyContextVersion: number;
+}
+
+export type RecoverAccountOutcome =
+  | { kind: "recovered"; token: string; revokedSessionIds: string[] }
+  | { kind: "conflict" };
+
 export interface AccountRepository {
   findIdentity(
     suppliedHandle: string,
@@ -80,6 +108,7 @@ export interface AccountRepository {
   recoveryVerifier(userId: string): Promise<RecoveryVerifierRecord | null>;
   register(input: RegisterAccountInput): Promise<void>;
   activateHandle(userId: string, canonicalHandle: string): Promise<boolean>;
+  recover(input: RecoverAccountInput): Promise<RecoverAccountOutcome>;
 }
 
 type SqliteDatabase = BetterSQLite3Database<typeof schema>;
@@ -93,7 +122,11 @@ const identitySelection = {
 };
 
 export class SqliteAccountRepository implements AccountRepository {
-  constructor(private readonly orm: SqliteDatabase) {}
+  constructor(
+    private readonly orm: SqliteDatabase,
+    private readonly sessionIdleTimeoutMs: number,
+    private readonly sessionAbsoluteTimeoutMs: number
+  ) {}
 
   findIdentity(
     suppliedHandle: string,
@@ -210,5 +243,72 @@ export class SqliteAccountRepository implements AccountRepository {
       .where(and(eq(schema.users.id, userId), isNull(schema.users.canonicalHandle)))
       .run();
     return Promise.resolve(result.changes === 1);
+  }
+
+  recover(input: RecoverAccountInput): Promise<RecoverAccountOutcome> {
+    const outcome = this.orm.transaction((transaction) => {
+      const keyMaterialUpdate = transaction
+        .update(schema.userKeyMaterial)
+        .set({
+          encryptedRootKey: input.encryptedRootKey,
+          rootKeyNonce: input.rootKeyNonce,
+          rootKeyFormatVersion: input.rootKeyFormatVersion,
+          rootKeyContextVersion: input.rootKeyContextVersion,
+          kdfSalt: input.vaultKdf.salt,
+          kdfOpsLimit: input.vaultKdf.opsLimit,
+          kdfMemLimit: input.vaultKdf.memLimit,
+          kdfVersion: input.vaultKdf.version,
+          keyMaterialVersion: sql`${schema.userKeyMaterial.keyMaterialVersion} + 1`,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(
+          and(
+            eq(schema.userKeyMaterial.userId, input.userId),
+            eq(
+              schema.userKeyMaterial.keyMaterialVersion,
+              input.expectedKeyMaterialVersion
+            )
+          )
+        )
+        .run();
+      if (keyMaterialUpdate.changes !== 1) {
+        return { kind: "conflict" as const };
+      }
+
+      transaction
+        .update(schema.users)
+        .set({
+          authVerifierHash: input.newAuthVerifierHash,
+          authKdfSalt: input.authKdf.salt,
+          authKdfOpsLimit: input.authKdf.opsLimit,
+          authKdfMemLimit: input.authKdf.memLimit,
+          authKdfVersion: input.authKdf.version,
+          updatedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(eq(schema.users.id, input.userId))
+        .run();
+      const revokedSessionIds = transaction
+        .delete(schema.sessions)
+        .where(eq(schema.sessions.userId, input.userId))
+        .returning({ id: schema.sessions.id })
+        .all()
+        .map(({ id }) => id);
+      const token = randomBytes(32).toString("base64url");
+      const now = Date.now();
+      transaction
+        .insert(schema.sessions)
+        .values({
+          id: crypto.randomUUID(),
+          userId: input.userId,
+          sessionHash: hashToken(token),
+          idleExpiresAt: new Date(now + this.sessionIdleTimeoutMs).toISOString(),
+          absoluteExpiresAt: new Date(
+            now + this.sessionAbsoluteTimeoutMs
+          ).toISOString()
+        })
+        .run();
+      return { kind: "recovered" as const, token, revokedSessionIds };
+    });
+    return Promise.resolve(outcome);
   }
 }

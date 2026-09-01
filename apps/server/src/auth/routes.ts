@@ -1,18 +1,14 @@
 import argon2 from "argon2";
 import { createHmac, randomBytes as nodeRandomBytes } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
 import { Router, type Request, type RequestHandler } from "express";
 import { z } from "zod";
 import { DEFAULT_KDF } from "@fortnote/shared";
-import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import {
   clearSessionCookie,
   createSession,
-  createSqliteSessionInTransaction,
   deleteSession,
-  deleteSqliteUserSessionsInTransaction,
   findSessionAsync,
   readSessionToken,
   setSessionCookie
@@ -65,8 +61,6 @@ const recoverSchema = z.object({
 
 const DUMMY_RESPONSE_SECRET = nodeRandomBytes(32);
 const DUMMY_AUTH_VERIFIER_HASH = argon2.hash(nodeRandomBytes(32));
-
-class KeyMaterialVersionConflict extends Error {}
 
 function unknownUserKdfResponse(username: string) {
   return {
@@ -366,60 +360,21 @@ export function createAuthRouter(context: AppContext): Router {
     }
 
     const newAuthVerifierHash = await argon2.hash(parsed.data.newAuthVerifier);
-    let recovered: { token: string; revokedSessionIds: string[] };
-    try {
-      recovered = context.db.orm.transaction((tx) => {
-        tx.update(schema.users)
-          .set({
-            authVerifierHash: newAuthVerifierHash,
-            authKdfSalt: parsed.data.authKdf.salt,
-            authKdfOpsLimit: parsed.data.authKdf.opsLimit,
-            authKdfMemLimit: parsed.data.authKdf.memLimit,
-            authKdfVersion: parsed.data.authKdf.version,
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(eq(schema.users.id, row.id))
-          .run();
-
-        const keyMaterialUpdate = tx.update(schema.userKeyMaterial)
-          .set({
-            encryptedRootKey: parsed.data.encryptedRootKey,
-            rootKeyNonce: parsed.data.rootKeyNonce,
-            rootKeyFormatVersion: parsed.data.rootKeyFormatVersion ?? 1,
-            rootKeyContextVersion:
-              parsed.data.rootKeyContextVersion ?? parsed.data.keyMaterialVersion + 1,
-            kdfSalt: parsed.data.vaultKdf.salt,
-            kdfOpsLimit: parsed.data.vaultKdf.opsLimit,
-            kdfMemLimit: parsed.data.vaultKdf.memLimit,
-            kdfVersion: parsed.data.vaultKdf.version,
-            keyMaterialVersion: sql`${schema.userKeyMaterial.keyMaterialVersion} + 1`,
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(and(
-            eq(schema.userKeyMaterial.userId, row.id),
-            eq(schema.userKeyMaterial.keyMaterialVersion, parsed.data.keyMaterialVersion)
-          ))
-          .run();
-        if (keyMaterialUpdate.changes !== 1) {
-          throw new KeyMaterialVersionConflict();
-        }
-
-        const revokedSessionIds = deleteSqliteUserSessionsInTransaction(
-          context.db,
-          row.id,
-          tx
-        );
-        return {
-          token: createSqliteSessionInTransaction(context.db, row.id, tx),
-          revokedSessionIds
-        };
-      });
-    } catch (error) {
-      if (error instanceof KeyMaterialVersionConflict) {
-        sendApiError(response, "conflict", "Key material version conflict");
-        return;
-      }
-      throw error;
+    const recovered = await context.db.accounts.recover({
+      userId: row.id,
+      expectedKeyMaterialVersion: parsed.data.keyMaterialVersion,
+      newAuthVerifierHash,
+      authKdf: parsed.data.authKdf,
+      vaultKdf: parsed.data.vaultKdf,
+      encryptedRootKey: parsed.data.encryptedRootKey,
+      rootKeyNonce: parsed.data.rootKeyNonce,
+      rootKeyFormatVersion: parsed.data.rootKeyFormatVersion ?? 1,
+      rootKeyContextVersion:
+        parsed.data.rootKeyContextVersion ?? parsed.data.keyMaterialVersion + 1
+    });
+    if (recovered.kind === "conflict") {
+      sendApiError(response, "conflict", "Key material version conflict");
+      return;
     }
 
     for (const sessionId of recovered.revokedSessionIds) {
