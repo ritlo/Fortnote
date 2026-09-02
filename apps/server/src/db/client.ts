@@ -27,6 +27,7 @@ import {
   LocalContentStorage,
   type ContentStorage
 } from "../content/storage.js";
+import { SqliteContentUploadRepository } from "../content/uploadRepository.js";
 import * as schema from "./schema.js";
 import { runMigrations } from "./migrations.js";
 
@@ -72,6 +73,7 @@ export function createDb(config: ServerConfig) {
   const sectionHistory = new SqliteSectionHistoryRepository(orm);
   const legacyHistory = new SqliteLegacyHistoryRepository(orm);
   const contentStorage: ContentStorage = new LocalContentStorage(config);
+  const contentUploads = new SqliteContentUploadRepository(orm);
   return {
     sqlite,
     orm,
@@ -93,6 +95,7 @@ export function createDb(config: ServerConfig) {
     sectionHistory,
     legacyHistory,
     contentStorage,
+    contentUploads,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
     sessionAbsoluteTimeoutMs: config.sessionAbsoluteTimeoutMs
   };

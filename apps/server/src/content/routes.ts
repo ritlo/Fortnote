@@ -1,8 +1,7 @@
 import { Router, type Response } from "express";
 import { z } from "zod";
-import { requireSession } from "../auth/session.js";
-import { canEditNote, canReadNote, getNoteAccess } from "../notes/access.js";
-import { ensureNoteSection } from "../notes/sections.js";
+import { requireSessionAsync } from "../auth/session.js";
+import { canReadNote } from "../notes/access.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import {
@@ -10,13 +9,13 @@ import {
   type ManifestCommitOutcome
 } from "./manifests.js";
 import {
-  getStorageQuotaStatus,
-  releaseStorageBytes,
-  reserveStorageBytes
-} from "./quota.js";
-import {
   ContentChunkConflictError
 } from "./storage.js";
+import type {
+  BeginContentUploadOutcome,
+  ContentUploadRecord,
+  ContentUploadView
+} from "./uploadRepository.js";
 
 const UUID = z.uuid();
 const HASH = z.string().regex(/^[0-9a-f]{64}$/u);
@@ -52,37 +51,11 @@ const commitSchema = z.object({
   expectedKeyEpoch: z.number().int().positive()
 });
 
-interface UploadRow {
-  id: string;
-  updateId: string;
-  noteId: string;
-  sectionId: string;
-  cryptoOwnerId: string;
-  keyEpoch: number;
-  kind: "update" | "checkpoint" | "root-update";
-  formatVersion: number;
-  totalCipherBytes: number;
-  chunkCount: number;
-  manifestHash: string;
-  checkpointSequenceCutoff: number | null;
-  status: "receiving" | "complete" | "committed" | "aborted" | "expired" | "invalid";
-  expiresAt: string;
-  ownerUserId: string;
-}
-
-interface ChunkRow {
-  chunkIndex: number;
-  cipherLength: number;
-  cipherHash: string;
-  nonce: Buffer;
-  fileCipherPath: string;
-}
-
 export function createContentRouter(context: AppContext): Router {
   const router = Router();
 
-  router.post("/content/uploads", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.post("/content/uploads", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -96,155 +69,73 @@ export function createContentRouter(context: AppContext): Router {
       sendApiError(response, "storage_limit", "Encrypted content exceeds storage quota");
       return;
     }
-    const outcome = context.db.sqlite.transaction(() => {
-      const access = getNoteAccess(context, payload.noteId, session.userId);
-      if (!canEditNote(access)) {
-        return { kind: "not-found" as const };
-      }
-      if (access.isDeleted) {
-        return { kind: "conflict" as const };
-      }
-      const noteState = context.db.sqlite
-        .prepare("SELECT rotation_fenced AS rotationFenced FROM notes WHERE id = ?")
-        .get(access.noteId) as { rotationFenced: number };
-      if (noteState.rotationFenced) {
-        return { kind: "rotation-pending" as const };
-      }
-      if (access.keyEpoch !== payload.expectedKeyEpoch) {
-        return { kind: "stale-epoch" as const };
-      }
-      const section = ensureNoteSection(
-        context,
-        payload.noteId,
-        payload.sectionId,
-        payload.expectedKeyEpoch
-      );
-      if (!section) {
-        return { kind: "not-found" as const };
-      }
-      const existing = context.db.sqlite
-        .prepare(`
-          SELECT id FROM content_uploads WHERE id = ? OR update_id = ?
-        `)
-        .get(payload.uploadId, payload.updateId) as { id: string } | undefined;
-      if (existing) {
-        const upload = getUpload(context, existing.id);
-        if (!upload || !sameUpload(upload, payload, section.id)) {
-          return { kind: "conflict" as const };
-        }
-        if (upload.status === "expired" || upload.status === "aborted") {
-          if (!reserveStorageBytes(
-            context.db,
-            access.ownerUserId,
-            upload.totalCipherBytes,
-            context.config.storageQuotaBytes
-          )) {
-            return { kind: "storage-limit" as const };
-          }
-          context.db.sqlite
-            .prepare("DELETE FROM content_chunks WHERE upload_id = ?")
-            .run(upload.id);
-          const expiresAt = new Date(
-            Date.now() + context.config.contentUploadExpiryMs
-          ).toISOString();
-          context.db.sqlite
-            .prepare(`
-              UPDATE content_uploads
-              SET status = 'receiving', expires_at = ?, updated_at = CURRENT_TIMESTAMP
-              WHERE id = ?
-            `)
-            .run(expiresAt, upload.id);
-          return {
-            kind: "existing" as const,
-            upload: getUpload(context, upload.id)!
-          };
-        }
-        return { kind: "existing" as const, upload };
-      }
-      if (!reserveStorageBytes(
-        context.db,
-        access.ownerUserId,
-        payload.totalCipherBytes,
-        context.config.storageQuotaBytes
-      )) {
-        return { kind: "storage-limit" as const };
-      }
-      const expiresAt = new Date(
+    const { checkpointSequenceCutoff, ...uploadInput } = payload;
+    const outcome = await context.db.contentUploads.begin({
+      sessionId: session.id,
+      userId: session.userId,
+      ...uploadInput,
+      ...(checkpointSequenceCutoff === undefined
+        ? {}
+        : { checkpointSequenceCutoff }),
+      expiresAt: new Date(
         Date.now() + context.config.contentUploadExpiryMs
-      ).toISOString();
-      context.db.sqlite
-        .prepare(`
-          INSERT INTO content_uploads (
-            id, update_id, note_id, section_id, crypto_owner_id, key_epoch,
-            kind, format_version, total_cipher_bytes, chunk_count, manifest_hash,
-            checkpoint_sequence_cutoff, status, expires_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'receiving', ?)
-        `)
-        .run(
-          payload.uploadId,
-          payload.updateId,
-          payload.noteId,
-          section.id,
-          access.cryptoOwnerId,
-          payload.expectedKeyEpoch,
-          payload.kind,
-          payload.formatVersion,
-          payload.totalCipherBytes,
-          payload.chunkCount,
-          payload.manifestHash,
-          payload.checkpointSequenceCutoff ?? null,
-          expiresAt
-        );
-      return { kind: "created" as const, upload: getUpload(context, payload.uploadId)! };
-    })();
+      ).toISOString(),
+      quotaBytes: context.config.storageQuotaBytes
+    });
     if (outcome.kind === "created" || outcome.kind === "existing") {
-      response.status(outcome.kind === "created" ? 201 : 200).json(uploadStatus(context, outcome.upload));
+      await cleanupUploadStorage(context, outcome);
+      response
+        .status(outcome.kind === "created" ? 201 : 200)
+        .json(uploadStatus(outcome));
       return;
     }
     sendGateError(response, outcome.kind);
   });
 
-  router.get("/content/uploads/:uploadId", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.get("/content/uploads/:uploadId", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
-    const upload = getUpload(context, request.params.uploadId);
-    if (!upload || !canEditNote(getNoteAccess(context, upload.noteId, session.userId))) {
+    const view = await context.db.contentUploads.status(
+      request.params.uploadId,
+      session.userId,
+      new Date().toISOString()
+    );
+    if (!view) {
       sendApiError(response, "not_found", "Content upload not found");
       return;
     }
-    expireUploadIfNeeded(context, upload);
-    response.json(uploadStatus(context, getUpload(context, upload.id)!));
+    await cleanupUploadStorage(context, view);
+    response.json(uploadStatus(view));
   });
 
   router.put("/content/uploads/:uploadId/chunks/:chunkIndex", async (request, response) => {
-    const session = requireSession(context.db, request, response);
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
-    const upload = getUpload(context, request.params.uploadId);
+    const upload = await context.db.contentUploads.findEditable(
+      request.params.uploadId,
+      session.userId
+    );
     const chunkIndex = Number(request.params.chunkIndex);
     const cipherLength = declaredLength(request.get("content-length"));
     const cipherHash = request.get("x-fortnote-cipher-hash") ?? "";
     const nonce = decodeNonce(request.get("x-fortnote-nonce"));
-    const initialAccess = upload
-      ? getNoteAccess(context, upload.noteId, session.userId)
-      : undefined;
-    if (!upload || !canEditNote(initialAccess)) {
+    if (!upload) {
       sendApiError(response, "not_found", "Content upload not found");
       return;
     }
-    const initialState = noteMutationState(context, upload.noteId);
-    if (initialAccess.isDeleted || initialState?.isDeleted) {
+    if (upload.noteIsDeleted) {
       sendApiError(response, "conflict", "Restore note before uploading content");
       return;
     }
-    if (initialState?.rotationFenced) {
+    if (upload.rotationFenced) {
       sendApiError(response, "rotation_pending", "Note-key rotation is pending");
       return;
     }
-    if (initialAccess.keyEpoch !== upload.keyEpoch) {
+    if (upload.noteKeyEpoch !== upload.keyEpoch) {
       sendApiError(response, "stale_epoch", "Note key epoch changed");
       return;
     }
@@ -265,7 +156,10 @@ export function createContentRouter(context: AppContext): Router {
       sendApiError(response, "conflict", "Content upload is not receiving chunks");
       return;
     }
-    const existing = getChunk(context, upload.id, chunkIndex);
+    const existing = await context.db.contentUploads.findChunk(
+      upload.id,
+      chunkIndex
+    );
     if (existing) {
       if (
         existing.cipherLength === cipherLength &&
@@ -287,66 +181,16 @@ export function createContentRouter(context: AppContext): Router {
         maxBytes: context.config.contentChunkMaxBytes,
         source: request
       });
-      const outcome = context.db.sqlite.transaction(() => {
-        if (!activeSession(context, session.id)) {
-          return "unauthorized" as const;
-        }
-        const current = getUpload(context, upload.id);
-        const access = current
-          ? getNoteAccess(context, current.noteId, session.userId)
-          : undefined;
-        if (!current || !canEditNote(access)) {
-          return "not-found" as const;
-        }
-        const noteState = noteMutationState(context, current.noteId);
-        if (access.isDeleted || noteState?.isDeleted) {
-          return "conflict" as const;
-        }
-        if (noteState?.rotationFenced) {
-          return "rotation-pending" as const;
-        }
-        if (access.keyEpoch !== current.keyEpoch || noteState?.keyEpoch !== current.keyEpoch) {
-          return "stale-epoch" as const;
-        }
-        if (current.status !== "receiving" && current.status !== "complete") {
-          return "conflict" as const;
-        }
-        const raced = getChunk(context, current.id, chunkIndex);
-        if (raced) {
-          return raced.cipherLength === cipherLength &&
-            raced.cipherHash === cipherHash &&
-            raced.nonce.equals(nonce)
-            ? "raced" as const
-            : "chunk-conflict" as const;
-        }
-        context.db.sqlite
-          .prepare(`
-            INSERT INTO content_chunks (
-              upload_id, chunk_index, cipher_length, cipher_hash, file_cipher_path, nonce
-            ) VALUES (?, ?, ?, ?, ?, ?)
-          `)
-          .run(current.id, chunkIndex, cipherLength, cipherHash, stored.fileCipherPath, nonce);
-        const aggregate = contentAggregate(context, current.id);
-        if (aggregate.bytes > current.totalCipherBytes) {
-          context.db.sqlite
-            .prepare("UPDATE content_uploads SET status = 'invalid' WHERE id = ?")
-            .run(current.id);
-          return "manifest-mismatch" as const;
-        }
-        if (
-          aggregate.count === current.chunkCount &&
-          aggregate.bytes === current.totalCipherBytes
-        ) {
-          context.db.sqlite
-            .prepare(`
-              UPDATE content_uploads
-              SET status = 'complete', updated_at = CURRENT_TIMESTAMP
-              WHERE id = ?
-            `)
-            .run(current.id);
-        }
-        return "stored" as const;
-      })();
+      const outcome = await context.db.contentUploads.registerChunk({
+        sessionId: session.id,
+        userId: session.userId,
+        uploadId: upload.id,
+        chunkIndex,
+        cipherLength,
+        cipherHash,
+        nonce,
+        storageKey: stored.fileCipherPath
+      });
       if (outcome === "stored") {
         response.status(204).send();
         return;
@@ -374,57 +218,34 @@ export function createContentRouter(context: AppContext): Router {
   });
 
   router.delete("/content/uploads/:uploadId", async (request, response) => {
-    const session = requireSession(context.db, request, response);
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
-    const upload = getUpload(context, request.params.uploadId);
-    if (!upload || !canEditNote(getNoteAccess(context, upload.noteId, session.userId))) {
-      sendApiError(response, "not_found", "Content upload not found");
+    const aborted = await context.db.contentUploads.abort(
+      request.params.uploadId,
+      session.id,
+      session.userId
+    );
+    if (aborted.kind !== "aborted") {
+      const errors = {
+        "not-found": ["not_found", "Content upload not found"],
+        unauthorized: ["unauthorized", "Session expired"],
+        conflict: ["conflict", "Committed content cannot be aborted"]
+      } as const;
+      const [code, message] = errors[aborted.kind];
+      sendApiError(response, code, message);
       return;
     }
-    const aborted = context.db.sqlite.transaction(() => {
-      const current = getUpload(context, upload.id);
-      if (!current) {
-        return { allowed: false, storageKeys: [] as string[] };
-      }
-      if (current.status === "committed") {
-        return { allowed: false, storageKeys: [] as string[] };
-      }
-      const storageKeys: string[] = [];
-      if (reservesStorage(current.status)) {
-        releaseStorageBytes(context.db, current.ownerUserId, current.totalCipherBytes);
-        storageKeys.push(
-          ...(context.db.sqlite
-            .prepare(
-              "SELECT file_cipher_path AS storageKey FROM content_chunks WHERE upload_id = ?"
-            )
-            .all(current.id) as { storageKey: string }[])
-            .map(({ storageKey }) => storageKey)
-        );
-        context.db.sqlite
-          .prepare("DELETE FROM content_chunks WHERE upload_id = ?")
-          .run(current.id);
-        context.db.sqlite
-          .prepare(`
-            UPDATE content_uploads
-            SET status = 'aborted', updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-          `)
-          .run(current.id);
-      }
-      return { allowed: true, storageKeys };
-    })();
-    if (!aborted.allowed) {
-      sendApiError(response, "conflict", "Committed content cannot be aborted");
-      return;
-    }
-    await context.db.contentStorage.deleteUpload(upload.id, aborted.storageKeys);
+    await context.db.contentStorage.deleteUpload(
+      request.params.uploadId,
+      aborted.storageKeys
+    );
     response.status(204).send();
   });
 
-  router.post("/content/uploads/:uploadId/commit", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.post("/content/uploads/:uploadId/commit", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -469,34 +290,19 @@ export function createContentRouter(context: AppContext): Router {
   });
 
   router.get("/content/manifests/:manifestId/chunks/:chunkIndex", async (request, response) => {
-    const session = requireSession(context.db, request, response);
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
     const chunkIndex = Number(request.params.chunkIndex);
-    const row = context.db.sqlite
-      .prepare(`
-        SELECT
-          m.note_id AS noteId,
-          m.upload_id AS uploadId,
-          c.file_cipher_path AS storageKey,
-          c.cipher_length AS cipherLength,
-          c.cipher_hash AS cipherHash,
-          c.nonce
-        FROM content_manifests m
-        JOIN content_chunks c ON c.upload_id = m.upload_id
-        WHERE m.id = ? AND c.chunk_index = ?
-      `)
-      .get(request.params.manifestId, chunkIndex) as
-        | {
-            noteId: string;
-            storageKey: string;
-            cipherLength: number;
-            cipherHash: string;
-            nonce: Buffer;
-          }
-        | undefined;
-    if (!row || !canReadNote(getNoteAccess(context, row.noteId, session.userId))) {
+    const row = await context.db.contentUploads.findManifestChunk(
+      request.params.manifestId,
+      chunkIndex
+    );
+    const access = row
+      ? await context.db.noteAccess.find(row.noteId, session.userId)
+      : undefined;
+    if (!row || !canReadNote(access)) {
       sendApiError(response, "not_found", "Content chunk not found");
       return;
     }
@@ -511,71 +317,26 @@ export function createContentRouter(context: AppContext): Router {
     stream.pipe(response);
   });
 
-  router.get("/content/quota", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.get("/content/quota", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
-    response.json(
-      getStorageQuotaStatus(context.db, session.userId, context.config.storageQuotaBytes)
-    );
+    response.json(await context.db.contentUploads.quota(
+      session.userId,
+      context.config.storageQuotaBytes
+    ));
   });
 
   return router;
 }
 
-function getUpload(context: AppContext, uploadId: string): UploadRow | null {
-  return (context.db.sqlite
-    .prepare(`
-      SELECT
-        u.id,
-        u.update_id AS updateId,
-        u.note_id AS noteId,
-        u.section_id AS sectionId,
-        u.crypto_owner_id AS cryptoOwnerId,
-        u.key_epoch AS keyEpoch,
-        u.kind,
-        u.format_version AS formatVersion,
-        u.total_cipher_bytes AS totalCipherBytes,
-        u.chunk_count AS chunkCount,
-        u.manifest_hash AS manifestHash,
-        u.checkpoint_sequence_cutoff AS checkpointSequenceCutoff,
-        u.status,
-        u.expires_at AS expiresAt,
-        n.user_id AS ownerUserId
-      FROM content_uploads u
-      JOIN notes n ON n.id = u.note_id
-      WHERE u.id = ?
-    `)
-    .get(uploadId) as UploadRow | undefined) ?? null;
-}
-
-function getChunk(context: AppContext, uploadId: string, chunkIndex: number): ChunkRow | null {
-  return (context.db.sqlite
-    .prepare(`
-      SELECT
-        chunk_index AS chunkIndex,
-        cipher_length AS cipherLength,
-        cipher_hash AS cipherHash,
-        nonce,
-        file_cipher_path AS fileCipherPath
-      FROM content_chunks
-      WHERE upload_id = ? AND chunk_index = ?
-    `)
-    .get(uploadId, chunkIndex) as ChunkRow | undefined) ?? null;
-}
-
-function uploadStatus(context: AppContext, upload: UploadRow) {
-  const chunks = context.db.sqlite
-    .prepare(`
-      SELECT chunk_index AS chunkIndex
-      FROM content_chunks WHERE upload_id = ? ORDER BY chunk_index
-    `)
-    .all(upload.id) as { chunkIndex: number }[];
+function uploadStatus(view: ContentUploadView) {
+  const { upload } = view;
   return {
     uploadId: upload.id,
     status: upload.status,
-    receivedChunkIndexes: chunks.map(({ chunkIndex }) => chunkIndex),
+    receivedChunkIndexes: view.receivedChunkIndexes,
     reservedBytes:
       reservesStorage(upload.status)
         ? upload.totalCipherBytes
@@ -584,90 +345,23 @@ function uploadStatus(context: AppContext, upload: UploadRow) {
   };
 }
 
-function sameUpload(
-  upload: UploadRow,
-  payload: z.infer<typeof uploadBeginSchema>,
-  storedSectionId: string
-): boolean {
-  return (
-    upload.id === payload.uploadId &&
-    upload.updateId === payload.updateId &&
-    upload.noteId === payload.noteId &&
-    upload.sectionId === storedSectionId &&
-    upload.keyEpoch === payload.expectedKeyEpoch &&
-    upload.kind === payload.kind &&
-    upload.formatVersion === payload.formatVersion &&
-    upload.totalCipherBytes === payload.totalCipherBytes &&
-    upload.chunkCount === payload.chunkCount &&
-    upload.manifestHash === payload.manifestHash &&
-    upload.checkpointSequenceCutoff === (payload.checkpointSequenceCutoff ?? null)
-  );
-}
-
-function contentAggregate(context: AppContext, uploadId: string): { count: number; bytes: number } {
-  return context.db.sqlite
-    .prepare(`
-      SELECT COUNT(*) AS count, COALESCE(SUM(cipher_length), 0) AS bytes
-      FROM content_chunks WHERE upload_id = ?
-    `)
-    .get(uploadId) as { count: number; bytes: number };
-}
-
-function noteMutationState(
+async function cleanupUploadStorage(
   context: AppContext,
-  noteId: string
-): { isDeleted: number; keyEpoch: number; rotationFenced: number } | null {
-  return (
-    (context.db.sqlite
-      .prepare(`
-        SELECT
-          is_deleted AS isDeleted,
-          key_epoch AS keyEpoch,
-          rotation_fenced AS rotationFenced
-        FROM notes WHERE id = ?
-      `)
-      .get(noteId) as
-      | { isDeleted: number; keyEpoch: number; rotationFenced: number }
-      | undefined) ?? null
-  );
-}
-
-function expireUploadIfNeeded(context: AppContext, upload: UploadRow): void {
-  if (
-    !reservesStorage(upload.status) ||
-    Date.parse(upload.expiresAt) > Date.now()
-  ) {
-    return;
+  view: ContentUploadView | Extract<
+    BeginContentUploadOutcome,
+    { kind: "created" | "existing" }
+  >
+): Promise<void> {
+  if (view.cleanupStorageKeys.length > 0) {
+    await context.db.contentStorage.deleteUpload(
+      view.upload.id,
+      view.cleanupStorageKeys
+    );
   }
-  context.db.sqlite.transaction(() => {
-    const current = getUpload(context, upload.id);
-    if (!current || !reservesStorage(current.status)) {
-      return;
-    }
-    releaseStorageBytes(context.db, current.ownerUserId, current.totalCipherBytes);
-    context.db.sqlite
-      .prepare("DELETE FROM content_chunks WHERE upload_id = ?")
-      .run(current.id);
-    context.db.sqlite
-      .prepare("UPDATE content_uploads SET status = 'expired' WHERE id = ?")
-      .run(current.id);
-  })();
 }
 
-function reservesStorage(status: UploadRow["status"]): boolean {
+function reservesStorage(status: ContentUploadRecord["status"]): boolean {
   return status === "receiving" || status === "complete" || status === "invalid";
-}
-
-function activeSession(context: AppContext, sessionId: string): boolean {
-  const now = new Date().toISOString();
-  return Boolean(
-    context.db.sqlite
-      .prepare(`
-        SELECT id FROM sessions
-        WHERE id = ? AND idle_expires_at > ? AND absolute_expires_at > ?
-      `)
-      .get(sessionId, now, now)
-  );
 }
 
 function declaredLength(value: string | undefined): number | null {
@@ -688,9 +382,16 @@ function decodeNonce(value: string | undefined): Buffer | null {
 
 function sendGateError(
   response: Response,
-  kind: "not-found" | "conflict" | "rotation-pending" | "stale-epoch" | "storage-limit"
+  kind:
+    | "unauthorized"
+    | "not-found"
+    | "conflict"
+    | "rotation-pending"
+    | "stale-epoch"
+    | "storage-limit"
 ): void {
   const mapping = {
+    unauthorized: ["unauthorized", "Session expired"],
     "not-found": ["not_found", "Note not found"],
     conflict: ["conflict", "Content upload conflicts with note state"],
     "rotation-pending": ["rotation_pending", "Note-key rotation is pending"],
