@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
-import { Transform, type Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ServerConfig } from "../config.js";
+import type { AttachmentStorage } from "../attachments/storage.js";
 
 const STORAGE_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -14,12 +15,106 @@ export interface StoredContentChunk {
   fileCipherPath: string;
   cipherLength: number;
   cipherHash: string;
+  deleteOnMetadataRace?: true;
+}
+
+export interface ContentChunkWrite {
+  uploadId: string;
+  chunkIndex: number;
+  expectedLength: number;
+  expectedHash: string;
+  maxBytes: number;
+  source: Readable;
+}
+
+export interface ContentStorage {
+  write(input: ContentChunkWrite): Promise<StoredContentChunk>;
+  read(storageKey: string): Promise<Readable>;
+  delete(storageKey: string): Promise<void>;
+  deleteUpload(uploadId: string, storageKeys?: readonly string[]): Promise<void>;
 }
 
 export class ContentChunkConflictError extends Error {
   constructor() {
     super("Conflicting encrypted content chunk already exists");
     this.name = "ContentChunkConflictError";
+  }
+}
+
+export class LocalContentStorage implements ContentStorage {
+  constructor(private readonly config: ServerConfig) {}
+
+  write(input: ContentChunkWrite): Promise<StoredContentChunk> {
+    return writeEncryptedContentChunk(this.config, input);
+  }
+
+  read(storageKey: string): Promise<Readable> {
+    const identity = localStorageIdentity(storageKey);
+    return Promise.resolve(
+      readEncryptedContentChunk(
+        this.config,
+        identity.uploadId,
+        identity.chunkIndex
+      )
+    );
+  }
+
+  delete(storageKey: string): Promise<void> {
+    const identity = localStorageIdentity(storageKey);
+    return deleteEncryptedContentChunk(
+      this.config,
+      identity.uploadId,
+      identity.chunkIndex
+    );
+  }
+
+  deleteUpload(uploadId: string): Promise<void> {
+    return deleteUncommittedContentUpload(this.config, uploadId);
+  }
+}
+
+export class AttachmentBackedContentStorage implements ContentStorage {
+  constructor(private readonly objectStorage: AttachmentStorage) {}
+
+  async write(input: ContentChunkWrite): Promise<StoredContentChunk> {
+    validateStorageIdentity(input.uploadId);
+    validateChunkIndex(input.chunkIndex);
+    validateExpectedChunk(input);
+    const storageKey = crypto.randomUUID();
+    const hash = createHash("sha256");
+    const source = Readable.from(hashChunks(input.source, hash));
+    await this.objectStorage.write({
+      storageId: storageKey,
+      source,
+      expectedBytes: input.expectedLength,
+      maxBytes: input.maxBytes
+    });
+    const actualHash = hash.digest("hex");
+    if (actualHash !== input.expectedHash) {
+      await this.objectStorage.delete(storageKey);
+      throw new Error("Encrypted content chunk hash mismatch");
+    }
+    return {
+      fileCipherPath: storageKey,
+      cipherLength: input.expectedLength,
+      cipherHash: actualHash,
+      deleteOnMetadataRace: true
+    };
+  }
+
+  read(storageKey: string): Promise<Readable> {
+    return this.objectStorage.read(storageKey);
+  }
+
+  delete(storageKey: string): Promise<void> {
+    return this.objectStorage.delete(storageKey);
+  }
+
+  async deleteUpload(
+    _uploadId: string,
+    storageKeys: readonly string[] = []
+  ): Promise<void> {
+    await Promise.all(storageKeys.map((storageKey) => this.delete(storageKey)));
   }
 }
 
@@ -35,14 +130,7 @@ export function contentChunkPath(
 
 export async function writeEncryptedContentChunk(
   config: ServerConfig,
-  input: {
-    uploadId: string;
-    chunkIndex: number;
-    expectedLength: number;
-    expectedHash: string;
-    maxBytes: number;
-    source: Readable;
-  }
+  input: ContentChunkWrite
 ): Promise<StoredContentChunk> {
   const finalPath = contentChunkPath(config, input.uploadId, input.chunkIndex);
   validateExpectedChunk(input);
@@ -189,6 +277,34 @@ function validateChunkIndex(chunkIndex: number): void {
 
 function relativeChunkPath(uploadId: string, chunkIndex: number): string {
   return path.posix.join("content", uploadId, `${String(chunkIndex)}.bin`);
+}
+
+function localStorageIdentity(storageKey: string): {
+  uploadId: string;
+  chunkIndex: number;
+} {
+  const match = /^content\/([^/]+)\/(\d+)\.bin$/u.exec(storageKey);
+  if (!match) {
+    throw new Error("Invalid content storage key");
+  }
+  const uploadId = match[1]!;
+  const chunkIndex = Number(match[2]);
+  validateStorageIdentity(uploadId);
+  validateChunkIndex(chunkIndex);
+  return { uploadId, chunkIndex };
+}
+
+async function* hashChunks(
+  source: Readable,
+  hash: ReturnType<typeof createHash>
+): AsyncGenerator<Buffer> {
+  for await (const value of source) {
+    const chunk = Buffer.isBuffer(value)
+      ? value
+      : Buffer.from(value as Uint8Array);
+    hash.update(chunk);
+    yield chunk;
+  }
 }
 
 function parseChunkPath(filePath: string): { uploadId: string; chunkIndex: number } {

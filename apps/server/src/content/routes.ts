@@ -15,11 +15,7 @@ import {
   reserveStorageBytes
 } from "./quota.js";
 import {
-  ContentChunkConflictError,
-  deleteEncryptedContentChunk,
-  deleteUncommittedContentUpload,
-  readEncryptedContentChunk,
-  writeEncryptedContentChunk
+  ContentChunkConflictError
 } from "./storage.js";
 
 const UUID = z.uuid();
@@ -283,7 +279,7 @@ export function createContentRouter(context: AppContext): Router {
       return;
     }
     try {
-      const stored = await writeEncryptedContentChunk(context.config, {
+      const stored = await context.db.contentStorage.write({
         uploadId: upload.id,
         chunkIndex,
         expectedLength: cipherLength,
@@ -320,7 +316,7 @@ export function createContentRouter(context: AppContext): Router {
           return raced.cipherLength === cipherLength &&
             raced.cipherHash === cipherHash &&
             raced.nonce.equals(nonce)
-            ? "stored" as const
+            ? "raced" as const
             : "chunk-conflict" as const;
         }
         context.db.sqlite
@@ -355,7 +351,14 @@ export function createContentRouter(context: AppContext): Router {
         response.status(204).send();
         return;
       }
-      await deleteEncryptedContentChunk(context.config, upload.id, chunkIndex);
+      if (outcome === "raced") {
+        if (stored.deleteOnMetadataRace) {
+          await context.db.contentStorage.delete(stored.fileCipherPath);
+        }
+        response.status(204).send();
+        return;
+      }
+      await context.db.contentStorage.delete(stored.fileCipherPath);
       sendChunkOutcome(response, outcome);
     } catch (error) {
       if (error instanceof ContentChunkConflictError) {
@@ -383,13 +386,22 @@ export function createContentRouter(context: AppContext): Router {
     const aborted = context.db.sqlite.transaction(() => {
       const current = getUpload(context, upload.id);
       if (!current) {
-        return false;
+        return { allowed: false, storageKeys: [] as string[] };
       }
       if (current.status === "committed") {
-        return false;
+        return { allowed: false, storageKeys: [] as string[] };
       }
+      const storageKeys: string[] = [];
       if (reservesStorage(current.status)) {
         releaseStorageBytes(context.db, current.ownerUserId, current.totalCipherBytes);
+        storageKeys.push(
+          ...(context.db.sqlite
+            .prepare(
+              "SELECT file_cipher_path AS storageKey FROM content_chunks WHERE upload_id = ?"
+            )
+            .all(current.id) as { storageKey: string }[])
+            .map(({ storageKey }) => storageKey)
+        );
         context.db.sqlite
           .prepare("DELETE FROM content_chunks WHERE upload_id = ?")
           .run(current.id);
@@ -401,13 +413,13 @@ export function createContentRouter(context: AppContext): Router {
           `)
           .run(current.id);
       }
-      return true;
+      return { allowed: true, storageKeys };
     })();
-    if (!aborted) {
+    if (!aborted.allowed) {
       sendApiError(response, "conflict", "Committed content cannot be aborted");
       return;
     }
-    await deleteUncommittedContentUpload(context.config, upload.id);
+    await context.db.contentStorage.deleteUpload(upload.id, aborted.storageKeys);
     response.status(204).send();
   });
 
@@ -456,7 +468,7 @@ export function createContentRouter(context: AppContext): Router {
     sendManifestOutcome(response, outcome);
   });
 
-  router.get("/content/manifests/:manifestId/chunks/:chunkIndex", (request, response) => {
+  router.get("/content/manifests/:manifestId/chunks/:chunkIndex", async (request, response) => {
     const session = requireSession(context.db, request, response);
     if (!session) {
       return;
@@ -467,7 +479,7 @@ export function createContentRouter(context: AppContext): Router {
         SELECT
           m.note_id AS noteId,
           m.upload_id AS uploadId,
-          c.chunk_index AS chunkIndex,
+          c.file_cipher_path AS storageKey,
           c.cipher_length AS cipherLength,
           c.cipher_hash AS cipherHash,
           c.nonce
@@ -478,8 +490,7 @@ export function createContentRouter(context: AppContext): Router {
       .get(request.params.manifestId, chunkIndex) as
         | {
             noteId: string;
-            uploadId: string;
-            chunkIndex: number;
+            storageKey: string;
             cipherLength: number;
             cipherHash: string;
             nonce: Buffer;
@@ -495,7 +506,7 @@ export function createContentRouter(context: AppContext): Router {
       "x-fortnote-cipher-hash": row.cipherHash,
       "x-fortnote-nonce": row.nonce.toString("base64")
     });
-    const stream = readEncryptedContentChunk(context.config, row.uploadId, row.chunkIndex);
+    const stream = await context.db.contentStorage.read(row.storageKey);
     stream.on("error", () => response.destroy());
     stream.pipe(response);
   });

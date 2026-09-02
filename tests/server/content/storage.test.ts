@@ -19,7 +19,9 @@ import {
   reconcileStorageAccountsPage
 } from "@server/content/maintenance.js";
 import { contentManifestHash } from "@server/content/manifests.js";
+import type { AttachmentStorage } from "@server/attachments/storage.js";
 import {
+  AttachmentBackedContentStorage,
   ContentChunkConflictError,
   contentChunkPath,
   deleteUncommittedContentUpload,
@@ -40,6 +42,57 @@ afterEach(() => {
 });
 
 describe("encrypted content chunk storage", () => {
+  it("stores content through a database- or object-backed attachment store", async () => {
+    const objects = new Map<string, Buffer>();
+    const objectStorage: AttachmentStorage = {
+      async write(input) {
+        const bytes = await streamBytes(input.source);
+        if (bytes.length !== input.expectedBytes) {
+          throw new Error("size mismatch");
+        }
+        objects.set(input.storageId, bytes);
+      },
+      read(storageId) {
+        const bytes = objects.get(storageId);
+        if (!bytes) {
+          throw new Error("missing object");
+        }
+        return Promise.resolve(Readable.from(bytes));
+      },
+      delete(storageId) {
+        objects.delete(storageId);
+        return Promise.resolve();
+      }
+    };
+    const storage = new AttachmentBackedContentStorage(objectStorage);
+    const bytes = Buffer.from("database-backed encrypted content");
+    const stored = await storage.write({
+      uploadId: crypto.randomUUID(),
+      chunkIndex: 0,
+      expectedLength: bytes.length,
+      expectedHash: digest(bytes),
+      maxBytes: 1024,
+      source: Readable.from(bytes)
+    });
+
+    expect(stored.fileCipherPath).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(await streamBytes(await storage.read(stored.fileCipherPath))).toEqual(bytes);
+    await storage.deleteUpload(crypto.randomUUID(), [stored.fileCipherPath]);
+    expect(objects.size).toBe(0);
+
+    await expect(
+      storage.write({
+        uploadId: crypto.randomUUID(),
+        chunkIndex: 1,
+        expectedLength: bytes.length,
+        expectedHash: "0".repeat(64),
+        maxBytes: 1024,
+        source: Readable.from(bytes)
+      })
+    ).rejects.toThrow("hash mismatch");
+    expect(objects.size).toBe(0);
+  });
+
   it("streams, verifies, and atomically publishes a chunk", async () => {
     const config = testConfig();
     const uploadId = crypto.randomUUID();

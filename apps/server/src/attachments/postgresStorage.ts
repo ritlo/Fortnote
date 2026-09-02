@@ -103,6 +103,17 @@ export class PostgresAttachmentStorage implements AttachmentStorage {
                   schema.attachmentObjects.storageKey
                 )
               )
+          ),
+          notExists(
+            this.database
+              .select({ one: sql`1` })
+              .from(schema.contentChunks)
+              .where(
+                eq(
+                  schema.contentChunks.storageKey,
+                  schema.attachmentObjects.storageKey
+                )
+              )
           )
         )
       );
