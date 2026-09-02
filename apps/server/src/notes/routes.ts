@@ -1,12 +1,9 @@
-import { and, eq, sql } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
-import * as schema from "../db/schema.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { requireSession, requireSessionAsync } from "../auth/session.js";
 import {
-  canEditNote,
   canOwnNote,
   canReadNote,
   getNoteAccess,
@@ -168,25 +165,12 @@ const updateMemberSchema = z.object({
   role: memberRoleSchema
 });
 
-function folderBelongsToUser(
-  context: AppContext,
-  userId: string,
-  folderId: string | null | undefined
-): boolean {
-  if (!folderId) {
-    return true;
-  }
-
-  const row = context.db.orm
-    .select({ id: schema.folders.id })
-    .from(schema.folders)
-    .where(and(eq(schema.folders.id, folderId), eq(schema.folders.userId, userId)))
-    .get();
-  return Boolean(row);
-}
-
 function publishEventCursors(context: AppContext, cursors: number[]): void {
   context.realtime?.publishEvents(cursors);
+}
+
+function responseTimestamp(value: string): string {
+  return value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
 }
 
 export function createNotesRouter(context: AppContext): Router {
@@ -203,8 +187,8 @@ export function createNotesRouter(context: AppContext): Router {
     response.json({ notes });
   });
 
-  router.post("/", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.post("/", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -215,63 +199,43 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const folderId = parsed.data.folderId ?? null;
-    if (!folderBelongsToUser(context, session.userId, folderId)) {
+    const payload = parsed.data;
+    const folderId = payload.folderId ?? null;
+    const rootSectionId = "rootSectionId" in payload ? payload.rootSectionId : null;
+    const clientInstanceId = requestClientInstanceId(request);
+    const outcome = await context.db.noteMutations.create({
+      noteId: payload.id,
+      actorUserId: session.userId,
+      folderId,
+      title: "title" in payload ? payload.title : "",
+      titleCipher: "titleCipher" in payload ? payload.titleCipher : null,
+      titleNonce: "titleCipher" in payload ? payload.titleNonce : null,
+      titleFormatVersion:
+        "titleCipher" in payload ? payload.titleFormatVersion : null,
+      encryptedNoteKey: payload.encryptedNoteKey,
+      noteKeyNonce: payload.noteKeyNonce,
+      noteKeyFormatVersion:
+        "titleCipher" in payload ? payload.noteKeyFormatVersion : 1,
+      contentCipher: "contentCipher" in payload ? payload.contentCipher : "",
+      contentNonce: "contentCipher" in payload ? payload.contentNonce : "",
+      contentLength: "contentCipher" in payload ? payload.contentLength : 0,
+      rootSectionId,
+      ...(clientInstanceId ? { clientInstanceId } : {})
+    });
+    if (outcome.kind === "invalid-folder") {
       sendApiError(response, "bad_request", "Invalid folder");
       return;
     }
-
-    const payload = parsed.data;
-    const cursor = context.db.orm.transaction((tx) => {
-      tx.insert(schema.notes).values({
-        id: payload.id,
-        userId: session.userId,
-        cryptoOwnerId: session.userId,
-        folderId,
-        title: "title" in payload ? payload.title : "",
-        titleCipher: "titleCipher" in payload ? payload.titleCipher : null,
-        titleNonce: "titleCipher" in payload ? payload.titleNonce : null,
-        titleFormatVersion: "titleCipher" in payload ? payload.titleFormatVersion : null,
-        encryptedNoteKey: payload.encryptedNoteKey,
-        noteKeyNonce: payload.noteKeyNonce,
-        noteKeyFormatVersion: "titleCipher" in payload ? payload.noteKeyFormatVersion : 1,
-        contentCipher: "contentCipher" in payload ? payload.contentCipher : "",
-        contentNonce: "contentCipher" in payload ? payload.contentNonce : "",
-        contentLength: "contentCipher" in payload ? payload.contentLength : 0,
-        rootSectionId: "rootSectionId" in payload ? payload.rootSectionId : null,
-        contentUpdatedAt: sql`CURRENT_TIMESTAMP`
-      }).run();
-      if ("rootSectionId" in payload) {
-        tx.insert(schema.noteSections).values({
-          id: payload.rootSectionId,
-          noteId: payload.id,
-          createdEpoch: 1
-        }).run();
-      }
-      tx.insert(schema.noteMemberships).values({
-        noteId: parsed.data.id,
-        userId: session.userId,
-        role: "owner",
-        status: "active"
-      }).run();
-      return writeRequestEvent(context, request, {
-        noteId: parsed.data.id,
-        actorUserId: session.userId,
-        eventType: "note.created",
-        noteVersion: 1
-      }, tx);
-    });
-    publishEventCursors(context, [cursor]);
+    publishEventCursors(context, [outcome.eventCursor]);
 
     response.status(201).json({
-      id: parsed.data.id,
+      id: payload.id,
       version: 1,
       rootVersion: 1,
       keyEpoch: 1,
-      rootSectionId: "rootSectionId" in payload ? payload.rootSectionId : null
+      rootSectionId
     });
   });
-
   router.get("/:id", async (request, response) => {
     const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
@@ -811,8 +775,8 @@ export function createNotesRouter(context: AppContext): Router {
       keyEpoch: outcome.keyEpoch
     });
   });
-  router.put("/:id", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.put("/:id", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -823,244 +787,85 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
+    const clientInstanceId = requestClientInstanceId(request);
     if ("rootVersion" in parsed.data) {
-      const protectedUpdate = parsed.data;
-      const metadataUpdate = context.db.orm.transaction((tx) => {
-        const current = tx
-          .select({
-            noteId: schema.notes.id,
-            folderId: schema.notes.folderId,
-            rootSectionId: schema.notes.rootSectionId,
-            rootVersion: schema.notes.rootVersion,
-            keyEpoch: schema.notes.keyEpoch,
-            isDeleted: schema.notes.isDeleted,
-            rotationFenced: schema.notes.rotationFenced,
-            role: schema.noteMemberships.role,
-            status: schema.noteMemberships.status
-          })
-          .from(schema.notes)
-          .innerJoin(
-            schema.noteMemberships,
-            eq(schema.noteMemberships.noteId, schema.notes.id)
-          )
-          .where(
-            and(
-              eq(schema.notes.id, request.params.id),
-              eq(schema.noteMemberships.userId, session.userId)
-            )
-          )
-          .get();
-        if (
-          current?.status !== "active" ||
-          (current.role !== "owner" && current.role !== "editor")
-        ) {
-          return { kind: "not-found" as const };
-        }
-        if (
-          current.isDeleted ||
-          current.rotationFenced ||
-          current.rootVersion !== protectedUpdate.rootVersion ||
-          current.keyEpoch !== protectedUpdate.keyEpoch
-        ) {
-          return { kind: "conflict" as const };
-        }
-        if (
-          protectedUpdate.encryptedNoteKey !== undefined &&
-          (current.role !== "owner" ||
-            (current.rootSectionId !== null &&
-              current.rootSectionId !== protectedUpdate.rootSectionId))
-        ) {
-          return { kind: "conflict" as const };
-        }
-        const folderId = protectedUpdate.folderId ?? current.folderId;
-        if (
-          current.role !== "owner" &&
-          protectedUpdate.folderId !== undefined &&
-          protectedUpdate.folderId !== current.folderId
-        ) {
-          return { kind: "invalid-folder" as const };
-        }
-        if (current.role === "owner" && folderId) {
-          const folder = tx
-            .select({ id: schema.folders.id })
-            .from(schema.folders)
-            .where(
-              and(
-                eq(schema.folders.id, folderId),
-                eq(schema.folders.userId, session.userId)
-              )
-            )
-            .get();
-          if (!folder) {
-            return { kind: "invalid-folder" as const };
-          }
-        }
-
-        const updateResult = tx
-          .update(schema.notes)
-          .set({
-            folderId,
-            title: protectedUpdate.titleCipher ? "" : undefined,
-            titleCipher: protectedUpdate.titleCipher,
-            titleNonce: protectedUpdate.titleNonce,
-            titleFormatVersion: protectedUpdate.titleFormatVersion,
-            encryptedNoteKey: protectedUpdate.encryptedNoteKey,
-            noteKeyNonce: protectedUpdate.noteKeyNonce,
-            noteKeyFormatVersion: protectedUpdate.noteKeyFormatVersion,
-            rootSectionId: protectedUpdate.rootSectionId,
-            rootVersion: sql`${schema.notes.rootVersion} + 1`,
-            version: sql`${schema.notes.version} + 1`,
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(
-            and(
-              eq(schema.notes.id, current.noteId),
-              eq(schema.notes.rootVersion, protectedUpdate.rootVersion),
-              eq(schema.notes.keyEpoch, protectedUpdate.keyEpoch),
-              eq(schema.notes.rotationFenced, false)
-            )
-          )
-          .run();
-        if (updateResult.changes !== 1) {
-          return { kind: "conflict" as const };
-        }
-        if (protectedUpdate.rootSectionId) {
-          tx.insert(schema.noteSections)
-            .values({
-              id: protectedUpdate.rootSectionId,
-              noteId: current.noteId,
-              createdEpoch: current.keyEpoch
-            })
-            .onConflictDoNothing()
-            .run();
-        }
-        const nextRootVersion = current.rootVersion + 1;
-        const eventCursor = writeRequestEvent(
-          context,
-          request,
-          {
-            noteId: current.noteId,
-            actorUserId: session.userId,
-            eventType: "note.updated",
-            noteVersion: nextRootVersion
-          },
-          tx
-        );
-        const saved = tx
-          .select({ updatedAt: schema.notes.updatedAt })
-          .from(schema.notes)
-          .where(eq(schema.notes.id, current.noteId))
-          .get();
-        return saved
-          ? {
-              kind: "saved" as const,
-              eventCursor,
-              rootVersion: nextRootVersion,
-              updatedAt: saved.updatedAt
-            }
-          : { kind: "conflict" as const };
+      const update = parsed.data;
+      const outcome = await context.db.noteMutations.updateProtected({
+        noteId: request.params.id,
+        actorUserId: session.userId,
+        expectedRootVersion: update.rootVersion,
+        expectedKeyEpoch: update.keyEpoch,
+        folderId: update.folderId,
+        titleCipher: update.titleCipher,
+        titleNonce: update.titleNonce,
+        titleFormatVersion: update.titleFormatVersion,
+        encryptedNoteKey: update.encryptedNoteKey,
+        noteKeyNonce: update.noteKeyNonce,
+        noteKeyFormatVersion: update.noteKeyFormatVersion,
+        rootSectionId: update.rootSectionId,
+        ...(clientInstanceId ? { clientInstanceId } : {})
       });
-      if (metadataUpdate.kind === "not-found") {
+      if (outcome.kind === "not-found") {
         sendApiError(response, "not_found", "Note not found");
         return;
       }
-      if (metadataUpdate.kind === "invalid-folder") {
+      if (outcome.kind === "invalid-folder") {
         sendApiError(response, "bad_request", "Invalid folder");
         return;
       }
-      if (metadataUpdate.kind === "conflict") {
+      if (outcome.kind === "conflict") {
         sendApiError(response, "conflict", "Note metadata changed");
         return;
       }
-      publishEventCursors(context, [metadataUpdate.eventCursor]);
+      publishEventCursors(context, [outcome.eventCursor]);
       response.json({
         id: request.params.id,
-        rootVersion: metadataUpdate.rootVersion,
-        keyEpoch: protectedUpdate.keyEpoch,
-        updatedAt: `${metadataUpdate.updatedAt.replace(" ", "T")}Z`
+        rootVersion: outcome.rootVersion,
+        keyEpoch: outcome.keyEpoch,
+        updatedAt: responseTimestamp(outcome.updatedAt)
       });
       return;
     }
 
-    const legacyUpdate = parsed.data;
-
-    const access = getNoteAccess(context, request.params.id, session.userId);
-    if (!canEditNote(access)) {
+    const update = parsed.data;
+    const outcome = await context.db.noteMutations.updateLegacy({
+      noteId: request.params.id,
+      actorUserId: session.userId,
+      expectedVersion: update.version,
+      folderId: update.folderId,
+      title: update.title,
+      contentCipher: update.contentCipher,
+      contentNonce: update.contentNonce,
+      contentLength: update.contentLength,
+      ...(clientInstanceId ? { clientInstanceId } : {})
+    });
+    if (outcome.kind === "not-found") {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
-    if (access.isDeleted) {
+    if (outcome.kind === "deleted") {
       sendApiError(response, "conflict", "Restore note before updating");
       return;
     }
-    if (access.version !== legacyUpdate.version) {
+    if (outcome.kind === "conflict") {
       sendApiError(response, "conflict", "Note version conflict");
       return;
     }
-
-    const folderId = legacyUpdate.folderId ?? access.folderId;
-    if (
-      access.role !== "owner" &&
-      legacyUpdate.folderId !== undefined &&
-      legacyUpdate.folderId !== access.folderId
-    ) {
+    if (outcome.kind === "shared-folder") {
       sendApiError(response, "bad_request", "Shared notes cannot be moved");
       return;
     }
-    if (access.role === "owner" && !folderBelongsToUser(context, session.userId, folderId)) {
+    if (outcome.kind === "invalid-folder") {
       sendApiError(response, "bad_request", "Invalid folder");
       return;
     }
-
-    const title = legacyUpdate.title ?? undefined;
-    const nextVersion = access.version + 1;
-    const update = context.db.orm.transaction((tx) => {
-      const updateResult = tx.update(schema.notes)
-        .set({
-          folderId,
-          title,
-          contentCipher: legacyUpdate.contentCipher,
-          contentNonce: legacyUpdate.contentNonce,
-          contentLength: legacyUpdate.contentLength,
-          contentUpdatedAt: sql`CURRENT_TIMESTAMP`,
-          version: sql`${schema.notes.version} + 1`,
-          updatedAt: sql`CURRENT_TIMESTAMP`
-        })
-        .where(and(
-          eq(schema.notes.id, access.noteId),
-          eq(schema.notes.version, legacyUpdate.version)
-        ))
-        .run();
-      if (updateResult.changes !== 1) {
-        return null;
-      }
-      const eventCursor = writeRequestEvent(context, request, {
-        noteId: access.noteId,
-        actorUserId: session.userId,
-        eventType: "note.updated",
-        noteVersion: nextVersion
-      }, tx);
-      const saved = tx
-        .select({ updatedAt: schema.notes.updatedAt })
-        .from(schema.notes)
-        .where(eq(schema.notes.id, access.noteId))
-        .get();
-
-      return saved ? { eventCursor, updatedAt: saved.updatedAt } : null;
-    });
-    if (update === null) {
-      sendApiError(response, "conflict", "Note version conflict");
-      return;
-    }
-    publishEventCursors(context, [update.eventCursor]);
-
+    publishEventCursors(context, [outcome.eventCursor]);
     response.json({
-      id: access.noteId,
-      version: nextVersion,
-      updatedAt: `${update.updatedAt.replace(" ", "T")}Z`
+      id: request.params.id,
+      version: outcome.version,
+      updatedAt: responseTimestamp(outcome.updatedAt)
     });
   });
-
   router.delete("/:id", async (request, response) => {
     const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
