@@ -1,91 +1,22 @@
-import { fromCanonicalBase64, type CrdtBinaryHeader } from "@fortnote/shared";
+import { fromCanonicalBase64 } from "@fortnote/shared";
 import { and, eq, gt, lte, ne, sql } from "drizzle-orm";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import * as schema from "../db/schema.js";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import * as schema from "../db/postgres/schema.js";
+import {
+  matchingUpdate,
+  paginateHistory,
+  type BinaryUpdateOutcome,
+  type ListSectionHistoryInput,
+  type PersistBinaryUpdateInput,
+  type SectionHistoryRepository,
+  type SectionHistoryRow
+} from "./history.js";
 import {
   ROOT_CRDT_SECTION_ID,
   storageSectionId
 } from "../notes/sections.js";
 
-export type BinaryUpdateOutcome =
-  | { status: "inserted" | "already-present"; serverSequence: number }
-  | {
-      status: "rejected";
-      code: "forbidden" | "rotation-pending" | "stale-epoch" | "storage-limit";
-    };
-
-interface SectionHistoryEntryBase {
-  updateId: string;
-  serverSequence: number;
-  cryptoOwnerId: string;
-  keyEpoch: number;
-  formatVersion: number;
-  kind: "update" | "checkpoint" | "root-update";
-  checkpointSequenceCutoff: number | null;
-}
-
-export interface InlineSectionHistoryEntry extends SectionHistoryEntryBase {
-  storage: "inline";
-  inlineCipher: Buffer;
-  nonce: Buffer;
-}
-
-export interface ManifestSectionHistoryEntry extends SectionHistoryEntryBase {
-  storage: "manifest";
-  manifestId: string;
-  uploadId: string;
-  totalCipherBytes: number;
-  chunkCount: number;
-  manifestHash: string;
-}
-
-export type SectionHistoryEntry =
-  | InlineSectionHistoryEntry
-  | ManifestSectionHistoryEntry;
-
-export interface SectionHistoryRow extends SectionHistoryEntryBase {
-  inlineCipher: Buffer | null;
-  nonce: Buffer | null;
-  manifestId: string | null;
-  uploadId: string | null;
-  totalCipherBytes: number | null;
-  chunkCount: number | null;
-  manifestHash: string | null;
-}
-
-export interface SectionHistoryPage {
-  entries: SectionHistoryEntry[];
-  hasMore: boolean;
-  nextSequence: number;
-}
-
-export interface PersistBinaryUpdateInput {
-  sessionId: string;
-  userId: string;
-  header: CrdtBinaryHeader;
-  cipher: Uint8Array;
-}
-
-export interface ListSectionHistoryInput {
-  noteId: string;
-  sectionId: string;
-  keyEpoch: number;
-  afterSequence: number;
-  maxItems: number;
-  maxBytes: number;
-}
-
-export interface SectionHistoryRepository {
-  persist(input: PersistBinaryUpdateInput): Promise<BinaryUpdateOutcome>;
-  list(input: ListSectionHistoryInput): Promise<SectionHistoryPage | null>;
-}
-
-interface ExistingUpdateRow {
-  noteId: string;
-  sectionId: string;
-  keyEpoch: number;
-  serverSequence: number;
-}
+type PostgresDatabase = NodePgDatabase<typeof schema>;
 
 interface HistoryAccess {
   cryptoOwnerId: string;
@@ -104,34 +35,32 @@ interface StoredSection {
   isDeleted: boolean;
 }
 
-type SqliteDatabase = BetterSQLite3Database<typeof schema>;
-
-function activeSession(
-  database: Pick<SqliteDatabase, "select">,
+async function activeSession(
+  database: Pick<PostgresDatabase, "select">,
   sessionId: string
-): boolean {
+): Promise<boolean> {
   const now = new Date().toISOString();
-  return Boolean(
-    database
-      .select({ id: schema.sessions.id })
-      .from(schema.sessions)
-      .where(
-        and(
-          eq(schema.sessions.id, sessionId),
-          gt(schema.sessions.idleExpiresAt, now),
-          gt(schema.sessions.absoluteExpiresAt, now)
-        )
+  const sessions = await database
+    .select({ id: schema.sessions.id })
+    .from(schema.sessions)
+    .where(
+      and(
+        eq(schema.sessions.id, sessionId),
+        gt(schema.sessions.idleExpiresAt, now),
+        gt(schema.sessions.absoluteExpiresAt, now)
       )
-      .get()
-  );
+    )
+    .limit(1)
+    .for("key share");
+  return Boolean(sessions[0]);
 }
 
-function historyAccess(
-  database: Pick<SqliteDatabase, "select">,
+async function historyAccess(
+  database: Pick<PostgresDatabase, "select">,
   noteId: string,
   userId: string
-): HistoryAccess | null {
-  return database
+): Promise<HistoryAccess | null> {
+  const rows = await database
     .select({
       cryptoOwnerId: schema.notes.cryptoOwnerId,
       keyEpoch: schema.notes.keyEpoch,
@@ -151,32 +80,35 @@ function historyAccess(
         eq(schema.noteMemberships.userId, userId)
       )
     )
-    .get() ?? null;
+    .limit(1)
+    .for("update", { of: [schema.notes, schema.noteMemberships] });
+  return rows[0] ?? null;
 }
 
-function ensureSection(
-  database: Pick<SqliteDatabase, "select" | "insert">,
+async function ensureSection(
+  database: Pick<PostgresDatabase, "select" | "insert">,
   noteId: string,
   sectionId: string,
   keyEpoch: number
-): StoredSection | null {
+): Promise<StoredSection | null> {
   const storedId = storageSectionId(noteId, sectionId);
   if (sectionId === ROOT_CRDT_SECTION_ID) {
-    const note = database
+    const notes = await database
       .select({ keyEpoch: schema.notes.keyEpoch })
       .from(schema.notes)
       .where(eq(schema.notes.id, noteId))
-      .get();
+      .limit(1)
+      .for("update");
+    const note = notes[0];
     if (!note) {
       return null;
     }
-    database
+    await database
       .insert(schema.noteSections)
       .values({ id: noteId, noteId, createdEpoch: note.keyEpoch })
-      .onConflictDoNothing()
-      .run();
+      .onConflictDoNothing();
   }
-  const section = database
+  const sections = await database
     .select({
       id: schema.noteSections.id,
       noteId: schema.noteSections.noteId,
@@ -191,24 +123,26 @@ function ensureSection(
         eq(schema.noteSections.noteId, noteId)
       )
     )
-    .get();
+    .limit(1)
+    .for("update");
+  const section = sections[0];
   if (!section || section.isDeleted || section.createdEpoch > keyEpoch) {
     return null;
   }
   return section;
 }
 
-export class SqliteSectionHistoryRepository
+export class PostgresSectionHistoryRepository
   implements SectionHistoryRepository
 {
-  constructor(private readonly orm: SqliteDatabase) {}
+  constructor(private readonly orm: PostgresDatabase) {}
 
   persist(input: PersistBinaryUpdateInput): Promise<BinaryUpdateOutcome> {
-    const outcome = this.orm.transaction((transaction) => {
-      if (!activeSession(transaction, input.sessionId)) {
+    return this.orm.transaction(async (transaction) => {
+      if (!await activeSession(transaction, input.sessionId)) {
         return { status: "rejected", code: "forbidden" } as const;
       }
-      const access = historyAccess(
+      const access = await historyAccess(
         transaction,
         input.header.noteId,
         input.userId
@@ -228,7 +162,7 @@ export class SqliteSectionHistoryRepository
       ) {
         return { status: "rejected", code: "forbidden" } as const;
       }
-      const section = ensureSection(
+      const section = await ensureSection(
         transaction,
         input.header.noteId,
         input.header.sectionId,
@@ -251,7 +185,7 @@ export class SqliteSectionHistoryRepository
         input.header.noteId,
         input.header.sectionId
       );
-      const existing = transaction
+      const existingRows = await transaction
         .select({
           noteId: schema.sectionUpdates.noteId,
           sectionId: schema.sectionUpdates.sectionId,
@@ -260,13 +194,15 @@ export class SqliteSectionHistoryRepository
         })
         .from(schema.sectionUpdates)
         .where(eq(schema.sectionUpdates.updateId, input.header.updateId))
-        .get();
+        .limit(1)
+        .for("update");
+      const existing = existingRows[0];
       if (existing) {
         return matchingUpdate(existing, input.header, storedSectionId);
       }
 
       const nextSequence = section.currentSequence + 1;
-      transaction
+      const inserted = await transaction
         .insert(schema.sectionUpdates)
         .values({
           updateId: input.header.updateId,
@@ -282,8 +218,25 @@ export class SqliteSectionHistoryRepository
           checkpointSequenceCutoff:
             input.header.checkpointSequenceCutoff ?? null
         })
-        .run();
-      transaction
+        .onConflictDoNothing()
+        .returning({ updateId: schema.sectionUpdates.updateId });
+      if (inserted.length !== 1) {
+        const duplicates = await transaction
+          .select({
+            noteId: schema.sectionUpdates.noteId,
+            sectionId: schema.sectionUpdates.sectionId,
+            keyEpoch: schema.sectionUpdates.keyEpoch,
+            serverSequence: schema.sectionUpdates.serverSequence
+          })
+          .from(schema.sectionUpdates)
+          .where(eq(schema.sectionUpdates.updateId, input.header.updateId))
+          .limit(1);
+        const duplicate = duplicates[0];
+        return duplicate
+          ? matchingUpdate(duplicate, input.header, storedSectionId)
+          : { status: "rejected", code: "forbidden" } as const;
+      }
+      const advanced = await transaction
         .update(schema.noteSections)
         .set({
           currentSequence: nextSequence,
@@ -292,12 +245,16 @@ export class SqliteSectionHistoryRepository
         .where(
           and(
             eq(schema.noteSections.id, storedSectionId),
-            eq(schema.noteSections.noteId, input.header.noteId)
+            eq(schema.noteSections.noteId, input.header.noteId),
+            eq(schema.noteSections.currentSequence, section.currentSequence)
           )
         )
-        .run();
+        .returning({ id: schema.noteSections.id });
+      if (advanced.length !== 1) {
+        throw new Error("Section sequence changed while locked");
+      }
       if (checkpointCutoff !== undefined && checkpointCutoff > 0) {
-        transaction
+        await transaction
           .delete(schema.sectionUpdates)
           .where(
             and(
@@ -310,17 +267,15 @@ export class SqliteSectionHistoryRepository
               lte(schema.sectionUpdates.serverSequence, checkpointCutoff),
               ne(schema.sectionUpdates.updateId, input.header.updateId)
             )
-          )
-          .run();
+          );
       }
       return { status: "inserted", serverSequence: nextSequence } as const;
     });
-    return Promise.resolve(outcome);
   }
 
-  list(input: ListSectionHistoryInput): Promise<SectionHistoryPage | null> {
-    const page = this.orm.transaction((transaction) => {
-      const section = ensureSection(
+  list(input: ListSectionHistoryInput) {
+    return this.orm.transaction(async (transaction) => {
+      const section = await ensureSection(
         transaction,
         input.noteId,
         input.sectionId,
@@ -329,7 +284,7 @@ export class SqliteSectionHistoryRepository
       if (!section) {
         return null;
       }
-      const rows = transaction
+      const rawRows = await transaction
         .select({
           updateId: schema.sectionUpdates.updateId,
           serverSequence: schema.sectionUpdates.serverSequence,
@@ -364,87 +319,12 @@ export class SqliteSectionHistoryRepository
           )
         )
         .orderBy(schema.sectionUpdates.serverSequence)
-        .limit(input.maxItems + 1)
-        .all() as SectionHistoryRow[];
+        .limit(input.maxItems + 1);
+      const rows: SectionHistoryRow[] = rawRows.map((row) => ({
+        ...row,
+        kind: row.kind as SectionHistoryRow["kind"]
+      }));
       return paginateHistory(rows, input);
     });
-    return Promise.resolve(page);
   }
-}
-
-export function matchingUpdate(
-  existing: ExistingUpdateRow,
-  header: CrdtBinaryHeader,
-  storedSectionId: string
-): BinaryUpdateOutcome {
-  return existing.noteId === header.noteId &&
-    existing.sectionId === storedSectionId &&
-    existing.keyEpoch === header.expectedKeyEpoch
-    ? { status: "already-present", serverSequence: existing.serverSequence }
-    : { status: "rejected", code: "forbidden" };
-}
-
-export function paginateHistory(
-  rows: SectionHistoryRow[],
-  limits: Pick<ListSectionHistoryInput, "afterSequence" | "maxItems" | "maxBytes">
-): SectionHistoryPage {
-  const hasMoreItems = rows.length > limits.maxItems;
-  const candidates = rows.slice(0, limits.maxItems).map(historyEntry);
-  const entries: SectionHistoryEntry[] = [];
-  let bytes = 0;
-  for (const row of candidates) {
-    const nextBytes =
-      bytes + (row.storage === "inline" ? row.inlineCipher.length : 0);
-    if (entries.length > 0 && nextBytes > limits.maxBytes) {
-      break;
-    }
-    entries.push(row);
-    bytes = nextBytes;
-  }
-  return {
-    entries,
-    hasMore: hasMoreItems || entries.length < candidates.length,
-    nextSequence:
-      entries.at(-1)?.serverSequence ?? limits.afterSequence
-  };
-}
-
-export function historyEntry(row: SectionHistoryRow): SectionHistoryEntry {
-  const base = {
-    updateId: row.updateId,
-    serverSequence: row.serverSequence,
-    cryptoOwnerId: row.cryptoOwnerId,
-    keyEpoch: row.keyEpoch,
-    formatVersion: row.formatVersion,
-    kind: row.kind,
-    checkpointSequenceCutoff: row.checkpointSequenceCutoff
-  };
-  if (row.manifestId) {
-    if (
-      !row.uploadId ||
-      row.totalCipherBytes === null ||
-      row.chunkCount === null ||
-      !row.manifestHash
-    ) {
-      throw new Error("Content manifest history is incomplete");
-    }
-    return {
-      ...base,
-      storage: "manifest",
-      manifestId: row.manifestId,
-      uploadId: row.uploadId,
-      totalCipherBytes: row.totalCipherBytes,
-      chunkCount: row.chunkCount,
-      manifestHash: row.manifestHash
-    };
-  }
-  if (!row.inlineCipher || !row.nonce) {
-    throw new Error("Inline content history is incomplete");
-  }
-  return {
-    ...base,
-    storage: "inline",
-    inlineCipher: row.inlineCipher,
-    nonce: row.nonce
-  };
 }

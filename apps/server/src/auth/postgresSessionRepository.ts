@@ -69,6 +69,20 @@ export class PostgresSessionRepository implements SessionRepository {
     };
   }
 
+  async isActive(sessionId: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    const rows = await this.orm
+      .select({ id: schema.sessions.id })
+      .from(schema.sessions)
+      .where(and(
+        eq(schema.sessions.id, sessionId),
+        gt(schema.sessions.idleExpiresAt, now),
+        gt(schema.sessions.absoluteExpiresAt, now)
+      ))
+      .limit(1);
+    return Boolean(rows[0]);
+  }
+
   async delete(token: string | null): Promise<string | null> {
     if (!token) {
       return null;

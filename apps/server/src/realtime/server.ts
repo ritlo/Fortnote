@@ -145,8 +145,14 @@ function connectClient(
     crdtV2Enabled,
     ...(clientInstanceId === undefined ? {} : { clientInstanceId })
   });
+  let messageQueue = Promise.resolve();
   socket.on("message", (message, isBinary) => {
-    handleClientMessage(context, hub, client, socket, message, isBinary);
+    messageQueue = messageQueue
+      .then(() => handleClientMessage(context, hub, client, socket, message, isBinary))
+      .catch((error: unknown) => {
+        console.error("Unable to process realtime message", error);
+        socket.close(1011, "Unable to process realtime message");
+      });
   });
 
   sendJson(socket, {
@@ -169,16 +175,16 @@ function connectClient(
     });
 }
 
-function handleClientMessage(
+async function handleClientMessage(
   context: AppContext,
   hub: RealtimeHub,
   client: RealtimeClient,
   socket: WebSocket,
   message: RawData,
   isBinary: boolean
-): void {
+): Promise<void> {
   if (isBinary) {
-    handleBinaryMessage(context, hub, client, socket, message);
+    await handleBinaryMessage(context, hub, client, socket, message);
     return;
   }
   const raw = rawDataToString(message);
@@ -190,7 +196,7 @@ function handleClientMessage(
   const parsedV2 = parseV2Control(raw);
   if (parsedV2) {
     if (parsedV2.type === "crdt-subscribe") {
-      hub.subscribeCrdtV2(client, parsedV2);
+      await hub.subscribeCrdtV2(client, parsedV2);
     } else {
       hub.unsubscribeCrdtV2(client, parsedV2);
     }
@@ -229,13 +235,13 @@ function handleClientMessage(
   }
 }
 
-function handleBinaryMessage(
+async function handleBinaryMessage(
   context: AppContext,
   hub: RealtimeHub,
   client: RealtimeClient,
   socket: WebSocket,
   message: RawData
-): void {
+): Promise<void> {
   let decoded: ReturnType<typeof decodeCrdtBinaryFrame>;
   try {
     decoded = decodeCrdtBinaryFrame(
@@ -254,7 +260,11 @@ function handleBinaryMessage(
     });
     return;
   }
-  const outcome = hub.publishCrdtBinary(client, decoded.header, decoded.cipher);
+  const outcome = await hub.publishCrdtBinary(
+    client,
+    decoded.header,
+    decoded.cipher
+  );
   if (outcome.status === "rejected") {
     sendJson(socket, {
       type: "crdt-reject",

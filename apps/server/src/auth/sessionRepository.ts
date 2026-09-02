@@ -7,6 +7,7 @@ import { hashToken, type SessionRecord } from "./session.js";
 export interface SessionRepository {
   create(userId: string): Promise<string>;
   find(token: string | null): Promise<SessionRecord | null>;
+  isActive(sessionId: string): Promise<boolean>;
   delete(token: string | null): Promise<string | null>;
 }
 
@@ -71,6 +72,20 @@ export class SqliteSessionRepository implements SessionRepository {
       ...row,
       displayName: row.displayName ?? row.username
     });
+  }
+
+  isActive(sessionId: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    const row = this.orm
+      .select({ id: schema.sessions.id })
+      .from(schema.sessions)
+      .where(and(
+        eq(schema.sessions.id, sessionId),
+        gt(schema.sessions.idleExpiresAt, now),
+        gt(schema.sessions.absoluteExpiresAt, now)
+      ))
+      .get();
+    return Promise.resolve(Boolean(row));
   }
 
   delete(token: string | null): Promise<string | null> {

@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSession } from "@server/auth/session.js";
 import type { AppDb } from "@server/db/client.js";
 import type { RealtimePublisher } from "@server/realtime/types.js";
-import { listSectionHistory } from "@server/realtime/history.js";
 import {
   createTestApp,
   csrfHeaders,
@@ -126,11 +125,15 @@ describe("resumable encrypted content routes", () => {
         serverSequence: 1
       })
     );
-    const history = listSectionHistory(
-      { config: app.locals.config, db: app.locals.db },
-      { noteId, sectionId: "root", keyEpoch: 1, afterSequence: 0 }
-    );
-    expect(history.entries).toEqual([
+    const history = await app.locals.db.sectionHistory.list({
+      noteId,
+      sectionId: "root",
+      keyEpoch: 1,
+      afterSequence: 0,
+      maxItems: app.locals.config.historyPageMaxItems,
+      maxBytes: app.locals.config.historyPageMaxBytes
+    });
+    expect(history?.entries).toEqual([
       expect.objectContaining({
         storage: "manifest",
         manifestId: requestId,
