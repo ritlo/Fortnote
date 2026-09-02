@@ -209,7 +209,7 @@ async function handleClientMessage(
   if (parsed.type === "presence") {
     hub.updatePresence(client, parsed.noteId, parsed.state);
   } else if (parsed.type === "crdt-subscribe") {
-    hub.subscribeCrdt(client, parsed.noteId);
+    await hub.subscribeCrdt(client, parsed.noteId);
   } else {
     if (parsed.cipher.length > MAX_CRDT_CIPHER_LENGTH) {
       sendJson(socket, {
@@ -220,7 +220,7 @@ async function handleClientMessage(
       });
       return;
     }
-    const outcome = hub.publishCrdtUpdate(client, parsed);
+    const outcome = await hub.publishCrdtUpdate(client, parsed);
     if (outcome === "accepted") {
       sendJson(socket, { type: "crdt-ack", updateId: parsed.updateId });
     } else {

@@ -22,6 +22,7 @@ import { SqliteNoteRotationRepository } from "../notes/rotationRepository.js";
 import { SqliteNoteMutationRepository } from "../notes/mutationRepository.js";
 import { SqliteNoteSectionRepository } from "../notes/sectionRepository.js";
 import { SqliteSectionHistoryRepository } from "../realtime/history.js";
+import { SqliteLegacyHistoryRepository } from "../realtime/legacyHistory.js";
 import * as schema from "./schema.js";
 import { runMigrations } from "./migrations.js";
 
@@ -65,6 +66,7 @@ export function createDb(config: ServerConfig) {
   const noteMutations = new SqliteNoteMutationRepository(orm);
   const noteSections = new SqliteNoteSectionRepository(orm);
   const sectionHistory = new SqliteSectionHistoryRepository(orm);
+  const legacyHistory = new SqliteLegacyHistoryRepository(orm);
   return {
     sqlite,
     orm,
@@ -84,6 +86,7 @@ export function createDb(config: ServerConfig) {
     noteMutations,
     noteSections,
     sectionHistory,
+    legacyHistory,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
     sessionAbsoluteTimeoutMs: config.sessionAbsoluteTimeoutMs
   };

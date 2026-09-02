@@ -1,5 +1,4 @@
 import { WebSocket } from "ws";
-import { and, eq, inArray, lt } from "drizzle-orm";
 import {
   encodeCrdtBinaryFrame,
   type CrdtBinaryHeader,
@@ -9,9 +8,8 @@ import {
   type EncryptedCrdtMessage
 } from "@fortnote/shared";
 import type { AppContext } from "../http/app.js";
-import * as schema from "../db/schema.js";
 import { deleteExpiredSessions, isSessionActive } from "../auth/session.js";
-import { canEditNote, canReadNote, getNoteAccess } from "../notes/access.js";
+import { canReadNote, getNoteAccess } from "../notes/access.js";
 import type { RealtimePublisher } from "./types.js";
 import type {
   BinaryUpdateOutcome,
@@ -238,45 +236,24 @@ export class RealtimeHub implements RealtimePublisher {
     this.broadcastPresence(noteId);
   }
 
-  subscribeCrdt(client: RealtimeClient, noteId: string): void {
+  async subscribeCrdt(client: RealtimeClient, noteId: string): Promise<void> {
     if (!this.context || !client.crdtEnabled) {
       return;
     }
-    const access = getNoteAccess(this.context, noteId, client.userId);
-    if (!this.ensureClientSession(client) || !canReadNote(access)) {
+    if (!await this.ensureClientSessionAsync(client)) {
+      return;
+    }
+    const access = await this.context.db.noteAccess.find(noteId, client.userId);
+    if (!canReadNote(access)) {
       return;
     }
     client.subscribedNoteIds.add(noteId);
-    const updates = this.context.db.orm
-      .select({
-        updateId: schema.noteUpdates.updateId,
-        noteId: schema.noteUpdates.noteId,
-        cryptoOwnerId: schema.noteUpdates.cryptoOwnerId,
-        keyEpoch: schema.noteUpdates.keyEpoch,
-        formatVersion: schema.noteUpdates.formatVersion,
-        cipher: schema.noteUpdates.cipher,
-        nonce: schema.noteUpdates.nonce,
-        kind: schema.noteUpdates.kind,
-        compactedUpdateIds: schema.noteUpdates.compactedUpdateIds
-      })
-      .from(schema.noteUpdates)
-      .where(and(
-        eq(schema.noteUpdates.noteId, noteId),
-        eq(schema.noteUpdates.keyEpoch, access.keyEpoch)
-      ))
-      .all();
+    const updates = await this.context.db.legacyHistory.list(
+      noteId,
+      access.keyEpoch
+    );
     for (const update of updates) {
-      const { kind, compactedUpdateIds, ...envelope } = update;
-      sendJson(
-        client.socket,
-        kind === "checkpoint"
-          ? {
-              ...envelope,
-              type: "crdt-checkpoint",
-              compactedUpdateIds: JSON.parse(compactedUpdateIds ?? "[]") as string[]
-            }
-          : { ...envelope, type: "crdt-update" }
-      );
+      sendJson(client.socket, update);
     }
     sendJson(client.socket, {
       type: "crdt-sync",
@@ -430,100 +407,28 @@ export class RealtimeHub implements RealtimePublisher {
     return outcome;
   }
 
-  publishCrdtUpdate(
+  async publishCrdtUpdate(
     client: RealtimeClient,
     update: EncryptedCrdtMessage
-  ): "accepted" | "forbidden" | "storage-limit" {
+  ): Promise<"accepted" | "forbidden" | "storage-limit"> {
     if (!this.context || !client.crdtEnabled) {
       return "forbidden";
     }
-    const access = getNoteAccess(this.context, update.noteId, client.userId);
-    if (
-      !this.ensureClientSession(client) ||
-      !canEditNote(access) ||
-      access.cryptoOwnerId !== update.cryptoOwnerId ||
-      access.keyEpoch !== update.keyEpoch
-    ) {
+    if (!await this.ensureClientSessionAsync(client)) {
       return "forbidden";
     }
-    const outcome = this.context.db.orm.transaction((tx) => {
-      const existing = tx
-        .select({ updateId: schema.noteUpdates.updateId })
-        .from(schema.noteUpdates)
-        .where(eq(schema.noteUpdates.updateId, update.updateId))
-        .get();
-      if (existing) {
-        return "duplicate" as const;
-      }
-      const storedUpdates = tx
-        .select({ updateId: schema.noteUpdates.updateId, cipher: schema.noteUpdates.cipher })
-        .from(schema.noteUpdates)
-        .where(and(
-          eq(schema.noteUpdates.noteId, update.noteId),
-          eq(schema.noteUpdates.keyEpoch, update.keyEpoch)
-        ))
-        .all();
-      const compactedIds = new Set(
-        update.type === "crdt-checkpoint" ? update.compactedUpdateIds : []
-      );
-      const compactedUpdates = storedUpdates.filter(({ updateId }) => compactedIds.has(updateId));
-      const storedBytes = storedUpdates.reduce(
-        (total, stored) => total + Buffer.byteLength(stored.cipher, "utf8"),
-        0
-      );
-      const compactedBytes = compactedUpdates.reduce(
-        (total, stored) => total + Buffer.byteLength(stored.cipher, "utf8"),
-        0
-      );
-      if (
-        storedUpdates.length + 1 - compactedUpdates.length > MAX_CRDT_ENVELOPES_PER_EPOCH ||
-        storedBytes + Buffer.byteLength(update.cipher, "utf8") - compactedBytes >
-          MAX_CRDT_BYTES_PER_EPOCH
-      ) {
-        return "rejected" as const;
-      }
-      const result = tx
-        .insert(schema.noteUpdates)
-        .values({
-          updateId: update.updateId,
-          noteId: update.noteId,
-          cryptoOwnerId: update.cryptoOwnerId,
-          keyEpoch: update.keyEpoch,
-          formatVersion: update.formatVersion,
-          cipher: update.cipher,
-          nonce: update.nonce,
-          kind: update.type === "crdt-checkpoint" ? "checkpoint" : "update",
-          compactedUpdateIds:
-            update.type === "crdt-checkpoint"
-              ? JSON.stringify(update.compactedUpdateIds)
-              : null
-        })
-        .onConflictDoNothing()
-        .run();
-      if (result.changes === 0) {
-        return "duplicate" as const;
-      }
-      if (update.type === "crdt-checkpoint") {
-        if (update.compactedUpdateIds.length > 0) {
-          tx.delete(schema.noteUpdates)
-            .where(and(
-              eq(schema.noteUpdates.noteId, update.noteId),
-              eq(schema.noteUpdates.keyEpoch, update.keyEpoch),
-              inArray(schema.noteUpdates.updateId, update.compactedUpdateIds)
-            ))
-            .run();
-        }
-        tx.delete(schema.noteUpdates)
-          .where(and(
-            eq(schema.noteUpdates.noteId, update.noteId),
-            lt(schema.noteUpdates.keyEpoch, update.keyEpoch)
-          ))
-          .run();
-      }
-      return "inserted" as const;
+    const outcome = await this.context.db.legacyHistory.persist({
+      sessionId: client.sessionId,
+      userId: client.userId,
+      update,
+      maxEnvelopes: MAX_CRDT_ENVELOPES_PER_EPOCH,
+      maxBytes: MAX_CRDT_BYTES_PER_EPOCH
     });
-    if (outcome === "rejected") {
+    if (outcome === "storage-limit") {
       return "storage-limit";
+    }
+    if (outcome === "forbidden") {
+      return "forbidden";
     }
     if (outcome === "duplicate") {
       return "accepted";
@@ -531,11 +436,19 @@ export class RealtimeHub implements RealtimePublisher {
     for (const recipient of this.clients) {
       if (
         recipient === client ||
-        !this.ensureClientSession(recipient) ||
         !recipient.crdtEnabled ||
-        !recipient.subscribedNoteIds.has(update.noteId) ||
-        !canReadNote(getNoteAccess(this.context, update.noteId, recipient.userId))
+        !recipient.subscribedNoteIds.has(update.noteId)
       ) {
+        continue;
+      }
+      if (!await this.ensureClientSessionAsync(recipient)) {
+        continue;
+      }
+      const access = await this.context.db.noteAccess.find(
+        update.noteId,
+        recipient.userId
+      );
+      if (!canReadNote(access)) {
         continue;
       }
       sendJson(recipient.socket, update);
