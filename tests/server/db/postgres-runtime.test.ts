@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import { getConfig, type ServerConfig } from "@server/config.js";
 import { createApplicationDatabase } from "@server/db/application.js";
 import type { PostgresApplicationDatabase } from "@server/db/postgres/client.js";
 import type { ApplicationDatabase } from "@server/db/types.js";
+import { contentManifestHash } from "@server/content/manifests.js";
 import { createApp } from "@server/http/app.js";
 import {
   csrfHeaders,
@@ -360,6 +362,62 @@ describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
       await harness.cleanup();
     }
   });
+
+  it("publishes one manifest for concurrent content commits", async () => {
+    const harness = await createPostgresHarness();
+    const postgres = harness.database as PostgresApplicationDatabase;
+    try {
+      const agent = request.agent(
+        createApp({ config: harness.config, db: harness.database })
+      );
+      const noteId = await registerAndCreateNote(agent, "concurrent_commit");
+      const content = committableContent(noteId);
+      await agent
+        .post("/api/content/uploads")
+        .set(csrfHeaders())
+        .send(content.payload)
+        .expect(201);
+      await agent
+        .put(`/api/content/uploads/${content.payload.uploadId}/chunks/0`)
+        .set(csrfHeaders())
+        .set("content-type", "application/octet-stream")
+        .set("content-length", String(content.bytes.byteLength))
+        .set("x-fortnote-cipher-hash", content.cipherHash)
+        .set("x-fortnote-nonce", content.nonce.toString("base64"))
+        .send(content.bytes)
+        .expect(204);
+
+      const responses = await Promise.all(
+        [crypto.randomUUID(), crypto.randomUUID()].map((requestId) =>
+          agent
+            .post(`/api/content/uploads/${content.payload.uploadId}/commit`)
+            .set(csrfHeaders())
+            .send({
+              requestId,
+              updateId: content.payload.updateId,
+              expectedKeyEpoch: 1
+            })
+        )
+      );
+
+      expect(responses.map(({ status }) => status)).toEqual([201, 201]);
+      expect(new Set(responses.map(({ body }) => body.manifestId)).size).toBe(1);
+      await expect(
+        contentCommitState(postgres, content.payload.uploadId, noteId)
+      ).resolves.toEqual({
+        chunks: 1,
+        currentSequence: 1,
+        manifests: 1,
+        objects: 1,
+        reservedBytes: 0,
+        sectionUpdates: 1,
+        usedBytes: content.bytes.byteLength
+      });
+    } finally {
+      await harness.database.close();
+      await harness.cleanup();
+    }
+  });
 });
 
 async function createSqliteHarness(): Promise<RuntimeHarness> {
@@ -465,6 +523,28 @@ function contentBeginPayload(noteId: string) {
     totalCipherBytes: 6,
     chunkCount: 1,
     manifestHash: "a".repeat(64)
+  };
+}
+
+function committableContent(noteId: string) {
+  const bytes = Buffer.from([3, 1, 4, 1, 5, 9]);
+  const cipherHash = createHash("sha256").update(bytes).digest("hex");
+  const nonce = Buffer.alloc(24, 7);
+  return {
+    bytes,
+    cipherHash,
+    nonce,
+    payload: {
+      ...contentBeginPayload(noteId),
+      manifestHash: contentManifestHash([
+        {
+          chunkIndex: 0,
+          cipherLength: bytes.byteLength,
+          cipherHash,
+          nonce
+        }
+      ])
+    }
   };
 }
 
@@ -593,6 +673,35 @@ async function eventPruningState(
       (SELECT MIN(cursor)::integer FROM event_cursors) AS "minimumCursor"
   `, [cursor]);
   return requiredRow(result.rows[0], "event pruning state");
+}
+
+async function contentCommitState(
+  database: PostgresApplicationDatabase,
+  uploadId: string,
+  noteId: string
+) {
+  const result = await database.pool.query<{
+    chunks: number;
+    currentSequence: number;
+    manifests: number;
+    objects: number;
+    reservedBytes: number;
+    sectionUpdates: number;
+    usedBytes: number;
+  }>(`
+    SELECT
+      (SELECT COUNT(*)::integer FROM content_manifests
+        WHERE upload_id = $1) AS manifests,
+      (SELECT COUNT(*)::integer FROM section_updates
+        WHERE note_id = $2) AS "sectionUpdates",
+      (SELECT current_sequence FROM note_sections
+        WHERE note_id = $2 AND id = $2) AS "currentSequence",
+      (SELECT COUNT(*)::integer FROM attachment_objects) AS objects,
+      (SELECT COUNT(*)::integer FROM attachment_object_chunks) AS chunks,
+      (SELECT reserved_bytes::integer FROM storage_accounts LIMIT 1) AS "reservedBytes",
+      (SELECT used_bytes::integer FROM storage_accounts LIMIT 1) AS "usedBytes"
+  `, [uploadId, noteId]);
+  return requiredRow(result.rows[0], "content commit state");
 }
 
 function requiredRow<T>(row: T | undefined, label: string): T {
