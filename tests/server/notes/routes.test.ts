@@ -446,6 +446,85 @@ describe("notes and folders routes", () => {
     ).toEqual({ count: 3 });
   });
 
+  it("rolls back legacy section reservations when event writes fail", async () => {
+    const app = createTestApp();
+    const owner = await registerAgent(app, "rollback_section_reservation_owner");
+    const legacy = notePayload();
+    const sectionId = crypto.randomUUID();
+    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
+
+    failNoteEventWrites(app);
+    await owner
+      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
+      .set(csrfHeaders())
+      .send({ sectionId, expectedKeyEpoch: 1, expectedRootVersion: 1 })
+      .expect(500);
+
+    expect(
+      app.locals.db.sqlite
+        .prepare(
+          `SELECT root_section_id AS rootSectionId, root_version AS rootVersion,
+                  version FROM notes WHERE id = ?`
+        )
+        .get(legacy.id)
+    ).toEqual({ rootSectionId: null, rootVersion: 1, version: 1 });
+    expect(
+      app.locals.db.sqlite
+        .prepare("SELECT id FROM note_sections WHERE id = ?")
+        .get(sectionId)
+    ).toBeUndefined();
+  });
+
+  it("rolls back section initialization when event writes fail", async () => {
+    const app = createTestApp();
+    const owner = await registerAgent(app, "rollback_section_initialization_owner");
+    const legacy = notePayload();
+    const sectionId = crypto.randomUUID();
+    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
+    await owner
+      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
+      .set(csrfHeaders())
+      .send({ sectionId, expectedKeyEpoch: 1, expectedRootVersion: 1 })
+      .expect(201);
+    const cryptoOwner = app.locals.db.sqlite
+      .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
+      .get(legacy.id) as { cryptoOwnerId: string };
+    const manifestId = seedCheckpointManifest(app, {
+      noteId: legacy.id,
+      sectionId,
+      cryptoOwnerId: cryptoOwner.cryptoOwnerId
+    });
+
+    failNoteEventWrites(app);
+    await owner
+      .post(`/api/notes/${legacy.id}/sections/${sectionId}/initialization`)
+      .set(csrfHeaders())
+      .send({ manifestId, expectedKeyEpoch: 1, expectedRootVersion: 2 })
+      .expect(500);
+
+    expect(
+      app.locals.db.sqlite
+        .prepare(
+          `SELECT n.content_cipher AS contentCipher,
+                  s.initialization_manifest_id AS initializationManifestId
+           FROM notes n
+           INNER JOIN note_sections s ON s.id = n.root_section_id
+           WHERE n.id = ?`
+        )
+        .get(legacy.id)
+    ).toEqual({
+      contentCipher: legacy.contentCipher,
+      initializationManifestId: null
+    });
+    expect(
+      app.locals.db.sqlite
+        .prepare(
+          "SELECT manifest_id AS manifestId FROM crdt_initializations WHERE note_id = ?"
+        )
+        .get(legacy.id)
+    ).toBeUndefined();
+  });
+
 	  it("atomically upgrades an owned legacy note to protected v2 metadata", async () => {
 	    const app = createTestApp();
 	    const owner = await registerAgent(app, "metadata_migration_owner");

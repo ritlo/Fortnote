@@ -2,21 +2,13 @@ import { Router } from "express";
 import { z } from "zod";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
-import { requireSession, requireSessionAsync } from "../auth/session.js";
+import { requireSessionAsync } from "../auth/session.js";
 import {
   canOwnNote,
   canReadNote,
-  getNoteAccess,
   getNoteAccessAsync
 } from "./access.js";
-import { requestClientInstanceId, writeRequestEvent } from "./events.js";
-import {
-  compareAndSetSectionInitialization,
-  createNoteSection,
-  listVisibleNoteSections,
-  reserveLegacyRootSection,
-  tombstoneNoteSection
-} from "./sections.js";
+import { requestClientInstanceId } from "./events.js";
 
 const legacyCreateNoteSchema = z.object({
   id: z.uuid(),
@@ -270,8 +262,8 @@ export function createNotesRouter(context: AppContext): Router {
     response.json(legacy);
   });
 
-  router.post("/:id/sections/legacy-reservation", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.post("/:id/sections/legacy-reservation", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -280,13 +272,15 @@ export function createNotesRouter(context: AppContext): Router {
       sendApiError(response, "bad_request", "Invalid legacy migration reservation");
       return;
     }
-    const outcome = reserveLegacyRootSection(context, {
+    const clientInstanceId = requestClientInstanceId(request);
+    const outcome = await context.db.noteSections.reserveLegacy({
       sessionId: session.id,
       userId: session.userId,
       noteId: request.params.id,
       sectionId: parsed.data.sectionId,
       expectedKeyEpoch: parsed.data.expectedKeyEpoch,
-      expectedRootVersion: parsed.data.expectedRootVersion
+      expectedRootVersion: parsed.data.expectedRootVersion,
+      ...(clientInstanceId ? { clientInstanceId } : {})
     });
     if (outcome.status === "rejected") {
       if (outcome.code === "forbidden") {
@@ -296,16 +290,8 @@ export function createNotesRouter(context: AppContext): Router {
       }
       return;
     }
-    if (outcome.changed) {
-      const eventCursor = context.db.orm.transaction((tx) =>
-        writeRequestEvent(context, request, {
-          noteId: request.params.id,
-          actorUserId: session.userId,
-          eventType: "note.updated",
-          noteVersion: outcome.version
-        }, tx)
-      );
-      publishEventCursors(context, [eventCursor]);
+    if (outcome.eventCursor !== null) {
+      publishEventCursors(context, [outcome.eventCursor]);
     }
     response.status(outcome.changed ? 201 : 200).json({
       status: outcome.status,
@@ -317,8 +303,8 @@ export function createNotesRouter(context: AppContext): Router {
     });
   });
 
-  router.post("/:id/sections", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.post("/:id/sections", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -327,30 +313,22 @@ export function createNotesRouter(context: AppContext): Router {
       sendApiError(response, "bad_request", "Invalid section creation");
       return;
     }
-    const outcome = createNoteSection(context, {
+    const clientInstanceId = requestClientInstanceId(request);
+    const outcome = await context.db.noteSections.create({
       sessionId: session.id,
       userId: session.userId,
       noteId: request.params.id,
       sectionId: parsed.data.sectionId,
       expectedKeyEpoch: parsed.data.expectedKeyEpoch,
-      expectedRootVersion: parsed.data.expectedRootVersion
+      expectedRootVersion: parsed.data.expectedRootVersion,
+      ...(clientInstanceId ? { clientInstanceId } : {})
     });
     if (outcome.status === "rejected") {
       sendSectionMutationError(response, outcome.code);
       return;
     }
-    if (outcome.status === "created") {
-      const eventCursor = context.db.orm.transaction((tx) =>
-        writeRequestEvent(context, request, {
-          noteId: request.params.id,
-          actorUserId: session.userId,
-          eventType: "section.created",
-          noteVersion: outcome.version,
-          resourceType: "section",
-          resourceId: parsed.data.sectionId
-        }, tx)
-      );
-      publishEventCursors(context, [eventCursor]);
+    if (outcome.eventCursor !== null) {
+      publishEventCursors(context, [outcome.eventCursor]);
     }
     response.status(outcome.status === "created" ? 201 : 200).json({
       status: outcome.status,
@@ -367,8 +345,8 @@ export function createNotesRouter(context: AppContext): Router {
     });
   });
 
-  router.delete("/:id/sections/:sectionId", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.delete("/:id/sections/:sectionId", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -377,30 +355,22 @@ export function createNotesRouter(context: AppContext): Router {
       sendApiError(response, "bad_request", "Invalid section deletion");
       return;
     }
-    const outcome = tombstoneNoteSection(context, {
+    const clientInstanceId = requestClientInstanceId(request);
+    const outcome = await context.db.noteSections.tombstone({
       sessionId: session.id,
       userId: session.userId,
       noteId: request.params.id,
       sectionId: request.params.sectionId,
       expectedKeyEpoch: parsed.data.expectedKeyEpoch,
-      expectedRootVersion: parsed.data.expectedRootVersion
+      expectedRootVersion: parsed.data.expectedRootVersion,
+      ...(clientInstanceId ? { clientInstanceId } : {})
     });
     if (outcome.status === "rejected") {
       sendSectionMutationError(response, outcome.code);
       return;
     }
-    if (outcome.status === "deleted") {
-      const eventCursor = context.db.orm.transaction((tx) =>
-        writeRequestEvent(context, request, {
-          noteId: request.params.id,
-          actorUserId: session.userId,
-          eventType: "section.deleted",
-          noteVersion: outcome.version,
-          resourceType: "section",
-          resourceId: request.params.sectionId
-        }, tx)
-      );
-      publishEventCursors(context, [eventCursor]);
+    if (outcome.eventCursor !== null) {
+      publishEventCursors(context, [outcome.eventCursor]);
     }
     response.json({
       status: outcome.status,
@@ -409,75 +379,75 @@ export function createNotesRouter(context: AppContext): Router {
     });
   });
 
-  router.post("/:id/sections/:sectionId/initialization", (request, response) => {
-    const session = requireSession(context.db, request, response);
-    if (!session) {
-      return;
-    }
-    const parsed = sectionInitializationSchema.safeParse(request.body);
-    if (!parsed.success) {
-      sendApiError(response, "bad_request", "Invalid section initialization");
-      return;
-    }
-    const legacyBefore = context.db.sqlite
-      .prepare("SELECT content_cipher <> '' AS available FROM notes WHERE id = ?")
-      .get(request.params.id) as { available: number } | undefined;
-    const outcome = compareAndSetSectionInitialization(context, {
-      sessionId: session.id,
-      userId: session.userId,
-      noteId: request.params.id,
-      sectionId: request.params.sectionId,
-      expectedKeyEpoch: parsed.data.expectedKeyEpoch,
-      expectedRootVersion: parsed.data.expectedRootVersion,
-      manifestId: parsed.data.manifestId
-    });
-    if (outcome.status === "rejected") {
-      if (outcome.code === "forbidden") {
-        sendApiError(response, "not_found", "Note not found");
-      } else {
-        sendApiError(response, "conflict", legacyMigrationConflict(outcome.code));
+  router.post(
+    "/:id/sections/:sectionId/initialization",
+    async (request, response) => {
+      const session = await requireSessionAsync(context.db, request, response);
+      if (!session) {
+        return;
       }
-      return;
+      const parsed = sectionInitializationSchema.safeParse(request.body);
+      if (!parsed.success) {
+        sendApiError(response, "bad_request", "Invalid section initialization");
+        return;
+      }
+      const clientInstanceId = requestClientInstanceId(request);
+      const outcome = await context.db.noteSections.initialize({
+        sessionId: session.id,
+        userId: session.userId,
+        noteId: request.params.id,
+        sectionId: request.params.sectionId,
+        expectedKeyEpoch: parsed.data.expectedKeyEpoch,
+        expectedRootVersion: parsed.data.expectedRootVersion,
+        manifestId: parsed.data.manifestId,
+        ...(clientInstanceId ? { clientInstanceId } : {})
+      });
+      if (outcome.status === "rejected") {
+        if (outcome.code === "forbidden") {
+          sendApiError(response, "not_found", "Note not found");
+        } else {
+          sendApiError(response, "conflict", legacyMigrationConflict(outcome.code));
+        }
+        return;
+      }
+      if (outcome.eventCursor !== null) {
+        publishEventCursors(context, [outcome.eventCursor]);
+      }
+      response.json({
+        status: outcome.status,
+        manifestId: outcome.manifestId,
+        rootVersion: outcome.rootVersion,
+        version: outcome.version
+      });
     }
-    const current = context.db.sqlite
-      .prepare(`SELECT root_version AS rootVersion, version FROM notes WHERE id = ?`)
-      .get(request.params.id) as { rootVersion: number; version: number };
-    if (outcome.status === "installed" || legacyBefore?.available) {
-      const eventCursor = context.db.orm.transaction((tx) =>
-        writeRequestEvent(context, request, {
-          noteId: request.params.id,
-          actorUserId: session.userId,
-          eventType: "note.updated",
-          noteVersion: current.version
-        }, tx)
-      );
-      publishEventCursors(context, [eventCursor]);
-    }
-    response.json({ ...outcome, ...current });
-  });
+  );
 
-  router.get("/:id/sections", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.get("/:id/sections", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
-    const access = getNoteAccess(context, request.params.id, session.userId);
+    const access = await getNoteAccessAsync(
+      context,
+      request.params.id,
+      session.userId
+    );
     if (!canReadNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
+    const sections = await context.db.noteSections.list(access.noteId);
     response.json({
-      sections: listVisibleNoteSections(context, access.noteId).map((section) => ({
+      sections: sections.map((section) => ({
         id: section.id,
         noteId: section.noteId,
         createdEpoch: section.createdEpoch,
         currentSequence: section.currentSequence,
         initialized: section.initializationManifestId !== null,
-        isDeleted: Boolean(section.isDeleted)
+        isDeleted: section.isDeleted
       }))
     });
   });
-
   router.get("/:id/memberships", async (request, response) => {
     const session = await requireSessionAsync(context.db, request, response);
     if (!session) {

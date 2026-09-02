@@ -20,6 +20,7 @@ import { SqliteNoteQueryRepository } from "../notes/queryRepository.js";
 import { SqliteNoteMembershipRepository } from "../notes/membershipRepository.js";
 import { SqliteNoteRotationRepository } from "../notes/rotationRepository.js";
 import { SqliteNoteMutationRepository } from "../notes/mutationRepository.js";
+import { SqliteNoteSectionRepository } from "../notes/sectionRepository.js";
 import * as schema from "./schema.js";
 import { runMigrations } from "./migrations.js";
 
@@ -61,6 +62,7 @@ export function createDb(config: ServerConfig) {
   const noteMemberships = new SqliteNoteMembershipRepository(orm);
   const noteRotations = new SqliteNoteRotationRepository(orm);
   const noteMutations = new SqliteNoteMutationRepository(orm);
+  const noteSections = new SqliteNoteSectionRepository(orm);
   return {
     sqlite,
     orm,
@@ -78,6 +80,7 @@ export function createDb(config: ServerConfig) {
     noteMemberships,
     noteRotations,
     noteMutations,
+    noteSections,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
     sessionAbsoluteTimeoutMs: config.sessionAbsoluteTimeoutMs
   };
