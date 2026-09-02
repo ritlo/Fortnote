@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, lte, or } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "../db/postgres/schema.js";
 import { hashToken, type SessionRecord } from "./session.js";
@@ -93,5 +93,16 @@ export class PostgresSessionRepository implements SessionRepository {
       .where(eq(schema.sessions.sessionHash, hashToken(token)))
       .returning({ id: schema.sessions.id });
     return rows[0]?.id ?? null;
+  }
+
+  async deleteExpired(now: string): Promise<number> {
+    const rows = await this.orm
+      .delete(schema.sessions)
+      .where(or(
+        lte(schema.sessions.idleExpiresAt, now),
+        lte(schema.sessions.absoluteExpiresAt, now)
+      ))
+      .returning({ id: schema.sessions.id });
+    return rows.length;
   }
 }

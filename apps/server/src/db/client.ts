@@ -101,9 +101,7 @@ export function createDb(config: ServerConfig) {
     contentStorage,
     contentUploads,
     contentManifests,
-    contentMaintenance,
-    sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
-    sessionAbsoluteTimeoutMs: config.sessionAbsoluteTimeoutMs
+    contentMaintenance
   };
 }
 

@@ -1,4 +1,4 @@
-import type { Server } from "node:http";
+import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { z } from "zod";
@@ -9,7 +9,6 @@ import {
   parseCrdtControlMessage
 } from "@fortnote/shared";
 import {
-  findSession,
   readSessionToken,
   type SessionRecord
 } from "../auth/session.js";
@@ -76,14 +75,24 @@ export function attachRealtimeServer(
   const allowedOrigins = allowedOriginAliases(context.config.allowedOrigin);
 
   server.on("upgrade", (request, socket, head) => {
+    void handleUpgrade(request, socket, head).catch((error: unknown) => {
+      console.error("Unable to authenticate realtime connection", error);
+      rejectUpgrade(socket, 500, "Internal Server Error");
+    });
+  });
+
+  async function handleUpgrade(
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer
+  ): Promise<void> {
     const url = new URL(request.url ?? "/", "http://localhost");
     if (url.pathname !== "/api/realtime") {
       rejectUpgrade(socket, 404, "Not Found");
       return;
     }
 
-    const session = findSession(
-      context.db,
+    const session = await context.db.sessions.find(
       readSessionToken(request.headers.cookie)
     );
     if (!session) {
@@ -117,7 +126,7 @@ export function attachRealtimeServer(
         parsed.success ? parsed.data.clientId : undefined
       );
     });
-  });
+  }
 
   return webSocketServer;
 }
@@ -207,7 +216,7 @@ async function handleClientMessage(
     return;
   }
   if (parsed.type === "presence") {
-    hub.updatePresence(client, parsed.noteId, parsed.state);
+    await hub.updatePresence(client, parsed.noteId, parsed.state);
   } else if (parsed.type === "crdt-subscribe") {
     await hub.subscribeCrdt(client, parsed.noteId);
   } else {

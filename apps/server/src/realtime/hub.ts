@@ -8,8 +8,7 @@ import {
   type EncryptedCrdtMessage
 } from "@fortnote/shared";
 import type { AppContext } from "../http/app.js";
-import { deleteExpiredSessions, isSessionActive } from "../auth/session.js";
-import { canReadNote, getNoteAccess } from "../notes/access.js";
+import { canReadNote } from "../notes/access.js";
 import type { RealtimePublisher } from "./types.js";
 import type {
   BinaryUpdateOutcome,
@@ -61,6 +60,7 @@ export class RealtimeHub implements RealtimePublisher {
   private readonly presenceSweepInterval: ReturnType<typeof setInterval> | null;
   private readonly sessionSweepInterval: ReturnType<typeof setInterval> | null;
   private eventPublishQueue: Promise<void> = Promise.resolve();
+  private presencePublishQueue: Promise<void> = Promise.resolve();
   private context: AppContext | null = null;
 
   constructor(options: RealtimeHubOptions = {}) {
@@ -79,7 +79,9 @@ export class RealtimeHub implements RealtimePublisher {
     this.sessionSweepInterval =
       sessionSweepIntervalMs > 0
         ? setInterval(() => {
-            this.sweepInvalidSessions();
+            void this.sweepInvalidSessions().catch((error: unknown) => {
+              console.error("Unable to sweep realtime sessions", error);
+            });
           }, sessionSweepIntervalMs)
         : null;
     this.sessionSweepInterval?.unref();
@@ -169,7 +171,7 @@ export class RealtimeHub implements RealtimePublisher {
       return;
     }
     for (const cursor of cursors) {
-      for (const [userId, clients] of this.activeClientsByUser()) {
+      for (const [userId, clients] of await this.activeClientsByUser()) {
         const [event] = await this.context.db.events.listVisible(
           userId,
           cursor - 1,
@@ -189,28 +191,52 @@ export class RealtimeHub implements RealtimePublisher {
     if (!this.context) {
       return;
     }
+
+    this.eventPublishQueue = this.eventPublishQueue
+      .then(() => this.publishContentManifestAsync(reference))
+      .catch((error: unknown) => {
+        console.error("Unable to publish content manifest", error);
+      });
+  }
+
+  private async publishContentManifestAsync(
+    reference: CrdtManifestReferenceV2
+  ): Promise<void> {
+    if (!this.context) {
+      return;
+    }
     for (const client of this.clients) {
-      const access = getNoteAccess(this.context, reference.noteId, client.userId);
       if (
         !client.crdtV2Enabled ||
-        !this.ensureClientSession(client) ||
         !client.subscribedCrdtScopes.has(
           crdtScope(reference.noteId, reference.sectionId)
-        ) ||
-        !canReadNote(access) ||
-        access.keyEpoch !== reference.keyEpoch
+        )
       ) {
+        continue;
+      }
+      if (!await this.ensureClientSessionAsync(client)) {
+        continue;
+      }
+      const access = await this.context.db.noteAccess.find(
+        reference.noteId,
+        client.userId
+      );
+      if (!canReadNote(access) || access.keyEpoch !== reference.keyEpoch) {
         continue;
       }
       sendJson(client.socket, reference);
     }
   }
 
-  updatePresence(client: RealtimeClient, noteId: string, state: ClientPresenceState): void {
+  async updatePresence(
+    client: RealtimeClient,
+    noteId: string,
+    state: ClientPresenceState
+  ): Promise<void> {
     if (!this.context) {
       return;
     }
-    if (!this.ensureClientSession(client)) {
+    if (!await this.ensureClientSessionAsync(client)) {
       return;
     }
 
@@ -219,7 +245,7 @@ export class RealtimeHub implements RealtimePublisher {
       return;
     }
 
-    const access = getNoteAccess(this.context, noteId, client.userId);
+    const access = await this.context.db.noteAccess.find(noteId, client.userId);
     if (!canReadNote(access)) {
       return;
     }
@@ -233,7 +259,7 @@ export class RealtimeHub implements RealtimePublisher {
       updatedAt: new Date().toISOString()
     });
     this.presenceByNote.set(noteId, notePresence);
-    this.broadcastPresence(noteId);
+    await this.queuePresenceBroadcast(noteId);
   }
 
   async subscribeCrdt(client: RealtimeClient, noteId: string): Promise<void> {
@@ -464,7 +490,7 @@ export class RealtimeHub implements RealtimePublisher {
       if (notePresence.size === 0) {
         this.presenceByNote.delete(noteId);
       }
-      this.broadcastPresence(noteId);
+      void this.queuePresenceBroadcast(noteId);
     }
   }
 
@@ -485,7 +511,7 @@ export class RealtimeHub implements RealtimePublisher {
     if (notePresence.size === 0) {
       this.presenceByNote.delete(noteId);
     }
-    this.broadcastPresence(noteId);
+    void this.queuePresenceBroadcast(noteId);
   }
 
   private sweepStalePresence(now = Date.now()): void {
@@ -505,18 +531,29 @@ export class RealtimeHub implements RealtimePublisher {
       if (notePresence.size === 0) {
         this.presenceByNote.delete(noteId);
       }
-      this.broadcastPresence(noteId);
+      void this.queuePresenceBroadcast(noteId);
     }
   }
 
-  private sweepInvalidSessions(): void {
-    if (this.context) {
-      deleteExpiredSessions(this.context.db);
+  private async sweepInvalidSessions(): Promise<void> {
+    if (!this.context) {
+      return;
     }
-    this.activeClientsByUser();
+    await this.context.db.sessions.deleteExpired(new Date().toISOString());
+    await this.activeClientsByUser();
   }
 
-  private broadcastPresence(noteId: string): void {
+  private queuePresenceBroadcast(noteId: string): Promise<void> {
+    const publish = this.presencePublishQueue.then(() =>
+      this.broadcastPresence(noteId)
+    );
+    this.presencePublishQueue = publish.catch((error: unknown) => {
+      console.error("Unable to publish note presence", error);
+    });
+    return this.presencePublishQueue;
+  }
+
+  private async broadcastPresence(noteId: string): Promise<void> {
     if (!this.context) {
       return;
     }
@@ -534,8 +571,8 @@ export class RealtimeHub implements RealtimePublisher {
       left.username.localeCompare(right.username)
     );
 
-    for (const [userId, clients] of this.activeClientsByUser()) {
-      const access = getNoteAccess(this.context, noteId, userId);
+    for (const [userId, clients] of await this.activeClientsByUser()) {
+      const access = await this.context.db.noteAccess.find(noteId, userId);
       if (!canReadNote(access)) {
         continue;
       }
@@ -545,7 +582,7 @@ export class RealtimeHub implements RealtimePublisher {
     }
   }
 
-  private activeClientsByUser(): Map<string, RealtimeClient[]> {
+  private async activeClientsByUser(): Promise<Map<string, RealtimeClient[]>> {
     const clientsByUser = new Map<string, RealtimeClient[]>();
     const activeSessions = new Map<string, boolean>();
     for (const client of this.clients) {
@@ -554,7 +591,7 @@ export class RealtimeHub implements RealtimePublisher {
         this.disconnectClient(client, "Session expired");
         continue;
       }
-      const active = knownSessionState ?? this.ensureClientSession(client);
+      const active = knownSessionState ?? await this.ensureClientSessionAsync(client);
       activeSessions.set(client.sessionId, active);
       if (!active) {
         continue;
@@ -564,14 +601,6 @@ export class RealtimeHub implements RealtimePublisher {
       clientsByUser.set(client.userId, clients);
     }
     return clientsByUser;
-  }
-
-  private ensureClientSession(client: RealtimeClient): boolean {
-    if (this.context && isSessionActive(this.context.db, client.sessionId)) {
-      return true;
-    }
-    this.disconnectClient(client, "Session expired");
-    return false;
   }
 
   private async ensureClientSessionAsync(

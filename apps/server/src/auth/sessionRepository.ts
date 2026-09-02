@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, lte, or } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "../db/schema.js";
 import { hashToken, type SessionRecord } from "./session.js";
@@ -9,6 +9,7 @@ export interface SessionRepository {
   find(token: string | null): Promise<SessionRecord | null>;
   isActive(sessionId: string): Promise<boolean>;
   delete(token: string | null): Promise<string | null>;
+  deleteExpired(now: string): Promise<number>;
 }
 
 export class SqliteSessionRepository implements SessionRepository {
@@ -99,5 +100,16 @@ export class SqliteSessionRepository implements SessionRepository {
       .returning({ id: schema.sessions.id })
       .get();
     return Promise.resolve(row?.id ?? null);
+  }
+
+  deleteExpired(now: string): Promise<number> {
+    const result = this.orm
+      .delete(schema.sessions)
+      .where(or(
+        lte(schema.sessions.idleExpiresAt, now),
+        lte(schema.sessions.absoluteExpiresAt, now)
+      ))
+      .run();
+    return Promise.resolve(result.changes);
   }
 }

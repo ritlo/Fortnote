@@ -17,7 +17,6 @@ import {
 import { getConfig } from "@server/config.js";
 import { createDb, type AppDb } from "@server/db/client.js";
 import { createApp, type AppContext } from "@server/http/app.js";
-import { compareAndSetSectionInitialization } from "@server/notes/sections.js";
 import {
   csrfHeaders,
   notePayload,
@@ -641,18 +640,18 @@ describe("realtime server", () => {
       manifestId: winnerManifestId
     };
 
-    expect(compareAndSetSectionInitialization(server.context, {
+    expect(await server.context.db.noteSections.initialize({
       ...initialization,
       expectedRootVersion: 2
     })).toEqual({ status: "rejected", code: "stale-version" });
-    expect(compareAndSetSectionInitialization(server.context, initialization)).toEqual({
+    expect(await server.context.db.noteSections.initialize(initialization)).toMatchObject({
       status: "installed",
       manifestId: winnerManifestId
     });
-    expect(compareAndSetSectionInitialization(server.context, {
+    expect(await server.context.db.noteSections.initialize({
       ...initialization,
       manifestId: losingManifestId
-    })).toEqual({
+    })).toMatchObject({
       status: "already-initialized",
       manifestId: winnerManifestId
     });

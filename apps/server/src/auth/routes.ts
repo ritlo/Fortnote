@@ -9,7 +9,6 @@ import {
   clearSessionCookie,
   createSession,
   deleteSession,
-  findSessionAsync,
   readSessionToken,
   setSessionCookie
 } from "./session.js";
@@ -396,8 +395,7 @@ export function createAuthRouter(context: AppContext): Router {
   });
 
   router.put("/handle", async (request, response) => {
-    const session = await findSessionAsync(
-      context.db,
+    const session = await context.db.sessions.find(
       readSessionToken(request.get("cookie"))
     );
     if (!session) {
@@ -437,8 +435,7 @@ export function createAuthRouter(context: AppContext): Router {
   });
 
   router.get("/me", async (request, response) => {
-    const session = await findSessionAsync(
-      context.db,
+    const session = await context.db.sessions.find(
       readSessionToken(request.get("cookie"))
     );
     if (!session) {
