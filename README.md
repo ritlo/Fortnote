@@ -35,18 +35,25 @@ the configuration file's directory.
 
 The server searches the current directory and its parents for `config.yaml`. Set
 `FORTNOTE_CONFIG` to use a different file. Existing environment variables such as `PORT`,
-`DATABASE_PATH`, `DATA_DIR`, and `ALLOWED_ORIGIN` override YAML values, which keeps secrets
-and deployment-specific values out of source control.
+`DATABASE_PROVIDER`, `DATABASE_PATH`, `DATABASE_URL`, `DATABASE_MAX_CONNECTIONS`, `DATA_DIR`,
+and `ALLOWED_ORIGIN` override YAML values, which keeps secrets and deployment-specific values
+out of source control.
 
-SQLite is currently the only supported database provider. The `database.provider` setting
-is explicit so PostgreSQL can be added in a later stage without changing the configuration
-contract.
+SQLite remains the safe default. To run the complete application with PostgreSQL, set the
+provider and connection URL through the environment; migrations run before the server listens:
+
+```sh
+DATABASE_PROVIDER=postgres \
+DATABASE_URL=postgresql://fortnote:fortnote-local@127.0.0.1:5432/fortnote \
+DATABASE_MAX_CONNECTIONS=10 \
+pnpm dev:server
+```
 
 ## Storage and deployment roadmap
 
-The next persistence stage adds PostgreSQL for relational data and encrypted attachment
-chunks. Attachment chunks will use ordinary `bytea` rows rather than PostgreSQL large objects;
-this fits Fortnote's existing bounded, encrypted chunks and keeps backup and deletion behavior
+PostgreSQL stores relational data and encrypted attachment chunks. Attachment chunks use ordinary
+`bytea` rows rather than PostgreSQL large objects. This fits Fortnote's existing bounded,
+encrypted chunks and keeps backup and deletion behavior
 transactional. An S3-compatible attachment backend can be added later through the same storage
 interface.
 
@@ -55,10 +62,9 @@ services, persistent volumes, health checks, a read-only `config.yaml` mount, an
 through environment variables or Docker secrets. The committed configuration will continue to
 default to local SQLite and local filesystem storage for development.
 
-The PostgreSQL schema, migration history, and chunked attachment backend are now present. Runtime
-routes still use the SQLite database adapter while their synchronous database calls are converted
-to provider-neutral asynchronous repositories. For schema development, start the isolated
-PostgreSQL service and apply its migrations with:
+The PostgreSQL schema, migration history, repositories, runtime provider selection, and chunked
+attachment backend are present. For schema development, start the isolated PostgreSQL service and
+apply its migrations with:
 
 ```sh
 docker compose -f compose.postgres.yaml up -d

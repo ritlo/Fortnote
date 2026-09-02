@@ -131,18 +131,52 @@ localstorage:
     );
 
     expect(config.port).toBe(4200);
-    expect(config.database.path).toBe(path.join(cwd, "environment.sqlite"));
+    expect(config.database).toEqual({
+      provider: "sqlite",
+      path: path.join(cwd, "environment.sqlite")
+    });
     expect(config.storageQuotaBytes).toBe(4096);
   });
 
-  it("rejects unsupported database providers", () => {
+  it("loads PostgreSQL settings from YAML and environment overrides", () => {
     const cwd = temporaryDirectory();
     writeFileSync(path.join(cwd, "config.yaml"), `
 database:
   provider: postgres
+  url: postgresql://yaml-user:yaml-password@localhost:5432/fortnote
+  maxConnections: 8
 `);
 
-    expect(() => getConfig({}, { cwd })).toThrow(/database\.provider/iu);
+    expect(getConfig({}, { cwd }).database).toEqual({
+      provider: "postgres",
+      url: "postgresql://yaml-user:yaml-password@localhost:5432/fortnote",
+      maxConnections: 8
+    });
+    expect(getConfig({
+      DATABASE_PROVIDER: "postgres",
+      DATABASE_URL: "postgres://environment-user:secret@database:5432/fortnote",
+      DATABASE_MAX_CONNECTIONS: "16"
+    }, { cwd }).database).toEqual({
+      provider: "postgres",
+      url: "postgres://environment-user:secret@database:5432/fortnote",
+      maxConnections: 16
+    });
+  });
+
+  it("requires a PostgreSQL URL and rejects unsupported providers", () => {
+    const cwd = temporaryDirectory();
+
+    expect(() => getConfig({ DATABASE_PROVIDER: "postgres" }, { cwd })).toThrow(
+      /DATABASE_URL is required/iu
+    );
+    expect(() => getConfig({ DATABASE_PROVIDER: "mongo" }, { cwd })).toThrow(
+      /expected sqlite or postgres/iu
+    );
+    expect(() => getConfig({
+      DATABASE_PROVIDER: "postgres",
+      DATABASE_URL: "postgresql://localhost/fortnote",
+      DATABASE_MAX_CONNECTIONS: "0"
+    }, { cwd })).toThrow("Invalid DATABASE_MAX_CONNECTIONS");
   });
 
   it("rejects malformed YAML and unknown settings", () => {

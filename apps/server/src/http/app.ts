@@ -1,6 +1,6 @@
 import express, { type ErrorRequestHandler } from "express";
 import helmet from "helmet";
-import type { AppDb } from "../db/client.js";
+import type { ApplicationDatabase } from "../db/types.js";
 import type { ServerConfig } from "../config.js";
 import type { RealtimePublisher } from "../realtime/types.js";
 import { createAttachmentsRouter } from "../attachments/routes.js";
@@ -16,7 +16,7 @@ import { logOperationalError, sendApiError } from "./errors.js";
 
 export interface AppContext {
   config: ServerConfig;
-  db: AppDb;
+  db: ApplicationDatabase;
   realtime?: RealtimePublisher;
 }
 

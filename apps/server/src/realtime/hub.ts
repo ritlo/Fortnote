@@ -61,7 +61,9 @@ export class RealtimeHub implements RealtimePublisher {
   private readonly sessionSweepInterval: ReturnType<typeof setInterval> | null;
   private eventPublishQueue: Promise<void> = Promise.resolve();
   private presencePublishQueue: Promise<void> = Promise.resolve();
+  private sessionSweepQueue: Promise<void> = Promise.resolve();
   private context: AppContext | null = null;
+  private closed = false;
 
   constructor(options: RealtimeHubOptions = {}) {
     this.presenceTtlMs = options.presenceTtlMs ?? DEFAULT_PRESENCE_TTL_MS;
@@ -70,6 +72,9 @@ export class RealtimeHub implements RealtimePublisher {
     this.presenceSweepInterval =
       sweepIntervalMs > 0
         ? setInterval(() => {
+            if (this.closed) {
+              return;
+            }
             this.sweepStalePresence();
           }, sweepIntervalMs)
         : null;
@@ -79,9 +84,14 @@ export class RealtimeHub implements RealtimePublisher {
     this.sessionSweepInterval =
       sessionSweepIntervalMs > 0
         ? setInterval(() => {
-            void this.sweepInvalidSessions().catch((error: unknown) => {
-              console.error("Unable to sweep realtime sessions", error);
-            });
+            if (this.closed) {
+              return;
+            }
+            this.sessionSweepQueue = this.sessionSweepQueue
+              .then(() => this.sweepInvalidSessions())
+              .catch((error: unknown) => {
+                console.error("Unable to sweep realtime sessions", error);
+              });
           }, sessionSweepIntervalMs)
         : null;
     this.sessionSweepInterval?.unref();
@@ -91,13 +101,24 @@ export class RealtimeHub implements RealtimePublisher {
     this.context = context;
   }
 
-  close(): void {
+  async close(): Promise<void> {
+    this.closed = true;
     if (this.presenceSweepInterval) {
       clearInterval(this.presenceSweepInterval);
     }
     if (this.sessionSweepInterval) {
       clearInterval(this.sessionSweepInterval);
     }
+    for (const client of this.clients) {
+      client.socket.close(1001, "Server shutting down");
+    }
+    this.clients.clear();
+    this.presenceByNote.clear();
+    await Promise.all([
+      this.eventPublishQueue,
+      this.presencePublishQueue,
+      this.sessionSweepQueue
+    ]);
   }
 
   addClient(input: {
@@ -536,7 +557,7 @@ export class RealtimeHub implements RealtimePublisher {
   }
 
   private async sweepInvalidSessions(): Promise<void> {
-    if (!this.context) {
+    if (this.closed || !this.context) {
       return;
     }
     await this.context.db.sessions.deleteExpired(new Date().toISOString());

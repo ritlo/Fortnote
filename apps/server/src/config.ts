@@ -8,6 +8,8 @@ const MIB = 1024 * KIB;
 const GIB = 1024 * MIB;
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
+const DEFAULT_SQLITE_PATH = "data/fortnote.sqlite";
+const DEFAULT_POSTGRES_MAX_CONNECTIONS = 10;
 
 const positiveIntegerSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const serverSchema = z.strictObject({
@@ -16,10 +18,17 @@ const serverSchema = z.strictObject({
   cookieSecure: z.boolean().default(true),
   allowedOrigin: z.string().min(1).default("http://localhost:5173")
 });
-const databaseSchema = z.strictObject({
-  provider: z.literal("sqlite").default("sqlite"),
-  path: z.string().min(1).default("data/fortnote.sqlite")
-});
+const databaseSchema = z.discriminatedUnion("provider", [
+  z.strictObject({
+    provider: z.literal("sqlite"),
+    path: z.string().min(1).default(DEFAULT_SQLITE_PATH)
+  }),
+  z.strictObject({
+    provider: z.literal("postgres"),
+    url: z.string().min(1).optional(),
+    maxConnections: positiveIntegerSchema.default(DEFAULT_POSTGRES_MAX_CONNECTIONS)
+  })
+]);
 const localStorageSchema = z.strictObject({
   dataDir: z.string().min(1).default("data/attachments"),
   quotaBytes: positiveIntegerSchema.default(10 * GIB),
@@ -43,7 +52,7 @@ const authSchema = z.strictObject({
 });
 const configFileSchema = z.strictObject({
   server: serverSchema.prefault({}),
-  database: databaseSchema.prefault({}),
+  database: databaseSchema.prefault({ provider: "sqlite" }),
   localstorage: localStorageSchema.prefault({}),
   limits: limitsSchema.prefault({}),
   sessions: sessionsSchema.prefault({}),
@@ -64,7 +73,7 @@ export interface PostgresDatabaseConfig {
 export interface ServerConfig {
   port: number;
   host: string;
-  database: SqliteDatabaseConfig;
+  database: SqliteDatabaseConfig | PostgresDatabaseConfig;
   dataDir: string;
   cookieSecure: boolean;
   allowedOrigin: string;
@@ -103,21 +112,43 @@ export function getConfig(
   const fileConfig = parseConfigFile(configPath);
   const baseDirectory = configPath ? path.dirname(configPath) : cwd;
   const databaseProvider = env.DATABASE_PROVIDER ?? fileConfig.database.provider;
-  if (databaseProvider !== "sqlite") {
-    throw new Error("Invalid DATABASE_PROVIDER: expected sqlite");
+  if (databaseProvider !== "sqlite" && databaseProvider !== "postgres") {
+    throw new Error("Invalid DATABASE_PROVIDER: expected sqlite or postgres");
   }
+
+  const database = databaseProvider === "sqlite"
+    ? {
+        provider: "sqlite" as const,
+        path: resolveConfiguredPath(
+          baseDirectory,
+          env.DATABASE_PATH ??
+            (fileConfig.database.provider === "sqlite"
+              ? fileConfig.database.path
+              : DEFAULT_SQLITE_PATH),
+          true
+        )
+      }
+    : {
+        provider: "postgres" as const,
+        url: postgresUrl(
+          env.DATABASE_URL ??
+            (fileConfig.database.provider === "postgres"
+              ? fileConfig.database.url
+              : undefined)
+        ),
+        maxConnections: environmentPositiveInteger(
+          env,
+          "DATABASE_MAX_CONNECTIONS",
+          fileConfig.database.provider === "postgres"
+            ? fileConfig.database.maxConnections
+            : DEFAULT_POSTGRES_MAX_CONNECTIONS
+        )
+      };
 
   return {
     port: environmentPositiveInteger(env, "PORT", fileConfig.server.port),
     host: env.HOST ?? fileConfig.server.host,
-    database: {
-      provider: databaseProvider,
-      path: resolveConfiguredPath(
-        baseDirectory,
-        env.DATABASE_PATH ?? fileConfig.database.path,
-        true
-      )
-    },
+    database,
     dataDir: resolveConfiguredPath(
       baseDirectory,
       env.DATA_DIR ?? fileConfig.localstorage.dataDir
@@ -272,4 +303,20 @@ function environmentBoolean(
     return false;
   }
   throw new Error(`Invalid ${name}`);
+}
+
+function postgresUrl(value: string | undefined): string {
+  if (!value) {
+    throw new Error("DATABASE_URL is required when database provider is postgres");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("Invalid DATABASE_URL");
+  }
+  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
+    throw new Error("Invalid DATABASE_URL");
+  }
+  return value;
 }

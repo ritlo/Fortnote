@@ -6,6 +6,7 @@ server:
   cookieSecure: true
 
 database:
+  # For PostgreSQL, set DATABASE_PROVIDER=postgres and provide DATABASE_URL.
   provider: sqlite
   path: data/fortnote.sqlite
 

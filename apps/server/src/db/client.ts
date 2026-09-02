@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
+import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import type { ServerConfig } from "../config.js";
 import {
   LocalAttachmentStorage,
@@ -30,10 +31,14 @@ import {
 import { SqliteContentUploadRepository } from "../content/uploadRepository.js";
 import { SqliteContentManifestRepository } from "../content/manifestRepository.js";
 import { SqliteContentMaintenanceRepository } from "../content/maintenanceRepository.js";
+import type { ApplicationDatabase } from "./types.js";
 import * as schema from "./schema.js";
 import { runMigrations } from "./migrations.js";
 
-export function createDb(config: ServerConfig) {
+export function createDb(config: ServerConfig): AppDb {
+  if (config.database.provider !== "sqlite") {
+    throw new Error("createDb requires SQLite configuration");
+  }
   fs.mkdirSync(path.dirname(config.database.path), { recursive: true });
   const sqlite = new Database(config.database.path);
   sqlite.pragma("foreign_keys = ON");
@@ -79,6 +84,7 @@ export function createDb(config: ServerConfig) {
   const contentManifests = new SqliteContentManifestRepository(orm);
   const contentMaintenance = new SqliteContentMaintenanceRepository(orm);
   return {
+    provider: "sqlite",
     sqlite,
     orm,
     attachmentStorage,
@@ -101,8 +107,16 @@ export function createDb(config: ServerConfig) {
     contentStorage,
     contentUploads,
     contentManifests,
-    contentMaintenance
+    contentMaintenance,
+    close() {
+      sqlite.close();
+      return Promise.resolve();
+    }
   };
 }
 
-export type AppDb = ReturnType<typeof createDb>;
+export interface AppDb extends ApplicationDatabase {
+  readonly provider: "sqlite";
+  readonly sqlite: InstanceType<typeof Database>;
+  readonly orm: BetterSQLite3Database<typeof schema>;
+}

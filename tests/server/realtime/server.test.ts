@@ -63,9 +63,7 @@ afterEach(async () => {
   for (const socket of openSockets.splice(0)) {
     socket.close();
   }
-  for (const hub of openHubs.splice(0)) {
-    hub.close();
-  }
+  await Promise.all(openHubs.splice(0).map((hub) => hub.close()));
   await Promise.all(
     openServers.splice(0).map(
       (server) =>
@@ -1487,7 +1485,7 @@ async function createRealtimeTestServer(
 }
 
 async function stopRealtimeTestServer(server: TestServer): Promise<void> {
-  server.realtime.close();
+  await server.realtime.close();
   removeTracked(openHubs, server.realtime);
   await new Promise<void>((resolve, reject) => {
     server.httpServer.close((error) => {

@@ -1,0 +1,47 @@
+import type { AttachmentMetadataRepository } from "../attachments/metadataRepository.js";
+import type { AttachmentMutationRepository } from "../attachments/mutationRepository.js";
+import type { AttachmentStorage } from "../attachments/storage.js";
+import type { AccountRepository } from "../auth/accountRepository.js";
+import type { SessionRepository } from "../auth/sessionRepository.js";
+import type { ContentMaintenanceRepository } from "../content/maintenanceRepository.js";
+import type { ContentManifestRepository } from "../content/manifests.js";
+import type { ContentStorage } from "../content/storage.js";
+import type { ContentUploadRepository } from "../content/uploadRepository.js";
+import type { EventReplayRepository } from "../events/replay.js";
+import type { FolderRepository } from "../folders/repository.js";
+import type { NoteLifecycleRepository } from "../notes/lifecycleRepository.js";
+import type { NoteMembershipRepository } from "../notes/membershipRepository.js";
+import type { NoteMutationRepository } from "../notes/mutationRepository.js";
+import type { NoteAccessRepository } from "../notes/noteAccessRepository.js";
+import type { NoteQueryRepository } from "../notes/queryRepository.js";
+import type { NoteRotationRepository } from "../notes/rotationRepository.js";
+import type { NoteSectionRepository } from "../notes/sectionRepository.js";
+import type { LegacyHistoryRepository } from "../realtime/legacyHistory.js";
+import type { SectionHistoryRepository } from "../realtime/history.js";
+import type { SharingKeyRepository } from "../sharingKeys/repository.js";
+
+export interface ApplicationDatabase {
+  readonly provider: "sqlite" | "postgres";
+  readonly attachmentStorage: AttachmentStorage;
+  readonly sessions: SessionRepository;
+  readonly noteAccess: NoteAccessRepository;
+  readonly attachmentMetadata: AttachmentMetadataRepository;
+  readonly attachmentMutations: AttachmentMutationRepository;
+  readonly noteLifecycle: NoteLifecycleRepository;
+  readonly folders: FolderRepository;
+  readonly events: EventReplayRepository;
+  readonly accounts: AccountRepository;
+  readonly sharingKeys: SharingKeyRepository;
+  readonly noteQueries: NoteQueryRepository;
+  readonly noteMemberships: NoteMembershipRepository;
+  readonly noteRotations: NoteRotationRepository;
+  readonly noteMutations: NoteMutationRepository;
+  readonly noteSections: NoteSectionRepository;
+  readonly sectionHistory: SectionHistoryRepository;
+  readonly legacyHistory: LegacyHistoryRepository;
+  readonly contentStorage: ContentStorage;
+  readonly contentUploads: ContentUploadRepository;
+  readonly contentManifests: ContentManifestRepository;
+  readonly contentMaintenance: ContentMaintenanceRepository;
+  close(): Promise<void>;
+}

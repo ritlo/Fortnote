@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Request, Response } from "express";
-import type { AppDb } from "../db/client.js";
+import type { ApplicationDatabase } from "../db/types.js";
 import { sendApiError } from "../http/errors.js";
 
 const SESSION_COOKIE = "fortnote_session";
@@ -18,7 +18,7 @@ export function hashToken(token: string): string {
 }
 
 export function createSession(
-  db: AppDb,
+  db: ApplicationDatabase,
   userId: string
 ): Promise<string> {
   return db.sessions.create(userId);
@@ -56,12 +56,15 @@ export function readSessionToken(cookieHeader: string | undefined): string | nul
   return match ? decodeURIComponent(match.slice(SESSION_COOKIE.length + 1)) : null;
 }
 
-export function deleteSession(db: AppDb, token: string | null): Promise<string | null> {
+export function deleteSession(
+  db: ApplicationDatabase,
+  token: string | null
+): Promise<string | null> {
   return db.sessions.delete(token);
 }
 
 export async function requireSessionAsync(
-  db: AppDb,
+  db: ApplicationDatabase,
   request: Request,
   response: Response
 ): Promise<SessionRecord | null> {
