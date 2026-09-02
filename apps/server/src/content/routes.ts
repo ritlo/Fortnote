@@ -4,10 +4,7 @@ import { requireSessionAsync } from "../auth/session.js";
 import { canReadNote } from "../notes/access.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
-import {
-  commitContentManifest,
-  type ManifestCommitOutcome
-} from "./manifests.js";
+import type { ManifestCommitOutcome } from "./manifests.js";
 import {
   ContentChunkConflictError
 } from "./storage.js";
@@ -254,7 +251,7 @@ export function createContentRouter(context: AppContext): Router {
       sendApiError(response, "bad_request", "Invalid manifest commit payload");
       return;
     }
-    const outcome = commitContentManifest(context, {
+    const outcome = await context.db.contentManifests.commit({
       sessionId: session.id,
       userId: session.userId,
       uploadId: request.params.uploadId,
