@@ -2,17 +2,10 @@ import type { Dir } from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
 import type { AppContext } from "../http/app.js";
-import { reconcileStorageAccount, releaseStorageBytes } from "./quota.js";
-import { deleteUncommittedContentUpload } from "./storage.js";
 
 const STORAGE_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-
-interface ExpiredUpload {
-  uploadId: string;
-  ownerUserId: string;
-  totalCipherBytes: number;
-}
+const ORPHAN_GRACE_MS = 60 * 60 * 1000;
 
 export interface MaintenancePage {
   processed: number;
@@ -37,59 +30,14 @@ export async function expireContentUploadsPage(
   context: AppContext,
   now = new Date()
 ): Promise<MaintenancePage> {
-  const cutoff = now.toISOString();
-  const expired = context.db.sqlite.transaction(() => {
-    const candidates = context.db.sqlite
-      .prepare(`
-        SELECT
-          u.id AS uploadId,
-          u.total_cipher_bytes AS totalCipherBytes,
-          n.user_id AS ownerUserId
-        FROM content_uploads u
-        JOIN notes n ON n.id = u.note_id
-        WHERE u.status IN ('receiving', 'complete', 'invalid')
-          AND u.expires_at <= ?
-        ORDER BY u.expires_at, u.id
-        LIMIT ?
-      `)
-      .all(cutoff, context.config.maintenanceBatchSize) as ExpiredUpload[];
-    const claimed: ExpiredUpload[] = [];
-    for (const candidate of candidates) {
-      const updated = context.db.sqlite
-        .prepare(`
-          UPDATE content_uploads
-          SET status = 'expired', updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-            AND status IN ('receiving', 'complete', 'invalid')
-            AND expires_at <= ?
-        `)
-        .run(candidate.uploadId, cutoff);
-      if (updated.changes === 1) {
-        context.db.sqlite
-          .prepare("DELETE FROM content_chunks WHERE upload_id = ?")
-          .run(candidate.uploadId);
-        releaseStorageBytes(
-          context.db,
-          candidate.ownerUserId,
-          candidate.totalCipherBytes
-        );
-        claimed.push(candidate);
-      }
-    }
-    return claimed;
-  })();
-
-  for (const upload of expired) {
-    await deleteUncommittedContentUpload(context.config, upload.uploadId);
+  const page = await context.db.contentMaintenance.expireUploads(
+    now.toISOString(),
+    context.config.maintenanceBatchSize
+  );
+  for (const upload of page.uploads) {
+    await context.db.contentStorage.deleteUpload(upload.uploadId, upload.storageKeys);
   }
-  const remaining = context.db.sqlite
-    .prepare(`
-      SELECT 1 FROM content_uploads
-      WHERE status IN ('receiving', 'complete', 'invalid') AND expires_at <= ?
-      LIMIT 1
-    `)
-    .get(cutoff);
-  return { processed: expired.length, hasMore: Boolean(remaining) };
+  return { processed: page.uploads.length, hasMore: page.hasMore };
 }
 
 export class ContentStorageScanner {
@@ -100,6 +48,10 @@ export class ContentStorageScanner {
 
   async nextPage(): Promise<StorageCleanupPage> {
     if (this.#done) {
+      return { scanned: 0, removed: 0, done: true };
+    }
+    if (!this.context.db.contentStorage.usesLocalUploadDirectories) {
+      this.#done = true;
       return { scanned: 0, removed: 0, done: true };
     }
     if (!this.#directory) {
@@ -120,9 +72,9 @@ export class ContentStorageScanner {
       if (
         entry.isDirectory() &&
         STORAGE_ID_PATTERN.test(entry.name) &&
-        canRemoveUploadDirectory(this.context, entry.name)
+        await this.context.db.contentMaintenance.canRemoveUpload(entry.name)
       ) {
-        await deleteUncommittedContentUpload(this.context.config, entry.name);
+        await this.context.db.contentStorage.deleteUpload(entry.name);
         removed += 1;
       }
     }
@@ -146,42 +98,21 @@ export class ContentStorageScanner {
 export function reconcileStorageAccountsPage(
   context: AppContext,
   afterUserId: string | null = null
-): ReconciliationPage {
-  const rows = context.db.sqlite
-    .prepare(`
-      SELECT user_id AS userId
-      FROM (
-        SELECT user_id FROM storage_accounts
-        UNION
-        SELECT user_id FROM notes
-      )
-      WHERE (? IS NULL OR user_id > ?)
-      ORDER BY user_id
-      LIMIT ?
-    `)
-    .all(afterUserId, afterUserId, context.config.maintenanceBatchSize) as {
-      userId: string;
-    }[];
-  for (const { userId } of rows) {
-    context.db.sqlite.transaction(() => reconcileStorageAccount(context.db, userId))();
-  }
-  const nextUserId = rows.at(-1)?.userId ?? null;
-  const hasMore = nextUserId
-    ? Boolean(
-        context.db.sqlite
-          .prepare(`
-            SELECT 1
-            FROM (
-              SELECT user_id FROM storage_accounts
-              UNION
-              SELECT user_id FROM notes
-            )
-            WHERE user_id > ? LIMIT 1
-          `)
-          .get(nextUserId)
-      )
-    : false;
-  return { processed: rows.length, hasMore, nextUserId };
+): Promise<ReconciliationPage> {
+  return context.db.contentMaintenance.reconcileStorageAccounts(
+    afterUserId,
+    context.config.maintenanceBatchSize
+  );
+}
+
+export function removeOrphanContentObjectsPage(
+  context: AppContext,
+  now = new Date()
+): Promise<StorageCleanupPage> {
+  return context.db.contentMaintenance.removeOrphanObjects(
+    new Date(now.getTime() - ORPHAN_GRACE_MS).toISOString(),
+    context.config.maintenanceBatchSize
+  );
 }
 
 export async function runContentStartupMaintenance(context: AppContext): Promise<void> {
@@ -202,9 +133,17 @@ export async function runContentStartupMaintenance(context: AppContext): Promise
     await yieldToEventLoop();
   }
 
+  let objectPage: StorageCleanupPage;
+  do {
+    objectPage = await removeOrphanContentObjectsPage(context);
+    if (!objectPage.done) {
+      await yieldToEventLoop();
+    }
+  } while (!objectPage.done);
+
   let afterUserId: string | null = null;
   for (;;) {
-    const page = reconcileStorageAccountsPage(context, afterUserId);
+    const page = await reconcileStorageAccountsPage(context, afterUserId);
     if (!page.hasMore) {
       break;
     }
@@ -235,6 +174,7 @@ export function startContentMaintenance(context: AppContext): ContentMaintenance
       if (page.done) {
         scanner = new ContentStorageScanner(context);
       }
+      await removeOrphanContentObjectsPage(context);
     } catch (error) {
       console.error("Fortnote content maintenance failed", error);
     } finally {
@@ -252,26 +192,6 @@ export function startContentMaintenance(context: AppContext): ContentMaintenance
       await scanner.close();
     }
   };
-}
-
-function canRemoveUploadDirectory(context: AppContext, uploadId: string): boolean {
-  const row = context.db.sqlite
-    .prepare(`
-      SELECT
-        u.status,
-        EXISTS(
-          SELECT 1 FROM content_manifests m WHERE m.upload_id = u.id
-        ) AS hasManifest
-      FROM content_uploads u WHERE u.id = ?
-    `)
-    .get(uploadId) as { status: string; hasManifest: number } | undefined;
-  if (!row) {
-    return true;
-  }
-  if (row.hasManifest || row.status === "committed") {
-    return false;
-  }
-  return row.status === "aborted" || row.status === "expired" || row.status === "invalid";
 }
 
 function yieldToEventLoop(): Promise<void> {

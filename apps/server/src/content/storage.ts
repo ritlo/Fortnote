@@ -28,6 +28,7 @@ export interface ContentChunkWrite {
 }
 
 export interface ContentStorage {
+  readonly usesLocalUploadDirectories: boolean;
   write(input: ContentChunkWrite): Promise<StoredContentChunk>;
   read(storageKey: string): Promise<Readable>;
   delete(storageKey: string): Promise<void>;
@@ -42,6 +43,8 @@ export class ContentChunkConflictError extends Error {
 }
 
 export class LocalContentStorage implements ContentStorage {
+  readonly usesLocalUploadDirectories = true;
+
   constructor(private readonly config: ServerConfig) {}
 
   write(input: ContentChunkWrite): Promise<StoredContentChunk> {
@@ -74,6 +77,8 @@ export class LocalContentStorage implements ContentStorage {
 }
 
 export class AttachmentBackedContentStorage implements ContentStorage {
+  readonly usesLocalUploadDirectories = false;
+
   constructor(private readonly objectStorage: AttachmentStorage) {}
 
   async write(input: ContentChunkWrite): Promise<StoredContentChunk> {

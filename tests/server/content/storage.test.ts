@@ -316,10 +316,10 @@ describe("encrypted content chunk storage", () => {
       .run();
 
     const context = { config, db };
-    const first = reconcileStorageAccountsPage(context);
+    const first = await reconcileStorageAccountsPage(context);
     expect(first.processed).toBe(2);
     expect(first.hasMore).toBe(true);
-    const second = reconcileStorageAccountsPage(context, first.nextUserId);
+    const second = await reconcileStorageAccountsPage(context, first.nextUserId);
     expect(second).toMatchObject({ processed: 1, hasMore: false });
     expect(
       db.sqlite

@@ -4,6 +4,8 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { PostgresAttachmentStorage } from "../../attachments/postgresStorage.js";
+import { AttachmentBackedContentStorage } from "../../content/storage.js";
+import { PostgresContentMaintenanceRepository } from "../../content/postgresMaintenanceRepository.js";
 import type { PostgresDatabaseConfig } from "../../config.js";
 import * as schema from "./schema.js";
 
@@ -11,6 +13,8 @@ export interface PostgresResources {
   pool: Pool;
   orm: ReturnType<typeof createPostgresOrm>;
   attachmentStorage: PostgresAttachmentStorage;
+  contentStorage: AttachmentBackedContentStorage;
+  contentMaintenance: PostgresContentMaintenanceRepository;
   close(): Promise<void>;
 }
 
@@ -31,11 +35,15 @@ export async function createPostgresResources(
         findPostgresMigrationsDirectory(options.cwd ?? process.cwd())
     });
     const attachmentStorage = new PostgresAttachmentStorage(orm);
+    const contentStorage = new AttachmentBackedContentStorage(attachmentStorage);
+    const contentMaintenance = new PostgresContentMaintenanceRepository(orm);
     await attachmentStorage.removeOrphans();
     return {
       pool,
       orm,
       attachmentStorage,
+      contentStorage,
+      contentMaintenance,
       close: () => pool.end()
     };
   } catch (error) {

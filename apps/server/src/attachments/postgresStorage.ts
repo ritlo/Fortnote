@@ -109,10 +109,7 @@ export class PostgresAttachmentStorage implements AttachmentStorage {
               .select({ one: sql`1` })
               .from(schema.contentChunks)
               .where(
-                eq(
-                  schema.contentChunks.storageKey,
-                  schema.attachmentObjects.storageKey
-                )
+                sql`${schema.contentChunks.storageKey} = ${schema.attachmentObjects.storageKey}::text`
               )
           )
         )
