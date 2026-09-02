@@ -13,6 +13,19 @@ import type {
 
 type PostgresDatabase = NodePgDatabase<typeof schema>;
 
+async function lockNote(
+  db: Pick<PostgresDatabase, "select">,
+  noteId: string
+): Promise<boolean> {
+  const notes = await db
+    .select({ id: schema.notes.id })
+    .from(schema.notes)
+    .where(eq(schema.notes.id, noteId))
+    .limit(1)
+    .for("update");
+  return Boolean(notes[0]);
+}
+
 export class PostgresNoteMembershipRepository
   implements NoteMembershipRepository
 {
@@ -20,6 +33,9 @@ export class PostgresNoteMembershipRepository
 
   invite(input: InviteNoteMemberInput): Promise<InviteNoteMemberOutcome> {
     return this.orm.transaction(async (transaction) => {
+      if (!(await lockNote(transaction, input.noteId))) {
+        return { status: "note_not_found" };
+      }
       const recipients = await transaction
         .select({ userId: schema.users.id, username: schema.users.username })
         .from(schema.users)
@@ -131,6 +147,9 @@ export class PostgresNoteMembershipRepository
 
   updateRole(input: UpdateNoteMemberRoleInput): Promise<number | null> {
     return this.orm.transaction(async (transaction) => {
+      if (!(await lockNote(transaction, input.noteId))) {
+        return null;
+      }
       const updated = await transaction
         .update(schema.noteMemberships)
         .set({ role: input.role, updatedAt: sql`CURRENT_TIMESTAMP` })
@@ -172,6 +191,9 @@ export class PostgresNoteMembershipRepository
 
   revoke(input: ChangeNoteMemberInput): Promise<number | null> {
     return this.orm.transaction(async (transaction) => {
+      if (!(await lockNote(transaction, input.noteId))) {
+        return null;
+      }
       const updated = await transaction
         .update(schema.noteMemberships)
         .set({ status: "revoked", updatedAt: sql`CURRENT_TIMESTAMP` })

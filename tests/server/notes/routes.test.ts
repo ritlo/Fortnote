@@ -630,6 +630,110 @@ describe("notes and folders routes", () => {
 	        .get(payload.id, remainingUser.body.id)
 	    ).toEqual({ encryptedNoteKey: "new_remaining_share_abcdefghijklmnopqrstuvwxyz" });
 	  });
+
+	  it("rolls back linked rotations when event writes fail", async () => {
+	    const app = createTestApp();
+	    const owner = await registerAgent(app, "linked_rollback_owner");
+	    const revoked = await registerAgent(app, "linked_rollback_revoked");
+	    const remaining = await registerAgent(app, "linked_rollback_remaining");
+	    const revokedUser = await revoked.get("/api/auth/me").expect(200);
+	    const remainingUser = await remaining.get("/api/auth/me").expect(200);
+	    await revoked
+	      .put("/api/sharing-keys/current")
+	      .set(csrfHeaders())
+	      .send({ ...sharingKeyPayload(2), formatVersion: 2 })
+	      .expect(201);
+	    await remaining
+	      .put("/api/sharing-keys/current")
+	      .set(csrfHeaders())
+	      .send({ ...sharingKeyPayload(2), formatVersion: 2 })
+	      .expect(201);
+	    const payload = protectedNotePayload();
+	    await owner.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
+	    for (const username of ["linked_rollback_revoked", "linked_rollback_remaining"]) {
+	      await owner
+	        .post(`/api/notes/${payload.id}/memberships`)
+	        .set(csrfHeaders())
+	        .send({
+	          username,
+	          role: "editor",
+	          sharingKeyVersion: 2,
+	          encryptedNoteKey: `initial_share_${username}_abcdefghijklmnopqrstuvwxyz`,
+	          formatVersion: 2
+	        })
+	        .expect(201);
+	    }
+
+	    failNoteEventWrites(app);
+	    await owner
+	      .post(`/api/notes/${payload.id}/key-rotation`)
+	      .set(csrfHeaders())
+	      .send({
+	        mode: "linked",
+	        revokedUserId: revokedUser.body.id,
+	        rootVersion: 1,
+	        sourceEpoch: 1,
+	        targetEpoch: 2,
+	        encryptedNoteKey: "failed_linked_note_key_abcdefghijklmnopqrstuvwxyz",
+	        noteKeyNonce: "failed_linked_note_nonce_abcdefghijklmnopqrstuvwxyz",
+	        noteKeyFormatVersion: 2,
+	        titleCipher: "failed_linked_title_cipher_abcdefghijklmnopqrstuvwxyz",
+	        titleNonce: "failed_linked_title_nonce_abcdefghijklmnopqrstuvwxyz",
+	        titleFormatVersion: 2,
+	        previousKeyCipher: "failed_linked_previous_key_abcdefghijklmnopqrstuvwxyz",
+	        previousKeyNonce: "failed_linked_previous_nonce_abcdefghijklmnopqrstuvwxyz",
+	        linkFormatVersion: 2,
+	        shares: [
+	          {
+	            recipientUserId: remainingUser.body.id,
+	            sharingKeyVersion: 2,
+	            encryptedNoteKey: "failed_linked_remaining_share_abcdefghijklmnopqrstuvwxyz",
+	            formatVersion: 2
+	          }
+	        ]
+	      })
+	      .expect(500);
+
+	    expect(
+	      app.locals.db.sqlite
+	        .prepare(
+	          `SELECT key_epoch AS keyEpoch, root_version AS rootVersion,
+	                  rotation_fenced AS rotationFenced, title_cipher AS titleCipher
+	           FROM notes WHERE id = ?`
+	        )
+	        .get(payload.id)
+	    ).toEqual({
+	      keyEpoch: 1,
+	      rootVersion: 1,
+	      rotationFenced: 0,
+	      titleCipher: payload.titleCipher
+	    });
+	    expect(
+	      app.locals.db.sqlite
+	        .prepare(
+	          "SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?"
+	        )
+	        .get(payload.id, revokedUser.body.id)
+	    ).toEqual({ status: "active" });
+	    expect(
+	      app.locals.db.sqlite
+	        .prepare(
+	          "SELECT target_epoch AS targetEpoch FROM note_epoch_links WHERE note_id = ?"
+	        )
+	        .get(payload.id)
+	    ).toBeUndefined();
+	    expect(
+	      app.locals.db.sqlite
+	        .prepare(
+	          "SELECT encrypted_note_key AS encryptedNoteKey FROM note_key_shares WHERE note_id = ? AND recipient_user_id = ?"
+	        )
+	        .get(payload.id, remainingUser.body.id)
+	    ).toEqual({
+	      encryptedNoteKey:
+	        "initial_share_linked_rollback_remaining_abcdefghijklmnopqrstuvwxyz"
+	    });
+	  });
+
 	  it("creates folder and note, then updates with optimistic version", async () => {
 	    const app = createTestApp();
 	    const agent = await registerAgent(app, "notes_user");

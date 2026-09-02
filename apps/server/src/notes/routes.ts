@@ -1,4 +1,4 @@
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
 import * as schema from "../db/schema.js";
@@ -187,14 +187,6 @@ function folderBelongsToUser(
 
 function publishEventCursors(context: AppContext, cursors: number[]): void {
   context.realtime?.publishEvents(cursors);
-}
-
-function sameMembers(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-  const rightSet = new Set(right);
-  return left.every((value) => rightSet.has(value));
 }
 
 export function createNotesRouter(context: AppContext): Router {
@@ -568,6 +560,10 @@ export function createNotesRouter(context: AppContext): Router {
       formatVersion: parsed.data.formatVersion,
       ...(clientInstanceId ? { clientInstanceId } : {})
     });
+    if (outcome.status === "note_not_found") {
+      sendApiError(response, "not_found", "Note not found");
+      return;
+    }
     if (outcome.status === "sharing_key_not_found") {
       sendApiError(response, "not_found", "Sharing key not found");
       return;
@@ -710,8 +706,8 @@ export function createNotesRouter(context: AppContext): Router {
     response.json({ links });
   });
 
-  router.post("/:id/key-rotation", (request, response) => {
-    const session = requireSession(context.db, request, response);
+  router.post("/:id/key-rotation", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
@@ -722,218 +718,27 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
+    const clientInstanceId = requestClientInstanceId(request);
     if ("mode" in parsed.data) {
-      const linkedRotation = parsed.data;
-      const outcome = context.db.orm.transaction((tx) => {
-        const current = tx
-          .select({
-            noteId: schema.notes.id,
-            version: schema.notes.version,
-            rootVersion: schema.notes.rootVersion,
-            keyEpoch: schema.notes.keyEpoch,
-            isDeleted: schema.notes.isDeleted,
-            rotationFenced: schema.notes.rotationFenced,
-            role: schema.noteMemberships.role,
-            status: schema.noteMemberships.status
-          })
-          .from(schema.notes)
-          .innerJoin(
-            schema.noteMemberships,
-            eq(schema.noteMemberships.noteId, schema.notes.id)
-          )
-          .where(
-            and(
-              eq(schema.notes.id, request.params.id),
-              eq(schema.noteMemberships.userId, session.userId)
-            )
-          )
-          .get();
-        if (current?.role !== "owner" || current.status !== "active") {
-          return { kind: "not-found" as const };
-        }
-        if (
-          current.isDeleted ||
-          current.rotationFenced ||
-          current.rootVersion !== linkedRotation.rootVersion ||
-          current.keyEpoch !== linkedRotation.sourceEpoch ||
-          linkedRotation.targetEpoch !== linkedRotation.sourceEpoch + 1
-        ) {
-          return { kind: "conflict" as const };
-        }
-
-        const activeMembers = tx
-          .select({
-            userId: schema.noteMemberships.userId,
-            role: schema.noteMemberships.role,
-            status: schema.noteMemberships.status
-          })
-          .from(schema.noteMemberships)
-          .where(eq(schema.noteMemberships.noteId, current.noteId))
-          .all();
-        const revoked = activeMembers.find(
-          (member) =>
-            member.userId === linkedRotation.revokedUserId &&
-            member.status === "active" &&
-            member.role !== "owner"
-        );
-        if (!revoked) {
-          return { kind: "not-found" as const };
-        }
-        const remainingIds = activeMembers
-          .filter(
-            (member) =>
-              member.status === "active" &&
-              member.role !== "owner" &&
-              member.userId !== linkedRotation.revokedUserId
-          )
-          .map((member) => member.userId);
-        if (
-          !sameMembers(
-            remainingIds,
-            linkedRotation.shares.map((share) => share.recipientUserId)
-          )
-        ) {
-          return { kind: "invalid-set" as const };
-        }
-        for (const share of linkedRotation.shares) {
-          const trustedKey = tx
-            .select({ userId: schema.userSharingKeys.userId })
-            .from(schema.userSharingKeys)
-            .where(
-              and(
-                eq(schema.userSharingKeys.userId, share.recipientUserId),
-                eq(
-                  schema.userSharingKeys.sharingKeyVersion,
-                  share.sharingKeyVersion
-                )
-              )
-            )
-            .get();
-          if (!trustedKey) {
-            return { kind: "invalid-set" as const };
-          }
-        }
-
-        const fence = tx
-          .update(schema.notes)
-          .set({ rotationFenced: true })
-          .where(
-            and(
-              eq(schema.notes.id, current.noteId),
-              eq(schema.notes.rootVersion, linkedRotation.rootVersion),
-              eq(schema.notes.keyEpoch, linkedRotation.sourceEpoch),
-              eq(schema.notes.rotationFenced, false)
-            )
-          )
-          .run();
-        if (fence.changes !== 1) {
-          return { kind: "conflict" as const };
-        }
-        const revokedMembership = tx
-          .update(schema.noteMemberships)
-          .set({ status: "revoked", updatedAt: sql`CURRENT_TIMESTAMP` })
-          .where(
-            and(
-              eq(schema.noteMemberships.noteId, current.noteId),
-              eq(schema.noteMemberships.userId, linkedRotation.revokedUserId),
-              eq(schema.noteMemberships.status, "active"),
-              ne(schema.noteMemberships.role, "owner")
-            )
-          )
-          .run();
-        if (revokedMembership.changes !== 1) {
-          return { kind: "conflict" as const };
-        }
-        tx.delete(schema.noteKeyShares)
-          .where(
-            and(
-              eq(schema.noteKeyShares.noteId, current.noteId),
-              eq(
-                schema.noteKeyShares.recipientUserId,
-                linkedRotation.revokedUserId
-              )
-            )
-          )
-          .run();
-        for (const share of linkedRotation.shares) {
-          tx.insert(schema.noteKeyShares)
-            .values({
-              noteId: current.noteId,
-              recipientUserId: share.recipientUserId,
-              senderUserId: session.userId,
-              sharingKeyVersion: share.sharingKeyVersion,
-              encryptedNoteKey: share.encryptedNoteKey,
-              formatVersion: share.formatVersion
-            })
-            .onConflictDoUpdate({
-              target: [
-                schema.noteKeyShares.noteId,
-                schema.noteKeyShares.recipientUserId
-              ],
-              set: {
-                senderUserId: session.userId,
-                sharingKeyVersion: share.sharingKeyVersion,
-                encryptedNoteKey: share.encryptedNoteKey,
-                formatVersion: share.formatVersion,
-                createdAt: sql`CURRENT_TIMESTAMP`
-              }
-            })
-            .run();
-        }
-        tx.insert(schema.noteEpochLinks)
-          .values({
-            noteId: current.noteId,
-            sourceEpoch: linkedRotation.sourceEpoch,
-            targetEpoch: linkedRotation.targetEpoch,
-            previousKeyCipher: linkedRotation.previousKeyCipher,
-            nonce: linkedRotation.previousKeyNonce,
-            formatVersion: linkedRotation.linkFormatVersion
-          })
-          .run();
-        tx.update(schema.notes)
-          .set({
-            encryptedNoteKey: linkedRotation.encryptedNoteKey,
-            noteKeyNonce: linkedRotation.noteKeyNonce,
-            noteKeyFormatVersion: linkedRotation.noteKeyFormatVersion,
-            titleCipher: linkedRotation.titleCipher,
-            titleNonce: linkedRotation.titleNonce,
-            titleFormatVersion: linkedRotation.titleFormatVersion,
-            keyEpoch: linkedRotation.targetEpoch,
-            rootVersion: sql`${schema.notes.rootVersion} + 1`,
-            version: sql`${schema.notes.version} + 1`,
-            rotationFenced: false,
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(
-            and(
-              eq(schema.notes.id, current.noteId),
-              eq(schema.notes.rotationFenced, true)
-            )
-          )
-          .run();
-        const eventCursor = writeRequestEvent(
-          context,
-          request,
-          {
-            noteId: current.noteId,
-            actorUserId: session.userId,
-            eventType: "membership.revoked",
-            noteVersion: current.version + 1,
-            resourceType: "membership",
-            resourceId: `${current.noteId}:${linkedRotation.revokedUserId}`,
-            payloadMetadata: {
-              membershipUserId: linkedRotation.revokedUserId,
-              targetEpoch: linkedRotation.targetEpoch
-            }
-          },
-          tx
-        );
-        return {
-          kind: "rotated" as const,
-          eventCursor,
-          version: current.version + 1,
-          rootVersion: current.rootVersion + 1
-        };
+      const rotation = parsed.data;
+      const outcome = await context.db.noteRotations.rotateLinked({
+        noteId: request.params.id,
+        actorUserId: session.userId,
+        revokedUserId: rotation.revokedUserId,
+        rootVersion: rotation.rootVersion,
+        sourceEpoch: rotation.sourceEpoch,
+        targetEpoch: rotation.targetEpoch,
+        encryptedNoteKey: rotation.encryptedNoteKey,
+        noteKeyNonce: rotation.noteKeyNonce,
+        noteKeyFormatVersion: rotation.noteKeyFormatVersion,
+        titleCipher: rotation.titleCipher,
+        titleNonce: rotation.titleNonce,
+        titleFormatVersion: rotation.titleFormatVersion,
+        previousKeyCipher: rotation.previousKeyCipher,
+        previousKeyNonce: rotation.previousKeyNonce,
+        linkFormatVersion: rotation.linkFormatVersion,
+        shares: rotation.shares,
+        ...(clientInstanceId ? { clientInstanceId } : {})
       });
       if (outcome.kind === "not-found") {
         sendApiError(response, "not_found", "Note not found");
@@ -949,170 +754,63 @@ export function createNotesRouter(context: AppContext): Router {
       }
       context.realtime?.closeNoteAccess(
         request.params.id,
-        linkedRotation.revokedUserId
+        rotation.revokedUserId
       );
       publishEventCursors(context, [outcome.eventCursor]);
       response.json({
         id: request.params.id,
         version: outcome.version,
         rootVersion: outcome.rootVersion,
-        keyEpoch: linkedRotation.targetEpoch
+        keyEpoch: outcome.keyEpoch
       });
       return;
     }
 
-    const legacyRotation = parsed.data;
-
-    const access = getNoteAccess(context, request.params.id, session.userId);
-    if (!canOwnNote(access)) {
+    const rotation = parsed.data;
+    const outcome = await context.db.noteRotations.rotateLegacy({
+      noteId: request.params.id,
+      actorUserId: session.userId,
+      encryptedNoteKey: rotation.encryptedNoteKey,
+      noteKeyNonce: rotation.noteKeyNonce,
+      contentCipher: rotation.contentCipher,
+      contentNonce: rotation.contentNonce,
+      contentLength: rotation.contentLength,
+      version: rotation.version,
+      shares: rotation.shares,
+      attachmentKeys: rotation.attachmentKeys,
+      ...(clientInstanceId ? { clientInstanceId } : {})
+    });
+    if (outcome.kind === "not-found") {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
-    if (access.isDeleted) {
+    if (outcome.kind === "deleted") {
       sendApiError(response, "conflict", "Restore note before rotating keys");
       return;
     }
-    if (access.version !== legacyRotation.version) {
+    if (outcome.kind === "conflict") {
       sendApiError(response, "conflict", "Note version conflict");
       return;
     }
-
-    const activeMembers = context.db.orm
-      .select({ userId: schema.noteMemberships.userId })
-      .from(schema.noteMemberships)
-      .where(and(
-        eq(schema.noteMemberships.noteId, access.noteId),
-        eq(schema.noteMemberships.status, "active"),
-        ne(schema.noteMemberships.role, "owner")
-      ))
-      .all();
-    const activeMemberIds = activeMembers.map((member) => member.userId);
-    const shareRecipientIds = legacyRotation.shares.map((share) => share.recipientUserId);
-    if (!sameMembers(activeMemberIds, shareRecipientIds)) {
+    if (outcome.kind === "invalid-members") {
       sendApiError(response, "bad_request", "Key shares must cover all active members");
       return;
     }
-
-    const validShareRows = legacyRotation.shares.length
-      ? context.db.orm.all<{ userId: string; sharingKeyVersion: number }>(sql`
-          SELECT user_id AS userId, sharing_key_version AS sharingKeyVersion
-          FROM ${schema.userSharingKeys}
-          WHERE (user_id, sharing_key_version) IN (
-            ${sql.join(
-              legacyRotation.shares.map((share) =>
-                sql`(${share.recipientUserId}, ${share.sharingKeyVersion})`
-              ),
-              sql`, `
-            )}
-          )
-        `)
-      : [];
-    const validShareKeys = new Set(
-      validShareRows.map((row) => `${row.userId}:${String(row.sharingKeyVersion)}`)
-    );
-    if (
-      legacyRotation.shares.some(
-        (share) =>
-          !validShareKeys.has(`${share.recipientUserId}:${String(share.sharingKeyVersion)}`)
-      )
-    ) {
+    if (outcome.kind === "invalid-sharing-key") {
       sendApiError(response, "bad_request", "Invalid sharing key version");
       return;
     }
-
-    const attachmentRows = context.db.orm
-      .select({ id: schema.attachments.id })
-      .from(schema.attachments)
-      .where(eq(schema.attachments.noteId, access.noteId))
-      .all();
-    const attachmentIds = attachmentRows.map((attachment) => attachment.id);
-    const rotatedAttachmentIds = legacyRotation.attachmentKeys.map(
-      (attachment) => attachment.attachmentId
-    );
-    if (!sameMembers(attachmentIds, rotatedAttachmentIds)) {
+    if (outcome.kind === "invalid-attachments") {
       sendApiError(response, "bad_request", "Attachment keys must cover all attachments");
       return;
     }
-
-    const nextVersion = access.version + 1;
-    const eventCursor = context.db.orm.transaction((tx) => {
-      const updateResult = tx.update(schema.notes)
-        .set({
-          encryptedNoteKey: legacyRotation.encryptedNoteKey,
-          noteKeyNonce: legacyRotation.noteKeyNonce,
-          contentCipher: legacyRotation.contentCipher,
-          contentNonce: legacyRotation.contentNonce,
-          contentLength: legacyRotation.contentLength,
-          contentUpdatedAt: sql`CURRENT_TIMESTAMP`,
-          version: sql`${schema.notes.version} + 1`,
-          keyEpoch: sql`${schema.notes.keyEpoch} + 1`,
-          updatedAt: sql`CURRENT_TIMESTAMP`
-        })
-        .where(and(
-          eq(schema.notes.id, access.noteId),
-          eq(schema.notes.version, legacyRotation.version)
-        ))
-        .run();
-      if (updateResult.changes !== 1) {
-        return null;
-      }
-      for (const share of legacyRotation.shares) {
-        tx.insert(schema.noteKeyShares)
-          .values({
-            noteId: access.noteId,
-            recipientUserId: share.recipientUserId,
-            senderUserId: session.userId,
-            sharingKeyVersion: share.sharingKeyVersion,
-            encryptedNoteKey: share.encryptedNoteKey,
-            formatVersion: share.formatVersion
-          })
-          .onConflictDoUpdate({
-            target: [schema.noteKeyShares.noteId, schema.noteKeyShares.recipientUserId],
-            set: {
-              senderUserId: session.userId,
-              sharingKeyVersion: share.sharingKeyVersion,
-              encryptedNoteKey: share.encryptedNoteKey,
-              formatVersion: share.formatVersion,
-              createdAt: sql`CURRENT_TIMESTAMP`
-            }
-          })
-          .run();
-      }
-      for (const attachmentKey of legacyRotation.attachmentKeys) {
-        tx.update(schema.attachments)
-          .set({
-            encryptedAttachmentKey: attachmentKey.encryptedAttachmentKey,
-            attachmentKeyNonce: attachmentKey.attachmentKeyNonce
-          })
-          .where(and(
-            eq(schema.attachments.id, attachmentKey.attachmentId),
-            eq(schema.attachments.noteId, access.noteId)
-          ))
-          .run();
-      }
-      return writeRequestEvent(context, request, {
-        noteId: access.noteId,
-        actorUserId: session.userId,
-        eventType: "note.updated",
-        noteVersion: nextVersion,
-        payloadMetadata: {
-          keyRotated: true
-        }
-      }, tx);
-    });
-    if (eventCursor === null) {
-      sendApiError(response, "conflict", "Note version conflict");
-      return;
-    }
-    publishEventCursors(context, [eventCursor]);
-
+    publishEventCursors(context, [outcome.eventCursor]);
     response.json({
-      id: access.noteId,
-      version: nextVersion,
-      keyEpoch: access.keyEpoch + 1
+      id: request.params.id,
+      version: outcome.version,
+      keyEpoch: outcome.keyEpoch
     });
   });
-
   router.put("/:id", (request, response) => {
     const session = requireSession(context.db, request, response);
     if (!session) {

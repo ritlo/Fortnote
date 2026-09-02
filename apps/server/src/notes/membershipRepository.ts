@@ -20,6 +20,7 @@ export interface InviteNoteMemberInput {
 
 export type InviteNoteMemberOutcome =
   | { status: "invited"; cursor: number; userId: string; username: string }
+  | { status: "note_not_found" }
   | { status: "sharing_key_not_found" }
   | { status: "self" }
   | { status: "owner" };
@@ -51,6 +52,14 @@ export class SqliteNoteMembershipRepository
 
   invite(input: InviteNoteMemberInput): Promise<InviteNoteMemberOutcome> {
     const outcome = this.orm.transaction((transaction) => {
+      const note = transaction
+        .select({ id: schema.notes.id })
+        .from(schema.notes)
+        .where(eq(schema.notes.id, input.noteId))
+        .get();
+      if (!note) {
+        return { status: "note_not_found" } as const;
+      }
       const recipient = transaction
         .select({ userId: schema.users.id, username: schema.users.username })
         .from(schema.users)
