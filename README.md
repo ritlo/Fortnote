@@ -72,6 +72,15 @@ DATABASE_URL=postgresql://fortnote:fortnote-local@127.0.0.1:5432/fortnote \
   pnpm --filter @fortnote/server db:migrate:postgres
 ```
 
+Run the live PostgreSQL runtime smoke test against an isolated test database. The test applies
+migrations, clears that database, and verifies auth, note creation, and a database-backed encrypted
+attachment round-trip, so never point it at development or production data:
+
+```sh
+FORTNOTE_POSTGRES_TEST_URL=postgresql://fortnote:fortnote-local@127.0.0.1:5432/fortnote_test \
+  pnpm --filter @fortnote/server test:postgres
+```
+
 ## Checks
 
 ```sh

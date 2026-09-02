@@ -9,6 +9,7 @@
     "db:migrate:postgres": "tsx src/db/postgres/migrate.ts",
     "dev": "tsx watch src/index.ts",
     "lint": "eslint .",
+    "test:postgres": "pnpm --dir ../.. exec vitest run --config tests/vitest.config.ts tests/server/db/postgres-runtime.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm --dir ../.. exec vitest run --config tests/vitest.config.ts tests/server"
   },
