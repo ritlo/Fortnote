@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { getConfig, type ServerConfig } from "@server/config.js";
 import { createApplicationDatabase } from "@server/db/application.js";
-import type { PostgresApplicationDatabase } from "@server/db/postgres/client.js";
+import {
+  createPostgresResources,
+  type PostgresApplicationDatabase
+} from "@server/db/postgres/client.js";
 import type { ApplicationDatabase } from "@server/db/types.js";
 import { contentManifestHash } from "@server/content/manifests.js";
 import { createApp } from "@server/http/app.js";
@@ -84,6 +87,79 @@ describe.each(runtimeProviders)("$name runtime contract", (runtime) => {
       }
     }
   );
+});
+
+describe.skipIf(!postgresUrl)("PostgreSQL startup lifecycle", () => {
+  it("reapplies migrations and serves persisted data after restart", async () => {
+    const harness = await createPostgresHarness();
+    let database: ApplicationDatabase | null = harness.database;
+    try {
+      const firstAgent = request.agent(
+        createApp({ config: harness.config, db: database })
+      );
+      const account = await registerUser(firstAgent, "postgres_restart");
+      const note = await firstAgent
+        .post("/api/notes")
+        .set(csrfHeaders())
+        .send(notePayload())
+        .expect(201);
+      const noteId = String(note.body.id);
+      const attachment = attachmentPayload();
+      await uploadAttachment(firstAgent, noteId, attachment).expect(201);
+
+      await database.close();
+      database = null;
+      database = await createApplicationDatabase(harness.config);
+      const restartedAgent = request.agent(
+        createApp({ config: harness.config, db: database })
+      );
+      await restartedAgent
+        .post("/api/auth/login")
+        .set(csrfHeaders())
+        .send({
+          username: account.username,
+          authVerifier: registerPayload(account.username).authVerifier
+        })
+        .expect(200);
+      await restartedAgent.get(`/api/notes/${noteId}`).expect(200);
+      const download = await restartedAgent
+        .get(`/api/attachments/${attachment.id}`)
+        .expect(200);
+      expect(download.body).toEqual(attachment.ciphertext);
+    } finally {
+      await database?.close();
+      await harness.cleanup();
+    }
+  });
+
+  it("rolls back a failed migration, closes its pool, and recovers", async () => {
+    const harness = await createPostgresHarness();
+    const postgres = harness.database as PostgresApplicationDatabase;
+    const migrationsDirectory = await failingMigrationsDirectory();
+    try {
+      if (harness.config.database.provider !== "postgres") {
+        throw new Error("PostgreSQL harness returned SQLite configuration");
+      }
+      const connectionsBefore = await activeConnectionCount(postgres);
+      await expect(
+        createPostgresResources(harness.config.database, {
+          migrationsDirectory
+        })
+      ).rejects.toThrow(/migration_failure_missing_table|does not exist/iu);
+
+      expect(await migrationFailureState(postgres)).toEqual({
+        activeConnections: connectionsBefore,
+        probeTable: null
+      });
+      const restarted = await createApplicationDatabase(harness.config);
+      await restarted.close();
+      expect(await activeConnectionCount(postgres)).toBe(connectionsBefore);
+    } finally {
+      await rm(migrationsDirectory, { recursive: true, force: true });
+      await harness.database.close();
+      await harness.cleanup();
+    }
+  });
 });
 
 describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
@@ -702,6 +778,62 @@ async function contentCommitState(
       (SELECT used_bytes::integer FROM storage_accounts LIMIT 1) AS "usedBytes"
   `, [uploadId, noteId]);
   return requiredRow(result.rows[0], "content commit state");
+}
+
+async function failingMigrationsDirectory(): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), "fortnote-pg-migration-failure-"));
+  await mkdir(join(directory, "meta"));
+  await Promise.all([
+    writeFile(
+      join(directory, "meta/_journal.json"),
+      JSON.stringify({
+        version: "7",
+        dialect: "postgresql",
+        entries: [
+          {
+            idx: 0,
+            version: "7",
+            when: Date.now() + 60_000,
+            tag: "9999_expected_failure",
+            breakpoints: true
+          }
+        ]
+      })
+    ),
+    writeFile(
+      join(directory, "9999_expected_failure.sql"),
+      [
+        "CREATE TABLE migration_failure_probe (id integer PRIMARY KEY);",
+        "--> statement-breakpoint",
+        "SELECT * FROM migration_failure_missing_table;"
+      ].join("\n")
+    )
+  ]);
+  return directory;
+}
+
+async function activeConnectionCount(
+  database: PostgresApplicationDatabase
+): Promise<number> {
+  const result = await database.pool.query<{ count: number }>(`
+    SELECT COUNT(*)::integer AS count
+    FROM pg_stat_activity
+    WHERE datname = current_database()
+  `);
+  return requiredRow(result.rows[0], "active connection count").count;
+}
+
+async function migrationFailureState(database: PostgresApplicationDatabase) {
+  const result = await database.pool.query<{
+    activeConnections: number;
+    probeTable: string | null;
+  }>(`
+    SELECT
+      to_regclass('public.migration_failure_probe')::text AS "probeTable",
+      (SELECT COUNT(*)::integer FROM pg_stat_activity
+        WHERE datname = current_database()) AS "activeConnections"
+  `);
+  return requiredRow(result.rows[0], "migration failure state");
 }
 
 function requiredRow<T>(row: T | undefined, label: string): T {
