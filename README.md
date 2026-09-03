@@ -101,7 +101,9 @@ The smoke runner uses a unique Compose project and database volume, chooses unpr
 ports, and removes its stack afterward. It verifies image build and migration, database readiness,
 non-root execution, authentication, note creation, encrypted attachment upload/download, app
 restart, persistence, graceful shutdown, and volume cleanup. Set `FORTNOTE_SMOKE_PORT` and
-`FORTNOTE_SMOKE_POSTGRES_PORT` only when specific unused host ports are required.
+`FORTNOTE_SMOKE_POSTGRES_PORT` only when specific unused host ports are required. The runner uses
+Docker when available and otherwise uses Podman; set `FORTNOTE_CONTAINER_ENGINE` to override that
+selection. The selected engine must have a Compose provider installed.
 
 The PostgreSQL schema, migration history, repositories, runtime provider selection, and chunked
 attachment backend are present. Migrations run automatically before the application becomes ready.

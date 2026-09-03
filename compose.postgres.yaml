@@ -31,10 +31,9 @@ services:
     init: true
     healthcheck:
       test:
-        - CMD
-        - node
-        - -e
-        - fetch('http://127.0.0.1:3001/api/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+        - CMD-SHELL
+        - >-
+          node -e "fetch('http://127.0.0.1:3001/api/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
       interval: 10s
       timeout: 5s
       retries: 6
@@ -42,7 +41,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:18-alpine
+    image: docker.io/library/postgres:18-alpine
     environment:
       POSTGRES_DB: fortnote
       POSTGRES_USER: fortnote

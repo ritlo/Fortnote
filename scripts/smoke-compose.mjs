@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import path from "node:path";
 import process from "node:process";
@@ -9,6 +9,9 @@ const repositoryRoot = path.resolve(
   ".."
 );
 const composeFile = path.join(repositoryRoot, "compose.postgres.yaml");
+const containerEngine = selectContainerEngine(
+  process.env.FORTNOTE_CONTAINER_ENGINE
+);
 const projectName = `fortnote-smoke-${String(process.pid)}-${String(Date.now())}`;
 const port = smokePort(
   process.env.FORTNOTE_SMOKE_PORT,
@@ -46,14 +49,20 @@ const composeArguments = [
 
 let composeStarted = false;
 let cleanupPromise = null;
+let interrupted = false;
+
+process.once("SIGINT", () => handleSignal("SIGINT", 130));
+process.once("SIGTERM", () => handleSignal("SIGTERM", 143));
 
 try {
   composeStarted = true;
   await compose("up", "--detach", "--build");
+  await expectServiceRunning("postgres");
+  await expectServiceRunning("app");
   await waitUntilReady();
   await compose(
     "exec",
-    "--no-TTY",
+    "-T",
     "app",
     "node",
     "--eval",
@@ -107,7 +116,7 @@ try {
 
   await compose("restart", "--timeout", "20", "app");
   await waitUntilReady();
-  const logs = await composeOutput("logs", "--no-color", "app");
+  const logs = await composeLogs("app");
   if (!logs.includes("Fortnote received SIGTERM; shutting down")) {
     throw new Error("Application restart did not record graceful SIGTERM shutdown");
   }
@@ -135,7 +144,7 @@ try {
 
 } catch (error) {
   if (composeStarted) {
-    const logs = await composeOutput("logs", "--no-color").catch(() => "");
+    const logs = await composeLogs().catch(() => "");
     if (logs) {
       console.error(logs);
     }
@@ -150,22 +159,77 @@ async function cleanup() {
   if (!composeStarted) {
     return;
   }
-  cleanupPromise ??= compose(
-    "down",
-    "--volumes",
-    "--remove-orphans",
-    "--timeout",
-    "20"
-  );
+  cleanupPromise ??= (async () => {
+    await compose(
+      "down",
+      "--volumes",
+      "--remove-orphans",
+      "--timeout",
+      "20",
+      ...(containerEngine === "docker" ? ["--rmi", "local"] : [])
+    );
+    if (containerEngine === "podman") {
+      await run(
+        containerEngine,
+        ["network", "rm", "--force", `${projectName}_default`],
+        false
+      );
+      await run(
+        containerEngine,
+        ["image", "rm", "--ignore", `${projectName}_app`],
+        false
+      );
+    }
+  })();
   await cleanupPromise;
 }
 
+async function expectServiceRunning(service) {
+  const containerId = await run(
+    containerEngine,
+    [
+      "ps",
+      "--quiet",
+      "--filter",
+      `label=com.docker.compose.project=${projectName}`,
+      "--filter",
+      `label=com.docker.compose.service=${service}`
+    ],
+    true
+  );
+  if (!containerId.trim()) {
+    throw new Error(`Compose service did not start: ${service}`);
+  }
+}
+
+function handleSignal(signal, exitCode) {
+  if (interrupted) {
+    return;
+  }
+  interrupted = true;
+  void cleanup().then(
+    () => process.exit(exitCode),
+    (error) => {
+      console.error(`Smoke-test cleanup failed after ${signal}`, error);
+      process.exit(1);
+    }
+  );
+}
+
 function compose(...arguments_) {
-  return run("docker", [...composeArguments, ...arguments_], false);
+  return run(containerEngine, [...composeArguments, ...arguments_], false);
 }
 
 function composeOutput(...arguments_) {
-  return run("docker", [...composeArguments, ...arguments_], true);
+  return run(containerEngine, [...composeArguments, ...arguments_], true);
+}
+
+function composeLogs(service) {
+  return composeOutput(
+    "logs",
+    ...(containerEngine === "docker" ? ["--no-color"] : []),
+    ...(service ? [service] : [])
+  );
 }
 
 function run(command, arguments_, captureOutput) {
@@ -294,6 +358,24 @@ function smokePort(value, variableName, fallback) {
     );
   }
   return parsed;
+}
+
+function selectContainerEngine(explicitEngine) {
+  if (explicitEngine) {
+    return explicitEngine;
+  }
+  for (const candidate of ["docker", "podman"]) {
+    const runtime = spawnSync(candidate, ["info"], { stdio: "ignore" });
+    const composeProvider = spawnSync(candidate, ["compose", "version"], {
+      stdio: "ignore"
+    });
+    if (runtime.status === 0 && composeProvider.status === 0) {
+      return candidate;
+    }
+  }
+  throw new Error(
+    "Docker or Podman with a Compose provider is required for this smoke test"
+  );
 }
 
 function registrationPayload(username) {

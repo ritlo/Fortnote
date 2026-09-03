@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22-bookworm-slim AS workspace
+FROM docker.io/library/node:22-bookworm-slim AS workspace
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
@@ -24,7 +24,7 @@ COPY packages/shared packages/shared
 RUN pnpm build
 RUN pnpm --filter @fortnote/server deploy --prod --legacy /runtime
 
-FROM node:22-bookworm-slim AS runtime
+FROM docker.io/library/node:22-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
