@@ -47,7 +47,12 @@ describe("PostgreSQL attachment storage", () => {
     expect(insertedObjects).toEqual([
       { storageKey: storageId, byteLength: bytes.length }
     ]);
-    expect(insertedChunks.map(({ chunkIndex }) => chunkIndex)).toEqual([0, 1, 2, 3]);
+    expect(insertedChunks.map(({ chunkIndex }) => chunkIndex)).toEqual([0, 1, 2]);
+    expect(insertedChunks.map(({ ciphertext }) => ciphertext.length)).toEqual([
+      256 * 1024,
+      256 * 1024,
+      88 * 1024
+    ]);
     expect(Buffer.concat(insertedChunks.map(({ ciphertext }) => ciphertext))).toEqual(bytes);
     expect(Math.max(...insertedChunks.map(({ ciphertext }) => ciphertext.length))).toBe(
       256 * 1024

@@ -2,9 +2,15 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { getConfig, type ServerConfig } from "@server/config.js";
+import {
+  expireContentUploadsPage,
+  reconcileStorageAccountsPage,
+  removeOrphanContentObjectsPage
+} from "@server/content/maintenance.js";
 import { createApplicationDatabase } from "@server/db/application.js";
 import {
   createPostgresResources,
@@ -156,6 +162,168 @@ describe.skipIf(!postgresUrl)("PostgreSQL startup lifecycle", () => {
       expect(await activeConnectionCount(postgres)).toBe(connectionsBefore);
     } finally {
       await rm(migrationsDirectory, { recursive: true, force: true });
+      await harness.database.close();
+      await harness.cleanup();
+    }
+  });
+});
+
+describe.skipIf(!postgresUrl)("PostgreSQL storage lifecycle", () => {
+  it("streams attachment ciphertext across database chunks in order", async () => {
+    const harness = await createPostgresHarness();
+    const postgres = harness.database as PostgresApplicationDatabase;
+    try {
+      const agent = request.agent(
+        createApp({ config: harness.config, db: harness.database })
+      );
+      const noteId = await registerAndCreateNote(agent, "postgres_streaming");
+      const ciphertext = Buffer.alloc(2 * 256 * 1024 + 37);
+      for (let index = 0; index < ciphertext.length; index += 1) {
+        ciphertext[index] = index % 251;
+      }
+      const attachment = attachmentPayload(ciphertext);
+
+      await uploadAttachment(agent, noteId, attachment).expect(201);
+      const stored = await attachmentObjectState(postgres, attachment.id);
+      expect(stored).toMatchObject({
+        byteLength: ciphertext.length,
+        chunks: 3,
+        storedBytes: ciphertext.length,
+        usedBytes: ciphertext.length
+      });
+      const download = await agent
+        .get(`/api/attachments/${attachment.id}`)
+        .expect(200);
+      expect(download.body).toEqual(ciphertext);
+
+      await agent
+        .delete(`/api/attachments/${attachment.id}`)
+        .set(csrfHeaders())
+        .expect(204);
+      await expect(storageCounts(postgres)).resolves.toEqual({
+        chunks: 0,
+        objects: 0,
+        reservedBytes: 0,
+        usedBytes: 0
+      });
+    } finally {
+      await harness.database.close();
+      await harness.cleanup();
+    }
+  });
+
+  it("expires uploads, removes old orphans, and reconciles quota in pages", async () => {
+    const harness = await createPostgresHarness();
+    const postgres = harness.database as PostgresApplicationDatabase;
+    const config = { ...harness.config, maintenanceBatchSize: 2 };
+    const context = { config, db: harness.database };
+    try {
+      const app = createApp(context);
+      const owner = request.agent(app);
+      const account = await registerUser(owner, "postgres_maintenance_owner");
+      const note = await owner
+        .post("/api/notes")
+        .set(csrfHeaders())
+        .send(notePayload())
+        .expect(201);
+      const noteId = String(note.body.id);
+      const expiring = await Promise.all(
+        ["expired one", "expired two", "expired three"].map((value) =>
+          uploadContent(owner, noteId, Buffer.from(value))
+        )
+      );
+      const committed = await uploadContent(
+        owner,
+        noteId,
+        Buffer.from("durable committed content"),
+        true
+      );
+      await postgres.pool.query(`
+        UPDATE content_uploads
+        SET expires_at = '2000-01-01T00:00:00.000Z'
+        WHERE status <> 'committed'
+      `);
+
+      await expect(expireContentUploadsPage(context)).resolves.toEqual({
+        processed: 2,
+        hasMore: true
+      });
+      await expect(expireContentUploadsPage(context)).resolves.toEqual({
+        processed: 1,
+        hasMore: false
+      });
+      await expect(
+        uploadLifecycleState(
+          postgres,
+          expiring.map(({ payload }) => payload.uploadId),
+          account.userId
+        )
+      ).resolves.toEqual({
+        expired: 3,
+        objects: 1,
+        reservedBytes: 0,
+        usedBytes: committed.bytes.length
+      });
+      const committedDownload = await owner
+        .get(`/api/content/manifests/${committed.manifestId}/chunks/0`)
+        .expect(200);
+      expect(committedDownload.body).toEqual(committed.bytes);
+
+      const orphanIds = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+      for (const storageId of orphanIds) {
+        await postgres.attachmentStorage.write({
+          storageId,
+          source: Readable.from(Buffer.from("old orphan ciphertext")),
+          expectedBytes: 21,
+          maxBytes: 1024
+        });
+      }
+      await postgres.pool.query(
+        "UPDATE attachment_objects SET created_at = $1 WHERE storage_key = ANY($2::uuid[])",
+        ["2000-01-01T00:00:00.000Z", orphanIds]
+      );
+      await expect(
+        removeOrphanContentObjectsPage(context)
+      ).resolves.toEqual({ scanned: 2, removed: 2, done: false });
+      await expect(
+        removeOrphanContentObjectsPage(context)
+      ).resolves.toEqual({ scanned: 1, removed: 1, done: true });
+      expect((await storageCounts(postgres)).objects).toBe(1);
+
+      const otherUserIds = [];
+      for (const label of ["postgres_reconcile_two", "postgres_reconcile_three"]) {
+        const agent = request.agent(app);
+        const other = await registerUser(agent, label);
+        otherUserIds.push(other.userId);
+        await agent
+          .post("/api/notes")
+          .set(csrfHeaders())
+          .send(notePayload())
+          .expect(201);
+      }
+      await postgres.pool.query(`
+        INSERT INTO storage_accounts (user_id, used_bytes, reserved_bytes)
+        SELECT id, 999, 999 FROM users
+        ON CONFLICT (user_id) DO UPDATE
+        SET used_bytes = 999, reserved_bytes = 999
+      `);
+
+      const firstPage = await reconcileStorageAccountsPage(context);
+      expect(firstPage).toMatchObject({ processed: 2, hasMore: true });
+      await expect(
+        reconcileStorageAccountsPage(context, firstPage.nextUserId)
+      ).resolves.toMatchObject({ processed: 1, hasMore: false });
+      await expect(
+        storageAccountStates(postgres, [account.userId, ...otherUserIds])
+      ).resolves.toEqual({
+        [account.userId]: {
+          reservedBytes: 0,
+          usedBytes: committed.bytes.length
+        },
+        [otherUserIds[0]!]: { reservedBytes: 0, usedBytes: 0 },
+        [otherUserIds[1]!]: { reservedBytes: 0, usedBytes: 0 }
+      });
+    } finally {
       await harness.database.close();
       await harness.cleanup();
     }
@@ -580,10 +748,12 @@ function sharingKeyPayload() {
   };
 }
 
-function attachmentPayload() {
+function attachmentPayload(
+  ciphertext = Buffer.from([4, 8, 15, 16, 23, 42])
+) {
   return {
     id: crypto.randomUUID(),
-    ciphertext: Buffer.from([4, 8, 15, 16, 23, 42])
+    ciphertext
   };
 }
 
@@ -602,8 +772,10 @@ function contentBeginPayload(noteId: string) {
   };
 }
 
-function committableContent(noteId: string) {
-  const bytes = Buffer.from([3, 1, 4, 1, 5, 9]);
+function committableContent(
+  noteId: string,
+  bytes = Buffer.from([3, 1, 4, 1, 5, 9])
+) {
   const cipherHash = createHash("sha256").update(bytes).digest("hex");
   const nonce = Buffer.alloc(24, 7);
   return {
@@ -612,6 +784,7 @@ function committableContent(noteId: string) {
     nonce,
     payload: {
       ...contentBeginPayload(noteId),
+      totalCipherBytes: bytes.length,
       manifestHash: contentManifestHash([
         {
           chunkIndex: 0,
@@ -622,6 +795,42 @@ function committableContent(noteId: string) {
       ])
     }
   };
+}
+
+async function uploadContent(
+  agent: HttpAgent,
+  noteId: string,
+  bytes: Buffer,
+  commit = false
+) {
+  const content = committableContent(noteId, bytes);
+  await agent
+    .post("/api/content/uploads")
+    .set(csrfHeaders())
+    .send(content.payload)
+    .expect(201);
+  await agent
+    .put(`/api/content/uploads/${content.payload.uploadId}/chunks/0`)
+    .set(csrfHeaders())
+    .set("content-type", "application/octet-stream")
+    .set("content-length", String(bytes.length))
+    .set("x-fortnote-cipher-hash", content.cipherHash)
+    .set("x-fortnote-nonce", content.nonce.toString("base64"))
+    .send(bytes)
+    .expect(204);
+  if (!commit) {
+    return { ...content, manifestId: "" };
+  }
+  const response = await agent
+    .post(`/api/content/uploads/${content.payload.uploadId}/commit`)
+    .set(csrfHeaders())
+    .send({
+      requestId: crypto.randomUUID(),
+      updateId: content.payload.updateId,
+      expectedKeyEpoch: 1
+    })
+    .expect(201);
+  return { ...content, manifestId: String(response.body.manifestId) };
 }
 
 function uploadAttachment(
@@ -665,6 +874,81 @@ async function storageCounts(database: PostgresApplicationDatabase) {
     throw new Error("PostgreSQL storage count query returned no rows");
   }
   return counts;
+}
+
+async function attachmentObjectState(
+  database: PostgresApplicationDatabase,
+  attachmentId: string
+) {
+  const result = await database.pool.query<{
+    byteLength: number;
+    chunks: number;
+    storedBytes: number;
+    usedBytes: number;
+  }>(`
+    SELECT
+      object.byte_length::integer AS "byteLength",
+      COUNT(chunk.chunk_index)::integer AS chunks,
+      COALESCE(SUM(octet_length(chunk.ciphertext)), 0)::integer AS "storedBytes",
+      account.used_bytes::integer AS "usedBytes"
+    FROM attachments attachment
+    INNER JOIN notes note ON note.id = attachment.note_id
+    INNER JOIN storage_accounts account ON account.user_id = note.user_id
+    INNER JOIN attachment_objects object
+      ON object.storage_key = attachment.storage_key
+    LEFT JOIN attachment_object_chunks chunk
+      ON chunk.storage_key = object.storage_key
+    WHERE attachment.id = $1
+    GROUP BY object.byte_length, account.used_bytes
+  `, [attachmentId]);
+  return requiredRow(result.rows[0], "attachment object state");
+}
+
+async function uploadLifecycleState(
+  database: PostgresApplicationDatabase,
+  uploadIds: string[],
+  userId: string
+) {
+  const result = await database.pool.query<{
+    expired: number;
+    objects: number;
+    reservedBytes: number;
+    usedBytes: number;
+  }>(`
+    SELECT
+      (SELECT COUNT(*)::integer FROM content_uploads
+        WHERE id = ANY($1::text[]) AND status = 'expired') AS expired,
+      (SELECT COUNT(*)::integer FROM attachment_objects) AS objects,
+      account.reserved_bytes::integer AS "reservedBytes",
+      account.used_bytes::integer AS "usedBytes"
+    FROM storage_accounts account
+    WHERE account.user_id = $2
+  `, [uploadIds, userId]);
+  return requiredRow(result.rows[0], "upload lifecycle state");
+}
+
+async function storageAccountStates(
+  database: PostgresApplicationDatabase,
+  userIds: string[]
+): Promise<Record<string, { reservedBytes: number; usedBytes: number }>> {
+  const result = await database.pool.query<{
+    reservedBytes: number;
+    usedBytes: number;
+    userId: string;
+  }>(`
+    SELECT
+      user_id AS "userId",
+      reserved_bytes::integer AS "reservedBytes",
+      used_bytes::integer AS "usedBytes"
+    FROM storage_accounts
+    WHERE user_id = ANY($1::text[])
+  `, [userIds]);
+  return Object.fromEntries(
+    result.rows.map(({ userId, reservedBytes, usedBytes }) => [
+      userId,
+      { reservedBytes, usedBytes }
+    ])
+  );
 }
 
 async function noteDeletionState(

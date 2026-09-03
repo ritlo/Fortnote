@@ -210,30 +210,38 @@ async function reconcileStorageAccount(
   database: PostgresDatabase,
   userId: string
 ): Promise<void> {
-  const [contentRows, attachmentRows, reservedRows] = await Promise.all([
-    database
-      .select({ bytes: sql<number>`COALESCE(SUM(${schema.contentManifests.totalCipherBytes}), 0)` })
-      .from(schema.contentManifests)
-      .innerJoin(schema.notes, eq(schema.notes.id, schema.contentManifests.noteId))
-      .where(eq(schema.notes.userId, userId)),
-    database
-      .select({ bytes: sql<number>`COALESCE(SUM(${schema.attachments.size}), 0)` })
-      .from(schema.attachments)
-      .innerJoin(schema.notes, eq(schema.notes.id, schema.attachments.noteId))
-      .where(eq(schema.notes.userId, userId)),
-    database
-      .select({ bytes: sql<number>`COALESCE(SUM(${schema.contentUploads.totalCipherBytes}), 0)` })
-      .from(schema.contentUploads)
-      .innerJoin(schema.notes, eq(schema.notes.id, schema.contentUploads.noteId))
-      .where(and(
-        eq(schema.notes.userId, userId),
-        inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES)
-      ))
-  ]);
-  const usedBytes = contentRows[0]!.bytes + attachmentRows[0]!.bytes;
-  const reservedBytes = reservedRows[0]!.bytes;
+  const contentRows = await database
+    .select({ bytes: sql<number>`COALESCE(SUM(${schema.contentManifests.totalCipherBytes}), 0)` })
+    .from(schema.contentManifests)
+    .innerJoin(schema.notes, eq(schema.notes.id, schema.contentManifests.noteId))
+    .where(eq(schema.notes.userId, userId));
+  const attachmentRows = await database
+    .select({ bytes: sql<number>`COALESCE(SUM(${schema.attachments.size}), 0)` })
+    .from(schema.attachments)
+    .innerJoin(schema.notes, eq(schema.notes.id, schema.attachments.noteId))
+    .where(eq(schema.notes.userId, userId));
+  const reservedRows = await database
+    .select({ bytes: sql<number>`COALESCE(SUM(${schema.contentUploads.totalCipherBytes}), 0)` })
+    .from(schema.contentUploads)
+    .innerJoin(schema.notes, eq(schema.notes.id, schema.contentUploads.noteId))
+    .where(and(
+      eq(schema.notes.userId, userId),
+      inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES)
+    ));
+  const usedBytes = storageBytes(
+    storageBytes(contentRows[0]!.bytes) + storageBytes(attachmentRows[0]!.bytes)
+  );
+  const reservedBytes = storageBytes(reservedRows[0]!.bytes);
   await database
     .update(schema.storageAccounts)
     .set({ usedBytes, reservedBytes, updatedAt: sql`CURRENT_TIMESTAMP` })
     .where(eq(schema.storageAccounts.userId, userId));
+}
+
+function storageBytes(value: number | string): number {
+  const bytes = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(bytes) || bytes < 0) {
+    throw new Error("PostgreSQL storage aggregate is outside the safe integer range");
+  }
+  return bytes;
 }

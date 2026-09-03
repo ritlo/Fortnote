@@ -29,26 +29,44 @@ export class PostgresAttachmentStorage implements AttachmentStorage {
 
       let byteLength = 0;
       let chunkIndex = 0;
+      let bufferedBytes = 0;
+      let bufferedParts: Buffer[] = [];
+      const flushChunk = async () => {
+        if (bufferedBytes === 0) {
+          return;
+        }
+        await transaction.insert(schema.attachmentObjectChunks).values({
+          storageKey: input.storageId,
+          chunkIndex,
+          ciphertext: Buffer.concat(bufferedParts, bufferedBytes)
+        });
+        bufferedBytes = 0;
+        bufferedParts = [];
+        chunkIndex += 1;
+      };
       for await (const value of input.source) {
         const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value as Uint8Array);
-        for (let offset = 0; offset < buffer.length; offset += DATABASE_CHUNK_BYTES) {
-          const ciphertext = buffer.subarray(offset, offset + DATABASE_CHUNK_BYTES);
-          byteLength += ciphertext.length;
-          if (byteLength > input.maxBytes) {
-            throw new AttachmentCiphertextSizeError("too-large");
+        byteLength += buffer.length;
+        if (byteLength > input.maxBytes) {
+          throw new AttachmentCiphertextSizeError("too-large");
+        }
+        let offset = 0;
+        while (offset < buffer.length) {
+          const available = DATABASE_CHUNK_BYTES - bufferedBytes;
+          const length = Math.min(available, buffer.length - offset);
+          bufferedParts.push(buffer.subarray(offset, offset + length));
+          bufferedBytes += length;
+          offset += length;
+          if (bufferedBytes === DATABASE_CHUNK_BYTES) {
+            await flushChunk();
           }
-          await transaction.insert(schema.attachmentObjectChunks).values({
-            storageKey: input.storageId,
-            chunkIndex,
-            ciphertext
-          });
-          chunkIndex += 1;
         }
       }
 
       if (byteLength !== input.expectedBytes) {
         throw new AttachmentCiphertextSizeError();
       }
+      await flushChunk();
     });
   }
 
