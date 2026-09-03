@@ -84,6 +84,18 @@ docker compose -f compose.postgres.yaml up -d --build
 password portion of `FORTNOTE_DATABASE_URL`. Prefer a protected environment file or deployment
 secret manager instead of placing credentials in shell history.
 
+On a host with Docker Compose, run the destructive, isolated deployment smoke test before staging:
+
+```sh
+pnpm smoke:compose
+```
+
+The smoke runner uses a unique Compose project and database volume, chooses unprivileged local
+ports, and removes its stack afterward. It verifies image build and migration, database readiness,
+non-root execution, authentication, note creation, encrypted attachment upload/download, app
+restart, persistence, graceful shutdown, and volume cleanup. Set `FORTNOTE_SMOKE_PORT` and
+`FORTNOTE_SMOKE_POSTGRES_PORT` only when specific unused host ports are required.
+
 The PostgreSQL schema, migration history, repositories, runtime provider selection, and chunked
 attachment backend are present. Migrations run automatically before the application becomes ready.
 For schema development, start only the isolated PostgreSQL service and apply migrations manually:

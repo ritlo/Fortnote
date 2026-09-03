@@ -44,7 +44,7 @@ services:
       POSTGRES_PASSWORD: ${FORTNOTE_POSTGRES_PASSWORD:-fortnote-local}
       PGDATA: /var/lib/postgresql/18/docker
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${FORTNOTE_POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql
     healthcheck:
