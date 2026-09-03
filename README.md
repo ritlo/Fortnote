@@ -35,7 +35,9 @@ the configuration file's directory.
 
 The server searches the current directory and its parents for `config.yaml`. Set
 `FORTNOTE_CONFIG` to use a different file. Existing environment variables such as `PORT`,
-`DATABASE_PROVIDER`, `DATABASE_PATH`, `DATABASE_URL`, `DATABASE_MAX_CONNECTIONS`, `DATA_DIR`,
+`DATABASE_PROVIDER`, `DATABASE_PATH`, `DATABASE_URL`, `DATABASE_MAX_CONNECTIONS`,
+`DATABASE_CONNECTION_TIMEOUT_MS`, `DATABASE_STATEMENT_TIMEOUT_MS`, `DATABASE_LOCK_TIMEOUT_MS`,
+`DATABASE_STARTUP_RETRY_ATTEMPTS`, `DATABASE_STARTUP_RETRY_DELAY_MS`, `DATA_DIR`,
 and `ALLOWED_ORIGIN` override YAML values, which keeps secrets and deployment-specific values
 out of source control.
 
@@ -48,6 +50,11 @@ DATABASE_URL=postgresql://fortnote:fortnote-local@127.0.0.1:5432/fortnote \
 DATABASE_MAX_CONNECTIONS=10 \
 pnpm dev:server
 ```
+
+PostgreSQL defaults to 10 pooled connections, a 5-second connection timeout, a 30-second statement
+timeout, and a 5-second lock timeout. Startup makes up to 10 connection attempts one second apart
+before failing; all of these values can be changed with the YAML fields or environment variables
+listed above.
 
 ## Storage and deployment roadmap
 

@@ -9,6 +9,8 @@ server:
 
 database:
   # For PostgreSQL, set DATABASE_PROVIDER=postgres and provide DATABASE_URL.
+  # PostgreSQL also supports maxConnections, connectionTimeoutMs, statementTimeoutMs,
+  # lockTimeoutMs, startupRetryAttempts, and startupRetryDelayMs.
   provider: sqlite
   path: data/fortnote.sqlite
 

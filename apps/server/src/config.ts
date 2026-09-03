@@ -10,6 +10,11 @@ const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DEFAULT_SQLITE_PATH = "data/fortnote.sqlite";
 const DEFAULT_POSTGRES_MAX_CONNECTIONS = 10;
+const DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS = 5_000;
+const DEFAULT_POSTGRES_STATEMENT_TIMEOUT_MS = 30_000;
+const DEFAULT_POSTGRES_LOCK_TIMEOUT_MS = 5_000;
+const DEFAULT_POSTGRES_STARTUP_RETRY_ATTEMPTS = 10;
+const DEFAULT_POSTGRES_STARTUP_RETRY_DELAY_MS = 1_000;
 
 const positiveIntegerSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const serverSchema = z.strictObject({
@@ -27,7 +32,20 @@ const databaseSchema = z.discriminatedUnion("provider", [
   z.strictObject({
     provider: z.literal("postgres"),
     url: z.string().min(1).optional(),
-    maxConnections: positiveIntegerSchema.default(DEFAULT_POSTGRES_MAX_CONNECTIONS)
+    maxConnections: positiveIntegerSchema.default(DEFAULT_POSTGRES_MAX_CONNECTIONS),
+    connectionTimeoutMs: positiveIntegerSchema.default(
+      DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS
+    ),
+    statementTimeoutMs: positiveIntegerSchema.default(
+      DEFAULT_POSTGRES_STATEMENT_TIMEOUT_MS
+    ),
+    lockTimeoutMs: positiveIntegerSchema.default(DEFAULT_POSTGRES_LOCK_TIMEOUT_MS),
+    startupRetryAttempts: positiveIntegerSchema.default(
+      DEFAULT_POSTGRES_STARTUP_RETRY_ATTEMPTS
+    ),
+    startupRetryDelayMs: positiveIntegerSchema.default(
+      DEFAULT_POSTGRES_STARTUP_RETRY_DELAY_MS
+    )
   })
 ]);
 const localStorageSchema = z.strictObject({
@@ -69,6 +87,11 @@ export interface PostgresDatabaseConfig {
   provider: "postgres";
   url: string;
   maxConnections: number;
+  connectionTimeoutMs: number;
+  statementTimeoutMs: number;
+  lockTimeoutMs: number;
+  startupRetryAttempts: number;
+  startupRetryDelayMs: number;
 }
 
 export interface ServerConfig {
@@ -145,6 +168,41 @@ export function getConfig(
           fileConfig.database.provider === "postgres"
             ? fileConfig.database.maxConnections
             : DEFAULT_POSTGRES_MAX_CONNECTIONS
+        ),
+        connectionTimeoutMs: environmentPositiveInteger(
+          env,
+          "DATABASE_CONNECTION_TIMEOUT_MS",
+          fileConfig.database.provider === "postgres"
+            ? fileConfig.database.connectionTimeoutMs
+            : DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS
+        ),
+        statementTimeoutMs: environmentPositiveInteger(
+          env,
+          "DATABASE_STATEMENT_TIMEOUT_MS",
+          fileConfig.database.provider === "postgres"
+            ? fileConfig.database.statementTimeoutMs
+            : DEFAULT_POSTGRES_STATEMENT_TIMEOUT_MS
+        ),
+        lockTimeoutMs: environmentPositiveInteger(
+          env,
+          "DATABASE_LOCK_TIMEOUT_MS",
+          fileConfig.database.provider === "postgres"
+            ? fileConfig.database.lockTimeoutMs
+            : DEFAULT_POSTGRES_LOCK_TIMEOUT_MS
+        ),
+        startupRetryAttempts: environmentPositiveInteger(
+          env,
+          "DATABASE_STARTUP_RETRY_ATTEMPTS",
+          fileConfig.database.provider === "postgres"
+            ? fileConfig.database.startupRetryAttempts
+            : DEFAULT_POSTGRES_STARTUP_RETRY_ATTEMPTS
+        ),
+        startupRetryDelayMs: environmentPositiveInteger(
+          env,
+          "DATABASE_STARTUP_RETRY_DELAY_MS",
+          fileConfig.database.provider === "postgres"
+            ? fileConfig.database.startupRetryDelayMs
+            : DEFAULT_POSTGRES_STARTUP_RETRY_DELAY_MS
         )
       };
 

@@ -278,6 +278,34 @@ describe.each(runtimeProviders)("$name runtime contract", (runtime) => {
 });
 
 describe.skipIf(!postgresUrl)("PostgreSQL startup lifecycle", () => {
+  it("applies bounded connection, statement, and lock waits", async () => {
+    const harness = await createPostgresHarness();
+    const postgres = harness.database as PostgresApplicationDatabase;
+    try {
+      if (harness.config.database.provider !== "postgres") {
+        throw new Error("PostgreSQL harness returned SQLite configuration");
+      }
+      expect(postgres.pool.options.connectionTimeoutMillis).toBe(
+        harness.config.database.connectionTimeoutMs
+      );
+      const settings = await postgres.pool.query<{
+        lockTimeout: string;
+        statementTimeout: string;
+      }>(`
+        SELECT
+          current_setting('lock_timeout') AS "lockTimeout",
+          current_setting('statement_timeout') AS "statementTimeout"
+      `);
+      expect(settings.rows[0]).toEqual({
+        lockTimeout: "5s",
+        statementTimeout: "30s"
+      });
+    } finally {
+      await harness.database.close();
+      await harness.cleanup();
+    }
+  });
+
   it("reapplies migrations and serves persisted data after restart", async () => {
     const harness = await createPostgresHarness();
     let database: ApplicationDatabase | null = harness.database;

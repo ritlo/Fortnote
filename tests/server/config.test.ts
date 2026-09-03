@@ -150,21 +150,41 @@ database:
   provider: postgres
   url: postgresql://yaml-user:yaml-password@localhost:5432/fortnote
   maxConnections: 8
+  connectionTimeoutMs: 6000
+  statementTimeoutMs: 31000
+  lockTimeoutMs: 7000
+  startupRetryAttempts: 12
+  startupRetryDelayMs: 1500
 `);
 
     expect(getConfig({}, { cwd }).database).toEqual({
       provider: "postgres",
       url: "postgresql://yaml-user:yaml-password@localhost:5432/fortnote",
-      maxConnections: 8
+      maxConnections: 8,
+      connectionTimeoutMs: 6000,
+      statementTimeoutMs: 31000,
+      lockTimeoutMs: 7000,
+      startupRetryAttempts: 12,
+      startupRetryDelayMs: 1500
     });
     expect(getConfig({
       DATABASE_PROVIDER: "postgres",
       DATABASE_URL: "postgres://environment-user:secret@database:5432/fortnote",
-      DATABASE_MAX_CONNECTIONS: "16"
+      DATABASE_MAX_CONNECTIONS: "16",
+      DATABASE_CONNECTION_TIMEOUT_MS: "7000",
+      DATABASE_STATEMENT_TIMEOUT_MS: "32000",
+      DATABASE_LOCK_TIMEOUT_MS: "8000",
+      DATABASE_STARTUP_RETRY_ATTEMPTS: "14",
+      DATABASE_STARTUP_RETRY_DELAY_MS: "2000"
     }, { cwd }).database).toEqual({
       provider: "postgres",
       url: "postgres://environment-user:secret@database:5432/fortnote",
-      maxConnections: 16
+      maxConnections: 16,
+      connectionTimeoutMs: 7000,
+      statementTimeoutMs: 32000,
+      lockTimeoutMs: 8000,
+      startupRetryAttempts: 14,
+      startupRetryDelayMs: 2000
     });
   });
 
@@ -214,6 +234,21 @@ database:
   ])("rejects unsafe %s values", (name, value) => {
     const cwd = temporaryDirectory();
     expect(() => getConfig({ [name]: value }, { cwd })).toThrow(`Invalid ${name}`);
+  });
+
+  it.each([
+    ["DATABASE_CONNECTION_TIMEOUT_MS", "0"],
+    ["DATABASE_LOCK_TIMEOUT_MS", "-1"],
+    ["DATABASE_STARTUP_RETRY_ATTEMPTS", "1.5"],
+    ["DATABASE_STARTUP_RETRY_DELAY_MS", "0"],
+    ["DATABASE_STATEMENT_TIMEOUT_MS", "NaN"]
+  ])("rejects unsafe PostgreSQL %s values", (name, value) => {
+    const cwd = temporaryDirectory();
+    expect(() => getConfig({
+      DATABASE_PROVIDER: "postgres",
+      DATABASE_URL: "postgresql://localhost/fortnote",
+      [name]: value
+    }, { cwd })).toThrow(`Invalid ${name}`);
   });
 });
 

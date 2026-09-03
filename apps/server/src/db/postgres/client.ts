@@ -47,11 +47,19 @@ export async function createPostgresResources(
 ): Promise<PostgresResources> {
   const pool = new Pool({
     connectionString: config.url,
-    max: config.maxConnections
+    max: config.maxConnections,
+    connectionTimeoutMillis: config.connectionTimeoutMs,
+    statement_timeout: config.statementTimeoutMs,
+    lock_timeout: config.lockTimeoutMs
   });
   const orm = createPostgresOrm(pool);
 
   try {
+    await waitForPostgres(
+      pool,
+      config.startupRetryAttempts,
+      config.startupRetryDelayMs
+    );
     await migrate(orm, {
       migrationsFolder:
         options.migrationsDirectory ??
@@ -142,4 +150,27 @@ export function findPostgresMigrationsDirectory(startDirectory: string): string 
 
 function createPostgresOrm(pool: Pool) {
   return drizzle({ client: pool, schema });
+}
+
+async function waitForPostgres(
+  pool: Pool,
+  attempts: number,
+  retryDelayMs: number
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await pool.query("SELECT 1");
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+    }
+  }
+  throw new Error(
+    `PostgreSQL unavailable after ${String(attempts)} connection attempts`,
+    { cause: lastError }
+  );
 }
