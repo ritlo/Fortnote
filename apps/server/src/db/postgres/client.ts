@@ -25,6 +25,7 @@ import { PostgresNoteSectionRepository } from "../../notes/postgresSectionReposi
 import { PostgresSectionHistoryRepository } from "../../realtime/postgresHistory.js";
 import { PostgresLegacyHistoryRepository } from "../../realtime/postgresLegacyHistory.js";
 import { PostgresSharingKeyRepository } from "../../sharingKeys/postgresRepository.js";
+import { logInfo } from "../../observability/log.js";
 import type { ApplicationDatabase } from "../types.js";
 import * as schema from "./schema.js";
 
@@ -60,10 +61,15 @@ export async function createPostgresResources(
       config.startupRetryAttempts,
       config.startupRetryDelayMs
     );
+    const migrationsStartedAt = performance.now();
     await migrate(orm, {
       migrationsFolder:
         options.migrationsDirectory ??
         findPostgresMigrationsDirectory(options.cwd ?? process.cwd())
+    });
+    logInfo("database.migrations.completed", {
+      durationMs: Math.max(0, Math.round(performance.now() - migrationsStartedAt)),
+      provider: "postgres"
     });
     const attachmentStorage = new PostgresAttachmentStorage(orm);
     await attachmentStorage.removeOrphans();

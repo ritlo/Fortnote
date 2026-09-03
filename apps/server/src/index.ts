@@ -9,10 +9,12 @@ import {
 import { createApplicationDatabase } from "./db/application.js";
 import type { ApplicationDatabase } from "./db/types.js";
 import { createApp } from "./http/app.js";
+import { logError, logInfo } from "./observability/log.js";
 import { RealtimeHub } from "./realtime/hub.js";
 import { attachRealtimeServer } from "./realtime/server.js";
 
 async function main(): Promise<void> {
+  const startupStartedAt = performance.now();
   const config = getConfig();
   const db = await createApplicationDatabase(config);
   const realtime = new RealtimeHub();
@@ -22,7 +24,12 @@ async function main(): Promise<void> {
   let maintenance: ContentMaintenanceHandle | null = null;
 
   try {
+    const maintenanceStartedAt = performance.now();
     await runContentStartupMaintenance(context);
+    logInfo("maintenance.startup.completed", {
+      durationMs: elapsedMilliseconds(maintenanceStartedAt),
+      provider: db.provider
+    });
     maintenance = startContentMaintenance(context);
     await listen(server, config.port, config.host);
   } catch (error) {
@@ -30,13 +37,16 @@ async function main(): Promise<void> {
     throw error;
   }
 
-  console.log(
-    `Fortnote API listening on ${config.host}:${String(config.port)} using ${db.provider}`
-  );
+  logInfo("server.started", {
+    durationMs: elapsedMilliseconds(startupStartedAt),
+    host: config.host,
+    port: config.port,
+    provider: db.provider
+  });
 
   let shutdownPromise: Promise<void> | null = null;
   const shutdown = (signal: NodeJS.Signals) => {
-    console.log(`Fortnote received ${signal}; shutting down`);
+    logInfo("server.shutdown.requested", { signal });
     shutdownPromise ??= closeResources({
       db,
       maintenance,
@@ -44,13 +54,22 @@ async function main(): Promise<void> {
       server,
       webSocketServer
     });
-    void shutdownPromise.catch((error: unknown) => {
-      console.error("Fortnote shutdown failed", error);
-      process.exitCode = 1;
-    });
+    void shutdownPromise.then(
+      () => {
+        logInfo("server.shutdown.completed", { signal });
+      },
+      (error: unknown) => {
+        logError("server.shutdown.failed", { signal }, error);
+        process.exitCode = 1;
+      }
+    );
   };
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);
+}
+
+function elapsedMilliseconds(startedAt: number): number {
+  return Math.max(0, Math.round(performance.now() - startedAt));
 }
 
 function listen(server: Server, port: number, host: string): Promise<void> {
@@ -119,6 +138,6 @@ function closeWebSocketServer(server: WebSocketServer): Promise<void> {
 }
 
 void main().catch((error: unknown) => {
-  console.error("Fortnote startup failed", error);
+  logError("server.startup.failed", {}, error);
   process.exitCode = 1;
 });

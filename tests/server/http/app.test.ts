@@ -11,11 +11,17 @@ describe("createApp", () => {
     const app = createTestApp();
 
     await request(app).get("/api/health").expect(200).expect({ ok: true });
-    await request(app).get("/api/ready").expect(200).expect({ ok: true });
+    await request(app)
+      .get("/api/ready")
+      .expect(200)
+      .expect({ ok: true, checks: { database: "up" } });
 
     app.locals.db.sqlite.close();
     await request(app).get("/api/health").expect(200).expect({ ok: true });
-    await request(app).get("/api/ready").expect(503).expect({ ok: false });
+    await request(app)
+      .get("/api/ready")
+      .expect(503)
+      .expect({ ok: false, checks: { database: "down" } });
   });
 
   it("serves static assets and SPA routes from the configured web root", async () => {

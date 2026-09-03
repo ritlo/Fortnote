@@ -65,7 +65,10 @@ describe.each(runtimeProviders)("$name runtime contract", (runtime) => {
         const agent = request.agent(
           createApp({ config: harness.config, db: harness.database })
         );
-        await agent.get("/api/ready").expect(200).expect({ ok: true });
+        await agent
+          .get("/api/ready")
+          .expect(200)
+          .expect({ ok: true, checks: { database: "up" } });
         const noteId = await registerAndCreateNote(agent, runtime.provider);
         const attachment = attachmentPayload();
 

@@ -62,9 +62,9 @@ export function createApp(context: AppContext) {
   app.get("/api/ready", async (_request, response) => {
     try {
       await context.db.checkReady();
-      response.json({ ok: true });
+      response.json({ ok: true, checks: { database: "up" } });
     } catch {
-      response.status(503).json({ ok: false });
+      response.status(503).json({ ok: false, checks: { database: "down" } });
     }
   });
 

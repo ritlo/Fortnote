@@ -117,7 +117,10 @@ try {
   await compose("restart", "--timeout", "20", "app");
   await waitUntilReady();
   const logs = await composeLogs("app");
-  if (!logs.includes("Fortnote received SIGTERM; shutting down")) {
+  if (
+    !logs.includes('"event":"server.shutdown.requested"') ||
+    !logs.includes('"signal":"SIGTERM"')
+  ) {
     throw new Error("Application restart did not record graceful SIGTERM shutdown");
   }
 

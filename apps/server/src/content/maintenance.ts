@@ -2,6 +2,7 @@ import type { Dir } from "node:fs";
 import fsPromises from "node:fs/promises";
 import path from "node:path";
 import type { AppContext } from "../http/app.js";
+import { logError } from "../observability/log.js";
 
 const STORAGE_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -176,7 +177,9 @@ export function startContentMaintenance(context: AppContext): ContentMaintenance
       }
       await removeOrphanContentObjectsPage(context);
     } catch (error) {
-      console.error("Fortnote content maintenance failed", error);
+      logError("maintenance.content.failed", {
+        provider: context.db.provider
+      }, error);
     } finally {
       schedule();
     }

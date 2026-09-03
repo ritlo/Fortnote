@@ -1,4 +1,5 @@
 import type { Response } from "express";
+import { logError } from "../observability/log.js";
 
 export type ApiErrorCode =
   | "bad_request"
@@ -93,5 +94,9 @@ export function createOperationalErrorRecord(
 }
 
 export function logOperationalError(input: OperationalErrorInput): void {
-  console.error("Fortnote operational error", createOperationalErrorRecord(input));
+  logError(
+    "request.failed",
+    { ...createOperationalErrorRecord(input) },
+    input.error
+  );
 }
