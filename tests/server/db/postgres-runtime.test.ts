@@ -93,6 +93,187 @@ describe.each(runtimeProviders)("$name runtime contract", (runtime) => {
       }
     }
   );
+
+  it.skipIf(!runtime.enabled)(
+    "rotates account credentials and encrypted key material",
+    async () => {
+      const harness = await runtime.createHarness();
+      try {
+        const app = createApp({ config: harness.config, db: harness.database });
+        const agent = request.agent(app);
+        const account = await registerUser(agent, `${runtime.provider}_key_rotation`);
+        const initial = registerPayload(account.username);
+
+        await request(app)
+          .get("/api/auth/kdf-params")
+          .query({ username: account.username })
+          .expect(200)
+          .expect(({ body }) => {
+            expect(body).toMatchObject({
+              authKdfVersion: 1,
+              vaultKdfVersion: 1
+            });
+          });
+        await request(app)
+          .get("/api/auth/recovery-params")
+          .query({ username: account.username })
+          .expect(200)
+          .expect(({ body }) => {
+            expect(body).toMatchObject({
+              recoveryKdfVersion: 1,
+              keyMaterialVersion: 1
+            });
+          });
+        await agent.get("/api/key-material").expect(200).expect(({ body }) => {
+          expect(body).toMatchObject({
+            encryptedRootKey: initial.encryptedRootKey,
+            keyMaterialVersion: 1
+          });
+        });
+
+        const newAuthVerifier = `rotated_auth_verifier_${account.userId}`;
+        await agent
+          .put("/api/key-material")
+          .set(csrfHeaders())
+          .send({
+            newAuthVerifier,
+            authKdf: {
+              salt: `rotated_auth_salt_${account.userId}`,
+              opsLimit: 4,
+              memLimit: 67108864,
+              version: 1
+            },
+            encryptedRootKey: `rotated_encrypted_root_key_${account.userId}`,
+            rootKeyNonce: `rotated_root_key_nonce_${account.userId}`,
+            rootKeyFormatVersion: 2,
+            rootKeyContextVersion: 2,
+            vaultKdf: {
+              salt: `rotated_vault_salt_${account.userId}`,
+              opsLimit: 4,
+              memLimit: 67108864,
+              version: 1
+            },
+            keyMaterialVersion: 1
+          })
+          .expect(200)
+          .expect({ keyMaterialVersion: 2 });
+        await agent
+          .put("/api/key-material")
+          .set(csrfHeaders())
+          .send({
+            encryptedRootKey: `stale_encrypted_root_key_${account.userId}`,
+            rootKeyNonce: `stale_root_key_nonce_${account.userId}`,
+            vaultKdf: {
+              salt: `stale_vault_salt_${account.userId}`,
+              opsLimit: 4,
+              memLimit: 67108864,
+              version: 1
+            },
+            keyMaterialVersion: 1
+          })
+          .expect(409);
+
+        await agent.post("/api/auth/logout").set(csrfHeaders()).expect(204);
+        await request(app)
+          .post("/api/auth/login")
+          .set(csrfHeaders())
+          .send({
+            username: account.username,
+            authVerifier: initial.authVerifier
+          })
+          .expect(401);
+        await request(app)
+          .post("/api/auth/login")
+          .set(csrfHeaders())
+          .send({ username: account.username, authVerifier: newAuthVerifier })
+          .expect(200);
+      } finally {
+        await harness.database.close();
+        await harness.cleanup();
+      }
+    }
+  );
+
+  it.skipIf(!runtime.enabled)(
+    "retains and cleans sharing keys across membership changes",
+    async () => {
+      const harness = await runtime.createHarness();
+      try {
+        const app = createApp({ config: harness.config, db: harness.database });
+        const owner = request.agent(app);
+        const recipient = request.agent(app);
+        await registerUser(owner, `${runtime.provider}_sharing_owner`);
+        const member = await registerUser(
+          recipient,
+          `${runtime.provider}_sharing_recipient`
+        );
+        await recipient
+          .put("/api/sharing-keys/current")
+          .set(csrfHeaders())
+          .send(sharingKeyPayload(1))
+          .expect(201);
+        await recipient
+          .put("/api/sharing-keys/current")
+          .set(csrfHeaders())
+          .send(sharingKeyPayload(2))
+          .expect(201);
+        await owner
+          .get("/api/sharing-keys/lookup")
+          .query({ username: member.username })
+          .expect(200)
+          .expect(({ body }) => {
+            expect(body).toMatchObject({
+              userId: member.userId,
+              sharingKeyVersion: 2,
+              publicKey: sharingKeyPayload(2).publicKey
+            });
+            expect(body.encryptedPrivateKey).toBeUndefined();
+          });
+
+        const note = await owner
+          .post("/api/notes")
+          .set(csrfHeaders())
+          .send(notePayload())
+          .expect(201);
+        const noteId = String(note.body.id);
+        await owner
+          .post(`/api/notes/${noteId}/memberships`)
+          .set(csrfHeaders())
+          .send({
+            username: member.username,
+            role: "viewer",
+            sharingKeyVersion: 1,
+            encryptedNoteKey: "contract_member_note_key_abcdefghijklmnopqrstuvwxyz",
+            formatVersion: 1
+          })
+          .expect(201);
+        await recipient
+          .post("/api/sharing-keys/cleanup")
+          .set(csrfHeaders())
+          .expect(200)
+          .expect({ deleted: 0 });
+
+        await owner
+          .delete(`/api/notes/${noteId}/memberships/${member.userId}`)
+          .set(csrfHeaders())
+          .expect(204);
+        await recipient
+          .post("/api/sharing-keys/cleanup")
+          .set(csrfHeaders())
+          .expect(200)
+          .expect({ deleted: 1 });
+        await recipient
+          .get("/api/sharing-keys/current")
+          .expect(200)
+          .expect(({ body }) => {
+            expect(body).toMatchObject(sharingKeyPayload(2));
+          });
+      } finally {
+        await harness.database.close();
+        await harness.cleanup();
+      }
+    }
+  );
 });
 
 describe.skipIf(!postgresUrl)("PostgreSQL startup lifecycle", () => {
@@ -737,13 +918,14 @@ async function registerUser(agent: HttpAgent, label: string) {
   return { userId: String(session.body.id), username };
 }
 
-function sharingKeyPayload() {
+function sharingKeyPayload(version = 1) {
   return {
-    sharingKeyVersion: 1,
-    publicKey: "contract_public_sharing_key_abcdefghijklmnopqrstuvwxyz",
+    sharingKeyVersion: version,
+    publicKey: `contract_public_sharing_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
     encryptedPrivateKey:
-      "contract_encrypted_private_sharing_key_abcdefghijklmnopqrstuvwxyz",
-    privateKeyNonce: "contract_private_key_nonce_abcdefghijklmnopqrstuvwxyz",
+      `contract_encrypted_private_sharing_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
+    privateKeyNonce:
+      `contract_private_key_nonce_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
     formatVersion: 1
   };
 }
@@ -774,7 +956,7 @@ function contentBeginPayload(noteId: string) {
 
 function committableContent(
   noteId: string,
-  bytes = Buffer.from([3, 1, 4, 1, 5, 9])
+  bytes: Buffer = Buffer.from([3, 1, 4, 1, 5, 9])
 ) {
   const cipherHash = createHash("sha256").update(bytes).digest("hex");
   const nonce = Buffer.alloc(24, 7);
