@@ -141,6 +141,7 @@ try {
     }),
     ciphertext
   );
+  await verifyBackupRestore();
 
 } catch (error) {
   if (composeStarted) {
@@ -185,6 +186,10 @@ async function cleanup() {
 }
 
 async function expectServiceRunning(service) {
+  await serviceContainerId(service);
+}
+
+async function serviceContainerId(service) {
   const containerId = await run(
     containerEngine,
     [
@@ -200,6 +205,112 @@ async function expectServiceRunning(service) {
   if (!containerId.trim()) {
     throw new Error(`Compose service did not start: ${service}`);
   }
+  return containerId.trim().split("\n", 1)[0];
+}
+
+async function verifyBackupRestore() {
+  const postgresContainer = await serviceContainerId("postgres");
+  console.log("Creating PostgreSQL backup archive");
+  const sourceFingerprint = await databaseFingerprint(
+    postgresContainer,
+    "fortnote"
+  );
+  const backup = await runBinary(
+    containerEngine,
+    [
+      "exec",
+      postgresContainer,
+      "pg_dump",
+      "--username=fortnote",
+      "--dbname=fortnote",
+      "--format=custom",
+      "--no-owner",
+      "--no-privileges"
+    ]
+  );
+  if (!backup.subarray(0, 5).equals(Buffer.from("PGDMP"))) {
+    throw new Error("PostgreSQL backup is not a valid custom-format archive");
+  }
+
+  const restoredDatabase = "fortnote_restore";
+  console.log("Restoring PostgreSQL backup archive");
+  await run(
+    containerEngine,
+    [
+      "exec",
+      postgresContainer,
+      "createdb",
+      "--username=fortnote",
+      restoredDatabase
+    ],
+    false
+  );
+  await runBinary(
+    containerEngine,
+    [
+      "exec",
+      "-i",
+      postgresContainer,
+      "pg_restore",
+      "--username=fortnote",
+      `--dbname=${restoredDatabase}`,
+      "--exit-on-error",
+      "--no-owner",
+      "--no-privileges"
+    ],
+    backup
+  );
+  const restoredFingerprint = await databaseFingerprint(
+    postgresContainer,
+    restoredDatabase
+  );
+  if (restoredFingerprint !== sourceFingerprint) {
+    throw new Error(
+      "PostgreSQL restore fingerprint differs from the source database"
+    );
+  }
+  console.log("PostgreSQL backup and attachment restore verified");
+}
+
+async function databaseFingerprint(containerId, databaseName) {
+  const sql = `
+    SELECT concat_ws(':',
+      (SELECT count(*) FROM users),
+      (SELECT count(*) FROM notes),
+      (SELECT count(*) FROM note_memberships),
+      (SELECT count(*) FROM attachments),
+      (SELECT count(*) FROM attachment_objects),
+      (SELECT count(*) FROM attachment_object_chunks),
+      COALESCE((
+        SELECT sum(octet_length(ciphertext))
+        FROM attachment_object_chunks
+      ), 0),
+      COALESCE((
+        SELECT md5(string_agg(
+          encode(ciphertext, 'hex'),
+          '' ORDER BY storage_key, chunk_index
+        ))
+        FROM attachment_object_chunks
+      ), '')
+    )
+  `;
+  const fingerprint = await run(
+    containerEngine,
+    [
+      "exec",
+      containerId,
+      "psql",
+      "--username=fortnote",
+      `--dbname=${databaseName}`,
+      "--tuples-only",
+      "--no-align",
+      "--set=ON_ERROR_STOP=1",
+      "--command",
+      sql
+    ],
+    true
+  );
+  return fingerprint.trim();
 }
 
 function handleSignal(signal, exitCode) {
@@ -257,6 +368,41 @@ function run(command, arguments_, captureOutput) {
         )
       );
     });
+  });
+}
+
+function runBinary(command, arguments_, input) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, arguments_, {
+      cwd: repositoryRoot,
+      env: composeEnvironment,
+      stdio: [input ? "pipe" : "ignore", "pipe", "pipe"],
+      timeout: 60_000,
+      killSignal: "SIGKILL"
+    });
+    const output = [];
+    const errors = [];
+    child.stdout.on("data", (value) => output.push(Buffer.from(value)));
+    child.stderr.on("data", (value) => errors.push(Buffer.from(value)));
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) {
+        resolve(Buffer.concat(output));
+        return;
+      }
+      const detail = Buffer.concat(errors).toString("utf8").trim();
+      reject(
+        new Error(
+          `${command} ${arguments_.join(" ")} failed` +
+            (signal ? ` with ${signal}` : ` with exit code ${String(code)}`) +
+            (detail ? `: ${detail}` : "")
+        )
+      );
+    });
+    if (input) {
+      child.stdin.on("error", () => undefined);
+      child.stdin.end(input);
+    }
   });
 }
 
