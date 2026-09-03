@@ -1,6 +1,41 @@
 name: fortnote
 
 services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      ALLOWED_ORIGIN: ${FORTNOTE_ALLOWED_ORIGIN:-http://localhost:3001}
+      COOKIE_SECURE: ${FORTNOTE_COOKIE_SECURE:-false}
+      DATABASE_MAX_CONNECTIONS: ${FORTNOTE_DATABASE_MAX_CONNECTIONS:-10}
+      DATABASE_PROVIDER: postgres
+      DATABASE_URL: ${FORTNOTE_DATABASE_URL:-postgresql://fortnote:fortnote-local@postgres:5432/fortnote}
+      WEB_ROOT: /app/public
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+    ports:
+      - "127.0.0.1:${FORTNOTE_PORT:-3001}:3001"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    init: true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3001/api/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+
   postgres:
     image: postgres:18-alpine
     environment:

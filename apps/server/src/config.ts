@@ -16,7 +16,8 @@ const serverSchema = z.strictObject({
   port: positiveIntegerSchema.default(3001),
   host: z.string().min(1).default("0.0.0.0"),
   cookieSecure: z.boolean().default(true),
-  allowedOrigin: z.string().min(1).default("http://localhost:5173")
+  allowedOrigin: z.string().min(1).default("http://localhost:5173"),
+  webRoot: z.string().min(1).nullable().default(null)
 });
 const databaseSchema = z.discriminatedUnion("provider", [
   z.strictObject({
@@ -77,6 +78,7 @@ export interface ServerConfig {
   dataDir: string;
   cookieSecure: boolean;
   allowedOrigin: string;
+  webRoot: string | null;
   jsonControlMaxBytes: number;
   realtimeFrameMaxBytes: number;
   contentChunkMaxBytes: number;
@@ -111,6 +113,7 @@ export function getConfig(
 
   const fileConfig = parseConfigFile(configPath);
   const baseDirectory = configPath ? path.dirname(configPath) : cwd;
+  const configuredWebRoot = env.WEB_ROOT ?? fileConfig.server.webRoot;
   const databaseProvider = env.DATABASE_PROVIDER ?? fileConfig.database.provider;
   if (databaseProvider !== "sqlite" && databaseProvider !== "postgres") {
     throw new Error("Invalid DATABASE_PROVIDER: expected sqlite or postgres");
@@ -159,6 +162,9 @@ export function getConfig(
       fileConfig.server.cookieSecure
     ),
     allowedOrigin: env.ALLOWED_ORIGIN ?? fileConfig.server.allowedOrigin,
+    webRoot: configuredWebRoot === null
+      ? null
+      : resolveConfiguredPath(baseDirectory, configuredWebRoot),
     jsonControlMaxBytes: environmentPositiveInteger(
       env,
       "JSON_CONTROL_MAX_BYTES",

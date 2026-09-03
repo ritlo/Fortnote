@@ -1,5 +1,6 @@
 import express, { type ErrorRequestHandler } from "express";
 import helmet from "helmet";
+import path from "node:path";
 import type { ApplicationDatabase } from "../db/types.js";
 import type { ServerConfig } from "../config.js";
 import type { RealtimePublisher } from "../realtime/types.js";
@@ -58,6 +59,14 @@ export function createApp(context: AppContext) {
   app.get("/api/health", (_request, response) => {
     response.json({ ok: true });
   });
+  app.get("/api/ready", async (_request, response) => {
+    try {
+      await context.db.checkReady();
+      response.json({ ok: true });
+    } catch {
+      response.status(503).json({ ok: false });
+    }
+  });
 
   app.use("/api/auth", createAuthRouter(context));
   app.use("/api", createAttachmentsRouter(context));
@@ -67,6 +76,22 @@ export function createApp(context: AppContext) {
   app.use("/api/key-material", createKeyMaterialRouter(context));
   app.use("/api/notes", createNotesRouter(context));
   app.use("/api/sharing-keys", createSharingKeysRouter(context));
+
+  const { webRoot } = context.config;
+  if (webRoot) {
+    app.use(express.static(webRoot, { index: false }));
+    app.use((request, response, next) => {
+      if (
+        request.method !== "GET" ||
+        request.path === "/api" ||
+        request.path.startsWith("/api/")
+      ) {
+        next();
+        return;
+      }
+      response.sendFile(path.join(webRoot, "index.html"));
+    });
+  }
 
   const handleError: ErrorRequestHandler = (error, _request, response, next) => {
     if (response.headersSent) {

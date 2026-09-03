@@ -57,17 +57,39 @@ encrypted chunks and keeps backup and deletion behavior
 transactional. An S3-compatible attachment backend can be added later through the same storage
 interface.
 
-The long-term deployment target is Docker Compose with separate application and PostgreSQL
-services, persistent volumes, health checks, a read-only `config.yaml` mount, and secrets passed
-through environment variables or Docker secrets. The committed configuration will continue to
-default to local SQLite and local filesystem storage for development.
+The staging deployment uses Docker Compose with separate application and PostgreSQL services. The
+application image builds both the web client and API, runs as the unprivileged `node` user, serves
+the client and API from one origin, mounts `config.yaml` read-only, and stores PostgreSQL-mode
+attachments entirely in the database. PostgreSQL data is kept in the `postgres-data` volume; the
+application container has a read-only filesystem and does not need an attachment volume.
 
-The PostgreSQL schema, migration history, repositories, runtime provider selection, and chunked
-attachment backend are present. For schema development, start the isolated PostgreSQL service and
-apply its migrations with:
+Start the complete local stack and open <http://localhost:3001>:
 
 ```sh
-docker compose -f compose.postgres.yaml up -d
+docker compose -f compose.postgres.yaml up --build
+```
+
+The committed Compose defaults are for localhost only. For a non-local deployment, set a strong
+database password and a matching connection URL, plus the externally visible HTTPS origin:
+
+```sh
+FORTNOTE_POSTGRES_PASSWORD='replace-with-a-strong-password' \
+FORTNOTE_DATABASE_URL='postgresql://fortnote:URL_ENCODED_PASSWORD@postgres:5432/fortnote' \
+FORTNOTE_ALLOWED_ORIGIN='https://notes.example.com' \
+FORTNOTE_COOKIE_SECURE=true \
+docker compose -f compose.postgres.yaml up -d --build
+```
+
+`FORTNOTE_POSTGRES_PASSWORD` is passed to PostgreSQL as-is; encode reserved URL characters in the
+password portion of `FORTNOTE_DATABASE_URL`. Prefer a protected environment file or deployment
+secret manager instead of placing credentials in shell history.
+
+The PostgreSQL schema, migration history, repositories, runtime provider selection, and chunked
+attachment backend are present. Migrations run automatically before the application becomes ready.
+For schema development, start only the isolated PostgreSQL service and apply migrations manually:
+
+```sh
+docker compose -f compose.postgres.yaml up -d postgres
 DATABASE_URL=postgresql://fortnote:fortnote-local@127.0.0.1:5432/fortnote \
   pnpm --filter @fortnote/server db:migrate:postgres
 ```

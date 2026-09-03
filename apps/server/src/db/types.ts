@@ -43,5 +43,6 @@ export interface ApplicationDatabase {
   readonly contentUploads: ContentUploadRepository;
   readonly contentManifests: ContentManifestRepository;
   readonly contentMaintenance: ContentMaintenanceRepository;
+  checkReady(): Promise<void>;
   close(): Promise<void>;
 }

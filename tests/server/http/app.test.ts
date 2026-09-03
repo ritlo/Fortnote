@@ -1,9 +1,43 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { createTestApp, csrfHeaders, registerAgent } from "../support/http.js";
 import { createOperationalErrorRecord, logOperationalError } from "@server/http/errors.js";
 
 describe("createApp", () => {
+  it("reports process liveness and database readiness separately", async () => {
+    const app = createTestApp();
+
+    await request(app).get("/api/health").expect(200).expect({ ok: true });
+    await request(app).get("/api/ready").expect(200).expect({ ok: true });
+
+    app.locals.db.sqlite.close();
+    await request(app).get("/api/health").expect(200).expect({ ok: true });
+    await request(app).get("/api/ready").expect(503).expect({ ok: false });
+  });
+
+  it("serves static assets and SPA routes from the configured web root", async () => {
+    const webRoot = await mkdtemp(join(tmpdir(), "fortnote-web-root-"));
+    try {
+      await Promise.all([
+        writeFile(join(webRoot, "index.html"), "<!doctype html><title>Fortnote web</title>"),
+        writeFile(join(webRoot, "asset.txt"), "encrypted client asset")
+      ]);
+      const app = createTestApp({ webRoot });
+
+      await request(app).get("/").expect(200).expect(/Fortnote web/u);
+      await request(app).get("/notes/example").expect(200).expect(/Fortnote web/u);
+      await request(app).get("/asset.txt").expect(200).expect("encrypted client asset");
+      await request(app).get("/api/missing").expect(404).expect(({ text }) => {
+        expect(text).not.toContain("Fortnote web");
+      });
+    } finally {
+      await rm(webRoot, { recursive: true, force: true });
+    }
+  });
+
   it("sets a strict content security policy", async () => {
     const app = createTestApp();
 

@@ -27,6 +27,7 @@ describe("server configuration", () => {
       dataDir: path.join(cwd, "data/attachments"),
       cookieSecure: true,
       allowedOrigin: "http://localhost:5173",
+      webRoot: null,
       jsonControlMaxBytes: 1024 * 1024,
       realtimeFrameMaxBytes: 256 * 1024,
       contentChunkMaxBytes: 256 * 1024,
@@ -50,6 +51,7 @@ server:
   host: 127.0.0.1
   cookieSecure: false
   allowedOrigin: http://127.0.0.1:5173
+  webRoot: public
 database:
   provider: sqlite
   path: state/fortnote.sqlite
@@ -84,6 +86,7 @@ auth:
       dataDir: path.join(cwd, "state/attachments"),
       cookieSecure: false,
       allowedOrigin: "http://127.0.0.1:5173",
+      webRoot: path.join(cwd, "public"),
       jsonControlMaxBytes: 524288,
       realtimeFrameMaxBytes: 65536,
       contentChunkMaxBytes: 131072,
@@ -125,7 +128,8 @@ localstorage:
         FORTNOTE_CONFIG: "settings.yaml",
         PORT: "4200",
         DATABASE_PATH: "environment.sqlite",
-        STORAGE_QUOTA_BYTES: "4096"
+        STORAGE_QUOTA_BYTES: "4096",
+        WEB_ROOT: "web"
       },
       { cwd }
     );
@@ -136,6 +140,7 @@ localstorage:
       path: path.join(cwd, "environment.sqlite")
     });
     expect(config.storageQuotaBytes).toBe(4096);
+    expect(config.webRoot).toBe(path.join(cwd, "web"));
   });
 
   it("loads PostgreSQL settings from YAML and environment overrides", () => {

@@ -114,6 +114,9 @@ export async function createPostgresDatabase(
       contentUploads: new PostgresContentUploadRepository(orm),
       contentManifests: new PostgresContentManifestRepository(orm),
       contentMaintenance: new PostgresContentMaintenanceRepository(orm),
+      checkReady: async () => {
+        await resources.pool.query("SELECT 1");
+      },
       close: () => resources.close()
     };
   } catch (error) {

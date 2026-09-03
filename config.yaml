@@ -4,6 +4,8 @@ server:
   port: 3001
   allowedOrigin: http://localhost:5173
   cookieSecure: true
+  # Set this to the built client directory when the API should also serve the web app.
+  webRoot: null
 
 database:
   # For PostgreSQL, set DATABASE_PROVIDER=postgres and provide DATABASE_URL.

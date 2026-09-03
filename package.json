@@ -2,6 +2,7 @@
   "name": "fortnote",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.6.0",
   "workspaces": [
     "apps/*",
     "packages/*"

@@ -108,6 +108,10 @@ export function createDb(config: ServerConfig): AppDb {
     contentUploads,
     contentManifests,
     contentMaintenance,
+    checkReady() {
+      sqlite.prepare("SELECT 1").get();
+      return Promise.resolve();
+    },
     close() {
       sqlite.close();
       return Promise.resolve();
