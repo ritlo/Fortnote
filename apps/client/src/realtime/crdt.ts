@@ -11,7 +11,6 @@ import type { DecryptedNote } from "../store/appStore";
 import { notifyCrdtSectionChange } from "./crdt/changes";
 import {
   getSnapshotVersion,
-  REMOTE_UPDATE,
   replaceLegacySectionContent,
   replaceWithSnapshot,
   ROOT_SECTION_ID,
@@ -21,9 +20,7 @@ import {
 import { CrdtProvider } from "./crdt/provider";
 import {
   broadcastCheckpoint,
-  broadcastUpdate,
-  clearCheckpointCoverage,
-  trackUpdate
+  broadcastUpdate
 } from "./crdt/outbound";
 import {
   getCrdtTransport,
@@ -45,13 +42,10 @@ import {
   trackPendingBroadcast,
   type Binding
 } from "./crdt/state";
-import {
-  decryptReceivedUpdate,
-  sendOutbound,
-  type IncomingCrdtMessage
-} from "./crdt/transport";
+import { sendOutbound } from "./crdt/transport";
 
 export { CrdtProvider } from "./crdt/provider";
+export { receiveCrdtUpdate } from "./crdt/incoming";
 export {
   subscribeCrdtSectionChanges,
   type CrdtSectionChange
@@ -510,75 +504,6 @@ export async function checkpointCrdtNote(note: DecryptedNote): Promise<void> {
   await Promise.all(current.map((binding) => broadcastCheckpoint(binding)));
 }
 
-export function receiveCrdtUpdate(
-  update: IncomingCrdtMessage
-): Promise<void> {
-  const sectionId = scopedSectionId(update) ?? defaultSectionId(update.noteId);
-  const binding = bindings.get(bindingKey(update.noteId, sectionId));
-  if (
-    binding?.note.cryptoOwnerId !== update.cryptoOwnerId ||
-    binding.note.keyEpoch !== messageKeyEpoch(update)
-  ) {
-    return Promise.resolve();
-  }
-  const received = binding.receiving.then(async () => {
-    try {
-      const currentTransport = getCrdtTransport();
-      const plaintext = await decryptReceivedUpdate({
-        update,
-        noteKeyBase64: binding.note.noteKeyBase64,
-        ...(currentTransport?.downloadContent
-          ? { downloadContent: currentTransport.downloadContent }
-          : {}),
-        onProgress: (progress) => {
-          binding.provider.emit("progress", progress);
-        }
-      });
-      if (!isActiveBinding(binding) || binding.note.keyEpoch !== messageKeyEpoch(update)) {
-        return;
-      }
-      Y.applyUpdate(binding.doc, plaintext, REMOTE_UPDATE);
-      binding.appliedUpdateCount += 1;
-      binding.failedUpdateIds.delete(update.updateId);
-      if (update.type === "crdt-checkpoint") {
-        update.compactedUpdateIds?.forEach((id) => {
-          binding.pendingUpdateIds.delete(id);
-          binding.failedUpdateIds.delete(id);
-          binding.receivedServerSequences.delete(id);
-        });
-      }
-      if (
-        (update.type === "crdt-binary" || update.type === "crdt-manifest") &&
-        update.serverSequence
-      ) {
-        binding.observedServerSequence = Math.max(
-          binding.observedServerSequence,
-          update.serverSequence
-        );
-        binding.receivedServerSequences.set(update.updateId, update.serverSequence);
-        clearCheckpointCoverage(binding, update);
-      }
-      trackUpdate(binding, update.updateId);
-      notifyCrdtSectionChange(binding);
-    } catch (error) {
-      if (!isActiveBinding(binding)) {
-        return;
-      }
-      binding.failedUpdateIds.add(update.updateId);
-      binding.pendingUpdateIds.add(update.updateId);
-      if (
-        (update.type === "crdt-binary" || update.type === "crdt-manifest") &&
-        update.serverSequence
-      ) {
-        binding.receivedServerSequences.set(update.updateId, update.serverSequence);
-      }
-      throw error;
-    }
-  });
-  binding.receiving = received.catch(() => undefined);
-  return received;
-}
-
 export async function finishCrdtSync(
   noteId: string,
   keyEpoch: number,
@@ -695,18 +620,4 @@ function noteBindings(note: DecryptedNote, includeRoot: boolean): Binding[] {
     getOrCreateBinding(note.id, ROOT_SECTION_ID, note.keyEpoch),
     section
   ];
-}
-
-function scopedSectionId(
-  update: IncomingCrdtMessage
-): string | null {
-  return "sectionId" in update && typeof update.sectionId === "string"
-    ? update.sectionId
-    : null;
-}
-
-function messageKeyEpoch(
-  update: IncomingCrdtMessage
-): number {
-  return update.type === "crdt-binary" ? update.expectedKeyEpoch : update.keyEpoch;
 }
