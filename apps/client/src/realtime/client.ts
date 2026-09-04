@@ -34,8 +34,12 @@ import {
 } from "./contentTransfer";
 import type { ScopedEncryptedCrdtMessage } from "./crdt";
 import {
+  flushCrdtOutbox,
+  persistCrdtOutbox,
+  readCrdtOutbox
+} from "./legacyOutbox";
+import {
   CLIENT_REALTIME_FRAME_MAX_BYTES,
-  isRealtimeMessage,
   parseRealtimeBinaryMessage,
   parseRealtimeMessage,
   type RealtimeMessage
@@ -45,9 +49,6 @@ export { parseRealtimeMessage } from "./protocol";
 export type { RealtimeMessage } from "./protocol";
 
 export type ClientPresenceState = PresenceState | "left";
-
-const CRDT_OUTBOX_KEY_PREFIX = "fortnote:crdt-outbox:v1:";
-const volatileCrdtOutboxes = new Map<string, Map<string, EncryptedCrdtMessage>>();
 
 export interface RecoverableCrdtDraft extends EncryptedSectionDraft {
   source: "rejected" | "restored";
@@ -656,57 +657,6 @@ function realtimeUrl(after: number, clientId: string): string {
     capabilities: `${CRDT_REALTIME_CAPABILITY},${CRDT_REALTIME_CAPABILITY_V2}`
   });
   return `${protocol}//${window.location.host}/api/realtime?${query.toString()}`;
-}
-
-function flushCrdtOutbox(socket: WebSocket, userId: string, enabled = true): void {
-  if (socket.readyState !== WebSocket.OPEN || !enabled) {
-    return;
-  }
-  for (const update of readCrdtOutbox(userId).values()) {
-    socket.send(JSON.stringify(update));
-  }
-}
-
-function readCrdtOutbox(userId: string): Map<string, EncryptedCrdtMessage> {
-  const existing = volatileCrdtOutboxes.get(userId);
-  if (existing) {
-    return existing;
-  }
-  const outbox = new Map<string, EncryptedCrdtMessage>();
-  try {
-    const stored = JSON.parse(localStorage.getItem(outboxKey(userId)) ?? "[]") as unknown;
-    if (Array.isArray(stored)) {
-      for (const value of stored) {
-        if (
-          isRealtimeMessage(value) &&
-          (value.type === "crdt-update" || value.type === "crdt-checkpoint")
-        ) {
-          outbox.set(value.updateId, value);
-        }
-      }
-    }
-  } catch {
-    // Corrupt storage is ignored; new writes replace it.
-  }
-  volatileCrdtOutboxes.set(userId, outbox);
-  return outbox;
-}
-
-function persistCrdtOutbox(userId: string, required = false): void {
-  try {
-    localStorage.setItem(
-      outboxKey(userId),
-      JSON.stringify([...(volatileCrdtOutboxes.get(userId)?.values() ?? [])])
-    );
-  } catch {
-    if (required) {
-      throw new Error("CRDT outbox storage is full");
-    }
-  }
-}
-
-function outboxKey(userId: string): string {
-  return `${CRDT_OUTBOX_KEY_PREFIX}${userId}`;
 }
 
 function isScopedCrdtUpdate(
