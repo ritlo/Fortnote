@@ -14,6 +14,7 @@
     "assurance:mutation": "stryker run && node scripts/classify-mutation-results.mjs",
     "assurance:perf": "pnpm build && node scripts/create-performance-fixture.mjs",
     "assurance:perf:full": "pnpm build && FORTNOTE_PERFORMANCE_PROFILE=full node scripts/create-performance-fixture.mjs",
+    "assurance:perf:postgres": "pnpm build && node scripts/run-postgres-performance.mjs",
     "assurance:verify": "node scripts/verify-assurance.mjs",
     "build": "pnpm -r build",
     "dev": "pnpm --filter @fortnote/client dev",

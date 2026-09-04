@@ -7,6 +7,7 @@ import {
   type Request,
   type Route
 } from "@playwright/test";
+import { requiresContentTransfer } from "../../../apps/client/src/realtime/crdt.js";
 
 export const MIB = 1024 * 1024;
 export const REPRESENTATIVE_DOCUMENT = {
@@ -400,9 +401,18 @@ async function replaceEditorWithGeneratedText(
   while (remaining > 0) {
     const chunkBytes = Math.min(remaining, GENERATED_EDIT_MAX_BYTES);
     const chunkPrefix = first ? prefix : "";
-    const committed = page.waitForResponse(isSuccessfulContentCommit, { timeout: 120_000 });
+    const committed = requiresContentTransfer(chunkBytes)
+      ? page.waitForResponse(isSuccessfulContentCommit, { timeout: 120_000 })
+      : null;
     await injectGeneratedEditorText(page, chunkBytes, chunkPrefix, first);
-    await committed;
+    if (committed) {
+      await committed;
+    } else {
+      await expect(page.locator(".collaboration-status")).toContainText(
+        "Saved and synchronized",
+        { timeout: 30_000 }
+      );
+    }
     remaining -= chunkBytes;
     first = false;
   }

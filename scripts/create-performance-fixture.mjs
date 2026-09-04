@@ -46,6 +46,18 @@ export function performanceFixtureDefinition(
   };
 }
 
+export function performanceDatabaseEnvironment(postgresUrl, sqlitePath) {
+  return postgresUrl
+    ? {
+        DATABASE_PROVIDER: "postgres",
+        DATABASE_URL: postgresUrl
+      }
+    : {
+        DATABASE_PROVIDER: "sqlite",
+        DATABASE_PATH: sqlitePath
+      };
+}
+
 async function run() {
   const fixtureRoot = await mkdtemp(path.join(tmpdir(), "fortnote-performance-"));
   const apiPort = await availablePort();
@@ -62,6 +74,11 @@ async function run() {
     process.env.FORTNOTE_PERFORMANCE_SEED,
     profile
   );
+  const postgresUrl = process.env.FORTNOTE_PERFORMANCE_DATABASE_URL;
+  const databaseEnvironment = performanceDatabaseEnvironment(
+    postgresUrl,
+    path.join(fixtureRoot, "performance.sqlite")
+  );
   await mkdir(outputDirectory, { recursive: true });
 
   const child = spawn(
@@ -70,7 +87,7 @@ async function run() {
     {
       env: {
         ...process.env,
-        DATABASE_PATH: path.join(fixtureRoot, "performance.sqlite"),
+        ...databaseEnvironment,
         DATA_DIR: path.join(fixtureRoot, "ciphertext"),
         API_PORT: String(apiPort),
         ALLOWED_ORIGIN: `http://127.0.0.1:${String(clientPort)}`,

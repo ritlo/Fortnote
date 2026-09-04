@@ -1,7 +1,10 @@
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { performanceFixtureDefinition } from "../../../scripts/create-performance-fixture.mjs";
+import {
+  performanceDatabaseEnvironment,
+  performanceFixtureDefinition
+} from "../../../scripts/create-performance-fixture.mjs";
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const verifierUrl = pathToFileURL(
@@ -67,6 +70,20 @@ describe("performance assurance calculations", () => {
       warmupRuns: 2
     });
     expect(new Set(Object.values(first.accounts).map(({ username }) => username)).size).toBe(3);
+  });
+
+  it("isolates performance runs on the selected database", () => {
+    expect(performanceDatabaseEnvironment(undefined, "/tmp/performance.sqlite")).toEqual({
+      DATABASE_PATH: "/tmp/performance.sqlite",
+      DATABASE_PROVIDER: "sqlite"
+    });
+    expect(performanceDatabaseEnvironment(
+      "postgresql://fortnote:secret@127.0.0.1:5432/fortnote",
+      "/tmp/performance.sqlite"
+    )).toEqual({
+      DATABASE_PROVIDER: "postgres",
+      DATABASE_URL: "postgresql://fortnote:secret@127.0.0.1:5432/fortnote"
+    });
   });
 
   it("calculates nearest-rank p95 from sorted and unsorted samples", async () => {

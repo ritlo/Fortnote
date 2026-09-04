@@ -25,3 +25,9 @@ export function performanceFixtureDefinition(
   seed?: string,
   profile?: "smoke" | "full"
 ): PerformanceFixtureDefinition;
+export function performanceDatabaseEnvironment(
+  postgresUrl: string | undefined,
+  sqlitePath: string
+):
+  | { DATABASE_PROVIDER: "postgres"; DATABASE_URL: string }
+  | { DATABASE_PROVIDER: "sqlite"; DATABASE_PATH: string };

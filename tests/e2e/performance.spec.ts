@@ -120,11 +120,18 @@ test.describe("controlled production performance", () => {
         traffic.stop();
 
         await samplePage.reload();
-        await samplePage.getByLabel("Account handle").fill(definition.accounts.owner.username);
-        await samplePage.getByLabel("Account password").fill(definition.accounts.owner.password);
+        await samplePage.getByRole("button", { name: "Sign in", exact: true }).click();
+        const accountHandle = samplePage.getByLabel("Account handle");
+        const accountPassword = samplePage.getByLabel("Account password");
+        await accountHandle.fill(definition.accounts.owner.username);
+        await accountPassword.fill(definition.accounts.owner.password);
+        await expect(accountHandle).toHaveValue(definition.accounts.owner.username);
+        await expect(accountPassword).toHaveValue(definition.accounts.owner.password);
         const freshSessionUsable = await userTiming(samplePage, "fresh-session-usable", async () => {
           await samplePage.getByRole("button", { name: "Sign in and decrypt" }).click();
-          await expect(samplePage.getByText("Signed in and decrypted")).toBeVisible();
+          await expect(samplePage.getByText("Signed in and decrypted")).toBeVisible({
+            timeout: 30_000
+          });
           await openDocument(samplePage, definition.title, dataset.marker);
         });
 
@@ -147,7 +154,9 @@ test.describe("controlled production performance", () => {
         const marker = `remote-${String(run).padStart(2, "0")}`;
         const collaboratorVisible = await userTiming(editorPage, "collaborator-visible", async () => {
           await appendText(editorPage, marker);
-          await expect(ownerPage.locator(".block-editor .bn-editor")).toContainText(marker);
+          await expect(ownerPage.locator(".block-editor .bn-editor")).toContainText(marker, {
+            timeout: 30_000
+          });
         });
 
         if (retained) {
@@ -174,7 +183,9 @@ test.describe("controlled production performance", () => {
         buildMode: "production",
         collaborators: definition.collaborators,
         cpu: `${String(os.cpus().length)}x ${os.cpus()[0]?.model ?? "unknown"}`,
-        database: "isolated local SQLite and filesystem ciphertext storage",
+        database: process.env.DATABASE_PROVIDER === "postgres"
+          ? "isolated PostgreSQL and database ciphertext storage"
+          : "isolated local SQLite and filesystem ciphertext storage",
         dataset: `${String(profile.documentBytes)} focused-document bytes/${String(definition.compactionEdits)} edits`,
         node: process.version,
         os: `${os.platform()} ${os.release()} ${os.arch()}`,
