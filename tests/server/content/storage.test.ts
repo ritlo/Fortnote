@@ -4,7 +4,7 @@ import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getConfig, type ServerConfig } from "@server/config.js";
 import type { AppDb } from "@server/db/client.js";
 import {
@@ -16,7 +16,8 @@ import {
 import {
   ContentStorageScanner,
   expireContentUploadsPage,
-  reconcileStorageAccountsPage
+  reconcileStorageAccountsPage,
+  startContentMaintenance
 } from "@server/content/maintenance.js";
 import { contentManifestHash } from "@server/content/manifests.js";
 import type { AttachmentStorage } from "@server/attachments/storage.js";
@@ -33,6 +34,8 @@ const cleanupDirectories: string[] = [];
 const cleanupDbs: AppDb[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   for (const db of cleanupDbs.splice(0)) {
     db.sqlite.close();
   }
@@ -334,6 +337,42 @@ describe("encrypted content chunk storage", () => {
       { usedBytes: 0, reservedBytes: 0 }
     ]);
   });
+
+  it("waits for active background maintenance before stopping", async () => {
+    vi.useFakeTimers();
+    const app = createTestApp({ contentUploadExpiryMs: 1_000 });
+    const config = app.locals.config as ServerConfig;
+    const db = app.locals.db as AppDb;
+    const context = { config, db };
+    cleanupDirectories.push(config.dataDir);
+    cleanupDbs.push(db);
+    const started = deferredSignal();
+    const release = deferredSignal();
+    vi.spyOn(db.contentMaintenance, "expireUploads").mockImplementation(async () => {
+      started.resolve();
+      await release.promise;
+      return { uploads: [], hasMore: false };
+    });
+    const maintenance = startContentMaintenance(context);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await started.promise;
+    const stopping = maintenance.stop();
+    const stopState = Promise.race([
+      stopping.then(() => "stopped" as const),
+      new Promise<"pending">((resolve) => {
+        setTimeout(() => {
+          resolve("pending");
+        }, 100);
+      })
+    ]);
+    await vi.advanceTimersByTimeAsync(100);
+    const stateBeforeRelease = await stopState;
+
+    release.resolve();
+    await stopping;
+    expect(stateBeforeRelease).toBe("pending");
+  });
 });
 
 function testConfig(): ServerConfig {
@@ -348,6 +387,16 @@ function testConfig(): ServerConfig {
 
 function digest(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function deferredSignal() {
+  let resolve!: () => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
 }
 
 function chunk(bytes: Buffer, size: number): Buffer[] {

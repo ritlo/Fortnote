@@ -156,6 +156,7 @@ export async function runContentStartupMaintenance(context: AppContext): Promise
 export function startContentMaintenance(context: AppContext): ContentMaintenanceHandle {
   let scanner = new ContentStorageScanner(context);
   let timer: NodeJS.Timeout | null = null;
+  let activePage: Promise<void> | null = null;
   let stopped = false;
   const intervalMs = Math.min(60_000, Math.max(1_000, context.config.contentUploadExpiryMs));
 
@@ -164,7 +165,14 @@ export function startContentMaintenance(context: AppContext): ContentMaintenance
       return;
     }
     timer = setTimeout(() => {
-      void runPage();
+      timer = null;
+      const page = runPage();
+      activePage = page;
+      void page.finally(() => {
+        if (activePage === page) {
+          activePage = null;
+        }
+      });
     }, intervalMs);
     timer.unref();
   };
@@ -191,6 +199,10 @@ export function startContentMaintenance(context: AppContext): ContentMaintenance
       stopped = true;
       if (timer) {
         clearTimeout(timer);
+        timer = null;
+      }
+      if (activePage) {
+        await activePage;
       }
       await scanner.close();
     }
