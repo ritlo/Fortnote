@@ -32,7 +32,7 @@ import type {
   SharingKeyEnvelope,
   StoreSharingKeyPayload,
   RegisterPayload
-} from "./api";
+} from "./api/contracts";
 
 const ROOT_KEY_AAD = utf8("fortnote:root-key:v1");
 const SHARING_PRIVATE_KEY_AAD = utf8("fortnote:sharing-private-key:v1");
