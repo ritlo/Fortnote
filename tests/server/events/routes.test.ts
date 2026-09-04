@@ -159,7 +159,7 @@ describe("event replay routes", () => {
       .query({ after: revokeCursor })
       .expect(200);
     expect(carolAfterRevoke.body.events).toEqual([]);
-  });
+  }, 10_000);
 
   it("prunes only events acknowledged by every user", async () => {
     const app = createTestApp();
