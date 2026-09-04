@@ -1,7 +1,10 @@
 import type { AppDb } from "@server/db/client.js";
+import { createTestApp } from "../support/http.js";
 
-interface TestAppWithDb {
-  locals: { db: AppDb };
+type TestApp = ReturnType<typeof createTestApp>;
+
+function appDb(app: TestApp): AppDb {
+  return (app.locals as { db: AppDb }).db;
 }
 
 export function sharingKeyPayload(version = 1) {
@@ -28,10 +31,10 @@ export function protectedNotePayload() {
 }
 
 export function seedCheckpointManifest(
-  app: TestAppWithDb,
+  app: TestApp,
   input: { noteId: string; sectionId: string; cryptoOwnerId: string }
 ): string {
-  const sqlite = app.locals.db.sqlite;
+  const sqlite = appDb(app).sqlite;
   const uploadId = crypto.randomUUID();
   const updateId = crypto.randomUUID();
   const manifestId = crypto.randomUUID();
@@ -67,8 +70,8 @@ export function seedCheckpointManifest(
   return manifestId;
 }
 
-export function failNoteEventWrites(app: TestAppWithDb): void {
-  app.locals.db.sqlite.exec(`
+export function failNoteEventWrites(app: TestApp): void {
+  appDb(app).sqlite.exec(`
     CREATE TRIGGER fail_note_events_insert
     BEFORE INSERT ON note_events
     BEGIN
