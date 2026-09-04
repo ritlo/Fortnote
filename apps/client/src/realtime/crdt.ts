@@ -1,162 +1,75 @@
 import {
   CRDT_BINARY_FORMAT_VERSION,
-  CRDT_BINARY_HEADER_MAX_BYTES,
   fromBase64,
   randomUuid,
-  toBase64,
-  type CrdtBinaryHeader,
-  type CrdtManifestReferenceV2,
-  type EncryptedCrdtMessage
+  type CrdtManifestReferenceV2
 } from "@fortnote/shared";
-import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import {
-  CONTENT_CHUNK_AUTH_BYTES,
-  decryptCrdtMessage,
-  encryptContentChunksV2,
-  encryptCrdtMessage,
-  type PreparedEncryptedContentV2
+  encryptContentChunksV2
 } from "../cryptoClient";
 import type { ContentManifestSummary } from "../api";
-import {
-  downloadVerifiedContent,
-  type VerifiedContentDownloadInput
-} from "./contentTransfer";
-import {
-  appendBlockNoteFragmentSnapshot,
-  replaceBlockNoteFragment,
-  replaceBlockNoteFragmentSnapshot,
-  snapshotBlockNoteFragment,
-  splitBlockNoteFragmentSnapshot,
-  type BlockNoteFragmentSnapshot
-} from "../lib/blockNote";
+import type { BlockNoteFragmentSnapshot } from "../lib/blockNote";
 import type { DecryptedNote } from "../store/appStore";
+import {
+  appendSectionContent,
+  getSectionOrder,
+  getSnapshotVersion,
+  REMOTE_UPDATE,
+  replaceLegacySectionContent,
+  replaceSectionContent,
+  replaceSectionOrder,
+  replaceWithSnapshot,
+  ROOT_SECTION_ID,
+  setSnapshotVersion,
+  SNAPSHOT_SEED,
+  snapshotSection,
+  splitSectionContent
+} from "./crdt/document";
+import { CrdtProvider } from "./crdt/provider";
+import {
+  bindingKey,
+  bindings,
+  bindingsForNote,
+  canWrite,
+  defaultSectionId,
+  getOrCreateBinding as getOrCreateStoredBinding,
+  isActiveBinding,
+  isActiveBindingForNote,
+  isBinding,
+  seedBinding,
+  throwIfCrdtHistoryUnreadable,
+  trackPendingBroadcast,
+  writableReadyBinding,
+  type Binding
+} from "./crdt/state";
+import {
+  decryptReceivedUpdate,
+  prepareOutbound,
+  sendOutbound,
+  type CrdtTransport,
+  type DurableDelivery,
+  type IncomingCrdtMessage,
+  type ReceivedBinaryCrdtMessage,
+  type ScopedEncryptedCrdtMessage
+} from "./crdt/transport";
+
+export { CrdtProvider } from "./crdt/provider";
+export { isCrdtHistoryUnreadableError } from "./crdt/state";
+export { requiresContentTransfer } from "./crdt/transport";
+export type {
+  ReceivedBinaryCrdtMessage,
+  ScopedEncryptedCrdtMessage
+} from "./crdt/transport";
 
 // Yjs provides battle-tested character/structure-level merging; the server only sees ciphertext.
-const REMOTE_UPDATE = Symbol("remote-update");
-const SNAPSHOT_SEED = Symbol("snapshot-seed");
-const SNAPSHOT_VERSION_KEY = "snapshotVersion";
-const FRAGMENT_KEY = "document-store";
-const ROOT_SECTION_ID = "root";
-const SECTION_ORDER_KEY = "sections";
 // ponytail: fixed threshold; tune from update-size metrics if storage churn matters.
 const CHECKPOINT_UPDATE_COUNT = 64;
-const REALTIME_FRAME_MAX_BYTES = 256 * 1024;
-const bindings = new Map<string, Binding>();
-let nextBindingGeneration = 1;
 let transport: CrdtTransport | null = null;
 const transportWaiters: {
   reject: (error: Error) => void;
   resolve: (next: CrdtTransport) => void;
 }[] = [];
-
-interface CrdtTransport {
-  discard: (noteId: string, beforeKeyEpoch: number) => void;
-  subscribe: (
-    noteId: string,
-    sectionId?: string,
-    keyEpoch?: number,
-    afterSequence?: number
-  ) => void;
-  unsubscribe?: (noteId: string, sectionId: string, keyEpoch: number) => void;
-  send: (update: ScopedEncryptedCrdtMessage) => Promise<void>;
-  sendDurably?: (
-    update: ScopedEncryptedCrdtMessage
-  ) => DurableDelivery<void>;
-  sendContent?: (
-    prepared: PreparedEncryptedContentV2
-  ) => Promise<ContentManifestSummary>;
-  sendContentDurably?: (
-    prepared: PreparedEncryptedContentV2
-  ) => DurableDelivery<ContentManifestSummary>;
-  downloadContent?: (input: VerifiedContentDownloadInput) => Promise<Uint8Array>;
-}
-
-interface DurableDelivery<T> {
-  durable: Promise<void>;
-  delivered: Promise<T>;
-}
-
-export interface ScopedEncryptedCrdtMessage {
-  type: "crdt-update" | "crdt-checkpoint";
-  formatVersion: typeof CRDT_BINARY_FORMAT_VERSION;
-  updateId: string;
-  noteId: string;
-  cryptoOwnerId: string;
-  keyEpoch: number;
-  sectionId: string;
-  kind: "update" | "checkpoint" | "root-update";
-  cipher: string;
-  nonce: string;
-  compactedUpdateIds?: string[];
-  checkpointSequenceCutoff?: number;
-}
-
-export type ReceivedBinaryCrdtMessage = CrdtBinaryHeader & { cipher: Uint8Array };
-type IncomingCrdtMessage =
-  | EncryptedCrdtMessage
-  | ScopedEncryptedCrdtMessage
-  | ReceivedBinaryCrdtMessage
-  | CrdtManifestReferenceV2;
-
-// BlockNote binds a ProseMirror doc to a Y.XmlFragment; awareness stays local.
-export class CrdtProvider {
-  readonly doc: Y.Doc;
-  readonly awareness: Awareness;
-  isSynced = false;
-  private listeners = new Map<string, Set<(data?: unknown) => void>>();
-
-  constructor(doc: Y.Doc) {
-    this.doc = doc;
-    this.awareness = new Awareness(doc);
-  }
-
-  on(event: string, callback: (data?: unknown) => void): void {
-    const set = this.listeners.get(event) ?? new Set();
-    set.add(callback);
-    this.listeners.set(event, set);
-  }
-
-  off(event: string, callback: (data?: unknown) => void): void {
-    this.listeners.get(event)?.delete(callback);
-  }
-
-  emit(event: string, data?: unknown): void {
-    if (event === "synced") {
-      this.isSynced = true;
-    }
-    this.listeners.get(event)?.forEach((callback) => {
-      callback(data);
-    });
-  }
-
-}
-
-interface Binding {
-  doc: Y.Doc;
-  fragment: Y.XmlFragment;
-  noteId: string;
-  sectionId: string;
-  provider: CrdtProvider;
-  note: DecryptedNote;
-  onChange: (patch: Partial<Pick<DecryptedNote, "title">>) => void;
-  pendingUpdateIds: Set<string>;
-  failedUpdateIds: Set<string>;
-  receivedServerSequences: Map<string, number>;
-  generation: number;
-  appliedUpdateCount: number;
-  checkpointing: boolean;
-  observedServerSequence: number;
-  pendingPatch: Partial<Pick<DecryptedNote, "title">>;
-  titleAuthorityVersion: number;
-  pendingBroadcasts: Set<Promise<void>>;
-  openGeneration: number;
-  ready: boolean;
-  receiving: Promise<void>;
-  snapshotSeeded: boolean;
-  inheritedEpochState: boolean;
-  keyEpoch: number;
-}
 
 export interface CrdtSectionChange {
   noteId: string;
@@ -198,7 +111,7 @@ export function snapshotReadyCrdtSection(
   ) {
     return null;
   }
-  return snapshotBlockNoteFragment(binding.fragment);
+  return snapshotSection(binding.fragment);
 }
 
 export function subscribeCrdtSectionChanges(
@@ -268,7 +181,7 @@ export function seedLegacyCrdtSection(
   const binding = getOrCreateBinding(note.id, sectionId, note.keyEpoch);
   binding.note = note;
   binding.doc.transact(() => {
-    replaceBlockNoteFragment(binding.fragment, body);
+    replaceLegacySectionContent(binding.fragment, body);
     setSnapshotVersion(binding.doc, note.version);
   }, SNAPSHOT_SEED);
   binding.titleAuthorityVersion = Math.max(binding.titleAuthorityVersion, note.version);
@@ -282,12 +195,7 @@ export function getCrdtSectionOrder(noteId: string): string[] {
   if (!root?.ready) {
     return [];
   }
-  return [...new Set(
-    root.doc
-      .getArray<unknown>(SECTION_ORDER_KEY)
-      .toArray()
-      .filter((sectionId): sectionId is string => typeof sectionId === "string")
-  )];
+  return getSectionOrder(root.doc);
 }
 
 export function replaceCrdtSectionOrder(
@@ -298,14 +206,7 @@ export function replaceCrdtSectionOrder(
   if (!root?.ready || !canWrite(root)) {
     return false;
   }
-  const uniqueIds = [...new Set(orderedSectionIds)];
-  root.doc.transact(() => {
-    const sections = root.doc.getArray<string>(SECTION_ORDER_KEY);
-    sections.delete(0, sections.length);
-    if (uniqueIds.length > 0) {
-      sections.insert(0, uniqueIds);
-    }
-  });
+  replaceSectionOrder(root.doc, orderedSectionIds);
   return true;
 }
 
@@ -314,7 +215,7 @@ export function snapshotCrdtSection(
   sectionId: string
 ): BlockNoteFragmentSnapshot {
   const binding = writableReadyBinding(noteId, sectionId);
-  return snapshotBlockNoteFragment(binding.fragment);
+  return snapshotSection(binding.fragment);
 }
 
 export function replaceCrdtSectionContent(
@@ -323,7 +224,7 @@ export function replaceCrdtSectionContent(
   snapshot: BlockNoteFragmentSnapshot
 ): void {
   const binding = writableReadyBinding(noteId, sectionId);
-  replaceBlockNoteFragmentSnapshot(binding.fragment, snapshot);
+  replaceSectionContent(binding.fragment, snapshot);
 }
 
 export function appendCrdtSectionContent(
@@ -332,14 +233,14 @@ export function appendCrdtSectionContent(
   snapshot: BlockNoteFragmentSnapshot
 ): void {
   const binding = writableReadyBinding(noteId, sectionId);
-  appendBlockNoteFragmentSnapshot(binding.fragment, snapshot);
+  appendSectionContent(binding.fragment, snapshot);
 }
 
 export function splitCrdtSectionContent(
   noteId: string,
   sectionId: string
 ): { before: BlockNoteFragmentSnapshot; after: BlockNoteFragmentSnapshot } | null {
-  return splitBlockNoteFragmentSnapshot(snapshotCrdtSection(noteId, sectionId));
+  return splitSectionContent(snapshotCrdtSection(noteId, sectionId));
 }
 
 export async function waitForCrdtSectionDurable(
@@ -486,99 +387,10 @@ function getOrCreateBinding(
   sectionId: string,
   keyEpoch?: number
 ): Binding {
-  const key = bindingKey(noteId, sectionId);
-  const existing = bindings.get(key);
-  if (
-    existing &&
-    (keyEpoch === undefined || existing.keyEpoch === keyEpoch || keyEpoch < existing.keyEpoch)
-  ) {
-    return existing;
-  }
-  const inheritedState = existing
-    ? Y.encodeStateAsUpdate(existing.doc)
-    : null;
-  const epochAdvanced = Boolean(
-    existing && keyEpoch !== undefined && keyEpoch > existing.keyEpoch
-  );
-  const doc = new Y.Doc();
-  const fragment = doc.getXmlFragment(FRAGMENT_KEY);
-  const provider = new CrdtProvider(doc);
-  const created: Binding = {
-    doc,
-    fragment,
-    noteId,
-    sectionId,
-    provider,
-    note: undefined as unknown as DecryptedNote,
-    onChange: () => undefined,
-    pendingUpdateIds: new Set(epochAdvanced ? [] : (existing?.pendingUpdateIds ?? [])),
-    failedUpdateIds: new Set(existing?.failedUpdateIds ?? []),
-    receivedServerSequences: new Map(
-      epochAdvanced ? [] : (existing?.receivedServerSequences ?? [])
-    ),
-    generation: nextBindingGeneration,
-    appliedUpdateCount: epochAdvanced ? 0 : (existing?.appliedUpdateCount ?? 0),
-    checkpointing: false,
-    observedServerSequence: epochAdvanced ? 0 : (existing?.observedServerSequence ?? 0),
-    pendingPatch: {},
-    titleAuthorityVersion: existing?.titleAuthorityVersion ?? 0,
-    pendingBroadcasts: new Set(),
-    openGeneration: 0,
-    ready: epochAdvanced ? false : (existing?.ready ?? false),
-    receiving: Promise.resolve(),
-    snapshotSeeded: inheritedState !== null,
-    inheritedEpochState: epochAdvanced && inheritedState !== null,
-    keyEpoch: keyEpoch ?? 0
-  };
-  nextBindingGeneration += 1;
-  if (inheritedState) {
-    Y.applyUpdate(doc, inheritedState, SNAPSHOT_SEED);
-  }
-  if (epochAdvanced && existing) {
-    existing.onChange = () => undefined;
-    existing.provider.awareness.destroy();
-    existing.doc.destroy();
-  }
-  bindings.set(key, created);
-  if (sectionId === ROOT_SECTION_ID) {
-    doc.getText("title").observe((event) => {
-      if (event.transaction.origin !== SNAPSHOT_SEED && isActiveBinding(created)) {
-        created.onChange({ title: doc.getText("title").toJSON() });
-      }
-    });
-  }
-  doc.on("update", (update, origin) => {
-    const note = created.note as DecryptedNote | undefined;
-    if (
-      origin !== REMOTE_UPDATE &&
-      origin !== SNAPSHOT_SEED &&
-      isActiveBinding(created) &&
-      note &&
-      note.role !== "viewer"
-    ) {
-      const delivery = broadcastUpdate(created, update);
-      trackPendingBroadcast(created, delivery.durable);
-      created.provider.emit("save-state", "saving");
-      void delivery.delivered.then(
-        () => {
-          if (
-            isActiveBinding(created) &&
-            created.pendingBroadcasts.size === 0
-          ) {
-            created.provider.emit("save-state", "saved");
-          }
-        },
-        () => {
-          if (isActiveBinding(created)) {
-            created.provider.emit("save-state", "failed");
-          }
-        }
-      );
-      void delivery.delivered.catch(() => undefined);
-    }
-    notifyCrdtSectionChange(created);
+  return getOrCreateStoredBinding(noteId, sectionId, keyEpoch, {
+    broadcastUpdate,
+    notifyChange: notifyCrdtSectionChange
   });
-  return created;
 }
 
 export function attachCrdtNote(
@@ -818,7 +630,14 @@ export function receiveCrdtUpdate(
   }
   const received = binding.receiving.then(async () => {
     try {
-      const plaintext = await decryptReceivedUpdate(binding, update);
+      const plaintext = await decryptReceivedUpdate({
+        update,
+        noteKeyBase64: binding.note.noteKeyBase64,
+        ...(transport?.downloadContent ? { downloadContent: transport.downloadContent } : {}),
+        onProgress: (progress) => {
+          binding.provider.emit("progress", progress);
+        }
+      });
       if (!isActiveBinding(binding) || binding.note.keyEpoch !== messageKeyEpoch(update)) {
         return;
       }
@@ -918,7 +737,13 @@ async function finishBindingSync(
     hasUpdates &&
     binding.appliedUpdateCount > 0
   ) {
-    replaceWithSnapshot(binding);
+    replaceWithSnapshot(
+      binding.doc,
+      binding.fragment,
+      binding.sectionId,
+      binding.note
+    );
+    binding.snapshotSeeded = true;
     if (binding.note.role !== "viewer") {
       await broadcastCheckpoint(binding);
     }
@@ -1094,129 +919,6 @@ function clearCheckpointCoverage(
   }
 }
 
-type PreparedOutbound =
-  | { storage: "content"; prepared: PreparedEncryptedContentV2 }
-  | { storage: "inline"; update: ScopedEncryptedCrdtMessage };
-
-async function prepareOutbound(
-  envelope: Omit<ScopedEncryptedCrdtMessage, "cipher" | "nonce">,
-  noteKeyBase64: string,
-  update: Uint8Array
-): Promise<PreparedOutbound> {
-  if (requiresContentTransfer(update.byteLength)) {
-    const prepared = await encryptContentChunksV2({
-      cryptoOwnerId: envelope.cryptoOwnerId,
-      noteId: envelope.noteId,
-      sectionId: envelope.sectionId,
-      keyEpoch: envelope.keyEpoch,
-      updateId: envelope.updateId,
-      kind: envelope.kind,
-      ...(envelope.checkpointSequenceCutoff === undefined
-        ? {}
-        : { checkpointSequenceCutoff: envelope.checkpointSequenceCutoff }),
-      noteKey: fromBase64(noteKeyBase64),
-      plaintext: update
-    });
-    return { storage: "content", prepared };
-  }
-  const encrypted = await encryptCrdtMessage({
-    ...envelope,
-    noteKeyBase64,
-    update
-  });
-  return {
-    storage: "inline",
-    update: {
-      ...envelope,
-      cipher: encrypted.cipher,
-      nonce: encrypted.nonce
-    }
-  };
-}
-
-function sendOutbound(
-  currentTransport: CrdtTransport,
-  outbound: PreparedOutbound
-): DurableDelivery<ContentManifestSummary | null> {
-  if (outbound.storage === "inline") {
-    const delivery = currentTransport.sendDurably?.(outbound.update) ?? (() => {
-      const delivered = Promise.resolve(currentTransport.send(outbound.update));
-      return { durable: delivered, delivered };
-    })();
-    return {
-      durable: delivery.durable,
-      delivered: delivery.delivered.then(() => null)
-    };
-  }
-  const durableDelivery = currentTransport.sendContentDurably?.(outbound.prepared);
-  if (durableDelivery) {
-    return durableDelivery;
-  }
-  if (!currentTransport.sendContent) {
-    throw new Error("Resumable encrypted content transport is unavailable");
-  }
-  const delivered = Promise.resolve(currentTransport.sendContent(outbound.prepared));
-  return { durable: delivered.then(() => undefined), delivered };
-}
-
-export function requiresContentTransfer(plaintextBytes: number): boolean {
-  return (
-    plaintextBytes + CONTENT_CHUNK_AUTH_BYTES + CRDT_BINARY_HEADER_MAX_BYTES >
-    REALTIME_FRAME_MAX_BYTES
-  );
-}
-
-function seedBinding(binding: Binding, note: DecryptedNote): void {
-  binding.doc.transact(() => {
-    if (binding.sectionId === ROOT_SECTION_ID) {
-      const title = binding.doc.getText("title");
-      if (title.length === 0) {
-        title.insert(0, note.title);
-      }
-      const sections = binding.doc.getArray<string>(SECTION_ORDER_KEY);
-      if (sections.length === 0 && note.rootSectionId) {
-        sections.insert(0, [note.rootSectionId]);
-      }
-    } else if (binding.fragment.length === 0) {
-      replaceBlockNoteFragment(binding.fragment, undefined);
-    }
-    setSnapshotVersion(binding.doc, note.version);
-  }, SNAPSHOT_SEED);
-}
-
-function getSnapshotVersion(doc: Y.Doc): number {
-  return doc.getMap<number>("metadata").get(SNAPSHOT_VERSION_KEY) ?? 0;
-}
-
-function setSnapshotVersion(doc: Y.Doc, version: number): void {
-  doc.getMap<number>("metadata").set(SNAPSHOT_VERSION_KEY, version);
-}
-
-function replaceWithSnapshot(binding: Binding): void {
-  binding.doc.transact(() => {
-    if (binding.sectionId === ROOT_SECTION_ID) {
-      const text = binding.doc.getText("title");
-      text.delete(0, text.length);
-      text.insert(0, binding.note.title);
-    }
-    if (binding.sectionId !== ROOT_SECTION_ID && binding.fragment.length === 0) {
-      replaceBlockNoteFragment(binding.fragment, undefined);
-    }
-    setSnapshotVersion(binding.doc, binding.note.version);
-  }, SNAPSHOT_SEED);
-  binding.snapshotSeeded = true;
-}
-
-function throwIfCrdtHistoryUnreadable(binding: Binding): void {
-  if (binding.failedUpdateIds.size > 0) {
-    throw new Error("Realtime history could not be decrypted");
-  }
-}
-
-export function isCrdtHistoryUnreadableError(error: unknown): boolean {
-  return error instanceof Error && error.message === "Realtime history could not be decrypted";
-}
-
 function trackUpdate(binding: Binding, updateId: string): void {
   binding.pendingUpdateIds.add(updateId);
   if (
@@ -1227,18 +929,6 @@ function trackUpdate(binding: Binding, updateId: string): void {
   ) {
     void broadcastCheckpoint(binding).catch(() => undefined);
   }
-}
-
-function trackPendingBroadcast(binding: Binding, pending: Promise<void>): void {
-  binding.pendingBroadcasts.add(pending);
-  const finish = () => {
-    binding.pendingBroadcasts.delete(pending);
-  };
-  void pending.then(finish, finish);
-}
-
-function canWrite(binding: Binding): boolean {
-  return binding.note.role !== "viewer";
 }
 
 function noteBindings(note: DecryptedNote, includeRoot: boolean): Binding[] {
@@ -1253,24 +943,6 @@ function noteBindings(note: DecryptedNote, includeRoot: boolean): Binding[] {
   ];
 }
 
-function bindingsForNote(noteId: string): Binding[] {
-  return [...bindings.values()].filter((binding) => binding.noteId === noteId);
-}
-
-function defaultSectionId(noteId: string): string {
-  for (const binding of bindingsForNote(noteId)) {
-    const note = binding.note as DecryptedNote | undefined;
-    if (note?.rootSectionId) {
-      return note.rootSectionId;
-    }
-  }
-  return ROOT_SECTION_ID;
-}
-
-function bindingKey(noteId: string, sectionId: string): string {
-  return JSON.stringify([noteId, sectionId]);
-}
-
 function scopedSectionId(
   update: IncomingCrdtMessage
 ): string | null {
@@ -1283,81 +955,6 @@ function messageKeyEpoch(
   update: IncomingCrdtMessage
 ): number {
   return update.type === "crdt-binary" ? update.expectedKeyEpoch : update.keyEpoch;
-}
-
-function decryptReceivedUpdate(
-  binding: Binding,
-  update: IncomingCrdtMessage
-): Promise<Uint8Array> {
-  if (update.type === "crdt-manifest") {
-    const manifest: ContentManifestSummary = {
-      manifestId: update.manifestId,
-      uploadId: update.uploadId,
-      updateId: update.updateId,
-      noteId: update.noteId,
-      sectionId: update.sectionId,
-      cryptoOwnerId: update.cryptoOwnerId,
-      keyEpoch: update.keyEpoch,
-      kind: update.kind,
-      firstSequence: update.serverSequence,
-      lastSequence: update.serverSequence,
-      totalCipherBytes: update.totalCipherBytes,
-      chunkCount: update.chunkCount,
-      manifestHash: update.manifestHash,
-      ...(update.checkpointSequenceCutoff === undefined
-        ? {}
-        : { checkpointSequenceCutoff: update.checkpointSequenceCutoff })
-    };
-    const download = transport?.downloadContent ?? downloadVerifiedContent;
-    return download({
-      manifest,
-      cryptoOwnerId: update.cryptoOwnerId,
-      noteKey: fromBase64(binding.note.noteKeyBase64),
-      onProgress: (progress) => {
-        binding.provider.emit("progress", progress);
-      }
-    });
-  }
-  if (update.type !== "crdt-binary") {
-    return decryptCrdtMessage({
-      ...update,
-      noteKeyBase64: binding.note.noteKeyBase64
-    });
-  }
-  return decryptCrdtMessage({
-    type: update.kind === "checkpoint" ? "crdt-checkpoint" : "crdt-update",
-    formatVersion: CRDT_BINARY_FORMAT_VERSION,
-    updateId: update.updateId,
-    noteId: update.noteId,
-    sectionId: update.sectionId,
-    cryptoOwnerId: update.cryptoOwnerId,
-    keyEpoch: update.expectedKeyEpoch,
-    kind: update.kind,
-    ...(update.checkpointSequenceCutoff === undefined
-      ? {}
-      : { checkpointSequenceCutoff: update.checkpointSequenceCutoff }),
-    cipher: toBase64(update.cipher),
-    nonce: update.nonce,
-    noteKeyBase64: binding.note.noteKeyBase64
-  });
-}
-
-function isBinding(binding: Binding | undefined): binding is Binding {
-  return binding !== undefined;
-}
-
-function isActiveBinding(binding: Binding): boolean {
-  const active = bindings.get(bindingKey(binding.noteId, binding.sectionId));
-  return active === binding && active.generation === binding.generation;
-}
-
-function isActiveBindingForNote(binding: Binding, note: DecryptedNote): boolean {
-  return (
-    isActiveBinding(binding) &&
-    binding.note.id === note.id &&
-    binding.keyEpoch === note.keyEpoch &&
-    binding.note.cryptoOwnerId === note.cryptoOwnerId
-  );
 }
 
 function notifyCrdtSectionChange(binding: Binding): void {
@@ -1381,14 +978,6 @@ function notifyCrdtSectionChange(binding: Binding): void {
       // Search/index observers must never interrupt CRDT convergence.
     }
   });
-}
-
-function writableReadyBinding(noteId: string, sectionId: string): Binding {
-  const binding = bindings.get(bindingKey(noteId, sectionId));
-  if (!binding?.ready || !canWrite(binding) || !isActiveBinding(binding)) {
-    throw new Error("Encrypted section is not ready for this operation");
-  }
-  return binding;
 }
 
 function getTransport(): Promise<CrdtTransport> {
