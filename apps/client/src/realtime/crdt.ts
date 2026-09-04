@@ -9,22 +9,15 @@ import {
   encryptContentChunksV2
 } from "../cryptoClient";
 import type { ContentManifestSummary } from "../api";
-import type { BlockNoteFragmentSnapshot } from "../lib/blockNote";
 import type { DecryptedNote } from "../store/appStore";
 import {
-  appendSectionContent,
-  getSectionOrder,
   getSnapshotVersion,
   REMOTE_UPDATE,
   replaceLegacySectionContent,
-  replaceSectionContent,
-  replaceSectionOrder,
   replaceWithSnapshot,
   ROOT_SECTION_ID,
   setSnapshotVersion,
-  SNAPSHOT_SEED,
-  snapshotSection,
-  splitSectionContent
+  SNAPSHOT_SEED
 } from "./crdt/document";
 import { CrdtProvider } from "./crdt/provider";
 import {
@@ -40,7 +33,6 @@ import {
   seedBinding,
   throwIfCrdtHistoryUnreadable,
   trackPendingBroadcast,
-  writableReadyBinding,
   type Binding
 } from "./crdt/state";
 import {
@@ -55,6 +47,15 @@ import {
 } from "./crdt/transport";
 
 export { CrdtProvider } from "./crdt/provider";
+export {
+  appendCrdtSectionContent,
+  getCrdtSectionOrder,
+  replaceCrdtSectionContent,
+  replaceCrdtSectionOrder,
+  snapshotCrdtSection,
+  snapshotReadyCrdtSection,
+  splitCrdtSectionContent
+} from "./crdt/sectionContent";
 export { isCrdtHistoryUnreadableError } from "./crdt/state";
 export { requiresContentTransfer } from "./crdt/transport";
 export type {
@@ -96,22 +97,6 @@ export function getCrdtProvider(
   sectionId?: string
 ): CrdtProvider {
   return getOrCreateBinding(noteId, sectionId ?? defaultSectionId(noteId), keyEpoch).provider;
-}
-
-export function snapshotReadyCrdtSection(
-  noteId: string,
-  keyEpoch: number,
-  sectionId: string
-): BlockNoteFragmentSnapshot | null {
-  const binding = bindings.get(bindingKey(noteId, sectionId));
-  if (
-    binding?.keyEpoch !== keyEpoch ||
-    !binding.ready ||
-    !isActiveBinding(binding)
-  ) {
-    return null;
-  }
-  return snapshotSection(binding.fragment);
 }
 
 export function subscribeCrdtSectionChanges(
@@ -188,59 +173,6 @@ export function seedLegacyCrdtSection(
   binding.snapshotSeeded = true;
   binding.ready = true;
   binding.provider.emit("synced");
-}
-
-export function getCrdtSectionOrder(noteId: string): string[] {
-  const root = bindings.get(bindingKey(noteId, ROOT_SECTION_ID));
-  if (!root?.ready) {
-    return [];
-  }
-  return getSectionOrder(root.doc);
-}
-
-export function replaceCrdtSectionOrder(
-  noteId: string,
-  orderedSectionIds: string[]
-): boolean {
-  const root = bindings.get(bindingKey(noteId, ROOT_SECTION_ID));
-  if (!root?.ready || !canWrite(root)) {
-    return false;
-  }
-  replaceSectionOrder(root.doc, orderedSectionIds);
-  return true;
-}
-
-export function snapshotCrdtSection(
-  noteId: string,
-  sectionId: string
-): BlockNoteFragmentSnapshot {
-  const binding = writableReadyBinding(noteId, sectionId);
-  return snapshotSection(binding.fragment);
-}
-
-export function replaceCrdtSectionContent(
-  noteId: string,
-  sectionId: string,
-  snapshot: BlockNoteFragmentSnapshot
-): void {
-  const binding = writableReadyBinding(noteId, sectionId);
-  replaceSectionContent(binding.fragment, snapshot);
-}
-
-export function appendCrdtSectionContent(
-  noteId: string,
-  sectionId: string,
-  snapshot: BlockNoteFragmentSnapshot
-): void {
-  const binding = writableReadyBinding(noteId, sectionId);
-  appendSectionContent(binding.fragment, snapshot);
-}
-
-export function splitCrdtSectionContent(
-  noteId: string,
-  sectionId: string
-): { before: BlockNoteFragmentSnapshot; after: BlockNoteFragmentSnapshot } | null {
-  return splitSectionContent(snapshotCrdtSection(noteId, sectionId));
 }
 
 export async function waitForCrdtSectionDurable(
