@@ -11,22 +11,27 @@ import {
   type ProtectedSearchIndexRecord,
   type SectionCacheRecord
 } from "./indexedDb/contracts";
+import {
+  ACKNOWLEDGEMENT_STORE,
+  CONTENT_TRANSFER_STORE,
+  deleteDatabase,
+  deleteIndexEntries,
+  deleteRecord,
+  getRecord,
+  idbError,
+  LEASE_STORE,
+  listByUser,
+  openDatabase,
+  OUTBOX_STORE,
+  putRecord,
+  requestResult,
+  safeOperation,
+  SEARCH_INDEX_STORE,
+  SECTION_CACHE_STORE,
+  transactionDone
+} from "./indexedDb/driver";
 
 export * from "./indexedDb/contracts";
-
-const DATABASE_VERSION = 3;
-
-const OUTBOX_STORE = "encryptedOutbox";
-const ACKNOWLEDGEMENT_STORE = "acknowledgements";
-const SECTION_CACHE_STORE = "sectionCache";
-const LEASE_STORE = "leases";
-const CONTENT_TRANSFER_STORE = "contentTransfers";
-const SEARCH_INDEX_STORE = "searchIndex";
-
-const OUTBOX_KEY = ["userId", "noteId", "sectionId", "keyEpoch", "updateId"];
-const CACHE_KEY = ["userId", "noteId", "sectionId", "keyEpoch", "manifestId"];
-const CONTENT_TRANSFER_KEY = ["userId", "uploadId"];
-const SEARCH_INDEX_KEY = ["userId", "noteId", "sectionId", "keyEpoch"];
 
 type OutboxKey = Pick<
   EncryptedOutboxRecord,
@@ -390,173 +395,6 @@ function createDatabaseApi(
       };
     }
   };
-}
-
-async function openDatabase(factory: IDBFactory, name: string): Promise<IDBDatabase> {
-  const request = factory.open(name, DATABASE_VERSION);
-  request.onupgradeneeded = () => {
-    const database = request.result;
-    ensureStore(database, request.transaction, OUTBOX_STORE, OUTBOX_KEY);
-    ensureStore(database, request.transaction, ACKNOWLEDGEMENT_STORE, OUTBOX_KEY);
-    ensureStore(database, request.transaction, SECTION_CACHE_STORE, CACHE_KEY);
-    ensureStore(database, request.transaction, LEASE_STORE, "scopeKey");
-    ensureStore(
-      database,
-      request.transaction,
-      CONTENT_TRANSFER_STORE,
-      CONTENT_TRANSFER_KEY
-    );
-    ensureStore(
-      database,
-      request.transaction,
-      SEARCH_INDEX_STORE,
-      SEARCH_INDEX_KEY
-    );
-  };
-  return requestResult(request);
-}
-
-function ensureStore(
-  database: IDBDatabase,
-  transaction: IDBTransaction | null,
-  name: string,
-  keyPath: string | string[]
-): void {
-  const store = database.objectStoreNames.contains(name)
-    ? transaction?.objectStore(name)
-    : database.createObjectStore(name, { keyPath });
-  if (store && !store.indexNames.contains("byUserId")) {
-    store.createIndex("byUserId", "userId", { unique: false });
-  }
-}
-
-async function getRecord<T>(
-  database: IDBDatabase,
-  storeName: string,
-  key: IDBValidKey
-): Promise<T | null> {
-  return safeOperation(async () => {
-    const transaction = database.transaction(storeName, "readonly");
-    const result = await requestResult(
-      transaction.objectStore(storeName).get(key) as IDBRequest<T | undefined>
-    );
-    await transactionDone(transaction);
-    return result ?? null;
-  });
-}
-
-async function listByUser<T>(
-  database: IDBDatabase,
-  storeName: string,
-  userId: string
-): Promise<T[]> {
-  return safeOperation(async () => {
-    const transaction = database.transaction(storeName, "readonly");
-    const result = await requestResult(
-      transaction.objectStore(storeName).index("byUserId").getAll(userId) as IDBRequest<T[]>
-    );
-    await transactionDone(transaction);
-    return result;
-  });
-}
-
-async function putRecord(
-  database: IDBDatabase,
-  storeName: string,
-  record: object
-): Promise<void> {
-  await safeOperation(async () => {
-    const transaction = database.transaction(storeName, "readwrite");
-    try {
-      const done = transactionDone(transaction);
-      transaction.objectStore(storeName).put(record);
-      await done;
-    } catch (error) {
-      try {
-        transaction.abort();
-      } catch {
-        // The transaction may already have entered its terminal state.
-      }
-      throw error;
-    }
-  });
-}
-
-async function deleteRecord(
-  database: IDBDatabase,
-  storeName: string,
-  key: IDBValidKey
-): Promise<void> {
-  await safeOperation(async () => {
-    const transaction = database.transaction(storeName, "readwrite");
-    const done = transactionDone(transaction);
-    transaction.objectStore(storeName).delete(key);
-    await done;
-  });
-}
-
-function deleteIndexEntries(index: IDBIndex, key: IDBValidKey): void {
-  const request = index.openCursor(key);
-  request.onsuccess = () => {
-    const cursor = request.result;
-    if (!cursor) {
-      return;
-    }
-    cursor.delete();
-    cursor.continue();
-  };
-}
-
-function requestResult<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => {
-      resolve(request.result);
-    };
-    request.onerror = () => {
-      reject(idbError(request.error));
-    };
-  });
-}
-
-function transactionDone(transaction: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    transaction.oncomplete = () => {
-      resolve();
-    };
-    transaction.onabort = () => {
-      reject(idbError(transaction.error));
-    };
-    transaction.onerror = () => {
-      reject(idbError(transaction.error));
-    };
-  });
-}
-
-function deleteDatabase(factory: IDBFactory, name: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const request = factory.deleteDatabase(name);
-    request.onsuccess = () => {
-      resolve();
-    };
-    request.onerror = () => {
-      reject(idbError(request.error));
-    };
-    request.onblocked = () => {
-      resolve();
-    };
-  });
-}
-
-function idbError(error: DOMException | null): Error {
-  return error ?? new IndexedDbOperationError();
-}
-
-async function safeOperation<T>(operation: () => Promise<T>): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    throw normalizeIndexedDbError(error);
-  }
 }
 
 function outboxIdentity(record: OutboxKey): OutboxKey {
