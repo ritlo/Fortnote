@@ -7,141 +7,30 @@ import {
 } from "../notes/sections.js";
 import type { ContentKind } from "./manifests.js";
 import type { StorageQuotaStatus } from "./quota.js";
+import type {
+  AbortContentUploadOutcome,
+  BeginContentUploadInput,
+  BeginContentUploadOutcome,
+  ContentChunkRecord,
+  ContentManifestChunkRecord,
+  ContentUploadRecord,
+  ContentUploadRepository,
+  ContentUploadStatus,
+  ContentUploadView,
+  RegisterContentChunkInput,
+  RegisterContentChunkOutcome
+} from "./uploadRepository/contracts.js";
+import {
+  beginUploadGate as beginGate,
+  canEditUpload as canEdit,
+  contentQuotaStatus as quotaStatus,
+  isSameContentChunk as sameChunk,
+  isSameContentUpload as sameUpload,
+  uploadReservesStorage as reservesStorage,
+  type UploadAccess
+} from "./uploadRepository/policy.js";
 
-export type ContentUploadStatus =
-  | "receiving"
-  | "complete"
-  | "committed"
-  | "aborted"
-  | "expired"
-  | "invalid";
-
-export interface ContentUploadRecord {
-  id: string;
-  updateId: string;
-  noteId: string;
-  sectionId: string;
-  cryptoOwnerId: string;
-  keyEpoch: number;
-  kind: ContentKind;
-  formatVersion: number;
-  totalCipherBytes: number;
-  chunkCount: number;
-  manifestHash: string;
-  checkpointSequenceCutoff: number | null;
-  status: ContentUploadStatus;
-  expiresAt: string;
-  ownerUserId: string;
-  noteKeyEpoch: number;
-  noteIsDeleted: boolean;
-  rotationFenced: boolean;
-}
-
-export interface ContentChunkRecord {
-  chunkIndex: number;
-  cipherLength: number;
-  cipherHash: string;
-  nonce: Buffer;
-  storageKey: string;
-}
-
-export interface ContentManifestChunkRecord extends ContentChunkRecord {
-  noteId: string;
-}
-
-export interface ContentUploadView {
-  upload: ContentUploadRecord;
-  receivedChunkIndexes: number[];
-  cleanupStorageKeys: string[];
-}
-
-export interface BeginContentUploadInput {
-  sessionId: string;
-  userId: string;
-  uploadId: string;
-  updateId: string;
-  noteId: string;
-  sectionId: string;
-  expectedKeyEpoch: number;
-  kind: ContentKind;
-  formatVersion: number;
-  totalCipherBytes: number;
-  chunkCount: number;
-  manifestHash: string;
-  checkpointSequenceCutoff?: number;
-  expiresAt: string;
-  quotaBytes: number;
-}
-
-export type BeginContentUploadOutcome =
-  | ({ kind: "created" | "existing" } & ContentUploadView)
-  | {
-      kind:
-        | "unauthorized"
-        | "not-found"
-        | "conflict"
-        | "rotation-pending"
-        | "stale-epoch"
-        | "storage-limit";
-    };
-
-export interface RegisterContentChunkInput {
-  sessionId: string;
-  userId: string;
-  uploadId: string;
-  chunkIndex: number;
-  cipherLength: number;
-  cipherHash: string;
-  nonce: Buffer;
-  storageKey: string;
-}
-
-export type RegisterContentChunkOutcome =
-  | "stored"
-  | "raced"
-  | "unauthorized"
-  | "not-found"
-  | "stale-epoch"
-  | "rotation-pending"
-  | "conflict"
-  | "chunk-conflict"
-  | "manifest-mismatch";
-
-export type AbortContentUploadOutcome =
-  | { kind: "aborted"; storageKeys: string[] }
-  | { kind: "unauthorized" | "not-found" | "conflict" };
-
-export interface ContentUploadRepository {
-  begin(input: BeginContentUploadInput): Promise<BeginContentUploadOutcome>;
-  status(
-    uploadId: string,
-    userId: string,
-    now: string
-  ): Promise<ContentUploadView | null>;
-  findEditable(uploadId: string, userId: string): Promise<ContentUploadRecord | null>;
-  findChunk(uploadId: string, chunkIndex: number): Promise<ContentChunkRecord | null>;
-  registerChunk(input: RegisterContentChunkInput): Promise<RegisterContentChunkOutcome>;
-  abort(
-    uploadId: string,
-    sessionId: string,
-    userId: string
-  ): Promise<AbortContentUploadOutcome>;
-  findManifestChunk(
-    manifestId: string,
-    chunkIndex: number
-  ): Promise<ContentManifestChunkRecord | null>;
-  quota(userId: string, quotaBytes: number): Promise<StorageQuotaStatus>;
-}
-
-interface UploadAccess {
-  ownerUserId: string;
-  cryptoOwnerId: string;
-  keyEpoch: number;
-  rotationFenced: boolean;
-  isDeleted: boolean;
-  role: string;
-  status: string;
-}
+export * from "./uploadRepository/contracts.js";
 
 type SqliteDatabase = BetterSQLite3Database<typeof schema>;
 
@@ -447,28 +336,6 @@ function uploadAccess(
     .get() ?? null;
 }
 
-function beginGate(
-  access: UploadAccess | null,
-  input: BeginContentUploadInput
-): Exclude<BeginContentUploadOutcome, { kind: "created" | "existing" }> | null {
-  if (!canEdit(access)) {
-    return { kind: "not-found" };
-  }
-  if (access.isDeleted) {
-    return { kind: "conflict" };
-  }
-  if (access.rotationFenced) {
-    return { kind: "rotation-pending" };
-  }
-  return access.keyEpoch === input.expectedKeyEpoch
-    ? null
-    : { kind: "stale-epoch" };
-}
-
-function canEdit(access: UploadAccess | null): access is UploadAccess {
-  return access?.status === "active" && (access.role === "owner" || access.role === "editor");
-}
-
 function ensureSection(
   database: Pick<SqliteDatabase, "select" | "insert">,
   noteId: string,
@@ -562,33 +429,6 @@ function findChunk(
     )
     .get();
   return row ?? null;
-}
-
-function sameChunk(
-  chunk: ContentChunkRecord,
-  input: RegisterContentChunkInput
-): boolean {
-  return chunk.cipherLength === input.cipherLength &&
-    chunk.cipherHash === input.cipherHash &&
-    chunk.nonce.equals(input.nonce);
-}
-
-function sameUpload(
-  upload: ContentUploadRecord,
-  input: BeginContentUploadInput,
-  sectionId: string
-): boolean {
-  return upload.id === input.uploadId &&
-    upload.updateId === input.updateId &&
-    upload.noteId === input.noteId &&
-    upload.sectionId === sectionId &&
-    upload.keyEpoch === input.expectedKeyEpoch &&
-    upload.kind === input.kind &&
-    upload.formatVersion === input.formatVersion &&
-    upload.totalCipherBytes === input.totalCipherBytes &&
-    upload.chunkCount === input.chunkCount &&
-    upload.manifestHash === input.manifestHash &&
-    upload.checkpointSequenceCutoff === (input.checkpointSequenceCutoff ?? null);
 }
 
 function readUploadView(
@@ -690,22 +530,4 @@ function contentAggregate(
     .from(schema.contentChunks)
     .where(eq(schema.contentChunks.uploadId, uploadId))
     .get()!;
-}
-
-function quotaStatus(
-  row: { usedBytes: number; reservedBytes: number } | undefined,
-  quotaBytes: number
-): StorageQuotaStatus {
-  const usedBytes = row?.usedBytes ?? 0;
-  const reservedBytes = row?.reservedBytes ?? 0;
-  return {
-    usedBytes,
-    reservedBytes,
-    quotaBytes,
-    availableBytes: Math.max(quotaBytes - usedBytes - reservedBytes, 0)
-  };
-}
-
-function reservesStorage(status: ContentUploadStatus): boolean {
-  return status === "receiving" || status === "complete" || status === "invalid";
 }
