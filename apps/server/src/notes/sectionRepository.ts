@@ -3,96 +3,26 @@ import { and, desc, eq, gt, ne, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "../db/schema.js";
 import { serializedEventMetadata } from "./events.js";
+import type {
+  InitializeSectionInput,
+  LegacySectionReservationOutcome,
+  NoteSectionRepository,
+  SectionInitializationOutcome,
+  SectionMutationOutcome,
+  SectionRecord,
+  SectionRejectionCode,
+  SectionWriteInput
+} from "./sectionRepository/contracts.js";
+import {
+  isWritableSectionAccess as isAccess,
+  validateWritableSectionAccess,
+  type WritableSectionAccess as WritableAccess
+} from "./sectionRepository/policy.js";
 import { ROOT_CRDT_SECTION_ID, storageSectionId } from "./sections.js";
 
-export interface SectionRecord {
-  id: string;
-  noteId: string;
-  createdEpoch: number;
-  currentSequence: number;
-  initializationManifestId: string | null;
-  isDeleted: boolean;
-}
-
-export interface SectionWriteInput {
-  sessionId: string;
-  userId: string;
-  noteId: string;
-  sectionId: string;
-  expectedKeyEpoch: number;
-  expectedRootVersion: number;
-  clientInstanceId?: string;
-}
-
-export type SectionRejectionCode =
-  | "forbidden"
-  | "last-section"
-  | "rotation-pending"
-  | "stale-epoch"
-  | "stale-version";
-
-type SectionFenceRejectionCode = Exclude<SectionRejectionCode, "last-section">;
-
-export type LegacySectionReservationOutcome =
-  | {
-      status: "reserved" | "pending" | "complete";
-      sectionId: string;
-      keyEpoch: number;
-      rootVersion: number;
-      version: number;
-      manifestId: string | null;
-      changed: boolean;
-      eventCursor: number | null;
-    }
-  | { status: "rejected"; code: SectionFenceRejectionCode };
-
-export type SectionMutationOutcome =
-  | {
-      status: "created" | "already-created" | "deleted" | "already-deleted";
-      rootVersion: number;
-      version: number;
-      eventCursor: number | null;
-    }
-  | { status: "rejected"; code: SectionRejectionCode };
-
-export interface InitializeSectionInput extends SectionWriteInput {
-  manifestId: string;
-}
-
-export type SectionInitializationOutcome =
-  | {
-      status: "installed" | "already-initialized";
-      manifestId: string;
-      rootVersion: number;
-      version: number;
-      eventCursor: number | null;
-    }
-  | { status: "rejected"; code: SectionFenceRejectionCode };
-
-export interface NoteSectionRepository {
-  list(noteId: string): Promise<SectionRecord[]>;
-  reserveLegacy(
-    input: SectionWriteInput
-  ): Promise<LegacySectionReservationOutcome>;
-  create(input: SectionWriteInput): Promise<SectionMutationOutcome>;
-  tombstone(input: SectionWriteInput): Promise<SectionMutationOutcome>;
-  initialize(
-    input: InitializeSectionInput
-  ): Promise<SectionInitializationOutcome>;
-}
+export * from "./sectionRepository/contracts.js";
 
 type SqliteDatabase = BetterSQLite3Database<typeof schema>;
-
-interface WritableAccess {
-  cryptoOwnerId: string;
-  keyEpoch: number;
-  version: number;
-  rootVersion: number;
-  rotationFenced: boolean;
-  isDeleted: boolean;
-  role: string;
-  status: string;
-}
 
 function activeSession(
   database: Pick<SqliteDatabase, "select">,
@@ -151,25 +81,10 @@ function writableAccess(
   if (!activeSession(database, input.sessionId)) {
     return "forbidden";
   }
-  const access = sectionAccess(database, input.noteId, input.userId);
-  if (
-    access?.status !== "active" ||
-    access.isDeleted ||
-    (access.role !== "owner" && access.role !== "editor")
-  ) {
-    return "forbidden";
-  }
-  if (access.keyEpoch !== input.expectedKeyEpoch) {
-    return "stale-epoch";
-  }
-  if (access.rotationFenced) {
-    return "rotation-pending";
-  }
-  return access;
-}
-
-function isAccess(value: WritableAccess | string): value is WritableAccess {
-  return typeof value !== "string";
+  return validateWritableSectionAccess(
+    sectionAccess(database, input.noteId, input.userId),
+    input
+  );
 }
 
 function insertEvent(

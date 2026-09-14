@@ -12,21 +12,15 @@ import type {
   SectionRecord,
   SectionRejectionCode,
   SectionWriteInput
-} from "./sectionRepository.js";
+} from "./sectionRepository/contracts.js";
+import {
+  isWritableSectionAccess as isAccess,
+  validateWritableSectionAccess,
+  type WritableSectionAccess as WritableAccess
+} from "./sectionRepository/policy.js";
 import { ROOT_CRDT_SECTION_ID, storageSectionId } from "./sections.js";
 
 type PostgresDatabase = NodePgDatabase<typeof schema>;
-
-interface WritableAccess {
-  cryptoOwnerId: string;
-  keyEpoch: number;
-  version: number;
-  rootVersion: number;
-  rotationFenced: boolean;
-  isDeleted: boolean;
-  role: string;
-  status: string;
-}
 
 async function activeSession(
   database: Pick<PostgresDatabase, "select">,
@@ -87,25 +81,10 @@ async function writableAccess(
   if (!await activeSession(database, input.sessionId)) {
     return "forbidden";
   }
-  const access = await sectionAccess(database, input.noteId, input.userId);
-  if (
-    access?.status !== "active" ||
-    access.isDeleted ||
-    (access.role !== "owner" && access.role !== "editor")
-  ) {
-    return "forbidden";
-  }
-  if (access.keyEpoch !== input.expectedKeyEpoch) {
-    return "stale-epoch";
-  }
-  if (access.rotationFenced) {
-    return "rotation-pending";
-  }
-  return access;
-}
-
-function isAccess(value: WritableAccess | string): value is WritableAccess {
-  return typeof value !== "string";
+  return validateWritableSectionAccess(
+    await sectionAccess(database, input.noteId, input.userId),
+    input
+  );
 }
 
 async function insertEvent(
