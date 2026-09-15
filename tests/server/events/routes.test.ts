@@ -6,6 +6,7 @@ import {
   notePayload,
   registerAgent
 } from "../support/http.js";
+import { testSql } from "../support/database.js";
 
 function sharingKeyPayload(username: string) {
   return {
@@ -29,7 +30,7 @@ function invitePayload(username: string, role: "editor" | "viewer") {
 
 describe("event replay routes", () => {
   it("replays visible events for online and offline collaborators", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "events_alice");
     const bob = await registerAgent(app, "events_bob");
     const carol = await registerAgent(app, "events_carol");
@@ -162,7 +163,7 @@ describe("event replay routes", () => {
   }, 10_000);
 
   it("prunes only events acknowledged by every user", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "retention_alice");
     const bob = await registerAgent(app, "retention_bob");
 
@@ -185,9 +186,7 @@ describe("event replay routes", () => {
       .send(invitePayload("retention_bob", "editor"))
       .expect(201);
 
-    const latest = app.locals.db.sqlite
-      .prepare("SELECT MAX(cursor) AS cursor FROM note_events")
-      .get() as { cursor: number };
+    const latest = (await testSql(app.locals.db).get("SELECT MAX(cursor) AS cursor FROM note_events"))!;
     expect(latest.cursor).toBeGreaterThan(0);
 
     await alice
@@ -195,9 +194,7 @@ describe("event replay routes", () => {
       .set(csrfHeaders())
       .send({ cursor: latest.cursor })
       .expect(204);
-    const remainingAfterAliceAck = app.locals.db.sqlite
-      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?")
-      .get(latest.cursor) as { count: number };
+    const remainingAfterAliceAck = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?", latest.cursor))!;
     expect(remainingAfterAliceAck.count).toBeGreaterThan(0);
 
     await bob
@@ -206,14 +203,12 @@ describe("event replay routes", () => {
       .send({ cursor: latest.cursor })
       .expect(204);
 
-    const remaining = app.locals.db.sqlite
-      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?")
-      .get(latest.cursor) as { count: number };
+    const remaining = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?", latest.cursor))!;
     expect(remaining.count).toBe(0);
   });
 
   it("prunes actor-scoped folder events without unrelated user acknowledgements", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "retention_folder_alice");
     await registerAgent(app, "retention_folder_bob");
 
@@ -223,9 +218,7 @@ describe("event replay routes", () => {
       .send({ name: "Private folder" })
       .expect(201);
 
-    const latest = app.locals.db.sqlite
-      .prepare("SELECT MAX(cursor) AS cursor FROM note_events")
-      .get() as { cursor: number };
+    const latest = (await testSql(app.locals.db).get("SELECT MAX(cursor) AS cursor FROM note_events"))!;
 
     await alice
       .post("/api/events/ack")
@@ -233,14 +226,12 @@ describe("event replay routes", () => {
       .send({ cursor: latest.cursor })
       .expect(204);
 
-    const remaining = app.locals.db.sqlite
-      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?")
-      .get(latest.cursor) as { count: number };
+    const remaining = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?", latest.cursor))!;
     expect(remaining.count).toBe(0);
   });
 
   it("retains revoke tombstones until the revoked user acknowledges them", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "retention_revoke_alice");
     const bob = await registerAgent(app, "retention_revoke_bob");
     const carol = await registerAgent(app, "retention_revoke_carol");
@@ -279,13 +270,9 @@ describe("event replay routes", () => {
       .set(csrfHeaders())
       .expect(204);
 
-    const revoke = app.locals.db.sqlite
-      .prepare(
-        `SELECT cursor
+    const revoke = (await testSql(app.locals.db).get(`SELECT cursor
          FROM note_events
-         WHERE note_id = ? AND event_type = 'membership.revoked'`
-      )
-      .get(noteId) as { cursor: number };
+         WHERE note_id = ? AND event_type = 'membership.revoked'`, noteId))!;
 
     await alice
       .post("/api/events/ack")
@@ -298,9 +285,7 @@ describe("event replay routes", () => {
       .send({ cursor: revoke.cursor })
       .expect(204);
 
-    const remainingBeforeCarolAck = app.locals.db.sqlite
-      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?")
-      .get(revoke.cursor) as { count: number };
+    const remainingBeforeCarolAck = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?", revoke.cursor))!;
     expect(remainingBeforeCarolAck.count).toBe(1);
 
     await carol
@@ -309,14 +294,12 @@ describe("event replay routes", () => {
       .send({ cursor: revoke.cursor })
       .expect(204);
 
-    const remainingAfterCarolAck = app.locals.db.sqlite
-      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?")
-      .get(revoke.cursor) as { count: number };
+    const remainingAfterCarolAck = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?", revoke.cursor))!;
     expect(remainingAfterCarolAck.count).toBe(0);
   });
 
   it("replays and retains permanent-delete tombstones for former members", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "delete_replay_alice");
     const bob = await registerAgent(app, "delete_replay_bob");
 
@@ -356,9 +339,7 @@ describe("event replay routes", () => {
       .set(csrfHeaders())
       .send({ cursor: deleteCursor })
       .expect(204);
-    const retainedBeforeBobAck = app.locals.db.sqlite
-      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?")
-      .get(deleteCursor) as { count: number };
+    const retainedBeforeBobAck = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?", deleteCursor))!;
     expect(retainedBeforeBobAck.count).toBe(1);
 
     await bob
@@ -369,20 +350,18 @@ describe("event replay routes", () => {
     const bobAfterAck = await bob.get("/api/events").query({ after: 0 }).expect(200);
     expect(bobAfterAck.body.events).toEqual([]);
 
-    const retainedAfterBobAck = app.locals.db.sqlite
-      .prepare("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?")
-      .get(deleteCursor) as { count: number };
+    const retainedAfterBobAck = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?", deleteCursor))!;
     expect(retainedAfterBobAck.count).toBe(0);
   });
 
   it("rejects unauthenticated replay requests", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     await request(app).get("/api/events").expect(401);
     await request(app).get("/api/events/cursor").expect(401);
   });
 
   it("rejects unauthenticated acknowledgement requests", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     await request(app)
       .post("/api/events/ack")
       .set(csrfHeaders())

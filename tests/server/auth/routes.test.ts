@@ -1,10 +1,11 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createTestApp, csrfHeaders, registerPayload } from "../support/http.js";
+import { testSql } from "../support/database.js";
 
 describe("auth routes", () => {
   it("registers, creates a session, and returns me", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = request.agent(app);
 
     const register = await agent
@@ -20,7 +21,7 @@ describe("auth routes", () => {
   });
 
   it("uses one canonical handle for registration, login, and sharing lookup", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const owner = request.agent(app);
     const ownerRegistration = await owner
       .post("/api/auth/register")
@@ -93,7 +94,7 @@ describe("auth routes", () => {
   });
 
   it("keeps colliding legacy identities exact until handle repair", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const first = request.agent(app);
     const second = request.agent(app);
     await first
@@ -106,16 +107,8 @@ describe("auth routes", () => {
       .set(csrfHeaders())
       .send(registerPayload("legacy_two"))
       .expect(201);
-    app.locals.db.sqlite
-      .prepare(
-        "UPDATE users SET username = ?, display_name = ?, canonical_handle = NULL, handle_state = 'repair-required' WHERE username = ?"
-      )
-      .run(" Legacy Name ", "Legacy Name", "legacy_one");
-    app.locals.db.sqlite
-      .prepare(
-        "UPDATE users SET username = ?, display_name = ?, canonical_handle = NULL, handle_state = 'repair-required' WHERE username = ?"
-      )
-      .run("legacy name", "legacy name", "legacy_two");
+    await testSql(app.locals.db).run("UPDATE users SET username = ?, display_name = ?, canonical_handle = NULL, handle_state = 'repair-required' WHERE username = ?", " Legacy Name ", "Legacy Name", "legacy_one");
+    await testSql(app.locals.db).run("UPDATE users SET username = ?, display_name = ?, canonical_handle = NULL, handle_state = 'repair-required' WHERE username = ?", "legacy name", "legacy name", "legacy_two");
 
     await first.get("/api/auth/me").expect(200).expect(({ body }) => {
       expect(body).toMatchObject({
@@ -139,7 +132,7 @@ describe("auth routes", () => {
   });
 
   it("uses the configured absolute session lifetime", async () => {
-    const app = createTestApp({ sessionAbsoluteTimeoutMs: 2_000 });
+    const app = await createTestApp({ sessionAbsoluteTimeoutMs: 2_000 });
     const before = Date.now();
     await request(app)
       .post("/api/auth/register")
@@ -147,15 +140,13 @@ describe("auth routes", () => {
       .send(registerPayload("short_session"))
       .expect(201);
 
-    const session = app.locals.db.sqlite
-      .prepare("SELECT absolute_expires_at AS absoluteExpiresAt FROM sessions")
-      .get() as { absoluteExpiresAt: string };
+    const session = (await testSql(app.locals.db).get<{ absoluteExpiresAt: string }>("SELECT absolute_expires_at AS absoluteExpiresAt FROM sessions"))!;
     expect(Date.parse(session.absoluteExpiresAt)).toBeGreaterThanOrEqual(before + 1_900);
     expect(Date.parse(session.absoluteExpiresAt)).toBeLessThanOrEqual(Date.now() + 2_100);
   });
 
   it("returns KDF parameters for registered users", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
 
     await request(app)
       .post("/api/auth/register")
@@ -175,7 +166,7 @@ describe("auth routes", () => {
   });
 
   it("returns generic KDF parameters for unknown users", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
 
     const response = await request(app)
       .get("/api/auth/kdf-params")
@@ -189,7 +180,7 @@ describe("auth routes", () => {
   });
 
   it("returns recovery parameters for registered users", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
 
     await request(app)
       .post("/api/auth/register")
@@ -212,7 +203,7 @@ describe("auth routes", () => {
   });
 
   it("rejects invalid login verifier", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
 
     await request(app)
       .post("/api/auth/register")
@@ -231,7 +222,7 @@ describe("auth routes", () => {
   });
 
   it("resets account password with recovery verifier", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = request.agent(app);
 
     await agent
@@ -277,7 +268,7 @@ describe("auth routes", () => {
   });
 
   it("logs out and invalidates the session", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = request.agent(app);
 
     await agent
@@ -291,7 +282,7 @@ describe("auth routes", () => {
   });
 
   it("rate limits repeated login attempts", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
 
     for (let index = 0; index < 20; index += 1) {
       await request(app)

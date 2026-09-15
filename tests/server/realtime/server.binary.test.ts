@@ -1,7 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished } from "vitest";
 import {
   cryptoReady,
   decodeCrdtBinaryFrame,
@@ -19,9 +16,9 @@ import {
   protectedNotePayload,
   register,
   seedCheckpointManifest,
-  stopRealtimeTestServer,
-  temporaryDirectories
+  stopRealtimeTestServer
 } from "./realtime.fixtures.js";
+import { createTestDatabaseConfig, testSql } from "../support/database.js";
 
 afterEach(cleanupRealtimeTests);
 
@@ -37,18 +34,14 @@ describe("realtime binary sections", () => {
       .set(csrfHeaders())
       .send(protectedNotePayload(noteId, sectionId))
       .expect(201);
-    server.db.sqlite
-      .prepare(`
+    await testSql(server.db).run(`
         UPDATE notes
         SET content_cipher = 'legacy-cipher', content_nonce = 'legacy-nonce',
             content_length = 42
         WHERE id = ?
-      `)
-      .run(noteId);
+      `, noteId);
     const cryptoOwnerId = (
-      server.db.sqlite
-        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
-        .get(noteId) as { cryptoOwnerId: string }
+      (await testSql(server.db).get<{ cryptoOwnerId: string }>("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?", noteId))!
     ).cryptoOwnerId;
     const socket = await connectBinary(server.url, alice.cookie);
     expect(await socket.nextJson("binary connected")).toMatchObject({
@@ -85,12 +78,10 @@ describe("realtime binary sections", () => {
       serverSequence: 1
     });
     expect(
-      server.db.sqlite
-        .prepare(`
+      await testSql(server.db).get(`
           SELECT server_sequence AS serverSequence, inline_cipher AS inlineCipher
           FROM section_updates WHERE update_id = ?
-        `)
-        .get(header.updateId)
+        `, header.updateId)
     ).toEqual({ serverSequence: 1, inlineCipher: Buffer.from(cipher) });
 
     socket.socket.send(frame);
@@ -101,9 +92,7 @@ describe("realtime binary sections", () => {
       serverSequence: 1
     });
     expect(
-      server.db.sqlite
-        .prepare("SELECT COUNT(*) AS count FROM section_updates WHERE update_id = ?")
-        .get(header.updateId)
+      await testSql(server.db).get("SELECT COUNT(*) AS count FROM section_updates WHERE update_id = ?", header.updateId)
     ).toEqual({ count: 1 });
 
     const staleHeader = binaryHeader({
@@ -120,9 +109,7 @@ describe("realtime binary sections", () => {
       code: "stale-epoch"
     });
 
-    server.db.sqlite
-      .prepare("UPDATE notes SET rotation_fenced = 1 WHERE id = ?")
-      .run(noteId);
+    await testSql(server.db).run("UPDATE notes SET rotation_fenced = TRUE WHERE id = ?", noteId);
     const fencedHeader = binaryHeader({ noteId, sectionId, cryptoOwnerId });
     socket.socket.send(encodeCrdtBinaryFrame(fencedHeader, cipher, 256 * 1024));
     expect(await socket.nextJson("rotation fence reject")).toEqual({
@@ -131,9 +118,7 @@ describe("realtime binary sections", () => {
       sectionId,
       code: "rotation-pending"
     });
-    server.db.sqlite
-      .prepare("UPDATE notes SET rotation_fenced = 0 WHERE id = ?")
-      .run(noteId);
+    await testSql(server.db).run("UPDATE notes SET rotation_fenced = FALSE WHERE id = ?", noteId);
 
     const oversizedCipher = new Uint8Array(256 * 1024);
     const oversizedHeader = {
@@ -203,9 +188,7 @@ describe("realtime binary sections", () => {
       .send(protectedNotePayload(noteId, sectionId))
       .expect(201);
     const cryptoOwnerId = (
-      server.db.sqlite
-        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
-        .get(noteId) as { cryptoOwnerId: string }
+      (await testSql(server.db).get<{ cryptoOwnerId: string }>("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?", noteId))!
     ).cryptoOwnerId;
     const tabA = crypto.randomUUID();
     const tabB = crypto.randomUUID();
@@ -251,11 +234,10 @@ describe("realtime binary sections", () => {
 
   it("replays paged binary history after a file-backed database restart", async () => {
     await cryptoReady();
-    const directory = await mkdtemp(join(tmpdir(), "fortnote-realtime-restart-"));
-    temporaryDirectories.push(directory);
-    const databasePath = join(directory, "fortnote.sqlite");
+    const database = await createTestDatabaseConfig({ persistent: true });
+    onTestFinished(() => database.dispose());
     const firstServer = await createRealtimeTestServer({
-      databasePath,
+      database,
       historyPageMaxItems: 2
     });
     const alice = await register(firstServer.url, "restart_alice");
@@ -267,9 +249,7 @@ describe("realtime binary sections", () => {
       .send(protectedNotePayload(noteId, sectionId))
       .expect(201);
     const cryptoOwnerId = (
-      firstServer.db.sqlite
-        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
-        .get(noteId) as { cryptoOwnerId: string }
+      (await testSql(firstServer.db).get<{ cryptoOwnerId: string }>("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?", noteId))!
     ).cryptoOwnerId;
     const writer = await connectBinary(firstServer.url, alice.cookie);
     await writer.nextJson("restart writer connected");
@@ -289,9 +269,7 @@ describe("realtime binary sections", () => {
         serverSequence: index + 1
       });
       expect(
-        firstServer.db.sqlite
-          .prepare("SELECT server_sequence AS serverSequence FROM section_updates WHERE update_id = ?")
-          .get(update.header.updateId)
+        await testSql(firstServer.db).get("SELECT server_sequence AS serverSequence FROM section_updates WHERE update_id = ?", update.header.updateId)
       ).toEqual({ serverSequence: index + 1 });
     }
 
@@ -299,7 +277,7 @@ describe("realtime binary sections", () => {
     await stopRealtimeTestServer(firstServer);
 
     const restarted = await createRealtimeTestServer({
-      databasePath,
+      database,
       historyPageMaxItems: 2
     });
     const reader = await connectBinary(restarted.url, alice.cookie);
@@ -371,9 +349,7 @@ describe("realtime binary sections", () => {
       .send(protectedNotePayload(noteId, sectionId))
       .expect(201);
     const cryptoOwnerId = (
-      server.db.sqlite
-        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
-        .get(noteId) as { cryptoOwnerId: string }
+      (await testSql(server.db).get<{ cryptoOwnerId: string }>("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?", noteId))!
     ).cryptoOwnerId;
     const writer = await connectBinary(server.url, alice.cookie);
     const reader = await connectBinary(server.url, alice.cookie);
@@ -442,9 +418,7 @@ describe("realtime binary sections", () => {
       .send(protectedNotePayload(noteId, sectionId))
       .expect(201);
     const cryptoOwnerId = (
-      server.db.sqlite
-        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
-        .get(noteId) as { cryptoOwnerId: string }
+      (await testSql(server.db).get<{ cryptoOwnerId: string }>("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?", noteId))!
     ).cryptoOwnerId;
     const socket = await connectBinary(server.url, alice.cookie);
     await socket.nextJson("checkpoint connected");
@@ -491,8 +465,7 @@ describe("realtime binary sections", () => {
     });
 
     expect(
-      server.db.sqlite
-        .prepare(`
+      await testSql(server.db).all(`
           SELECT
             update_id AS updateId,
             server_sequence AS serverSequence,
@@ -500,8 +473,7 @@ describe("realtime binary sections", () => {
           FROM section_updates
           WHERE note_id = ? AND section_id = ?
           ORDER BY server_sequence
-        `)
-        .all(noteId, sectionId)
+        `, noteId, sectionId)
     ).toEqual([
       {
         updateId: concurrentLater.updateId,
@@ -515,9 +487,7 @@ describe("realtime binary sections", () => {
       }
     ]);
     expect(
-      server.db.sqlite
-        .prepare("SELECT COUNT(*) AS count FROM section_updates WHERE update_id = ?")
-        .get(rootUpdate.updateId)
+      await testSql(server.db).get("SELECT COUNT(*) AS count FROM section_updates WHERE update_id = ?", rootUpdate.updateId)
     ).toEqual({ count: 1 });
 
     const futureCutoff = {
@@ -544,8 +514,7 @@ describe("realtime binary sections", () => {
       .set(csrfHeaders())
       .send(protectedNotePayload(noteId, sectionId))
       .expect(201);
-    const identity = server.db.sqlite
-      .prepare(`
+    const identity = (await testSql(server.db).get<{ sessionId: string; userId: string; cryptoOwnerId: string }>(`
         SELECT s.id AS sessionId, s.user_id AS userId, n.crypto_owner_id AS cryptoOwnerId
         FROM sessions s
         INNER JOIN users u ON u.id = s.user_id
@@ -553,14 +522,13 @@ describe("realtime binary sections", () => {
         WHERE n.id = ?
         ORDER BY s.created_at DESC
         LIMIT 1
-      `)
-      .get(noteId) as { sessionId: string; userId: string; cryptoOwnerId: string };
-    const winnerManifestId = seedCheckpointManifest(server.db, {
+      `, noteId))!;
+    const winnerManifestId = await seedCheckpointManifest(server.db, {
       noteId,
       sectionId,
       cryptoOwnerId: identity.cryptoOwnerId
     });
-    const losingManifestId = seedCheckpointManifest(server.db, {
+    const losingManifestId = await seedCheckpointManifest(server.db, {
       noteId,
       sectionId,
       cryptoOwnerId: identity.cryptoOwnerId
@@ -591,8 +559,7 @@ describe("realtime binary sections", () => {
       manifestId: winnerManifestId
     });
     expect(
-      server.db.sqlite
-        .prepare(`
+      await testSql(server.db).get(`
           SELECT
             i.manifest_id AS manifestId,
             i.legacy_root_version AS legacyRootVersion,
@@ -600,21 +567,18 @@ describe("realtime binary sections", () => {
           FROM crdt_initializations i
           INNER JOIN note_sections s ON s.id = i.section_id
           WHERE i.note_id = ? AND i.section_id = ? AND i.key_epoch = 1
-        `)
-        .get(noteId, sectionId)
+        `, noteId, sectionId)
     ).toEqual({
       manifestId: winnerManifestId,
       legacyRootVersion: 1,
       sectionManifestId: winnerManifestId
     });
     expect(
-      server.db.sqlite
-        .prepare(`
+      await testSql(server.db).get(`
           SELECT content_cipher AS contentCipher, content_nonce AS contentNonce,
                  content_length AS contentLength
           FROM notes WHERE id = ?
-        `)
-        .get(noteId)
+        `, noteId)
     ).toEqual({ contentCipher: "", contentNonce: "", contentLength: 0 });
   });
 });

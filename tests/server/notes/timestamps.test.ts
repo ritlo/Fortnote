@@ -10,7 +10,7 @@ describe.each(["legacy", "protected"] as const)("%s note save timestamps", (form
     ["2026-09-14 11:31:53.344647-05:30", "2026-09-14T17:01:53.344Z"],
     ["2026-09-14T17:01:53.344Z", "2026-09-14T17:01:53.344Z"]
   ])("serializes %s as canonical UTC", async (stored, expected) => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "timestamp_user");
     const note = format === "legacy" ? notePayload() : protectedNotePayload();
     await agent.post("/api/notes").set(csrfHeaders()).send(note).expect(201);

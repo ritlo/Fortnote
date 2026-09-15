@@ -8,7 +8,7 @@ import { createOperationalErrorRecord, logOperationalError } from "@server/http/
 
 describe("createApp", () => {
   it("reports process liveness and database readiness separately", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
 
     await request(app).get("/api/health").expect(200).expect({ ok: true });
     await request(app)
@@ -16,7 +16,7 @@ describe("createApp", () => {
       .expect(200)
       .expect({ ok: true, checks: { database: "up" } });
 
-    app.locals.db.sqlite.close();
+    await app.locals.db.close();
     await request(app).get("/api/health").expect(200).expect({ ok: true });
     await request(app)
       .get("/api/ready")
@@ -31,7 +31,7 @@ describe("createApp", () => {
         writeFile(join(webRoot, "index.html"), "<!doctype html><title>Fortnote web</title>"),
         writeFile(join(webRoot, "asset.txt"), "encrypted client asset")
       ]);
-      const app = createTestApp({ webRoot });
+      const app = await createTestApp({ webRoot });
 
       await request(app).get("/").expect(200).expect(/Fortnote web/u);
       await request(app).get("/notes/example").expect(200).expect(/Fortnote web/u);
@@ -45,7 +45,7 @@ describe("createApp", () => {
   });
 
   it("sets a strict content security policy", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
 
     const response = await request(app).get("/api/health").expect(200);
     const csp = response.headers["content-security-policy"]!;
@@ -58,7 +58,7 @@ describe("createApp", () => {
   });
 
   it("marks authenticated API responses no-store and returns correlation IDs", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "no-store-user");
 
     const response = await agent.get("/api/auth/me").expect(200);
@@ -70,7 +70,7 @@ describe("createApp", () => {
   });
 
   it("uses the safe nested error envelope for auth and parser failures", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const unauthorized = await request(app).get("/api/key-material").expect(401);
     expect(unauthorized.headers["cache-control"]).toBe("no-store");
     expect(unauthorized.body).toEqual({

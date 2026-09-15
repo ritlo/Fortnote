@@ -9,23 +9,31 @@ import {
   toBase64,
   type CrdtBinaryHeader
 } from "@fortnote/shared";
-import { getConfig } from "@server/config.js";
-import { createDb, type AppDb } from "@server/db/client.js";
+import { getConfig, type ServerConfig } from "@server/config.js";
+import { createApplicationDatabase } from "@server/db/application.js";
+import type { ApplicationDatabase } from "@server/db/types.js";
 import { createApp, type AppContext } from "@server/http/app.js";
 import { RealtimeHub } from "@server/realtime/hub.js";
 import { attachRealtimeServer } from "@server/realtime/server.js";
 import { csrfHeaders, registerPayload } from "../support/http.js";
+import {
+  createTestDatabaseConfig,
+  testSql,
+  trackTestDatabase,
+  type TestDatabaseConfig
+} from "../support/database.js";
 
 interface TestServer {
   context: AppContext;
-  db: AppDb;
+  db: ApplicationDatabase;
   httpServer: Server;
   realtime: RealtimeHub;
   url: string;
 }
 
 interface TestServerOptions {
-  databasePath?: string;
+  /** A shared database to reopen; the caller disposes it. */
+  database?: TestDatabaseConfig;
   historyPageMaxItems?: number;
   presenceSweepIntervalMs?: number;
   presenceTtlMs?: number;
@@ -46,7 +54,7 @@ interface BinarySocketClient {
 const openServers: Server[] = [];
 const openSockets: WebSocket[] = [];
 const openHubs: RealtimeHub[] = [];
-const openDatabases: AppDb[] = [];
+const openDatabases: ApplicationDatabase[] = [];
 export const temporaryDirectories: string[] = [];
 const TEST_ALLOWED_ORIGIN = "http://localhost:5173";
 
@@ -69,9 +77,7 @@ export async function cleanupRealtimeTests(): Promise<void> {
         })
     )
   );
-  for (const db of openDatabases.splice(0)) {
-    db.sqlite.close();
-  }
+  await Promise.all(openDatabases.splice(0).map((db) => db.close()));
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true })
@@ -82,18 +88,18 @@ export async function cleanupRealtimeTests(): Promise<void> {
 export async function createRealtimeTestServer(
   options: TestServerOptions = {}
 ): Promise<TestServer> {
-  const {
-    databasePath = ":memory:",
-    historyPageMaxItems,
-    ...realtimeOptions
-  } = options;
-  const config = {
+  const { database, historyPageMaxItems, ...realtimeOptions } = options;
+  const testDatabase = database ?? (await createTestDatabaseConfig());
+  const config: ServerConfig = {
     ...getConfig(),
     port: 0,
-    database: { provider: "sqlite" as const, path: databasePath },
+    database: testDatabase.database,
     ...(historyPageMaxItems === undefined ? {} : { historyPageMaxItems })
   };
-  const db = createDb(config);
+  const db = trackTestDatabase(
+    await createApplicationDatabase(config),
+    database ? null : testDatabase
+  );
   openDatabases.push(db);
   const realtime = new RealtimeHub(realtimeOptions);
   const context = { config, db, realtime };
@@ -128,7 +134,7 @@ export async function stopRealtimeTestServer(server: TestServer): Promise<void> 
     });
   });
   removeTracked(openServers, server.httpServer);
-  server.db.sqlite.close();
+  await server.db.close();
   removeTracked(openDatabases, server.db);
 }
 
@@ -149,46 +155,38 @@ function removeTracked<T>(values: T[], value: T): void {
   }
 }
 
-export function seedCheckpointManifest(
-  db: AppDb,
+export async function seedCheckpointManifest(
+  db: ApplicationDatabase,
   input: { noteId: string; sectionId: string; cryptoOwnerId: string }
-): string {
+): Promise<string> {
   const uploadId = crypto.randomUUID();
   const updateId = crypto.randomUUID();
   const manifestId = crypto.randomUUID();
-  db.sqlite
-    .prepare(`
+  await testSql(db).run(`
       INSERT INTO content_uploads (
         id, update_id, note_id, section_id, crypto_owner_id, key_epoch,
         kind, format_version, total_cipher_bytes, chunk_count, manifest_hash,
         status, expires_at
       ) VALUES (?, ?, ?, ?, ?, 1, 'checkpoint', 2, 6, 1, ?, 'committed', ?)
-    `)
-    .run(
-      uploadId,
+    `, uploadId,
       updateId,
       input.noteId,
       input.sectionId,
       input.cryptoOwnerId,
       `hash-${manifestId}`,
-      "2099-01-01T00:00:00.000Z"
-    );
-  db.sqlite
-    .prepare(`
+      "2099-01-01T00:00:00.000Z");
+  await testSql(db).run(`
       INSERT INTO content_manifests (
         id, upload_id, update_id, note_id, section_id, key_epoch, kind,
         format_version, first_sequence, last_sequence, total_cipher_bytes,
         chunk_count, manifest_hash
       ) VALUES (?, ?, ?, ?, ?, 1, 'checkpoint', 2, 1, 1, 6, 1, ?)
-    `)
-    .run(
-      manifestId,
+    `, manifestId,
       uploadId,
       updateId,
       input.noteId,
       input.sectionId,
-      `hash-${manifestId}`
-    );
+      `hash-${manifestId}`);
   return manifestId;
 }
 

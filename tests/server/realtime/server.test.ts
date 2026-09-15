@@ -14,6 +14,7 @@ import {
   sharingKeyPayload,
   waitForClose
 } from "./realtime.fixtures.js";
+import { testSql } from "../support/database.js";
 
 afterEach(cleanupRealtimeTests);
 
@@ -64,9 +65,7 @@ describe("realtime server", () => {
       await aliceSocket.next("alice replay");
 
       const closed = waitForClose(aliceSocket.socket);
-      server.db.sqlite
-        .prepare(`UPDATE sessions SET ${expiryColumn} = ?`)
-        .run(new Date(0).toISOString());
+      await testSql(server.db).run(`UPDATE sessions SET ${expiryColumn} = ?`, new Date(0).toISOString());
 
       await expect(closed).resolves.toBe(1008);
     }
@@ -108,9 +107,7 @@ describe("realtime server", () => {
       .expect(201);
 
     const currentCursor = (
-      server.db.sqlite
-        .prepare("SELECT MAX(cursor) AS cursor FROM note_events")
-        .get() as { cursor: number }
+      (await testSql(server.db).get<{ cursor: number }>("SELECT MAX(cursor) AS cursor FROM note_events"))!
     ).cursor;
 
     const bobSocket = await connect(server.url, bob.cookie, currentCursor);
@@ -206,14 +203,10 @@ describe("realtime server", () => {
       .expect(201);
 
     const currentCursor = (
-      server.db.sqlite
-        .prepare("SELECT MAX(cursor) AS cursor FROM note_events")
-        .get() as { cursor: number }
+      (await testSql(server.db).get<{ cursor: number }>("SELECT MAX(cursor) AS cursor FROM note_events"))!
     ).cursor;
     const cryptoOwnerId = (
-      server.db.sqlite
-        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
-        .get(noteId) as { cryptoOwnerId: string }
+      (await testSql(server.db).get<{ cryptoOwnerId: string }>("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?", noteId))!
     ).cryptoOwnerId;
     const aliceSocket = await connect(server.url, alice.cookie, currentCursor);
     const bobSocket = await connect(server.url, bob.cookie, currentCursor);
@@ -364,9 +357,7 @@ describe("realtime server", () => {
       .expect(201);
     const bobUserId = String(invited.body.userId);
     const cryptoOwnerId = (
-      server.db.sqlite
-        .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
-        .get(noteId) as { cryptoOwnerId: string }
+      (await testSql(server.db).get("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?", noteId))!
     ).cryptoOwnerId;
     const aliceSocket = await connect(server.url, alice.cookie, 0);
     const bobSocket = await connect(server.url, bob.cookie, 0);
@@ -411,9 +402,7 @@ describe("realtime server", () => {
     expect(await bobSocket.next("bob CRDT update")).toEqual(update);
     await expectNoMessage(legacyBobSocket, "legacy client CRDT update");
     expect(
-      server.db.sqlite
-        .prepare("SELECT cipher FROM note_updates WHERE update_id = ?")
-        .get(update.updateId)
+      await testSql(server.db).get("SELECT cipher FROM note_updates WHERE update_id = ?", update.updateId)
     ).toEqual({ cipher: update.cipher });
 
     const largeUpdate = {
@@ -457,12 +446,10 @@ describe("realtime server", () => {
     });
     expect(await bobSocket.next("bob CRDT checkpoint")).toEqual(checkpoint);
     expect(
-      server.db.sqlite
-        .prepare("SELECT update_id AS updateId, kind FROM note_updates WHERE note_id = ?")
-        .all(noteId)
+      await testSql(server.db).all("SELECT update_id AS updateId, kind FROM note_updates WHERE note_id = ?", noteId)
     ).toEqual([{ updateId: checkpoint.updateId, kind: "checkpoint" }]);
     expect(
-      server.db.sqlite.prepare("SELECT COUNT(*) AS count FROM note_events").get()
+      await testSql(server.db).get("SELECT COUNT(*) AS count FROM note_events")
     ).toEqual({ count: 2 });
 
     aliceSocket.socket.send(JSON.stringify(checkpoint));
@@ -485,17 +472,15 @@ describe("realtime server", () => {
     expect(await bobSocket.next("bob epoch checkpoint")).toEqual(epochCheckpoint);
 
     const storedBytes = (
-      server.db.sqlite
-        .prepare("SELECT COALESCE(SUM(LENGTH(cipher)), 0) AS bytes FROM note_updates WHERE note_id = ?")
-        .get(noteId) as { bytes: number }
+      (await testSql(server.db).get<{ bytes: number }>("SELECT COALESCE(SUM(LENGTH(cipher)), 0) AS bytes FROM note_updates WHERE note_id = ?", noteId))!
     ).bytes;
     const byteFillerId = crypto.randomUUID();
-    server.db.sqlite.prepare(`
+    await testSql(server.db).run(`
       INSERT INTO note_updates (
         update_id, note_id, crypto_owner_id, key_epoch, format_version,
         cipher, nonce, kind
       ) VALUES (?, ?, ?, 1, 1, ?, 'nonce', 'update')
-    `).run(byteFillerId, noteId, cryptoOwnerId, "x".repeat(4 * 1024 * 1024 - storedBytes));
+    `, byteFillerId, noteId, cryptoOwnerId, "x".repeat(4 * 1024 * 1024 - storedBytes));
     const byteBlockedUpdate = { ...update, updateId: crypto.randomUUID() };
     aliceSocket.socket.send(JSON.stringify(byteBlockedUpdate));
     expect(await aliceSocket.next("byte-limit CRDT rejection")).toEqual({
@@ -504,17 +489,16 @@ describe("realtime server", () => {
       updateId: byteBlockedUpdate.updateId,
       reason: "storage-limit"
     });
-    server.db.sqlite.prepare("DELETE FROM note_updates WHERE update_id = ?").run(byteFillerId);
+    await testSql(server.db).run("DELETE FROM note_updates WHERE update_id = ?", byteFillerId);
 
     const fillerIds = Array.from({ length: 126 }, () => crypto.randomUUID());
-    const insertFiller = server.db.sqlite.prepare(`
-      INSERT INTO note_updates (
-        update_id, note_id, crypto_owner_id, key_epoch, format_version,
-        cipher, nonce, kind
-      ) VALUES (?, ?, ?, 1, 1, 'cipher', 'nonce', 'update')
-    `);
     for (const fillerId of fillerIds) {
-      insertFiller.run(fillerId, noteId, cryptoOwnerId);
+      await testSql(server.db).run(`
+        INSERT INTO note_updates (
+          update_id, note_id, crypto_owner_id, key_epoch, format_version,
+          cipher, nonce, kind
+        ) VALUES (?, ?, ?, 1, 1, 'cipher', 'nonce', 'update')
+      `, fillerId, noteId, cryptoOwnerId);
     }
     const blockedUpdate = {
       ...update,
@@ -543,9 +527,7 @@ describe("realtime server", () => {
     expect(await bobSocket.next("bounded checkpoint broadcast"))
       .toEqual(boundedCheckpoint);
     expect(
-      server.db.sqlite
-        .prepare("SELECT COUNT(*) AS count FROM note_updates WHERE note_id = ?")
-        .get(noteId)
+      await testSql(server.db).get("SELECT COUNT(*) AS count FROM note_updates WHERE note_id = ?", noteId)
     ).toEqual({ count: 128 });
 
     const bobClosed = waitForClose(bobSocket.socket);
@@ -557,9 +539,7 @@ describe("realtime server", () => {
     await aliceSocket.next("alice revoke event");
     await expect(bobClosed).resolves.toBe(1008);
     await expect(legacyBobClosed).resolves.toBe(1008);
-    server.db.sqlite
-      .prepare("UPDATE notes SET key_epoch = 2 WHERE id = ?")
-      .run(noteId);
+    await testSql(server.db).run("UPDATE notes SET key_epoch = 2 WHERE id = ?", noteId);
 
     const postRevokeCheckpoint = {
       type: "crdt-checkpoint",
@@ -578,9 +558,7 @@ describe("realtime server", () => {
       updateId: postRevokeCheckpoint.updateId
     });
     expect(
-      server.db.sqlite
-        .prepare("SELECT key_epoch AS keyEpoch FROM note_updates WHERE note_id = ?")
-        .all(noteId)
+      await testSql(server.db).all("SELECT key_epoch AS keyEpoch FROM note_updates WHERE note_id = ?", noteId)
     ).toEqual([{ keyEpoch: 2 }]);
   });
 
@@ -643,9 +621,7 @@ describe("realtime server", () => {
       .expect(201);
 
     const currentCursor = (
-      server.db.sqlite
-        .prepare("SELECT MAX(cursor) AS cursor FROM note_events")
-        .get() as { cursor: number }
+      (await testSql(server.db).get<{ cursor: number }>("SELECT MAX(cursor) AS cursor FROM note_events"))!
     ).cursor;
     const bobSocket = await connect(server.url, bob.cookie, currentCursor);
     await bobSocket.next("bob connected");

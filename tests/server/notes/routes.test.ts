@@ -11,10 +11,12 @@ import {
   seedCheckpointManifest,
   sharingKeyPayload
 } from "./routes.fixtures.js";
+import { testSql } from "../support/database.js";
+import { canonicalTimestamp } from "@server/db/timestamps.js";
 
 describe("notes and folders routes", () => {
 	  it("persists encrypted display metadata and returns body-free lists", async () => {
-	    const app = createTestApp();
+	    const app = await createTestApp();
 	    const agent = await registerAgent(app, "protected_metadata_user");
 	    const folderId = crypto.randomUUID();
 	    await agent
@@ -52,13 +54,9 @@ describe("notes and folders routes", () => {
 	      nameFormatVersion: 2
 	    });
 
-	    const stored = app.locals.db.sqlite
-	      .prepare(
-	        `SELECT title, title_cipher AS titleCipher,
+	    const stored = await testSql(app.locals.db).get(`SELECT title, title_cipher AS titleCipher,
 	                content_cipher AS contentCipher, content_length AS contentLength
-	         FROM notes WHERE id = ?`
-	      )
-	      .get(payload.id);
+	         FROM notes WHERE id = ?`, payload.id);
 	    expect(stored).toEqual({
 	      title: "",
 	      titleCipher: payload.titleCipher,
@@ -68,7 +66,7 @@ describe("notes and folders routes", () => {
 	  });
 
 	  it("revalidates metadata role, root version, and epoch with concealed denial", async () => {
-	    const app = createTestApp();
+	    const app = await createTestApp();
 	    const owner = await registerAgent(app, "metadata_owner");
 	    const outsider = await registerAgent(app, "metadata_outsider");
 	    const payload = protectedNotePayload();
@@ -108,7 +106,7 @@ describe("notes and folders routes", () => {
 	  });
 
   it("lists only opaque section metadata for authorized readers", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const owner = await registerAgent(app, "section_metadata_owner");
     const outsider = await registerAgent(app, "section_metadata_outsider");
     const payload = protectedNotePayload();
@@ -141,7 +139,7 @@ describe("notes and folders routes", () => {
   });
 
   it("creates and tombstones sections idempotently with fresh fences", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const owner = await registerAgent(app, "section_mutation_owner");
     const outsider = await registerAgent(app, "section_mutation_outsider");
     const payload = protectedNotePayload();
@@ -236,7 +234,7 @@ describe("notes and folders routes", () => {
   });
 
   it("reserves one recoverable migration section without exposing legacy content in metadata", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const owner = await registerAgent(app, "legacy_section_owner");
     const outsider = await registerAgent(app, "legacy_section_outsider");
     const legacy = notePayload();
@@ -311,18 +309,16 @@ describe("notes and folders routes", () => {
         });
       });
     expect(
-      app.locals.db.sqlite
-        .prepare(`
+      await testSql(app.locals.db).get(`
           SELECT n.root_section_id AS rootSectionId, s.is_deleted AS isDeleted
           FROM notes n INNER JOIN note_sections s ON s.id = n.root_section_id
           WHERE n.id = ?
-        `)
-        .get(legacy.id)
+        `, legacy.id)
     ).toEqual({ rootSectionId: firstSectionId, isDeleted: 0 });
   });
 
   it("replaces only a stale empty migration reservation", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const owner = await registerAgent(app, "stale_legacy_section_owner");
     const legacy = notePayload();
     const staleSectionId = crypto.randomUUID();
@@ -337,9 +333,7 @@ describe("notes and folders routes", () => {
         expectedRootVersion: 1
       })
       .expect(201);
-    app.locals.db.sqlite
-      .prepare("UPDATE note_sections SET updated_at = datetime('now', '-1 hour') WHERE id = ?")
-      .run(staleSectionId);
+    await testSql(app.locals.db).run("UPDATE note_sections SET updated_at = ? WHERE id = ?", new Date(Date.now() - 60 * 60 * 1000).toISOString(), staleSectionId);
 
     await owner
       .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
@@ -358,9 +352,7 @@ describe("notes and folders routes", () => {
         });
       });
     expect(
-      app.locals.db.sqlite
-        .prepare("SELECT id, is_deleted AS isDeleted FROM note_sections WHERE note_id = ? ORDER BY id")
-        .all(legacy.id)
+      await testSql(app.locals.db).all("SELECT id, is_deleted AS isDeleted FROM note_sections WHERE note_id = ? ORDER BY id", legacy.id)
     ).toEqual(expect.arrayContaining([
       { id: staleSectionId, isDeleted: 1 },
       { id: replacementSectionId, isDeleted: 0 }
@@ -368,7 +360,7 @@ describe("notes and folders routes", () => {
   });
 
   it("clears legacy columns only after installing the committed initial checkpoint", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const owner = await registerAgent(app, "legacy_initialization_owner");
     const legacy = notePayload();
     const sectionId = crypto.randomUUID();
@@ -378,10 +370,8 @@ describe("notes and folders routes", () => {
       .set(csrfHeaders())
       .send({ sectionId, expectedKeyEpoch: 1, expectedRootVersion: 1 })
       .expect(201);
-    const cryptoOwner = app.locals.db.sqlite
-      .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
-      .get(legacy.id) as { cryptoOwnerId: string };
-    const manifestId = seedCheckpointManifest(app, {
+    const cryptoOwner = (await testSql(app.locals.db).get<{ cryptoOwnerId: string }>("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?", legacy.id))!;
+    const manifestId = await seedCheckpointManifest(app, {
       noteId: legacy.id,
       sectionId,
       cryptoOwnerId: cryptoOwner.cryptoOwnerId
@@ -405,13 +395,11 @@ describe("notes and folders routes", () => {
       expect(body).toMatchObject({ legacyContentAvailable: false });
     });
     expect(
-      app.locals.db.sqlite
-        .prepare(`
+      await testSql(app.locals.db).get(`
           SELECT content_cipher AS contentCipher, content_nonce AS contentNonce,
                  content_length AS contentLength
           FROM notes WHERE id = ?
-        `)
-        .get(legacy.id)
+        `, legacy.id)
     ).toEqual({ contentCipher: "", contentNonce: "", contentLength: 0 });
     await owner
       .post(`/api/notes/${legacy.id}/sections/${sectionId}/initialization`)
@@ -422,20 +410,18 @@ describe("notes and folders routes", () => {
         expect(body).toMatchObject({ status: "already-initialized", manifestId });
       });
     expect(
-      app.locals.db.sqlite
-        .prepare("SELECT COUNT(*) AS count FROM note_events WHERE note_id = ?")
-        .get(legacy.id)
+      await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE note_id = ?", legacy.id)
     ).toEqual({ count: 3 });
   });
 
   it("rolls back legacy section reservations when event writes fail", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const owner = await registerAgent(app, "rollback_section_reservation_owner");
     const legacy = notePayload();
     const sectionId = crypto.randomUUID();
     await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
 
-    failNoteEventWrites(app);
+    await failNoteEventWrites(app);
     await owner
       .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
       .set(csrfHeaders())
@@ -443,22 +429,16 @@ describe("notes and folders routes", () => {
       .expect(500);
 
     expect(
-      app.locals.db.sqlite
-        .prepare(
-          `SELECT root_section_id AS rootSectionId, root_version AS rootVersion,
-                  version FROM notes WHERE id = ?`
-        )
-        .get(legacy.id)
+      await testSql(app.locals.db).get(`SELECT root_section_id AS rootSectionId, root_version AS rootVersion,
+                  version FROM notes WHERE id = ?`, legacy.id)
     ).toEqual({ rootSectionId: null, rootVersion: 1, version: 1 });
     expect(
-      app.locals.db.sqlite
-        .prepare("SELECT id FROM note_sections WHERE id = ?")
-        .get(sectionId)
+      await testSql(app.locals.db).get("SELECT id FROM note_sections WHERE id = ?", sectionId)
     ).toBeUndefined();
   });
 
   it("rolls back section initialization when event writes fail", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const owner = await registerAgent(app, "rollback_section_initialization_owner");
     const legacy = notePayload();
     const sectionId = crypto.randomUUID();
@@ -468,16 +448,14 @@ describe("notes and folders routes", () => {
       .set(csrfHeaders())
       .send({ sectionId, expectedKeyEpoch: 1, expectedRootVersion: 1 })
       .expect(201);
-    const cryptoOwner = app.locals.db.sqlite
-      .prepare("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?")
-      .get(legacy.id) as { cryptoOwnerId: string };
-    const manifestId = seedCheckpointManifest(app, {
+    const cryptoOwner = (await testSql(app.locals.db).get<{ cryptoOwnerId: string }>("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?", legacy.id))!;
+    const manifestId = await seedCheckpointManifest(app, {
       noteId: legacy.id,
       sectionId,
       cryptoOwnerId: cryptoOwner.cryptoOwnerId
     });
 
-    failNoteEventWrites(app);
+    await failNoteEventWrites(app);
     await owner
       .post(`/api/notes/${legacy.id}/sections/${sectionId}/initialization`)
       .set(csrfHeaders())
@@ -485,30 +463,22 @@ describe("notes and folders routes", () => {
       .expect(500);
 
     expect(
-      app.locals.db.sqlite
-        .prepare(
-          `SELECT n.content_cipher AS contentCipher,
+      await testSql(app.locals.db).get(`SELECT n.content_cipher AS contentCipher,
                   s.initialization_manifest_id AS initializationManifestId
            FROM notes n
            INNER JOIN note_sections s ON s.id = n.root_section_id
-           WHERE n.id = ?`
-        )
-        .get(legacy.id)
+           WHERE n.id = ?`, legacy.id)
     ).toEqual({
       contentCipher: legacy.contentCipher,
       initializationManifestId: null
     });
     expect(
-      app.locals.db.sqlite
-        .prepare(
-          "SELECT manifest_id AS manifestId FROM crdt_initializations WHERE note_id = ?"
-        )
-        .get(legacy.id)
+      await testSql(app.locals.db).get("SELECT manifest_id AS manifestId FROM crdt_initializations WHERE note_id = ?", legacy.id)
     ).toBeUndefined();
   });
 
 	  it("atomically upgrades an owned legacy note to protected v2 metadata", async () => {
-	    const app = createTestApp();
+	    const app = await createTestApp();
 	    const owner = await registerAgent(app, "metadata_migration_owner");
 	    const legacy = notePayload();
 	    const rootSectionId = crypto.randomUUID();
@@ -531,14 +501,10 @@ describe("notes and folders routes", () => {
 	      .expect(200);
 
 	    expect(
-	      app.locals.db.sqlite
-	        .prepare(
-	          `SELECT title, title_format_version AS titleFormatVersion,
+	      await testSql(app.locals.db).get(`SELECT title, title_format_version AS titleFormatVersion,
 	                  note_key_format_version AS noteKeyFormatVersion,
 	                  root_section_id AS rootSectionId
-	           FROM notes WHERE id = ?`
-	        )
-	        .get(legacy.id)
+	           FROM notes WHERE id = ?`, legacy.id)
 	    ).toEqual({
       title: "",
 	      titleFormatVersion: 2,
@@ -546,14 +512,12 @@ describe("notes and folders routes", () => {
 	      rootSectionId
 	    });
 	    expect(
-	      app.locals.db.sqlite
-	        .prepare("SELECT id FROM note_sections WHERE id = ? AND note_id = ?")
-	        .get(rootSectionId, legacy.id)
+	      await testSql(app.locals.db).get("SELECT id FROM note_sections WHERE id = ? AND note_id = ?", rootSectionId, legacy.id)
 	    ).toEqual({ id: rootSectionId });
 	  });
 
 	  it("atomically revokes a member and activates an adjacent linked epoch", async () => {
-	    const app = createTestApp();
+	    const app = await createTestApp();
 	    const owner = await registerAgent(app, "linked_owner");
 	    const revoked = await registerAgent(app, "linked_revoked");
 	    const remaining = await registerAgent(app, "linked_remaining");
@@ -616,18 +580,10 @@ describe("notes and folders routes", () => {
 	      .send({ ...rotationPayload, shares: [] })
 	      .expect(400);
 	    expect(
-	      app.locals.db.sqlite
-	        .prepare(
-	          "SELECT key_epoch AS keyEpoch, root_version AS rootVersion, rotation_fenced AS rotationFenced FROM notes WHERE id = ?"
-	        )
-	        .get(payload.id)
+	      await testSql(app.locals.db).get("SELECT key_epoch AS keyEpoch, root_version AS rootVersion, rotation_fenced AS rotationFenced FROM notes WHERE id = ?", payload.id)
 	    ).toEqual({ keyEpoch: 1, rootVersion: 1, rotationFenced: 0 });
 	    expect(
-	      app.locals.db.sqlite
-	        .prepare(
-	          "SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?"
-	        )
-	        .get(payload.id, revokedUser.body.id)
+	      await testSql(app.locals.db).get("SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?", payload.id, revokedUser.body.id)
 	    ).toEqual({ status: "active" });
 
 	    await owner
@@ -639,13 +595,9 @@ describe("notes and folders routes", () => {
 	        expect(body).toMatchObject({ rootVersion: 2, keyEpoch: 2 });
 	      });
 
-	    const note = app.locals.db.sqlite
-	      .prepare(
-	        `SELECT key_epoch AS keyEpoch, root_version AS rootVersion,
+	    const note = await testSql(app.locals.db).get(`SELECT key_epoch AS keyEpoch, root_version AS rootVersion,
 	                rotation_fenced AS rotationFenced, title_cipher AS titleCipher
-	         FROM notes WHERE id = ?`
-	      )
-	      .get(payload.id);
+	         FROM notes WHERE id = ?`, payload.id);
 	    expect(note).toEqual({
 	      keyEpoch: 2,
 	      rootVersion: 2,
@@ -653,11 +605,7 @@ describe("notes and folders routes", () => {
 	      titleCipher: rotationPayload.titleCipher
 	    });
 	    expect(
-	      app.locals.db.sqlite
-	        .prepare(
-	          "SELECT source_epoch AS sourceEpoch, target_epoch AS targetEpoch FROM note_epoch_links WHERE note_id = ?"
-	        )
-	        .get(payload.id)
+	      await testSql(app.locals.db).get("SELECT source_epoch AS sourceEpoch, target_epoch AS targetEpoch FROM note_epoch_links WHERE note_id = ?", payload.id)
 	    ).toEqual({ sourceEpoch: 1, targetEpoch: 2 });
 	    const links = await owner
 	      .get(`/api/notes/${payload.id}/epoch-links`)
@@ -677,23 +625,15 @@ describe("notes and folders routes", () => {
 	      .get(`/api/notes/${payload.id}/epoch-links`)
 	      .expect(404);
 	    expect(
-	      app.locals.db.sqlite
-	        .prepare(
-	          "SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?"
-	        )
-	        .get(payload.id, revokedUser.body.id)
+	      await testSql(app.locals.db).get("SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?", payload.id, revokedUser.body.id)
 	    ).toEqual({ status: "revoked" });
 	    expect(
-	      app.locals.db.sqlite
-	        .prepare(
-	          "SELECT encrypted_note_key AS encryptedNoteKey FROM note_key_shares WHERE note_id = ? AND recipient_user_id = ?"
-	        )
-	        .get(payload.id, remainingUser.body.id)
+	      await testSql(app.locals.db).get("SELECT encrypted_note_key AS encryptedNoteKey FROM note_key_shares WHERE note_id = ? AND recipient_user_id = ?", payload.id, remainingUser.body.id)
 	    ).toEqual({ encryptedNoteKey: "new_remaining_share_abcdefghijklmnopqrstuvwxyz" });
 	  });
 
 	  it("rolls back linked rotations when event writes fail", async () => {
-	    const app = createTestApp();
+	    const app = await createTestApp();
 	    const owner = await registerAgent(app, "linked_rollback_owner");
 	    const revoked = await registerAgent(app, "linked_rollback_revoked");
 	    const remaining = await registerAgent(app, "linked_rollback_remaining");
@@ -725,7 +665,7 @@ describe("notes and folders routes", () => {
 	        .expect(201);
 	    }
 
-	    failNoteEventWrites(app);
+	    await failNoteEventWrites(app);
 	    await owner
 	      .post(`/api/notes/${payload.id}/key-rotation`)
 	      .set(csrfHeaders())
@@ -756,13 +696,9 @@ describe("notes and folders routes", () => {
 	      .expect(500);
 
 	    expect(
-	      app.locals.db.sqlite
-	        .prepare(
-	          `SELECT key_epoch AS keyEpoch, root_version AS rootVersion,
+	      await testSql(app.locals.db).get(`SELECT key_epoch AS keyEpoch, root_version AS rootVersion,
 	                  rotation_fenced AS rotationFenced, title_cipher AS titleCipher
-	           FROM notes WHERE id = ?`
-	        )
-	        .get(payload.id)
+	           FROM notes WHERE id = ?`, payload.id)
 	    ).toEqual({
 	      keyEpoch: 1,
 	      rootVersion: 1,
@@ -770,25 +706,13 @@ describe("notes and folders routes", () => {
 	      titleCipher: payload.titleCipher
 	    });
 	    expect(
-	      app.locals.db.sqlite
-	        .prepare(
-	          "SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?"
-	        )
-	        .get(payload.id, revokedUser.body.id)
+	      await testSql(app.locals.db).get("SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?", payload.id, revokedUser.body.id)
 	    ).toEqual({ status: "active" });
 	    expect(
-	      app.locals.db.sqlite
-	        .prepare(
-	          "SELECT target_epoch AS targetEpoch FROM note_epoch_links WHERE note_id = ?"
-	        )
-	        .get(payload.id)
+	      await testSql(app.locals.db).get("SELECT target_epoch AS targetEpoch FROM note_epoch_links WHERE note_id = ?", payload.id)
 	    ).toBeUndefined();
 	    expect(
-	      app.locals.db.sqlite
-	        .prepare(
-	          "SELECT encrypted_note_key AS encryptedNoteKey FROM note_key_shares WHERE note_id = ? AND recipient_user_id = ?"
-	        )
-	        .get(payload.id, remainingUser.body.id)
+	      await testSql(app.locals.db).get("SELECT encrypted_note_key AS encryptedNoteKey FROM note_key_shares WHERE note_id = ? AND recipient_user_id = ?", payload.id, remainingUser.body.id)
 	    ).toEqual({
 	      encryptedNoteKey:
 	        "initial_share_linked_rollback_remaining_abcdefghijklmnopqrstuvwxyz"
@@ -796,7 +720,7 @@ describe("notes and folders routes", () => {
 	  });
 
 	  it("creates folder and note, then updates with optimistic version", async () => {
-	    const app = createTestApp();
+	    const app = await createTestApp();
 	    const agent = await registerAgent(app, "notes_user");
 
     const folder = await agent
@@ -823,30 +747,20 @@ describe("notes and folders routes", () => {
       })
       .expect(200);
 
-    const storedUpdate = app.locals.db.sqlite
-      .prepare("SELECT updated_at AS updatedAt FROM notes WHERE id = ?")
-      .get(note.body.id) as { updatedAt: string };
+    const storedUpdate = (await testSql(app.locals.db).get<{ updatedAt: string }>("SELECT updated_at AS updatedAt FROM notes WHERE id = ?", note.body.id))!;
     expect(updated.body).toMatchObject({
       version: 2,
-      updatedAt: new Date(`${storedUpdate.updatedAt.replace(" ", "T")}Z`).toISOString()
+      updatedAt: canonicalTimestamp(storedUpdate.updatedAt)
     });
-    const membership = app.locals.db.sqlite
-      .prepare(
-        `SELECT role, status
+    const membership = await testSql(app.locals.db).get(`SELECT role, status
          FROM note_memberships
-	         WHERE note_id = ?`
-	      )
-      .get(note.body.id) as { role: string; status: string } | undefined;
+	         WHERE note_id = ?`, note.body.id);
     expect(membership).toEqual({ role: "owner", status: "active" });
 
-    const events = app.locals.db.sqlite
-      .prepare(
-        `SELECT event_type AS eventType, note_version AS noteVersion
+    const events = await testSql(app.locals.db).all(`SELECT event_type AS eventType, note_version AS noteVersion
          FROM note_events
          WHERE note_id = ?
-         ORDER BY cursor`
-      )
-      .all(note.body.id) as { eventType: string; noteVersion: number }[];
+         ORDER BY cursor`, note.body.id);
     expect(events).toEqual([
       { eventType: "note.created", noteVersion: 1 },
       { eventType: "note.updated", noteVersion: 2 }

@@ -5,12 +5,13 @@ import {
   notePayload,
   registerAgent
 } from "../support/http.js";
+import { testSql } from "../support/database.js";
 
 const sharingKeyPayload = buildSharingKeyPayload(1);
 
 describe("sharing key routes", () => {
   it("stores and returns the signed-in user's current sharing key", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "sharing_owner");
 
     await agent.get("/api/sharing-keys/current").expect(404);
@@ -33,7 +34,7 @@ describe("sharing key routes", () => {
   });
 
   it("upgrades a private-key envelope without replacing its public identity", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "sharing_migration");
     const legacy = buildSharingKeyPayload(1);
     const upgraded = {
@@ -65,7 +66,7 @@ describe("sharing key routes", () => {
   });
 
   it("looks up only another user's public sharing key", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "sharing_alice");
     const bob = await registerAgent(app, "sharing_bob");
 
@@ -92,7 +93,7 @@ describe("sharing key routes", () => {
   });
 
   it("requires a published sharing key for lookups", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     await registerAgent(app, "sharing_no_key");
     const viewer = await registerAgent(app, "sharing_viewer");
 
@@ -103,7 +104,7 @@ describe("sharing key routes", () => {
   });
 
   it("cleans up retired sharing keys that no shares reference", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "cleanup_unused");
     const user = await agent.get("/api/auth/me").expect(200);
 
@@ -124,11 +125,11 @@ describe("sharing key routes", () => {
       .expect(200);
 
     expect(cleanup.body).toEqual({ deleted: 1 });
-    expect(sharingKeyVersions(app, String(user.body.id))).toEqual([2]);
+    expect(await sharingKeyVersions(app, String(user.body.id))).toEqual([2]);
   });
 
   it("keeps retired sharing keys that existing shares still reference", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const owner = await registerAgent(app, "cleanup_owner");
     const recipient = await registerAgent(app, "cleanup_recipient");
     const recipientUser = await recipient.get("/api/auth/me").expect(200);
@@ -167,7 +168,7 @@ describe("sharing key routes", () => {
       .expect(200);
 
     expect(cleanup.body).toEqual({ deleted: 0 });
-    expect(sharingKeyVersions(app, String(recipientUser.body.id))).toEqual([1, 2]);
+    expect(await sharingKeyVersions(app, String(recipientUser.body.id))).toEqual([1, 2]);
   });
 });
 
@@ -181,18 +182,14 @@ function buildSharingKeyPayload(version: number) {
   };
 }
 
-function sharingKeyVersions(
-  app: ReturnType<typeof createTestApp>,
+async function sharingKeyVersions(
+  app: Awaited<ReturnType<typeof createTestApp>>,
   userId: string
-): number[] {
-  const rows = app.locals.db.sqlite
-    .prepare(
-      `SELECT sharing_key_version AS sharingKeyVersion
+): Promise<number[]> {
+  const rows = await testSql(app.locals.db).all<{ sharingKeyVersion: number }>(`SELECT sharing_key_version AS sharingKeyVersion
        FROM user_sharing_keys
        WHERE user_id = ?
-       ORDER BY sharing_key_version`
-    )
-    .all(userId) as { sharingKeyVersion: number }[];
+       ORDER BY sharing_key_version`, userId);
 
   return rows.map((row) => row.sharingKeyVersion);
 }

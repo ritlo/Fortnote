@@ -11,10 +11,11 @@ import {
   protectedNotePayload,
   sharingKeyPayload
 } from "./routes.fixtures.js";
+import { testSql } from "../support/database.js";
 
 describe("note CRUD and collaboration routes", () => {
   it("rejects stale note versions", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "stale_user");
     const created = await agent
       .post("/api/notes")
@@ -35,7 +36,7 @@ describe("note CRUD and collaboration routes", () => {
   });
 
   it("rolls back note updates when event writes fail", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "rollback_update_user");
     const created = await agent
       .post("/api/notes")
@@ -44,7 +45,7 @@ describe("note CRUD and collaboration routes", () => {
       .expect(201);
     const noteId = String(created.body.id);
 
-    failNoteEventWrites(app);
+    await failNoteEventWrites(app);
 
     await agent
       .put(`/api/notes/${noteId}`)
@@ -58,21 +59,12 @@ describe("note CRUD and collaboration routes", () => {
       })
       .expect(500);
 
-    const note = app.locals.db.sqlite
-      .prepare(
-        `SELECT title,
+    const note = (await testSql(app.locals.db).get(`SELECT title,
                 content_cipher AS contentCipher,
                 content_length AS contentLength,
                 version
          FROM notes
-         WHERE id = ?`
-      )
-      .get(noteId) as {
-      contentCipher: string;
-      contentLength: number;
-      title: string;
-      version: number;
-    };
+         WHERE id = ?`, noteId))!;
     expect(note).toEqual({
       contentCipher: "content_cipher_abcdefghijklmnopqrstuvwxyz",
       contentLength: 128,
@@ -82,26 +74,22 @@ describe("note CRUD and collaboration routes", () => {
   });
 
   it("rolls back note creates when event writes fail", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "rollback_create_user");
     const payload = notePayload();
 
-    failNoteEventWrites(app);
+    await failNoteEventWrites(app);
 
     await agent.post("/api/notes").set(csrfHeaders()).send(payload).expect(500);
 
-    const note = app.locals.db.sqlite
-      .prepare("SELECT id FROM notes WHERE id = ?")
-      .get(payload.id);
+    const note = await testSql(app.locals.db).get("SELECT id FROM notes WHERE id = ?", payload.id);
     expect(note).toBeUndefined();
-    const membership = app.locals.db.sqlite
-      .prepare("SELECT note_id AS noteId FROM note_memberships WHERE note_id = ?")
-      .get(payload.id);
+    const membership = await testSql(app.locals.db).get("SELECT note_id AS noteId FROM note_memberships WHERE note_id = ?", payload.id);
     expect(membership).toBeUndefined();
   });
 
 	  it("prevents cross-user note reads and folder assignment", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "alice_notes");
     const bob = await registerAgent(app, "bob_notes");
 
@@ -127,7 +115,7 @@ describe("note CRUD and collaboration routes", () => {
 	  });
 
   it("rejects invalid and deleted folder targets for note metadata", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "folder_target_validation_user");
     const invalidFolderId = crypto.randomUUID();
 
@@ -160,7 +148,7 @@ describe("note CRUD and collaboration routes", () => {
   });
 
 	  it("requires an active owner membership to read notes", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "membership_user");
     const created = await agent
       .post("/api/notes")
@@ -169,13 +157,9 @@ describe("note CRUD and collaboration routes", () => {
       .expect(201);
 
     await agent.get(`/api/notes/${String(created.body.id)}`).expect(200);
-    app.locals.db.sqlite
-      .prepare(
-        `UPDATE note_memberships
+    await testSql(app.locals.db).run(`UPDATE note_memberships
          SET status = 'revoked'
-         WHERE note_id = ?`
-      )
-      .run(created.body.id);
+         WHERE note_id = ?`, created.body.id);
 
     await agent.get(`/api/notes/${String(created.body.id)}`).expect(404);
     const listed = await agent.get("/api/notes").expect(200);
@@ -183,7 +167,7 @@ describe("note CRUD and collaboration routes", () => {
   });
 
   it("invites, updates, and revokes note collaborators with key shares", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "member_alice");
     const bob = await registerAgent(app, "member_bob");
     await registerAgent(app, "member_carol");
@@ -317,20 +301,12 @@ describe("note CRUD and collaboration routes", () => {
     await bob.get(`/api/notes/${noteId}/key-share`).expect(404);
     await bob.get(`/api/notes/${noteId}/memberships`).expect(404);
 
-    const events = app.locals.db.sqlite
-      .prepare(
-        `SELECT event_type AS eventType,
+    const events = await testSql(app.locals.db).all<{ eventType: string; resourceType: string; payloadMetadata: string }>(`SELECT event_type AS eventType,
                 resource_type AS resourceType,
                 payload_metadata AS payloadMetadata
          FROM note_events
          WHERE note_id = ?
-         ORDER BY cursor`
-      )
-      .all(noteId) as {
-      eventType: string;
-      resourceType: string;
-      payloadMetadata: string | null;
-    }[];
+         ORDER BY cursor`, noteId);
 
     expect(events.map((event) => event.eventType)).toEqual([
       "note.created",
@@ -354,7 +330,7 @@ describe("note CRUD and collaboration routes", () => {
   });
 
   it("rotates note keys for all active members and attachments", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "rotate_alice");
     const bob = await registerAgent(app, "rotate_bob");
     const bobSession = await bob.get("/api/auth/me").expect(200);
@@ -429,23 +405,13 @@ describe("note CRUD and collaboration routes", () => {
       .expect(200);
     expect(rotated.body).toMatchObject({ id: noteId, version: 2 });
 
-    const note = app.locals.db.sqlite
-      .prepare(
-        `SELECT encrypted_note_key AS encryptedNoteKey,
+    const note = (await testSql(app.locals.db).get(`SELECT encrypted_note_key AS encryptedNoteKey,
                 note_key_nonce AS noteKeyNonce,
                 content_cipher AS contentCipher,
                 content_length AS contentLength,
                 version
          FROM notes
-         WHERE id = ?`
-      )
-      .get(noteId) as {
-      contentCipher: string;
-      contentLength: number;
-      encryptedNoteKey: string;
-      noteKeyNonce: string;
-      version: number;
-    };
+         WHERE id = ?`, noteId))!;
     expect(note).toEqual({
       contentCipher: "rotated_content_cipher_abcdefghijklmnopqrstuvwxyz",
       contentLength: 777,
@@ -453,32 +419,18 @@ describe("note CRUD and collaboration routes", () => {
       noteKeyNonce: "rotated_owner_nonce_abcdefghijklmnopqrstuvwxyz",
       version: 2
     });
-    const share = app.locals.db.sqlite
-      .prepare(
-        `SELECT encrypted_note_key AS encryptedNoteKey,
+    const share = (await testSql(app.locals.db).get(`SELECT encrypted_note_key AS encryptedNoteKey,
                 sharing_key_version AS sharingKeyVersion
          FROM note_key_shares
-         WHERE note_id = ? AND recipient_user_id = ?`
-      )
-      .get(noteId, bobUserId) as {
-      encryptedNoteKey: string;
-      sharingKeyVersion: number;
-    };
+         WHERE note_id = ? AND recipient_user_id = ?`, noteId, bobUserId))!;
     expect(share).toEqual({
       encryptedNoteKey: "rotated_share_for_bob_abcdefghijklmnopqrstuvwxyz",
       sharingKeyVersion: 2
     });
-    const attachment = app.locals.db.sqlite
-      .prepare(
-        `SELECT encrypted_attachment_key AS encryptedAttachmentKey,
+    const attachment = (await testSql(app.locals.db).get(`SELECT encrypted_attachment_key AS encryptedAttachmentKey,
                 attachment_key_nonce AS attachmentKeyNonce
          FROM attachments
-         WHERE id = ?`
-      )
-      .get("00000000-0000-4000-8000-000000000001") as {
-      attachmentKeyNonce: string;
-      encryptedAttachmentKey: string;
-    };
+         WHERE id = ?`, "00000000-0000-4000-8000-000000000001"))!;
     expect(attachment).toEqual({
       attachmentKeyNonce: "rotated_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
       encryptedAttachmentKey: "rotated_attachment_key_abcdefghijklmnopqrstuvwxyz"
@@ -486,7 +438,7 @@ describe("note CRUD and collaboration routes", () => {
   });
 
   it("rolls back key rotations when event writes fail", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "rollback_rotation_alice");
     const bob = await registerAgent(app, "rollback_rotation_bob");
     const bobSession = await bob.get("/api/auth/me").expect(200);
@@ -532,7 +484,7 @@ describe("note CRUD and collaboration routes", () => {
       .send(Buffer.from("ciphered"))
       .expect(201);
 
-    failNoteEventWrites(app);
+    await failNoteEventWrites(app);
 
     await alice
       .post(`/api/notes/${noteId}/key-rotation`)
@@ -563,17 +515,13 @@ describe("note CRUD and collaboration routes", () => {
       })
       .expect(500);
 
-    const note = app.locals.db.sqlite
-      .prepare(
-        `SELECT encrypted_note_key AS encryptedNoteKey,
+    const note = await testSql(app.locals.db).get(`SELECT encrypted_note_key AS encryptedNoteKey,
                 note_key_nonce AS noteKeyNonce,
                 content_cipher AS contentCipher,
                 content_length AS contentLength,
                 version
          FROM notes
-         WHERE id = ?`
-      )
-      .get(noteId);
+         WHERE id = ?`, noteId);
     expect(note).toEqual({
       contentCipher: "content_cipher_abcdefghijklmnopqrstuvwxyz",
       contentLength: 128,
@@ -581,26 +529,18 @@ describe("note CRUD and collaboration routes", () => {
       noteKeyNonce: "note_key_nonce_abcdefghijklmnopqrstuvwxyz",
       version: 1
     });
-    const share = app.locals.db.sqlite
-      .prepare(
-        `SELECT encrypted_note_key AS encryptedNoteKey,
+    const share = await testSql(app.locals.db).get(`SELECT encrypted_note_key AS encryptedNoteKey,
                 sharing_key_version AS sharingKeyVersion
          FROM note_key_shares
-         WHERE note_id = ? AND recipient_user_id = ?`
-      )
-      .get(noteId, bobUserId);
+         WHERE note_id = ? AND recipient_user_id = ?`, noteId, bobUserId);
     expect(share).toEqual({
       encryptedNoteKey: "old_rotation_share_for_bob_abcdefghijklmnopqrstuvwxyz",
       sharingKeyVersion: 2
     });
-    const attachment = app.locals.db.sqlite
-      .prepare(
-        `SELECT encrypted_attachment_key AS encryptedAttachmentKey,
+    const attachment = await testSql(app.locals.db).get(`SELECT encrypted_attachment_key AS encryptedAttachmentKey,
                 attachment_key_nonce AS attachmentKeyNonce
          FROM attachments
-         WHERE id = ?`
-      )
-      .get("00000000-0000-4000-8000-000000000002");
+         WHERE id = ?`, "00000000-0000-4000-8000-000000000002");
     expect(attachment).toEqual({
       attachmentKeyNonce: "old_rotation_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
       encryptedAttachmentKey: "old_rotation_attachment_key_abcdefghijklmnopqrstuvwxyz"
@@ -608,7 +548,7 @@ describe("note CRUD and collaboration routes", () => {
   });
 
   it("rejects partial key rotations", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "partial_rotate_alice");
     const bob = await registerAgent(app, "partial_rotate_bob");
 
@@ -652,7 +592,7 @@ describe("note CRUD and collaboration routes", () => {
   });
 
   it("rolls back membership invites when event writes fail", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "rollback_member_alice");
     const bob = await registerAgent(app, "rollback_member_bob");
     const bobSession = await bob.get("/api/auth/me").expect(200);
@@ -671,7 +611,7 @@ describe("note CRUD and collaboration routes", () => {
       .expect(201);
     const noteId = String(created.body.id);
 
-    failNoteEventWrites(app);
+    await failNoteEventWrites(app);
 
     await alice
       .post(`/api/notes/${noteId}/memberships`)
@@ -685,27 +625,19 @@ describe("note CRUD and collaboration routes", () => {
       })
       .expect(500);
 
-    const membership = app.locals.db.sqlite
-      .prepare(
-        `SELECT role
+    const membership = await testSql(app.locals.db).get(`SELECT role
          FROM note_memberships
-         WHERE note_id = ? AND user_id = ?`
-      )
-      .get(noteId, bobUserId);
+         WHERE note_id = ? AND user_id = ?`, noteId, bobUserId);
     expect(membership).toBeUndefined();
 
-    const keyShare = app.locals.db.sqlite
-      .prepare(
-        `SELECT encrypted_note_key AS encryptedNoteKey
+    const keyShare = await testSql(app.locals.db).get(`SELECT encrypted_note_key AS encryptedNoteKey
          FROM note_key_shares
-         WHERE note_id = ? AND recipient_user_id = ?`
-      )
-      .get(noteId, bobUserId);
+         WHERE note_id = ? AND recipient_user_id = ?`, noteId, bobUserId);
     expect(keyShare).toBeUndefined();
   });
 
   it("rolls back membership role updates when event writes fail", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "rollback_role_alice");
     const bob = await registerAgent(app, "rollback_role_bob");
     const bobSession = await bob.get("/api/auth/me").expect(200);
@@ -736,7 +668,7 @@ describe("note CRUD and collaboration routes", () => {
       })
       .expect(201);
 
-    failNoteEventWrites(app);
+    await failNoteEventWrites(app);
 
     await alice
       .patch(`/api/notes/${noteId}/memberships/${bobUserId}`)
@@ -744,18 +676,14 @@ describe("note CRUD and collaboration routes", () => {
       .send({ role: "viewer" })
       .expect(500);
 
-    const membership = app.locals.db.sqlite
-      .prepare(
-        `SELECT role, status
+    const membership = await testSql(app.locals.db).get(`SELECT role, status
          FROM note_memberships
-         WHERE note_id = ? AND user_id = ?`
-      )
-      .get(noteId, bobUserId);
+         WHERE note_id = ? AND user_id = ?`, noteId, bobUserId);
     expect(membership).toEqual({ role: "editor", status: "active" });
   });
 
   it("rolls back membership revokes when event writes fail", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "rollback_revoke_alice");
     const bob = await registerAgent(app, "rollback_revoke_bob");
     const bobSession = await bob.get("/api/auth/me").expect(200);
@@ -786,35 +714,27 @@ describe("note CRUD and collaboration routes", () => {
       })
       .expect(201);
 
-    failNoteEventWrites(app);
+    await failNoteEventWrites(app);
 
     await alice
       .delete(`/api/notes/${noteId}/memberships/${bobUserId}`)
       .set(csrfHeaders())
       .expect(500);
 
-    const membership = app.locals.db.sqlite
-      .prepare(
-        `SELECT role, status
+    const membership = await testSql(app.locals.db).get(`SELECT role, status
          FROM note_memberships
-         WHERE note_id = ? AND user_id = ?`
-      )
-      .get(noteId, bobUserId);
+         WHERE note_id = ? AND user_id = ?`, noteId, bobUserId);
     expect(membership).toEqual({ role: "editor", status: "active" });
-    const keyShare = app.locals.db.sqlite
-      .prepare(
-        `SELECT encrypted_note_key AS encryptedNoteKey
+    const keyShare = await testSql(app.locals.db).get(`SELECT encrypted_note_key AS encryptedNoteKey
          FROM note_key_shares
-         WHERE note_id = ? AND recipient_user_id = ?`
-      )
-      .get(noteId, bobUserId);
+         WHERE note_id = ? AND recipient_user_id = ?`, noteId, bobUserId);
     expect(keyShare).toEqual({
       encryptedNoteKey: "rollback_revoke_share_for_bob_abcdefghijklmnopqrstuvwxyz"
     });
   });
 
   it("enforces one-level folder nesting", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "folder_user");
 
     const parent = await agent
@@ -837,7 +757,7 @@ describe("note CRUD and collaboration routes", () => {
   });
 
   it("soft deletes, restores, and permanently deletes notes", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "trash_user");
     const created = await agent
       .post("/api/notes")
@@ -865,20 +785,12 @@ describe("note CRUD and collaboration routes", () => {
 
     await agent.get(`/api/notes/${String(created.body.id)}`).expect(404);
 
-    const events = app.locals.db.sqlite
-      .prepare(
-        `SELECT event_type AS eventType,
+    const events = await testSql(app.locals.db).all<{ eventType: string; noteVersion: number; payloadMetadata: string }>(`SELECT event_type AS eventType,
                 note_version AS noteVersion,
                 payload_metadata AS payloadMetadata
          FROM note_events
          WHERE note_id = ?
-         ORDER BY cursor`
-      )
-      .all(created.body.id) as {
-      eventType: string;
-      noteVersion: number;
-      payloadMetadata: string | null;
-    }[];
+         ORDER BY cursor`, created.body.id);
     expect(events.map((event) => event.eventType)).toEqual([
       "note.created",
       "note.deleted",

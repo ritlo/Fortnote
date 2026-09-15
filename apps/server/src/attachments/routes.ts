@@ -162,6 +162,17 @@ export function createAttachmentsRouter(context: AppContext): Router {
 
     const storageId = crypto.randomUUID();
     let committed = false;
+    let cleanup: Promise<void> | null = null;
+    // Release before any error response so a retrying client never sees the
+    // abandoned reservation or ciphertext still held.
+    const releaseUpload = () =>
+      (cleanup ??= (async () => {
+        await context.db.attachmentMutations.release(
+          reservation.ownerUserId,
+          payload.size
+        );
+        await context.db.attachmentStorage.delete(storageId);
+      })());
     try {
       await context.db.attachmentStorage.write({
         storageId,
@@ -193,6 +204,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
         ...(clientInstanceId ? { clientInstanceId } : {})
       });
       if (outcome.kind !== "committed") {
+        await releaseUpload();
         sendAttachmentGateError(response, outcome.kind);
         return;
       }
@@ -204,6 +216,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
       });
     } catch (error) {
       if (error instanceof AttachmentCiphertextSizeError) {
+        await releaseUpload();
         sendApiError(
           response,
           error.kind === "too-large" ? "payload_too_large" : "bad_request",
@@ -214,11 +227,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
       throw error;
     } finally {
       if (!committed) {
-        await context.db.attachmentMutations.release(
-          reservation.ownerUserId,
-          payload.size
-        );
-        await context.db.attachmentStorage.delete(storageId);
+        await releaseUpload();
       }
     }
   });

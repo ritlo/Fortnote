@@ -6,10 +6,11 @@ import {
   notePayload,
   registerAgent
 } from "../support/http.js";
+import { failNoteEventWrites, testSql } from "../support/database.js";
 
 describe("folders routes", () => {
   it("writes owner-scoped folder events", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const alice = await registerAgent(app, "folder_events_alice");
     const bob = await registerAgent(app, "folder_events_bob");
 
@@ -48,12 +49,12 @@ describe("folders routes", () => {
   });
 
   it("rolls back folder creates when event writes fail", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "folder_create_rollback_user");
     const db = app.locals.db as AppDb;
     const folderId = crypto.randomUUID();
 
-    failNoteEventWrites(app);
+    await failNoteEventWrites(app.locals.db);
 
     await agent
       .post("/api/folders")
@@ -61,14 +62,12 @@ describe("folders routes", () => {
       .send({ id: folderId, name: "Drafts" })
       .expect(500);
 
-    const storedFolder = db.sqlite
-      .prepare("SELECT id FROM folders WHERE id = ?")
-      .get(folderId);
+    const storedFolder = await testSql(db).get("SELECT id FROM folders WHERE id = ?", folderId);
     expect(storedFolder).toBeUndefined();
   });
 
   it("rolls back folder updates when event writes fail", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "folder_update_rollback_user");
     const db = app.locals.db as AppDb;
     const folder = await agent
@@ -78,7 +77,7 @@ describe("folders routes", () => {
       .expect(201);
     const folderId = String(folder.body.id);
 
-    failNoteEventWrites(app);
+    await failNoteEventWrites(app.locals.db);
 
     await agent
       .put(`/api/folders/${folderId}`)
@@ -86,14 +85,12 @@ describe("folders routes", () => {
       .send({ name: "Renamed" })
       .expect(500);
 
-    const storedFolder = db.sqlite
-      .prepare("SELECT name FROM folders WHERE id = ?")
-      .get(folderId);
+    const storedFolder = await testSql(db).get("SELECT name FROM folders WHERE id = ?", folderId);
     expect(storedFolder).toEqual({ name: "Inbox" });
   });
 
   it("rolls back folder deletes when event writes fail", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "folder_rollback_user");
     const db = app.locals.db as AppDb;
 
@@ -110,22 +107,18 @@ describe("folders routes", () => {
       .expect(201);
     const noteId = String(note.body.id);
 
-    failNoteEventWrites(app);
+    await failNoteEventWrites(app.locals.db);
 
     await agent.delete(`/api/folders/${folderId}`).set(csrfHeaders()).expect(500);
 
-    const storedFolder = db.sqlite
-      .prepare("SELECT id FROM folders WHERE id = ?")
-      .get(folderId);
+    const storedFolder = await testSql(db).get("SELECT id FROM folders WHERE id = ?", folderId);
     expect(storedFolder).toEqual({ id: folderId });
-    const storedNote = db.sqlite
-      .prepare("SELECT folder_id AS folderId FROM notes WHERE id = ?")
-      .get(noteId);
+    const storedNote = await testSql(db).get("SELECT folder_id AS folderId FROM notes WHERE id = ?", noteId);
     expect(storedNote).toEqual({ folderId });
   });
 
   it("reparents a note to the deleted folder's parent", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "folder_reparent_user");
     const db = app.locals.db as AppDb;
 
@@ -150,19 +143,7 @@ describe("folders routes", () => {
 
     await agent.delete(`/api/folders/${nestedId}`).set(csrfHeaders()).expect(204);
 
-    const storedNote = db.sqlite
-      .prepare("SELECT folder_id AS folderId FROM notes WHERE id = ?")
-      .get(noteId);
+    const storedNote = await testSql(db).get("SELECT folder_id AS folderId FROM notes WHERE id = ?", noteId);
     expect(storedNote).toEqual({ folderId: parentId });
   });
 });
-
-function failNoteEventWrites(app: ReturnType<typeof createTestApp>): void {
-  app.locals.db.sqlite.exec(`
-    CREATE TRIGGER fail_note_events_insert
-    BEFORE INSERT ON note_events
-    BEGIN
-      SELECT RAISE(ABORT, 'note event failure');
-    END;
-  `);
-}

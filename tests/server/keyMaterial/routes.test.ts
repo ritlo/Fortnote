@@ -4,7 +4,7 @@ import { createTestApp, csrfHeaders, registerAgent } from "../support/http.js";
 
 describe("key material routes", () => {
   it("returns encrypted key material for current user", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "key_user");
 
     const response = await agent.get("/api/key-material").expect(200);
@@ -20,7 +20,7 @@ describe("key material routes", () => {
   });
 
   it("updates encrypted vault envelope with optimistic concurrency", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "rewrap_user");
 
     const updated = await agent
@@ -67,7 +67,7 @@ describe("key material routes", () => {
   });
 
   it("updates account auth verifier with vault envelope", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
     const agent = await registerAgent(app, "password_user");
 
     await agent
@@ -115,7 +115,7 @@ describe("key material routes", () => {
   });
 
   it("requires authentication", async () => {
-    const app = createTestApp();
+    const app = await createTestApp();
 
     await request(app).get("/api/key-material").expect(401);
   });

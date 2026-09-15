@@ -32,6 +32,8 @@ import {
 
 const cleanupDirectories: string[] = [];
 const cleanupDbs: AppDb[] = [];
+// These tests exercise local filesystem storage and SQLite internals directly.
+const LOCAL_SQLITE = { provider: "sqlite", path: ":memory:" } as const;
 
 afterEach(() => {
   vi.useRealTimers();
@@ -224,7 +226,7 @@ describe("encrypted content chunk storage", () => {
   });
 
   it("expires uploads and cleans orphans in bounded pages without touching committed files", async () => {
-    const app = createTestApp({ maintenanceBatchSize: 2 });
+    const app = await createTestApp({ maintenanceBatchSize: 2, database: LOCAL_SQLITE });
     const config = app.locals.config as ServerConfig;
     const db = app.locals.db as AppDb;
     const context = { config, db };
@@ -298,7 +300,7 @@ describe("encrypted content chunk storage", () => {
   });
 
   it("reconciles committed and reserved counters in bounded user pages", async () => {
-    const app = createTestApp({ maintenanceBatchSize: 2 });
+    const app = await createTestApp({ maintenanceBatchSize: 2, database: LOCAL_SQLITE });
     const config = app.locals.config as ServerConfig;
     const db = app.locals.db as AppDb;
     cleanupDirectories.push(config.dataDir);
@@ -340,7 +342,7 @@ describe("encrypted content chunk storage", () => {
 
   it("waits for active background maintenance before stopping", async () => {
     vi.useFakeTimers();
-    const app = createTestApp({ contentUploadExpiryMs: 1_000 });
+    const app = await createTestApp({ contentUploadExpiryMs: 1_000, database: LOCAL_SQLITE });
     const config = app.locals.config as ServerConfig;
     const db = app.locals.db as AppDb;
     const context = { config, db };

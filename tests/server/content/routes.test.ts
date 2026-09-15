@@ -14,8 +14,9 @@ import {
   registerAgent
 } from "../support/http.js";
 import { contentManifestHash, type ContentKind } from "@server/content/manifests.js";
+import { testSql } from "../support/database.js";
 
-type TestApp = ReturnType<typeof createTestApp>;
+type TestApp = Awaited<ReturnType<typeof createTestApp>>;
 type TestAgent = Awaited<ReturnType<typeof registerAgent>>;
 
 interface TestChunk {
@@ -26,13 +27,16 @@ interface TestChunk {
 
 const apps: TestApp[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   for (const app of apps.splice(0)) {
-    const db = app.locals.db as AppDb;
-    db.sqlite.close();
+    await (app.locals.db as AppDb).close();
     fs.rmSync(String(app.locals.config.dataDir), { recursive: true, force: true });
   }
 });
+
+function usesLocalUploads(app: TestApp): boolean {
+  return (app.locals.db as AppDb).contentStorage.usesLocalUploadDirectories;
+}
 
 describe("resumable encrypted content routes", () => {
   it("begins idempotently, reports progress, reserves quota, and aborts cleanly", async () => {
@@ -57,9 +61,11 @@ describe("resumable encrypted content routes", () => {
     await putChunk(agent, payload.uploadId, 0, chunk).expect(204);
     const status = await agent.get(`/api/content/uploads/${payload.uploadId}`).expect(200);
     expect(status.body).toMatchObject({ status: "complete", receivedChunkIndexes: [0] });
-    expect(
-      fs.existsSync(path.join(String(app.locals.config.dataDir), "content", payload.uploadId, "0.bin"))
-    ).toBe(true);
+    if (usesLocalUploads(app)) {
+      expect(
+        fs.existsSync(path.join(String(app.locals.config.dataDir), "content", payload.uploadId, "0.bin"))
+      ).toBe(true);
+    }
 
     await agent
       .delete(`/api/content/uploads/${payload.uploadId}`)
@@ -101,7 +107,7 @@ describe("resumable encrypted content routes", () => {
     await putChunk(agent, payload.uploadId, 1, chunks[1]!).expect(204);
     await putChunk(agent, payload.uploadId, 1, chunks[1]!).expect(204);
     await putChunk(agent, payload.uploadId, 1, testChunk("different encrypted data")).expect(409);
-    expect(manifestCount(app)).toBe(0);
+    expect(await manifestCount(app)).toBe(0);
 
     await putChunk(agent, payload.uploadId, 0, chunks[0]!).expect(204);
     const requestId = crypto.randomUUID();
@@ -115,7 +121,7 @@ describe("resumable encrypted content routes", () => {
       lastSequence: 1,
       totalCipherBytes: chunks.reduce((total, chunk) => total + chunk.bytes.length, 0)
     });
-    expect(manifestCount(app)).toBe(1);
+    expect(await manifestCount(app)).toBe(1);
     expect(publishContentManifest).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "crdt-manifest",
@@ -177,7 +183,7 @@ describe("resumable encrypted content routes", () => {
     await putChunk(agent, missing.uploadId, 0, chunks[0]!).expect(204);
     const missingCommit = await commit(agent, missing).expect(409);
     expect(missingCommit.body.error.code).toBe("chunk_missing");
-    expect(manifestCount(app)).toBe(0);
+    expect(await manifestCount(app)).toBe(0);
 
     const corrupted = {
       ...beginPayload(noteId, chunks),
@@ -188,7 +194,7 @@ describe("resumable encrypted content routes", () => {
     await putChunk(agent, corrupted.uploadId, 0, chunks[0]!).expect(204);
     const corruptCommit = await commit(agent, corrupted).expect(409);
     expect(corruptCommit.body.error.code).toBe("manifest_mismatch");
-    expect(manifestCount(app)).toBe(0);
+    expect(await manifestCount(app)).toBe(0);
   });
 
   it("rechecks the note epoch at commit and retains the reservation until abort", async () => {
@@ -199,7 +205,7 @@ describe("resumable encrypted content routes", () => {
     await putChunk(agent, payload.uploadId, 0, chunk).expect(204);
 
     const db = app.locals.db as AppDb;
-    db.sqlite.prepare("UPDATE notes SET key_epoch = 2 WHERE id = ?").run(noteId);
+    await testSql(db).run("UPDATE notes SET key_epoch = 2 WHERE id = ?", noteId);
     const response = await commit(agent, payload).expect(409);
     expect(response.body.error.code).toBe("stale_epoch");
     expect((await agent.get("/api/content/quota").expect(200)).body.reservedBytes).toBe(
@@ -224,23 +230,21 @@ describe("resumable encrypted content routes", () => {
       "content-owner",
       payload.uploadId,
       chunk,
-      (db) => {
-        db.sqlite.prepare("UPDATE notes SET key_epoch = 2 WHERE id = ?").run(noteId);
+      async (db) => {
+        await testSql(db).run("UPDATE notes SET key_epoch = 2 WHERE id = ?", noteId);
       }
     );
     expect(response.status).toBe(409);
     expect(response.body).toMatchObject({ error: { code: "stale_epoch" } });
     const db = app.locals.db as AppDb;
     expect(
-      (db.sqlite
-        .prepare("SELECT COUNT(*) AS count FROM content_chunks WHERE upload_id = ?")
-        .get(payload.uploadId) as { count: number }).count
+      ((await testSql(db).get("SELECT COUNT(*) AS count FROM content_chunks WHERE upload_id = ?", payload.uploadId))!).count
     ).toBe(0);
     expect(
       fs.existsSync(path.join(String(app.locals.config.dataDir), "content", payload.uploadId, "0.bin"))
     ).toBe(false);
 
-    db.sqlite.prepare("UPDATE notes SET key_epoch = 1 WHERE id = ?").run(noteId);
+    await testSql(db).run("UPDATE notes SET key_epoch = 1 WHERE id = ?", noteId);
     await agent
       .delete(`/api/content/uploads/${payload.uploadId}`)
       .set(csrfHeaders())
@@ -261,12 +265,10 @@ describe("resumable encrypted content routes", () => {
     expect(checkpoint.firstSequence).toBe(3);
 
     const db = app.locals.db as AppDb;
-    const updates = db.sqlite
-      .prepare(`
+    const updates = await testSql(db).all(`
         SELECT update_id AS updateId, server_sequence AS serverSequence, kind
         FROM section_updates WHERE note_id = ? ORDER BY server_sequence
-      `)
-      .all(noteId) as { updateId: string; serverSequence: number; kind: string }[];
+      `, noteId);
     expect(updates).toEqual([
       { updateId: second.updateId, serverSequence: 2, kind: "update" },
       { updateId: checkpoint.updateId, serverSequence: 3, kind: "checkpoint" }
@@ -294,7 +296,7 @@ async function setup(
   overrides: Parameters<typeof createTestApp>[0] = {},
   realtime?: RealtimePublisher
 ) {
-  const app = createTestApp(overrides, realtime);
+  const app = await createTestApp(overrides, realtime);
   apps.push(app);
   const agent = await registerAgent(app, "content-owner");
   const note = await agent
@@ -391,11 +393,9 @@ async function uploadAndCommit(
   };
 }
 
-function manifestCount(app: TestApp): number {
+async function manifestCount(app: TestApp): Promise<number> {
   const db = app.locals.db as AppDb;
-  return (db.sqlite.prepare("SELECT COUNT(*) AS count FROM content_manifests").get() as {
-    count: number;
-  }).count;
+  return ((await testSql(db).get<{ count: number }>("SELECT COUNT(*) AS count FROM content_manifests"))!).count;
 }
 
 async function putChunkDuringMutation(
@@ -403,13 +403,10 @@ async function putChunkDuringMutation(
   username: string,
   uploadId: string,
   chunk: TestChunk,
-  mutate: (db: AppDb) => void
+  mutate: (db: AppDb) => Promise<void>
 ): Promise<{ body: unknown; status: number }> {
   const db = app.locals.db as AppDb;
-  const config = app.locals.config as { dataDir: string };
-  const user = db.sqlite
-    .prepare("SELECT id FROM users WHERE username = ?")
-    .get(username) as { id: string };
+  const user = (await testSql(db).get<{ id: string }>("SELECT id FROM users WHERE username = ?", username))!;
   const token = await createSession(db, user.id);
   const server = createServer(app);
   server.listen(0, "127.0.0.1");
@@ -451,9 +448,9 @@ async function putChunkDuringMutation(
       upload.on("error", reject);
       const midpoint = Math.floor(chunk.bytes.length / 2);
       upload.write(chunk.bytes.subarray(0, midpoint));
-      void waitForPartialChunk(config.dataDir, uploadId)
-        .then(() => {
-          mutate(db);
+      void waitForPartialChunk(app, uploadId)
+        .then(async () => {
+          await mutate(db);
           upload.end(chunk.bytes.subarray(midpoint));
         })
         .catch(reject);
@@ -471,11 +468,18 @@ async function putChunkDuringMutation(
   }
 }
 
-async function waitForPartialChunk(dataDir: string, uploadId: string): Promise<void> {
-  const directory = path.join(dataDir, "content", uploadId);
+// Local storage writes a .part file; object storage inserts its object row first.
+async function waitForPartialChunk(app: TestApp, uploadId: string): Promise<void> {
+  const directory = path.join(String(app.locals.config.dataDir), "content", uploadId);
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    const entries = await fs.promises.readdir(directory).catch(() => []);
-    if (entries.some((entry) => entry.endsWith(".part"))) {
+    const started = usesLocalUploads(app)
+      ? (await fs.promises.readdir(directory).catch(() => [])).some((entry) =>
+          entry.endsWith(".part")
+        )
+      : Boolean((await testSql(app.locals.db).get<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM attachment_objects"
+        ))?.count);
+    if (started) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
