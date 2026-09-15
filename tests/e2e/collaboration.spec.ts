@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { readFile } from "node:fs/promises";
+import { readStoredAttachment, readStoredNote } from "./support/stored.js";
 import {
   expect,
   test,
@@ -27,8 +27,6 @@ import {
   openShareDialog,
   pageAttemptShare,
   readOwnSharingFingerprint,
-  readStoredCollaboration,
-  readStoredMedia,
   register,
   reloadAndUnlock,
   restartManagedE2eServer,
@@ -54,8 +52,6 @@ test("syncs a shared note for an online editor and offline viewer", async ({
   const aliceBody = `Alice online update ${alice.suffix}`;
   const concurrentAliceEdit = `alice-edit-${alice.suffix}`;
   const concurrentBobEdit = `bob-edit-${alice.suffix}`;
-  const attachmentName = `shared-${alice.suffix}.txt`;
-  const attachmentBody = `Shared attachment ${alice.suffix}`;
   const bobBody = `Bob editor update ${alice.suffix}`;
   const realtimeFrames: string[] = [];
   const carolRealtime = { closes: 0 };
@@ -180,8 +176,8 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     );
     await expect(blockEditor(carolPage)).toHaveCount(0);
 
-    const stored = readStoredCollaboration(alice.username);
-    const storedAttachment = stored.attachmentPath ? await readFile(stored.attachmentPath) : null;
+    const stored = await readStoredNote(alice.username);
+    expect(stored.contentBytes.length).toBeGreaterThan(0);
     const responseBodies = await Promise.all(traffic.responseBodies);
     const browserTraffic = Buffer.concat([...traffic.requestBodies, ...responseBodies]);
     for (const plaintext of [
@@ -189,15 +185,13 @@ test("syncs a shared note for an online editor and offline viewer", async ({
       initialBody,
       aliceBody,
       mergedBody,
-      bobBody,
-      attachmentName,
-      attachmentBody
+      bobBody
     ]) {
       expect(browserTraffic.toString("utf8")).not.toContain(plaintext);
       expect(realtimeFrames.join("\n")).not.toContain(plaintext);
       expect(stored.databasePayload).not.toContain(plaintext);
-      if (storedAttachment) {
-        expect(storedAttachment.toString("utf8")).not.toContain(plaintext);
+      for (const bytes of [...stored.attachments.map((attachment) => attachment.bytes), ...stored.contentBytes]) {
+        expect(bytes.toString("utf8")).not.toContain(plaintext);
       }
     }
   } finally {
@@ -272,7 +266,7 @@ test("embeds encrypted media for reloads and shared viewers", async ({
     `<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><metadata>${marker}</metadata><rect width="2" height="2" fill="green"/></svg>`
   );
   const realtimeFrames: string[] = [];
-  let storedFilePath = "";
+  let storedStorageKey = "";
   let storedAttachmentId = "";
 
   try {
@@ -353,10 +347,11 @@ test("embeds encrypted media for reloads and shared viewers", async ({
     });
 
     await test.step("keep plaintext and object URLs client-only", async () => {
-      const stored = readStoredMedia(alice.username);
-      storedFilePath = stored.filePath;
-      storedAttachmentId = stored.attachmentId;
-      const storedBytes = await readFile(stored.filePath);
+      const stored = await readStoredNote(alice.username);
+      expect(stored.attachments).toHaveLength(1);
+      const attachment = stored.attachments[0];
+      storedStorageKey = attachment.storageKey;
+      storedAttachmentId = attachment.id;
       const responseBodies = await Promise.all(traffic.responseBodies);
       const browserTraffic = Buffer.concat([...traffic.requestBodies, ...responseBodies]);
 
@@ -367,8 +362,10 @@ test("embeds encrypted media for reloads and shared viewers", async ({
       expect(realtimeFrames.join("\n")).not.toContain("blob:");
       expect(stored.databasePayload).not.toContain(marker);
       expect(stored.databasePayload).not.toContain("blob:");
-      expect(storedBytes.includes(image)).toBe(false);
-      expect(storedBytes.toString("utf8")).not.toContain(marker);
+      for (const bytes of [attachment.bytes, ...stored.contentBytes]) {
+        expect(bytes.includes(image)).toBe(false);
+        expect(bytes.toString("utf8")).not.toContain(marker);
+      }
     });
 
     await test.step("leave deleted embeds unavailable without corrupting the document", async () => {
@@ -395,7 +392,7 @@ test("embeds encrypted media for reloads and shared viewers", async ({
           )
         )
         .toEqual([null, null]);
-      await expect(readFile(storedFilePath)).rejects.toThrow();
+      await expect(readStoredAttachment(storedStorageKey)).rejects.toThrow("Stored ciphertext not found");
     });
   } finally {
     await closeContexts(contexts);

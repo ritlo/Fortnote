@@ -2,21 +2,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import process from "node:process";
+import { e2eServerEnvironment } from "./environment.js";
 
 const restartPath = resolve("data/e2e-server.restart");
 const statePath = resolve("data/e2e-server.state");
-const serverEnvironment = {
-  ...process.env,
-  ALLOWED_ORIGIN: process.env.ALLOWED_ORIGIN ??
-    `http://127.0.0.1:${process.env.CLIENT_PORT ?? "5173"}`,
-  COOKIE_SECURE: process.env.COOKIE_SECURE ?? "false",
-  DATABASE_PATH: process.env.DATABASE_PATH ?? "data/e2e.sqlite",
-  DATA_DIR: process.env.DATA_DIR ?? "data/e2e-attachments",
-  AUTH_IP_RATE_LIMIT_MAX_ATTEMPTS: process.env.AUTH_IP_RATE_LIMIT_MAX_ATTEMPTS ?? "1000",
-  AUTH_ACCOUNT_RATE_LIMIT_MAX_ATTEMPTS:
-    process.env.AUTH_ACCOUNT_RATE_LIMIT_MAX_ATTEMPTS ?? "1000",
-  PORT: process.env.API_PORT ?? process.env.PORT ?? "3001"
-};
+const serverEnvironment = e2eServerEnvironment();
 const serverHealthUrl = `http://127.0.0.1:${serverEnvironment.PORT}/api/health`;
 let child: ChildProcess | null = null;
 let stopping = false;

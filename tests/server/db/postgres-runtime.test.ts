@@ -14,6 +14,8 @@ import {
 } from "@server/db/postgres/client.js";
 import type { ApplicationDatabase } from "@server/db/types.js";
 import { createApp } from "@server/http/app.js";
+import { readStoredAttachment, readStoredNote } from "../../e2e/support/stored.js";
+import { protectedNotePayload } from "../notes/routes.fixtures.js";
 import {
   csrfHeaders,
   notePayload,
@@ -60,7 +62,10 @@ describe.each(runtimeProviders)("$name runtime contract", (runtime) => {
           .get("/api/ready")
           .expect(200)
           .expect({ ok: true, checks: { database: "up" } });
-        const noteId = await registerAndCreateNote(agent, runtime.provider);
+        const account = await registerUser(agent, runtime.provider);
+        const note = notePayload();
+        await agent.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
+        const noteId = note.id;
         const attachment = attachmentPayload();
 
         await uploadAttachment(agent, noteId, attachment).expect(201);
@@ -77,17 +82,52 @@ describe.each(runtimeProviders)("$name runtime contract", (runtime) => {
           .expect(200);
         expect(download.body).toEqual(attachment.ciphertext);
 
+        const contentBytes = Buffer.from("stored-content-probe-ciphertext");
+        await uploadContent(agent, noteId, contentBytes, true);
+        const inspected = await readStoredNote(account.username, harness.config);
+        expect(inspected.attachments).toHaveLength(1);
+        expect(inspected.attachments[0]?.bytes).toEqual(attachment.ciphertext);
+        expect(inspected.contentBytes).toContainEqual(contentBytes);
+        expect(inspected.databasePayload).toContain(note.encryptedNoteKey);
+        const storageKey = inspected.attachments[0]!.storageKey;
+        expect(await readStoredAttachment(storageKey, harness.config)).toEqual(attachment.ciphertext);
+
         await agent
           .delete(`/api/attachments/${attachment.id}`)
           .set(csrfHeaders())
           .expect(204);
         await agent.get(`/api/attachments/${attachment.id}`).expect(404);
+        await expect(readStoredAttachment(storageKey, harness.config)).rejects.toThrow("Stored ciphertext not found");
       } finally {
         await harness.database.close();
         await harness.cleanup();
       }
     }
   );
+
+  it.skipIf(!runtime.enabled)("returns canonical timestamps from both save APIs", async () => {
+    const harness = await runtime.createHarness();
+    try {
+      const agent = request.agent(createApp({ config: harness.config, db: harness.database }));
+      await registerUser(agent, `${runtime.provider}_timestamps`);
+      for (const format of ["legacy", "protected"] as const) {
+        const note = format === "legacy" ? notePayload() : protectedNotePayload();
+        await agent.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
+        const response = await agent.put(`/api/notes/${note.id}`).set(csrfHeaders())
+          .send(format === "legacy" ? {
+            version: 1, contentCipher: "timestamp_content_cipher",
+            contentNonce: "timestamp_content_nonce", contentLength: 24
+          } : { rootVersion: 1, keyEpoch: 1 })
+          .expect(200);
+        const updatedAt = response.body.updatedAt as string;
+        expect(updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+        expect(new Date(updatedAt).toISOString()).toBe(updatedAt);
+      }
+    } finally {
+      await harness.database.close();
+      await harness.cleanup();
+    }
+  });
 
   it.skipIf(!runtime.enabled)(
     "rotates account credentials and encrypted key material",

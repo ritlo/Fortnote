@@ -828,7 +828,7 @@ describe("notes and folders routes", () => {
       .get(note.body.id) as { updatedAt: string };
     expect(updated.body).toMatchObject({
       version: 2,
-      updatedAt: `${storedUpdate.updatedAt.replace(" ", "T")}Z`
+      updatedAt: new Date(`${storedUpdate.updatedAt.replace(" ", "T")}Z`).toISOString()
     });
     const membership = app.locals.db.sqlite
       .prepare(

@@ -48,7 +48,7 @@ export async function createSqliteHarness(): Promise<RuntimeHarness> {
   const dataDir = await mkdtemp(join(tmpdir(), "fortnote-sqlite-contract-"));
   const config: ServerConfig = {
     ...getConfig({}),
-    database: { provider: "sqlite", path: ":memory:" },
+    database: { provider: "sqlite", path: join(dataDir, "contract.sqlite") },
     dataDir,
     cookieSecure: false
   };

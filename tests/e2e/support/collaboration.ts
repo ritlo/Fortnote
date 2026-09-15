@@ -1,7 +1,6 @@
 import { Buffer } from "node:buffer";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { decodeCrdtBinaryFrame } from "../../../packages/shared/src/index.js";
 import {
   expect,
@@ -431,131 +430,6 @@ export function waitForAttachmentUpload(page: Page) {
       response.url().includes("/attachments") &&
       response.ok()
   );
-}
-
-export function readStoredMedia(ownerUsername: string): {
-  attachmentId: string;
-  databasePayload: string;
-  filePath: string;
-} {
-  const database = new DatabaseSync(resolve("apps/server/data/e2e.sqlite"), {
-    readOnly: true,
-    timeout: 5_000
-  });
-  try {
-    const row = database
-      .prepare(
-	        `SELECT a.id AS id,
-	                a.note_id AS noteId,
-	                a.file_cipher_path AS fileCipherPath,
-	                a.filename,
-	                a.mime_type AS mimeType,
-	                a.metadata_cipher AS metadataCipher,
-	                n.title,
-	                n.title_cipher AS titleCipher,
-	                n.content_cipher AS contentCipher
-	         FROM attachments a
-	         JOIN notes n ON n.id = a.note_id
-	         JOIN users u ON u.id = n.user_id
-	         WHERE u.username = ?
-	         ORDER BY a.created_at DESC
-	         LIMIT 1`
-	      )
-	      .get(ownerUsername) as
-	      | {
-	          contentCipher: string;
-	          fileCipherPath: string;
-	          filename: string;
-	          id: string;
-	          metadataCipher: string | null;
-	          mimeType: string;
-	          noteId: string;
-	          title: string;
-	          titleCipher: string | null;
-	        }
-	      | undefined;
-	    if (!row) {
-	      throw new Error(`Stored media not found for: ${ownerUsername}`);
-	    }
-    const updates = database
-      .prepare("SELECT cipher FROM note_updates WHERE note_id = ?")
-      .all(row.noteId) as { cipher: string }[];
-	    return {
-	      attachmentId: row.id,
-	      databasePayload: JSON.stringify([
-	        row,
-	        ...updates.map((update) => update.cipher)
-	      ]),
-      filePath: resolve("apps/server/data/e2e-attachments", row.fileCipherPath)
-    };
-  } finally {
-    database.close();
-  }
-}
-
-export function readStoredCollaboration(ownerUsername: string): {
-  attachmentPath: string | null;
-  databasePayload: string;
-} {
-  const database = new DatabaseSync(resolve("apps/server/data/e2e.sqlite"), {
-    readOnly: true,
-    timeout: 5_000
-  });
-  try {
-    const note = database
-      .prepare(
-        `SELECT n.id, n.title, n.title_cipher AS titleCipher,
-                n.content_cipher AS contentCipher, n.encrypted_note_key AS encryptedNoteKey,
-                n.key_epoch AS keyEpoch
-         FROM notes n
-         JOIN users u ON u.id = n.user_id
-         WHERE u.username = ?
-         ORDER BY n.created_at DESC
-         LIMIT 1`
-      )
-      .get(ownerUsername) as Record<string, unknown> | undefined;
-    if (!note || typeof note.id !== "string") {
-      throw new Error(`Stored collaboration note not found for: ${ownerUsername}`);
-    }
-    const attachment = database
-      .prepare(
-        `SELECT filename, mime_type AS mimeType, metadata_cipher AS metadataCipher,
-                encrypted_attachment_key AS encryptedAttachmentKey,
-                file_cipher_path AS fileCipherPath
-         FROM attachments
-         WHERE note_id = ?
-         ORDER BY created_at DESC
-         LIMIT 1`
-      )
-      .get(note.id) as
-      | {
-          fileCipherPath: string;
-          [key: string]: unknown;
-        }
-      | undefined;
-    const updates = database
-      .prepare(
-        `SELECT cipher, nonce, key_epoch AS keyEpoch, kind
-         FROM note_updates
-         WHERE note_id = ?`
-      )
-      .all(note.id);
-    const shares = database
-      .prepare(
-        `SELECT encrypted_note_key AS encryptedNoteKey, format_version AS formatVersion
-         FROM note_key_shares
-         WHERE note_id = ?`
-      )
-      .all(note.id);
-    return {
-      attachmentPath: attachment
-        ? resolve("apps/server/data/e2e-attachments", attachment.fileCipherPath)
-        : null,
-      databasePayload: JSON.stringify({ attachment, note, shares, updates })
-    };
-  } finally {
-    database.close();
-  }
 }
 
 export async function waitForNoteSave(page: Page) {

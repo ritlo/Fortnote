@@ -135,7 +135,12 @@ function publishEventCursors(context: AppContext, cursors: number[]): void {
 }
 
 function responseTimestamp(value: string): string {
-  return value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  // SQLite omits the timezone; Postgres includes an offset, sometimes just +HH.
+  const timestamp = value.replace(" ", "T");
+  const zoned = /(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(timestamp)
+    ? timestamp.replace(/([+-]\d{2})$/, "$1:00")
+    : `${timestamp}Z`;
+  return new Date(zoned).toISOString();
 }
 
 export function createNotesRouter(context: AppContext): Router {
