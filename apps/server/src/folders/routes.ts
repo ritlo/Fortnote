@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
+import { withCanonicalTimestamps } from "../db/timestamps.js";
 import { requireSessionAsync } from "../auth/session.js";
 import { requestClientInstanceId } from "../notes/events.js";
 
@@ -57,7 +58,7 @@ export function createFoldersRouter(context: AppContext): Router {
 
     const rows = await context.db.folders.list(session.userId);
 
-    response.json({ folders: rows });
+    response.json({ folders: rows.map(withCanonicalTimestamps) });
   });
 
   router.post("/", async (request, response) => {

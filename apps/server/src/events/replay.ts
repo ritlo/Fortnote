@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "../db/schema.js";
+import { canonicalTimestamp } from "../db/timestamps.js";
 
 export interface CollaborationEvent {
   cursor: number;
@@ -52,8 +53,7 @@ export function mapEventRows(rows: EventRow[]): CollaborationEvent[] {
     actorUserId: row.actorUserId,
     version: row.noteVersion,
     metadata: parseMetadata(row.payloadMetadata),
-    createdAt:
-      row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt
+    createdAt: canonicalTimestamp(row.createdAt)
   }));
 }
 

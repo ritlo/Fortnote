@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
+import { canonicalTimestamp, withCanonicalTimestamps } from "../db/timestamps.js";
 import { requireSessionAsync } from "../auth/session.js";
 import {
   canOwnNote,
@@ -134,15 +135,6 @@ function publishEventCursors(context: AppContext, cursors: number[]): void {
   context.realtime?.publishEvents(cursors);
 }
 
-function responseTimestamp(value: string): string {
-  // SQLite omits the timezone; Postgres includes an offset, sometimes just +HH.
-  const timestamp = value.replace(" ", "T");
-  const zoned = /(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(timestamp)
-    ? timestamp.replace(/([+-]\d{2})$/, "$1:00")
-    : `${timestamp}Z`;
-  return new Date(zoned).toISOString();
-}
-
 export function createNotesRouter(context: AppContext): Router {
   const router = Router();
 
@@ -154,7 +146,7 @@ export function createNotesRouter(context: AppContext): Router {
 
     const includeDeleted = request.query.deleted === "true";
     const notes = await context.db.noteQueries.list(session.userId, includeDeleted);
-    response.json({ notes });
+    response.json({ notes: notes.map(withCanonicalTimestamps) });
   });
 
   router.post("/", async (request, response) => {
@@ -219,7 +211,7 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    response.json(row);
+    response.json(withCanonicalTimestamps(row));
   });
 
   router.get("/:id/legacy-content", async (request, response) => {
@@ -266,7 +258,7 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    response.json(row);
+    response.json(withCanonicalTimestamps(row));
   });
 
   router.get("/:id/epoch-links", async (request, response) => {
@@ -280,7 +272,7 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
     const links = await context.db.noteQueries.epochLinks(access.noteId);
-    response.json({ links });
+    response.json({ links: links.map(withCanonicalTimestamps) });
   });
 
   router.post("/:id/key-rotation", async (request, response) => {
@@ -435,7 +427,7 @@ export function createNotesRouter(context: AppContext): Router {
         id: request.params.id,
         rootVersion: outcome.rootVersion,
         keyEpoch: outcome.keyEpoch,
-        updatedAt: responseTimestamp(outcome.updatedAt)
+        updatedAt: canonicalTimestamp(outcome.updatedAt)
       });
       return;
     }
@@ -476,7 +468,7 @@ export function createNotesRouter(context: AppContext): Router {
     response.json({
       id: request.params.id,
       version: outcome.version,
-      updatedAt: responseTimestamp(outcome.updatedAt)
+      updatedAt: canonicalTimestamp(outcome.updatedAt)
     });
   });
   router.delete("/:id", async (request, response) => {

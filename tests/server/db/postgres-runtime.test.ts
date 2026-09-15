@@ -155,6 +155,78 @@ describe.each(runtimeProviders)("$name runtime contract", (runtime) => {
     }
   });
 
+  it.skipIf(!runtime.enabled)("returns canonical UTC timestamps from read APIs", async () => {
+    const harness = await runtime.createHarness();
+    try {
+      const app = createApp({ config: harness.config, db: harness.database });
+      const owner = request.agent(app);
+      const recipient = request.agent(app);
+      await registerUser(owner, `${runtime.provider}_timestamp_owner`);
+      const member = await registerUser(recipient, `${runtime.provider}_timestamp_member`);
+      for (const agent of [owner, recipient]) {
+        await agent.put("/api/sharing-keys/current").set(csrfHeaders())
+          .send(sharingKeyPayload(1)).expect(201);
+      }
+      const folderId = crypto.randomUUID();
+      await owner.post("/api/folders").set(csrfHeaders())
+        .send({ id: folderId, name: "Timestamp folder" }).expect(201);
+      const note = notePayload(folderId);
+      await owner.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
+      await uploadAttachment(owner, note.id, attachmentPayload()).expect(201);
+      const upload = contentBeginPayload(note.id);
+      await owner.post("/api/content/uploads").set(csrfHeaders()).send(upload).expect(201);
+      await owner.post(`/api/notes/${note.id}/memberships`).set(csrfHeaders()).send({
+        username: member.username,
+        role: "viewer",
+        sharingKeyVersion: 1,
+        encryptedNoteKey: "contract_member_note_key_abcdefghijklmnopqrstuvwxyz",
+        formatVersion: 1
+      }).expect(201);
+
+      const timestamps: unknown[] = [];
+      const folders = (await owner.get("/api/folders").expect(200)).body.folders;
+      timestamps.push(folders[0].createdAt, folders[0].updatedAt);
+      const listed = (await owner.get("/api/notes").expect(200)).body.notes;
+      timestamps.push(listed[0].createdAt, listed[0].updatedAt);
+      const detail = (await owner.get(`/api/notes/${note.id}`).expect(200)).body;
+      timestamps.push(detail.createdAt, detail.updatedAt);
+      const attachments = (await owner.get(`/api/notes/${note.id}/attachments`).expect(200))
+        .body.attachments;
+      timestamps.push(attachments[0].createdAt);
+      const memberships = (await owner.get(`/api/notes/${note.id}/memberships`).expect(200))
+        .body.memberships as { createdAt: unknown; updatedAt: unknown }[];
+      expect(memberships).toHaveLength(2);
+      for (const membership of memberships) {
+        timestamps.push(membership.createdAt, membership.updatedAt);
+      }
+      const currentKey = (await owner.get("/api/sharing-keys/current").expect(200)).body;
+      timestamps.push(currentKey.createdAt, currentKey.updatedAt);
+      const versionKey = (await owner.get("/api/sharing-keys/versions/1").expect(200)).body;
+      timestamps.push(versionKey.createdAt, versionKey.updatedAt);
+      const lookup = (await owner.get("/api/sharing-keys/lookup")
+        .query({ username: member.username }).expect(200)).body;
+      timestamps.push(lookup.createdAt);
+      const status = (await owner.get(`/api/content/uploads/${upload.uploadId}`).expect(200)).body;
+      timestamps.push(status.expiresAt);
+      const events = (await owner.get("/api/events").expect(200)).body
+        .events as { createdAt: unknown }[];
+      expect(events.length).toBeGreaterThan(0);
+      timestamps.push(...events.map(({ createdAt }) => createdAt));
+      await owner.delete(`/api/notes/${note.id}`).set(csrfHeaders()).expect(204);
+      const deleted = (await owner.get("/api/notes").query({ deleted: "true" }).expect(200))
+        .body.notes as { id: string; deletedAt: unknown }[];
+      timestamps.push(deleted.find(({ id }) => id === note.id)?.deletedAt);
+
+      for (const timestamp of timestamps) {
+        expect(timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+        expect(new Date(timestamp as string).toISOString()).toBe(timestamp);
+      }
+    } finally {
+      await harness.database.close();
+      await harness.cleanup();
+    }
+  });
+
   it.skipIf(!runtime.enabled)(
     "rotates account credentials and encrypted key material",
     async () => {

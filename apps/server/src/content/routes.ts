@@ -4,6 +4,7 @@ import { requireSessionAsync } from "../auth/session.js";
 import { canReadNote } from "../notes/access.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
+import { canonicalTimestamp } from "../db/timestamps.js";
 import type { ManifestCommitOutcome } from "./manifests.js";
 import {
   ContentChunkConflictError
@@ -338,7 +339,7 @@ function uploadStatus(view: ContentUploadView) {
       reservesStorage(upload.status)
         ? upload.totalCipherBytes
         : 0,
-    expiresAt: upload.expiresAt
+    expiresAt: canonicalTimestamp(upload.expiresAt)
   };
 }
 

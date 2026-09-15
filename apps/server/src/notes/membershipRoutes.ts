@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSessionAsync } from "../auth/session.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
+import { withCanonicalTimestamps } from "../db/timestamps.js";
 import { canOwnNote, canReadNote, getNoteAccessAsync } from "./access.js";
 import { requestClientInstanceId } from "./events.js";
 
@@ -34,7 +35,7 @@ export function registerMembershipRoutes(router: Router, context: AppContext): v
     }
 
     const memberships = await context.db.noteQueries.memberships(access.noteId);
-    response.json({ memberships });
+    response.json({ memberships: memberships.map(withCanonicalTimestamps) });
   });
 
   router.post("/:id/memberships", async (request, response) => {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSessionAsync } from "../auth/session.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
+import { withCanonicalTimestamps } from "../db/timestamps.js";
 import { canonicalizeHandle } from "../auth/identity.js";
 
 const sharingKeySchema = z.object({
@@ -29,7 +30,7 @@ export function createSharingKeysRouter(context: AppContext): Router {
       return;
     }
 
-    response.json(row);
+    response.json(withCanonicalTimestamps(row));
   });
 
   router.get("/versions/:version", async (request, response) => {
@@ -54,7 +55,7 @@ export function createSharingKeysRouter(context: AppContext): Router {
       return;
     }
 
-    response.json(row);
+    response.json(withCanonicalTimestamps(row));
   });
 
   router.put("/current", async (request, response) => {
@@ -116,7 +117,7 @@ export function createSharingKeysRouter(context: AppContext): Router {
     }
 
     response.json({
-      ...row,
+      ...withCanonicalTimestamps(row),
       username: row.canonicalHandle,
       canonicalHandle: row.canonicalHandle
     });

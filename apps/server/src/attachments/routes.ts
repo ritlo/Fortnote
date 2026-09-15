@@ -4,6 +4,7 @@ import { LIMITS } from "@fortnote/shared";
 import { requireSessionAsync } from "../auth/session.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
+import { withCanonicalTimestamps } from "../db/timestamps.js";
 import {
   AttachmentCiphertextSizeError,
   safeDisplayFilename
@@ -242,7 +243,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
 
     response.json({
       attachments: rows.map((row) => ({
-        ...row,
+        ...withCanonicalTimestamps(row),
         filename: row.metadataFormatVersion === 2 ? undefined : row.filename,
         mimeType: row.metadataFormatVersion === 2 ? undefined : row.mimeType
       }))
