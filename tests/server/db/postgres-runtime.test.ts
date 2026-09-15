@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { rm } from "node:fs/promises";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import {
@@ -439,6 +439,75 @@ describe.skipIf(!postgresUrl)("PostgreSQL startup lifecycle", () => {
 });
 
 describe.skipIf(!postgresUrl)("PostgreSQL storage lifecycle", () => {
+  it("releases pooled connections while an attachment upload stream stalls", async () => {
+    const harness = await createPostgresHarness();
+    try {
+      if (harness.config.database.provider !== "postgres") {
+        throw new Error("PostgreSQL harness returned SQLite configuration");
+      }
+      const resources = await createPostgresResources({
+        ...harness.config.database,
+        maxConnections: 1,
+        connectionTimeoutMs: 2_000
+      });
+      try {
+        const storageId = crypto.randomUUID();
+        const ciphertext = Buffer.alloc(300 * 1024);
+        for (let index = 0; index < ciphertext.length; index += 1) {
+          ciphertext[index] = index % 251;
+        }
+        const source = new PassThrough();
+        const written = resources.attachmentStorage.write({
+          storageId,
+          source,
+          expectedBytes: ciphertext.length,
+          maxBytes: ciphertext.length
+        });
+        source.write(ciphertext.subarray(0, 256 * 1024));
+
+        // With the upload stalled, the single pooled connection must stay usable.
+        let storedChunks = 0;
+        for (let attempt = 0; attempt < 50 && storedChunks === 0; attempt += 1) {
+          const result = await resources.pool.query<{ count: number }>(
+            "SELECT COUNT(*)::integer AS count FROM attachment_object_chunks WHERE storage_key = $1",
+            [storageId]
+          );
+          storedChunks = result.rows[0]?.count ?? 0;
+          if (storedChunks === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+        }
+        expect(storedChunks).toBe(1);
+
+        source.end(ciphertext.subarray(256 * 1024));
+        await written;
+        const parts: Buffer[] = [];
+        for await (const part of await resources.attachmentStorage.read(storageId)) {
+          parts.push(part as Buffer);
+        }
+        expect(Buffer.concat(parts)).toEqual(ciphertext);
+
+        const rejectedId = crypto.randomUUID();
+        await expect(resources.attachmentStorage.write({
+          storageId: rejectedId,
+          source: Readable.from([ciphertext]),
+          expectedBytes: 1024,
+          maxBytes: 1024
+        })).rejects.toThrow("Encrypted attachment exceeds maximum bytes");
+        const leftovers = await resources.pool.query<{ count: number }>(
+          "SELECT COUNT(*)::integer AS count FROM attachment_objects WHERE storage_key = $1",
+          [rejectedId]
+        );
+        expect(leftovers.rows[0]?.count).toBe(0);
+      } finally {
+        await resources.close();
+      }
+    } finally {
+      await harness.database.close();
+      await harness.cleanup();
+    }
+  });
+
   it("streams attachment ciphertext across database chunks in order", async () => {
     const harness = await createPostgresHarness();
     const postgres = harness.database as PostgresApplicationDatabase;

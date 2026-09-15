@@ -21,12 +21,15 @@ export class PostgresAttachmentStorage implements AttachmentStorage {
     validateStorageId(input.storageId);
     validateAttachmentSize(input.expectedBytes, input.maxBytes);
 
-    await this.database.transaction(async (transaction) => {
-      await transaction.insert(schema.attachmentObjects).values({
-        storageKey: input.storageId,
-        byteLength: input.expectedBytes
-      });
+    // Chunks are inserted as separate statements so no pooled connection is held
+    // while waiting on the client. The object stays unreferenced until write()
+    // resolves, and crashed uploads are removed by the orphan sweep.
+    await this.database.insert(schema.attachmentObjects).values({
+      storageKey: input.storageId,
+      byteLength: input.expectedBytes
+    });
 
+    try {
       let byteLength = 0;
       let chunkIndex = 0;
       let bufferedBytes = 0;
@@ -35,7 +38,7 @@ export class PostgresAttachmentStorage implements AttachmentStorage {
         if (bufferedBytes === 0) {
           return;
         }
-        await transaction.insert(schema.attachmentObjectChunks).values({
+        await this.database.insert(schema.attachmentObjectChunks).values({
           storageKey: input.storageId,
           chunkIndex,
           ciphertext: Buffer.concat(bufferedParts, bufferedBytes)
@@ -67,34 +70,39 @@ export class PostgresAttachmentStorage implements AttachmentStorage {
         throw new AttachmentCiphertextSizeError();
       }
       await flushChunk();
-    });
+    } catch (error) {
+      await this.delete(input.storageId).catch(() => undefined);
+      throw error;
+    }
   }
 
   async read(storageId: string): Promise<Readable> {
     validateStorageId(storageId);
     const objects = await this.database
-      .select({ byteLength: schema.attachmentObjects.byteLength })
+      .select({
+        byteLength: schema.attachmentObjects.byteLength,
+        chunkCount: sql<number>`count(${schema.attachmentObjectChunks.chunkIndex})::integer`,
+        lastChunkIndex: sql<number>`coalesce(max(${schema.attachmentObjectChunks.chunkIndex}), -1)::integer`,
+        storedBytes: sql<string>`coalesce(sum(octet_length(${schema.attachmentObjectChunks.ciphertext})), 0)::bigint`
+      })
       .from(schema.attachmentObjects)
+      .leftJoin(
+        schema.attachmentObjectChunks,
+        eq(schema.attachmentObjectChunks.storageKey, schema.attachmentObjects.storageKey)
+      )
       .where(eq(schema.attachmentObjects.storageKey, storageId))
-      .limit(1);
+      .groupBy(schema.attachmentObjects.storageKey, schema.attachmentObjects.byteLength);
     const object = objects[0];
     if (!object) {
       throw new Error("Attachment ciphertext not found");
     }
-
-    const rows = await this.database
-      .select({ ciphertext: schema.attachmentObjectChunks.ciphertext })
-      .from(schema.attachmentObjectChunks)
-      .where(eq(schema.attachmentObjectChunks.storageKey, storageId))
-      .orderBy(schema.attachmentObjectChunks.chunkIndex);
-    const actualBytes = rows.reduce(
-      (total, row) => total + row.ciphertext.byteLength,
-      0
-    );
-    if (actualBytes !== object.byteLength) {
+    if (
+      Number(object.storedBytes) !== object.byteLength ||
+      object.lastChunkIndex !== object.chunkCount - 1
+    ) {
       throw new Error("Attachment ciphertext is incomplete");
     }
-    return Readable.from(rows.map((row) => row.ciphertext));
+    return Readable.from(readChunks(this.database, storageId, object.chunkCount));
   }
 
   async delete(storageId: string): Promise<void> {
@@ -132,5 +140,27 @@ export class PostgresAttachmentStorage implements AttachmentStorage {
           )
         )
       );
+  }
+}
+
+async function* readChunks(
+  database: PostgresDatabase,
+  storageId: string,
+  chunkCount: number
+): AsyncGenerator<Buffer> {
+  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+    const rows = await database
+      .select({ ciphertext: schema.attachmentObjectChunks.ciphertext })
+      .from(schema.attachmentObjectChunks)
+      .where(and(
+        eq(schema.attachmentObjectChunks.storageKey, storageId),
+        eq(schema.attachmentObjectChunks.chunkIndex, chunkIndex)
+      ))
+      .limit(1);
+    const row = rows[0];
+    if (!row) {
+      throw new Error("Attachment ciphertext is incomplete");
+    }
+    yield row.ciphertext;
   }
 }
