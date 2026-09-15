@@ -1,123 +1,160 @@
 import fs from "node:fs";
 import path from "node:path";
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import type { ServerConfig } from "../config.js";
-import {
-  LocalAttachmentStorage,
-  type AttachmentStorage
-} from "../attachments/storage.js";
-import { SqliteAttachmentMetadataRepository } from "../attachments/metadataRepository.js";
-import { SqliteAttachmentMutationRepository } from "../attachments/mutationRepository.js";
-import { SqliteSessionRepository } from "../auth/sessionRepository.js";
-import { SqliteNoteAccessRepository } from "../notes/noteAccessRepository.js";
-import { SqliteNoteLifecycleRepository } from "../notes/lifecycleRepository.js";
-import { SqliteFolderRepository } from "../folders/repository.js";
-import { SqliteEventReplayRepository } from "../events/replay.js";
-import { SqliteAccountRepository } from "../auth/accountRepository.js";
-import { SqliteSharingKeyRepository } from "../sharingKeys/repository.js";
-import { SqliteNoteQueryRepository } from "../notes/queryRepository.js";
-import { SqliteNoteMembershipRepository } from "../notes/membershipRepository.js";
-import { SqliteNoteRotationRepository } from "../notes/rotationRepository.js";
-import { SqliteNoteMutationRepository } from "../notes/mutationRepository.js";
-import { SqliteNoteSectionRepository } from "../notes/sectionRepository.js";
-import { SqliteSectionHistoryRepository } from "../realtime/history.js";
-import { SqliteLegacyHistoryRepository } from "../realtime/legacyHistory.js";
-import { LocalContentStorage, type ContentStorage } from "../content/storage.js";
-import { SqliteContentUploadRepository } from "../content/uploadRepository.js";
-import { SqliteContentManifestRepository } from "../content/manifestRepository.js";
-import { SqliteContentMaintenanceRepository } from "../content/maintenanceRepository.js";
-import type { ApplicationDatabase } from "./types.js";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { Pool } from "pg";
+import { PostgresAttachmentMetadataRepository } from "../attachments/postgresMetadataRepository.js";
+import { PostgresAttachmentMutationRepository } from "../attachments/postgresMutationRepository.js";
+import { PostgresAttachmentStorage } from "../attachments/postgresStorage.js";
+import { PostgresAccountRepository } from "../auth/postgresAccountRepository.js";
+import { PostgresSessionRepository } from "../auth/postgresSessionRepository.js";
+import type { DatabaseConfig, ServerConfig } from "../config.js";
+import { PostgresContentMaintenanceRepository } from "../content/postgresMaintenanceRepository.js";
+import { PostgresContentManifestRepository } from "../content/postgresManifestRepository.js";
+import { PostgresContentUploadRepository } from "../content/postgresUploadRepository.js";
+import { AttachmentBackedContentStorage } from "../content/storage.js";
+import { PostgresEventReplayRepository } from "../events/postgresReplayRepository.js";
+import { PostgresFolderRepository } from "../folders/postgresRepository.js";
+import { PostgresNoteLifecycleRepository } from "../notes/postgresLifecycleRepository.js";
+import { PostgresNoteMembershipRepository } from "../notes/postgresMembershipRepository.js";
+import { PostgresNoteMutationRepository } from "../notes/postgresMutationRepository.js";
+import { PostgresNoteAccessRepository } from "../notes/postgresNoteAccessRepository.js";
+import { PostgresNoteQueryRepository } from "../notes/postgresQueryRepository.js";
+import { PostgresNoteRotationRepository } from "../notes/postgresRotationRepository.js";
+import { PostgresNoteSectionRepository } from "../notes/postgresSectionRepository.js";
+import { PostgresSectionHistoryRepository } from "../realtime/postgresHistory.js";
+import { PostgresLegacyHistoryRepository } from "../realtime/postgresLegacyHistory.js";
+import { PostgresSharingKeyRepository } from "../sharingKeys/postgresRepository.js";
+import { logInfo } from "../observability/log.js";
+import type { ApplicationDatabase, Database } from "./types.js";
 import * as schema from "./schema.js";
-import { runMigrations } from "./migrations.js";
 
-export function createDb(config: ServerConfig): AppDb {
-  if (config.database.provider !== "sqlite") {
-    throw new Error("createDb requires SQLite configuration");
+export interface DatabaseResources {
+  pool: Pool;
+  orm: Database;
+  attachmentStorage: PostgresAttachmentStorage;
+  close(): Promise<void>;
+}
+
+/** Connects, applies migrations, and removes stale unreferenced attachment objects. */
+export async function createDatabaseResources(
+  config: DatabaseConfig,
+  options: { cwd?: string; migrationsDirectory?: string } = {}
+): Promise<DatabaseResources> {
+  const pool = new Pool({
+    connectionString: config.url,
+    max: config.maxConnections,
+    connectionTimeoutMillis: config.connectionTimeoutMs,
+    statement_timeout: config.statementTimeoutMs,
+    lock_timeout: config.lockTimeoutMs
+  });
+  const orm = drizzle({ client: pool, schema });
+
+  try {
+    await waitForDatabase(pool, config.startupRetryAttempts, config.startupRetryDelayMs);
+    const migrationsStartedAt = performance.now();
+    await migrate(orm, {
+      migrationsFolder:
+        options.migrationsDirectory ??
+        findMigrationsDirectory(options.cwd ?? process.cwd())
+    });
+    logInfo("database.migrations.completed", {
+      durationMs: Math.max(0, Math.round(performance.now() - migrationsStartedAt))
+    });
+    const attachmentStorage = new PostgresAttachmentStorage(orm);
+    await attachmentStorage.removeOrphans();
+    return {
+      pool,
+      orm,
+      attachmentStorage,
+      close: () => pool.end()
+    };
+  } catch (error) {
+    await pool.end();
+    throw error;
   }
-  fs.mkdirSync(path.dirname(config.database.path), { recursive: true });
-  const sqlite = new Database(config.database.path);
-  sqlite.pragma("foreign_keys = ON");
-  runMigrations(sqlite);
-  const orm = drizzle(sqlite, { schema });
-  const localAttachmentStorage = new LocalAttachmentStorage(config.dataDir);
-  localAttachmentStorage.removeOrphans(
-    new Set(
-      orm
-        .select({ storageKey: schema.attachments.storageKey })
-        .from(schema.attachments)
-        .all()
-        .map(({ storageKey }) => storageKey)
-    )
-  );
-  const attachmentStorage: AttachmentStorage = localAttachmentStorage;
-  const sessions = new SqliteSessionRepository(
-    orm,
-    config.sessionIdleTimeoutMs,
-    config.sessionAbsoluteTimeoutMs
-  );
-  const noteAccess = new SqliteNoteAccessRepository(orm);
-  const attachmentMetadata = new SqliteAttachmentMetadataRepository(orm);
-  const attachmentMutations = new SqliteAttachmentMutationRepository(orm);
-  const noteLifecycle = new SqliteNoteLifecycleRepository(orm);
-  const folders = new SqliteFolderRepository(orm);
-  const events = new SqliteEventReplayRepository(orm);
-  const accounts = new SqliteAccountRepository(
-    orm,
-    config.sessionIdleTimeoutMs,
-    config.sessionAbsoluteTimeoutMs
-  );
-  const sharingKeys = new SqliteSharingKeyRepository(orm);
-  const noteQueries = new SqliteNoteQueryRepository(orm);
-  const noteMemberships = new SqliteNoteMembershipRepository(orm);
-  const noteRotations = new SqliteNoteRotationRepository(orm);
-  const noteMutations = new SqliteNoteMutationRepository(orm);
-  const noteSections = new SqliteNoteSectionRepository(orm);
-  const sectionHistory = new SqliteSectionHistoryRepository(orm);
-  const legacyHistory = new SqliteLegacyHistoryRepository(orm);
-  const contentStorage: ContentStorage = new LocalContentStorage(config);
-  const contentUploads = new SqliteContentUploadRepository(orm);
-  const contentManifests = new SqliteContentManifestRepository(orm);
-  const contentMaintenance = new SqliteContentMaintenanceRepository(orm);
+}
+
+export async function createApplicationDatabase(
+  config: ServerConfig
+): Promise<ApplicationDatabase> {
+  const resources = await createDatabaseResources(config.database);
+  const { pool, orm, attachmentStorage } = resources;
   return {
-    provider: "sqlite",
-    sqlite,
+    pool,
     orm,
     attachmentStorage,
-    sessions,
-    noteAccess,
-    attachmentMetadata,
-    attachmentMutations,
-    noteLifecycle,
-    folders,
-    events,
-    accounts,
-    sharingKeys,
-    noteQueries,
-    noteMemberships,
-    noteRotations,
-    noteMutations,
-    noteSections,
-    sectionHistory,
-    legacyHistory,
-    contentStorage,
-    contentUploads,
-    contentManifests,
-    contentMaintenance,
-    checkReady() {
-      sqlite.prepare("SELECT 1").get();
-      return Promise.resolve();
+    sessions: new PostgresSessionRepository(
+      orm,
+      config.sessionIdleTimeoutMs,
+      config.sessionAbsoluteTimeoutMs
+    ),
+    noteAccess: new PostgresNoteAccessRepository(orm),
+    attachmentMetadata: new PostgresAttachmentMetadataRepository(orm),
+    attachmentMutations: new PostgresAttachmentMutationRepository(orm),
+    noteLifecycle: new PostgresNoteLifecycleRepository(orm),
+    folders: new PostgresFolderRepository(orm),
+    events: new PostgresEventReplayRepository(orm),
+    accounts: new PostgresAccountRepository(
+      orm,
+      config.sessionIdleTimeoutMs,
+      config.sessionAbsoluteTimeoutMs
+    ),
+    sharingKeys: new PostgresSharingKeyRepository(orm),
+    noteQueries: new PostgresNoteQueryRepository(orm),
+    noteMemberships: new PostgresNoteMembershipRepository(orm),
+    noteRotations: new PostgresNoteRotationRepository(orm),
+    noteMutations: new PostgresNoteMutationRepository(orm),
+    noteSections: new PostgresNoteSectionRepository(orm),
+    sectionHistory: new PostgresSectionHistoryRepository(orm),
+    legacyHistory: new PostgresLegacyHistoryRepository(orm),
+    contentStorage: new AttachmentBackedContentStorage(attachmentStorage),
+    contentUploads: new PostgresContentUploadRepository(orm),
+    contentManifests: new PostgresContentManifestRepository(orm),
+    contentMaintenance: new PostgresContentMaintenanceRepository(orm),
+    checkReady: async () => {
+      await pool.query("SELECT 1");
     },
-    close() {
-      sqlite.close();
-      return Promise.resolve();
-    }
+    close: () => resources.close()
   };
 }
 
-export interface AppDb extends ApplicationDatabase {
-  readonly provider: "sqlite";
-  readonly sqlite: InstanceType<typeof Database>;
-  readonly orm: BetterSQLite3Database<typeof schema>;
+export function findMigrationsDirectory(startDirectory: string): string {
+  let directory = path.resolve(startDirectory);
+  for (;;) {
+    const candidate = path.join(directory, "drizzle");
+    if (fs.existsSync(path.join(candidate, "meta/_journal.json"))) {
+      return candidate;
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) {
+      throw new Error("Database migrations directory not found");
+    }
+    directory = parent;
+  }
+}
+
+async function waitForDatabase(
+  pool: Pool,
+  attempts: number,
+  retryDelayMs: number
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await pool.query("SELECT 1");
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+    }
+  }
+  throw new Error(
+    `PostgreSQL unavailable after ${String(attempts)} connection attempts`,
+    {
+      cause: lastError
+    }
+  );
 }

@@ -6,12 +6,11 @@ import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { canonicalTimestamp } from "../db/timestamps.js";
 import type { ManifestCommitOutcome } from "./manifests.js";
-import { ContentChunkConflictError } from "./storage.js";
 import type {
   BeginContentUploadOutcome,
   ContentUploadRecord,
   ContentUploadView
-} from "./uploadRepository.js";
+} from "./uploadRepository/contracts.js";
 
 const UUID = z.uuid();
 const HASH = z.string().regex(/^[0-9a-f]{64}$/u);
@@ -199,10 +198,6 @@ export function createContentRouter(context: AppContext): Router {
         await context.db.contentStorage.delete(stored.fileCipherPath);
         sendChunkOutcome(response, outcome);
       } catch (error) {
-        if (error instanceof ContentChunkConflictError) {
-          sendApiError(response, "chunk_conflict", error.message);
-          return;
-        }
         if (
           error instanceof Error &&
           /length|hash|maximum|exceeds/iu.test(error.message)

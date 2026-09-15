@@ -1,7 +1,7 @@
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { PostgresAttachmentStorage } from "@server/attachments/postgresStorage.js";
-import * as schema from "@server/db/postgres/schema.js";
+import * as schema from "@server/db/schema.js";
 
 function recordingDatabase() {
   const insertedObjects: unknown[] = [];

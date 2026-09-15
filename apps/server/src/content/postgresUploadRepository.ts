@@ -1,6 +1,6 @@
 import { and, eq, gt, or, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import * as schema from "../db/postgres/schema.js";
+import * as schema from "../db/schema.js";
 import { ROOT_CRDT_SECTION_ID, storageSectionId } from "../notes/sections.js";
 import type { ContentKind } from "./manifests.js";
 import type { StorageQuotaStatus } from "./quota.js";

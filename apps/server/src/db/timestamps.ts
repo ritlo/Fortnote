@@ -1,6 +1,6 @@
 const TIMESTAMP_KEYS = ["createdAt", "updatedAt", "deletedAt", "expiresAt"] as const;
 
-// SQLite stores naive UTC text; PostgreSQL returns an offset, sometimes just +HH.
+// PostgreSQL text timestamps carry an offset, sometimes just +HH; naive values are UTC.
 export function canonicalTimestamp(value: string | Date): string {
   if (value instanceof Date) {
     return value.toISOString();

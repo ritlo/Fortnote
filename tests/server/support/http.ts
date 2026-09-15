@@ -1,30 +1,22 @@
 import request from "supertest";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { getConfig } from "@server/config.js";
-import { createApplicationDatabase } from "@server/db/application.js";
+import { createApplicationDatabase } from "@server/db/client.js";
 import { createApp } from "@server/http/app.js";
 import type { ServerConfig } from "@server/config.js";
 import type { RealtimePublisher } from "@server/realtime/types.js";
 import { createTestDatabaseConfig, trackTestDatabase } from "./database.js";
 
-/**
- * Builds an app on the provider selected by FORTNOTE_TEST_DATABASE_PROVIDER
- * (SQLite by default). Pass `database` in overrides to pin a provider.
- */
+/** Builds an app on a fresh test database that is dropped when the test finishes. */
 export async function createTestApp(
   overrides: Partial<ServerConfig> = {},
   realtime?: RealtimePublisher
 ) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "fortnote-test-"));
-  const testDatabase = overrides.database ? null : await createTestDatabaseConfig();
+  const testDatabase = await createTestDatabaseConfig();
   const config: ServerConfig = {
-    ...getConfig({}),
+    ...getConfig({ DATABASE_URL: testDatabase.database.url }),
     port: 0,
     host: "127.0.0.1",
-    database: testDatabase?.database ?? { provider: "sqlite", path: ":memory:" },
-    dataDir,
+    database: testDatabase.database,
     cookieSecure: false,
     allowedOrigin: "http://localhost:5173",
     ...overrides

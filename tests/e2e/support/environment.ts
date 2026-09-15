@@ -3,8 +3,11 @@ export function e2eServerEnvironment(env: NodeJS.ProcessEnv = process.env) {
     ...env,
     ALLOWED_ORIGIN: env.ALLOWED_ORIGIN ?? `http://127.0.0.1:${env.CLIENT_PORT ?? "5173"}`,
     COOKIE_SECURE: env.COOKIE_SECURE ?? "false",
-    DATABASE_PATH: env.DATABASE_PATH ?? "data/e2e.sqlite",
-    DATA_DIR: env.DATA_DIR ?? "data/e2e-attachments",
+    // Defaults to the disposable database from `pnpm test:db:start`.
+    DATABASE_URL:
+      env.DATABASE_URL ??
+      env.FORTNOTE_POSTGRES_TEST_URL ??
+      "postgresql://fortnote:fortnote-test@127.0.0.1:55432/fortnote",
     AUTH_IP_RATE_LIMIT_MAX_ATTEMPTS: env.AUTH_IP_RATE_LIMIT_MAX_ATTEMPTS ?? "1000",
     AUTH_ACCOUNT_RATE_LIMIT_MAX_ATTEMPTS:
       env.AUTH_ACCOUNT_RATE_LIMIT_MAX_ATTEMPTS ?? "1000",

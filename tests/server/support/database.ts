@@ -1,16 +1,13 @@
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { Pool, types } from "pg";
 import { onTestFinished } from "vitest";
 import { getConfig, type ServerConfig } from "@server/config.js";
-import type { AppDb } from "@server/db/client.js";
-import type { PostgresApplicationDatabase } from "@server/db/postgres/client.js";
 import type { ApplicationDatabase } from "@server/db/types.js";
 
-export const testDatabaseProvider: ApplicationDatabase["provider"] =
-  process.env.FORTNOTE_TEST_DATABASE_PROVIDER === "postgres" ? "postgres" : "sqlite";
+/** Matches `pnpm test:db:start`; CI points this at its PostgreSQL service instead. */
+export const TEST_DATABASE_URL =
+  process.env.FORTNOTE_POSTGRES_TEST_URL ??
+  "postgresql://fortnote:fortnote-test@127.0.0.1:55432/fortnote";
 
 export interface TestDatabaseConfig {
   database: ServerConfig["database"];
@@ -18,43 +15,26 @@ export interface TestDatabaseConfig {
 }
 
 /**
- * Creates an isolated database for one test. PostgreSQL gets a fresh database
- * per call so tests that reuse usernames or counts cannot see each other.
+ * Creates a fresh database for one test so tests that reuse usernames or counts
+ * cannot see each other. The application migrates it when it opens.
  */
-export async function createTestDatabaseConfig(
-  options: { persistent?: boolean } = {}
-): Promise<TestDatabaseConfig> {
-  if (testDatabaseProvider === "sqlite") {
-    if (!options.persistent) {
-      return {
-        database: { provider: "sqlite", path: ":memory:" },
-        dispose: () => Promise.resolve()
-      };
-    }
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "fortnote-test-db-"));
-    return {
-      database: { provider: "sqlite", path: path.join(directory, "fortnote.sqlite") },
-      dispose: () => fs.promises.rm(directory, { recursive: true, force: true })
-    };
-  }
-
-  const adminUrl = process.env.FORTNOTE_POSTGRES_TEST_URL;
-  if (!adminUrl) {
+export async function createTestDatabaseConfig(): Promise<TestDatabaseConfig> {
+  const name = `fortnote_test_${randomUUID().replaceAll("-", "")}`;
+  try {
+    await adminQuery(`CREATE DATABASE ${name}`);
+  } catch (error) {
+    const target = new URL(TEST_DATABASE_URL);
     throw new Error(
-      "FORTNOTE_POSTGRES_TEST_URL is required when FORTNOTE_TEST_DATABASE_PROVIDER=postgres"
+      `Test PostgreSQL is unavailable at ${target.host}; run \`pnpm test:db:start\` or set FORTNOTE_POSTGRES_TEST_URL`,
+      { cause: error }
     );
   }
-  const name = `fortnote_test_${randomUUID().replaceAll("-", "")}`;
-  await adminQuery(adminUrl, `CREATE DATABASE ${name}`);
-  const url = new URL(adminUrl);
+  const url = new URL(TEST_DATABASE_URL);
   url.pathname = `/${name}`;
   return {
-    database: getConfig({
-      DATABASE_PROVIDER: "postgres",
-      DATABASE_URL: url.toString(),
-      DATABASE_MAX_CONNECTIONS: "3"
-    }).database,
-    dispose: () => adminQuery(adminUrl, `DROP DATABASE IF EXISTS ${name} WITH (FORCE)`)
+    database: getConfig({ DATABASE_URL: url.toString(), DATABASE_MAX_CONNECTIONS: "3" })
+      .database,
+    dispose: () => adminQuery(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`)
   };
 }
 
@@ -88,14 +68,13 @@ export interface TestSql {
   run(sql: string, ...params: unknown[]): Promise<void>;
 }
 
-// PostgreSQL rows are shaped like SQLite rows: 64-bit integers and numerics as
-// numbers, booleans as 0/1, so assertions are identical for both providers.
+// Assertion rows use numbers for 64-bit integers and numerics, 0/1 for booleans,
+// and text for timestamps, which keeps expected values compact.
 const INT8_OID = 20;
 const BOOL_OID = 16;
 const NUMERIC_OID = 1700;
-// date, timestamp, timestamptz: keep text like SQLite and the drizzle string mode.
 const TEMPORAL_OIDS = new Set([1082, 1114, 1184]);
-const sqliteShapedTypes = {
+const assertionRowTypes = {
   getTypeParser(oid: number, format?: "text" | "binary"): (value: string) => unknown {
     if (oid === INT8_OID || oid === NUMERIC_OID) {
       return (value: string) => Number(value);
@@ -110,30 +89,16 @@ const sqliteShapedTypes = {
   }
 };
 
-/** Runs portable SQL with `?` placeholders against either provider. */
+/** Runs assertion SQL with `?` placeholders against a test database. */
 export function testSql(database: unknown): TestSql {
-  const application = database as ApplicationDatabase;
-  if (application.provider === "sqlite") {
-    const sqlite = (application as AppDb).sqlite;
-    return {
-      get: <T>(sql: string, ...params: unknown[]) =>
-        Promise.resolve(sqlite.prepare(sql).get(...(params as never[])) as T | undefined),
-      all: <T>(sql: string, ...params: unknown[]) =>
-        Promise.resolve(sqlite.prepare(sql).all(...(params as never[])) as T[]),
-      run: (sql: string, ...params: unknown[]) => {
-        sqlite.prepare(sql).run(...(params as never[]));
-        return Promise.resolve();
-      }
-    };
-  }
-  const { pool } = application as PostgresApplicationDatabase;
+  const { pool } = database as ApplicationDatabase;
   const query = async (sql: string, params: unknown[]) => {
     let index = 0;
     // PostgreSQL folds unquoted aliases to lowercase; quote camelCase ones.
     const text = sql
       .replace(/\bAS\s+([a-z]+[A-Z]\w*)/gu, 'AS "$1"')
       .replace(/\?/gu, () => `$${String(++index)}`);
-    return pool.query({ text, values: params, types: sqliteShapedTypes });
+    return pool.query({ text, values: params, types: assertionRowTypes });
   };
   return {
     get: async <T>(sql: string, ...params: unknown[]) =>
@@ -148,18 +113,7 @@ export function testSql(database: unknown): TestSql {
 
 /** Installs a trigger that makes every note event insert fail. */
 export async function failNoteEventWrites(database: unknown): Promise<void> {
-  const application = database as ApplicationDatabase;
-  if (application.provider === "sqlite") {
-    (application as AppDb).sqlite.exec(`
-      CREATE TRIGGER fail_note_events_insert
-      BEFORE INSERT ON note_events
-      BEGIN
-        SELECT RAISE(ABORT, 'note event failure');
-      END;
-    `);
-    return;
-  }
-  await (application as PostgresApplicationDatabase).pool.query(`
+  await (database as ApplicationDatabase).pool.query(`
     CREATE FUNCTION fail_note_events_insert() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
       RAISE EXCEPTION 'note event failure';
@@ -173,8 +127,8 @@ export async function failNoteEventWrites(database: unknown): Promise<void> {
 
 // Create and drop test databases from the maintenance database so setup never
 // appears as activity on the shared database that runtime tests inspect.
-async function adminQuery(url: string, text: string): Promise<void> {
-  const maintenanceUrl = new URL(url);
+async function adminQuery(text: string): Promise<void> {
+  const maintenanceUrl = new URL(TEST_DATABASE_URL);
   maintenanceUrl.pathname = "/postgres";
   const pool = new Pool({ connectionString: maintenanceUrl.toString(), max: 1 });
   try {

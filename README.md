@@ -6,6 +6,7 @@ Fortnote is a self-hosted, end-to-end encrypted notes application with realtime 
 
 - Node.js 22 or newer
 - pnpm
+- Docker or Podman, for PostgreSQL in development and tests
 
 ## Development
 
@@ -15,7 +16,12 @@ Install dependencies:
 pnpm install
 ```
 
-Start the API server and web client in separate terminals:
+Start PostgreSQL, then the API server and web client in separate terminals. The server applies
+database migrations before it listens:
+
+```sh
+docker compose -f compose.postgres.yaml up -d postgres
+```
 
 ```sh
 pnpm dev:server
@@ -25,31 +31,34 @@ pnpm dev:server
 pnpm dev
 ```
 
-Open <http://localhost:5173>. Local server data is written under `data/` and is ignored by Git.
+Open <http://localhost:5173>.
+
+### Tests
+
+The server tests need PostgreSQL. Start the disposable test database once, then run the tests:
+
+```sh
+pnpm test:db:start
+pnpm test
+```
+
+Each server test creates and drops its own database, and the runtime contract tests clear the
+test database itself. Stop the container with `pnpm test:db:stop`. To use another server, set
+`FORTNOTE_POSTGRES_TEST_URL` to a URL whose user can create databases; never point it at data you
+want to keep.
 
 ## Configuration
 
 Server settings live in the root [`config.yaml`](config.yaml). The committed file contains
-safe local defaults and no secrets. Relative database and `localstorage` paths are resolved from
-the configuration file's directory.
+safe local defaults and no secrets; its database URL matches the `postgres` service in
+`compose.postgres.yaml`.
 
 The server searches the current directory and its parents for `config.yaml`. Set
-`FORTNOTE_CONFIG` to use a different file. Existing environment variables such as `PORT`,
-`DATABASE_PROVIDER`, `DATABASE_PATH`, `DATABASE_URL`, `DATABASE_MAX_CONNECTIONS`,
-`DATABASE_CONNECTION_TIMEOUT_MS`, `DATABASE_STATEMENT_TIMEOUT_MS`, `DATABASE_LOCK_TIMEOUT_MS`,
-`DATABASE_STARTUP_RETRY_ATTEMPTS`, `DATABASE_STARTUP_RETRY_DELAY_MS`, `DATA_DIR`,
-and `ALLOWED_ORIGIN` override YAML values, which keeps secrets and deployment-specific values
-out of source control.
-
-SQLite remains the safe default. To run the complete application with PostgreSQL, set the
-provider and connection URL through the environment; migrations run before the server listens:
-
-```sh
-DATABASE_PROVIDER=postgres \
-DATABASE_URL=postgresql://fortnote:fortnote-local@127.0.0.1:5432/fortnote \
-DATABASE_MAX_CONNECTIONS=10 \
-pnpm dev:server
-```
+`FORTNOTE_CONFIG` to use a different file. Environment variables such as `PORT`, `DATABASE_URL`,
+`DATABASE_MAX_CONNECTIONS`, `DATABASE_CONNECTION_TIMEOUT_MS`, `DATABASE_STATEMENT_TIMEOUT_MS`,
+`DATABASE_LOCK_TIMEOUT_MS`, `DATABASE_STARTUP_RETRY_ATTEMPTS`,
+`DATABASE_STARTUP_RETRY_DELAY_MS`, `STORAGE_QUOTA_BYTES`, and `ALLOWED_ORIGIN` override YAML
+values, which keeps secrets and deployment-specific values out of source control.
 
 PostgreSQL defaults to 10 pooled connections, a 5-second connection timeout, a 30-second statement
 timeout, and a 5-second lock timeout. Startup makes up to 10 connection attempts one second apart
@@ -105,26 +114,18 @@ restart, persistence, graceful shutdown, and volume cleanup. Set `FORTNOTE_SMOKE
 Docker when available and otherwise uses Podman; set `FORTNOTE_CONTAINER_ENGINE` to override that
 selection. The selected engine must have a Compose provider installed.
 
-The PostgreSQL schema, migration history, repositories, runtime provider selection, and chunked
-attachment backend are present. Migrations run automatically before the application becomes ready.
-For schema development, start only the isolated PostgreSQL service and apply migrations manually:
+Migrations run automatically before the application becomes ready. After changing
+`apps/server/src/db/schema.ts`, generate a migration and apply it to the development database:
 
 ```sh
-docker compose -f compose.postgres.yaml up -d postgres
-DATABASE_URL=postgresql://fortnote:fortnote-local@127.0.0.1:5432/fortnote \
-  pnpm --filter @fortnote/server db:migrate:postgres
+pnpm --filter @fortnote/server db:generate
+pnpm --filter @fortnote/server db:migrate
 ```
 
-Run the live PostgreSQL runtime contract tests against an isolated test database. They apply
-migrations, clear that database, run the same auth, note, and encrypted-attachment workflow against
-SQLite and PostgreSQL, verify restart and failed-migration recovery, and exercise concurrent
-attachment, content, note, membership, rotation, and event mutations. Never point them at
-development or production data:
-
-```sh
-FORTNOTE_POSTGRES_TEST_URL=postgresql://fortnote:fortnote-local@127.0.0.1:5432/fortnote_test \
-  pnpm --filter @fortnote/server test:postgres
-```
+The runtime contract tests in `tests/server/db/postgres-runtime.test.ts` apply migrations to the
+test database, clear it, and verify auth, notes, encrypted attachments, restart and failed-migration
+recovery, and concurrent attachment, content, note, membership, rotation, and event mutations.
+They run as part of `pnpm test`.
 
 ## Checks
 
@@ -137,8 +138,8 @@ pnpm build
 ```
 
 Run `pnpm format` to apply the Prettier formatting that `format:check` enforces. The CI
-workflow in `.github/workflows/ci.yml` runs these checks on every push and pull request, plus
-the server suite against PostgreSQL through `pnpm --filter @fortnote/server test:postgres`.
+workflow in `.github/workflows/ci.yml` runs these checks on every push and pull request against a
+PostgreSQL service.
 
 ## License
 

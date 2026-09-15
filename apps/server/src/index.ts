@@ -6,7 +6,7 @@ import {
   startContentMaintenance,
   type ContentMaintenanceHandle
 } from "./content/maintenance.js";
-import { createApplicationDatabase } from "./db/application.js";
+import { createApplicationDatabase } from "./db/client.js";
 import type { ApplicationDatabase } from "./db/types.js";
 import { createApp } from "./http/app.js";
 import { logError, logInfo } from "./observability/log.js";
@@ -27,8 +27,7 @@ async function main(): Promise<void> {
     const maintenanceStartedAt = performance.now();
     await runContentStartupMaintenance(context);
     logInfo("maintenance.startup.completed", {
-      durationMs: elapsedMilliseconds(maintenanceStartedAt),
-      provider: db.provider
+      durationMs: elapsedMilliseconds(maintenanceStartedAt)
     });
     maintenance = startContentMaintenance(context);
     await listen(server, config.port, config.host);
@@ -40,8 +39,7 @@ async function main(): Promise<void> {
   logInfo("server.started", {
     durationMs: elapsedMilliseconds(startupStartedAt),
     host: config.host,
-    port: config.port,
-    provider: db.provider
+    port: config.port
   });
 
   let shutdownPromise: Promise<void> | null = null;

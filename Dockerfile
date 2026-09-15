@@ -35,7 +35,7 @@ WORKDIR /app
 COPY --from=workspace --chown=node:node /runtime ./
 COPY --from=workspace --chown=node:node /workspace/apps/client/dist ./public
 COPY --chown=node:node config.yaml ./config.yaml
-COPY --chown=node:node drizzle/postgres ./drizzle/postgres
+COPY --chown=node:node drizzle ./drizzle
 
 USER node
 EXPOSE 3001

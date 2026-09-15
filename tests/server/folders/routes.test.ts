@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AppDb } from "@server/db/client.js";
+import type { ApplicationDatabase } from "@server/db/types.js";
 import {
   createTestApp,
   csrfHeaders,
@@ -51,7 +51,7 @@ describe("folders routes", () => {
   it("rolls back folder creates when event writes fail", async () => {
     const app = await createTestApp();
     const agent = await registerAgent(app, "folder_create_rollback_user");
-    const db = app.locals.db as AppDb;
+    const db = app.locals.db as ApplicationDatabase;
     const folderId = crypto.randomUUID();
 
     await failNoteEventWrites(app.locals.db);
@@ -72,7 +72,7 @@ describe("folders routes", () => {
   it("rolls back folder updates when event writes fail", async () => {
     const app = await createTestApp();
     const agent = await registerAgent(app, "folder_update_rollback_user");
-    const db = app.locals.db as AppDb;
+    const db = app.locals.db as ApplicationDatabase;
     const folder = await agent
       .post("/api/folders")
       .set(csrfHeaders())
@@ -98,7 +98,7 @@ describe("folders routes", () => {
   it("rolls back folder deletes when event writes fail", async () => {
     const app = await createTestApp();
     const agent = await registerAgent(app, "folder_rollback_user");
-    const db = app.locals.db as AppDb;
+    const db = app.locals.db as ApplicationDatabase;
 
     const folder = await agent
       .post("/api/folders")
@@ -132,7 +132,7 @@ describe("folders routes", () => {
   it("reparents a note to the deleted folder's parent", async () => {
     const app = await createTestApp();
     const agent = await registerAgent(app, "folder_reparent_user");
-    const db = app.locals.db as AppDb;
+    const db = app.locals.db as ApplicationDatabase;
 
     const parent = await agent
       .post("/api/folders")

@@ -1,11 +1,10 @@
 import { Buffer } from "node:buffer";
 import { once } from "node:events";
-import fs from "node:fs";
 import { createServer, request as sendHttpRequest } from "node:http";
 import { describe, expect, it } from "vitest";
 import { LIMITS } from "@fortnote/shared";
 import { createSession } from "@server/auth/session.js";
-import type { AppDb } from "@server/db/client.js";
+import type { ApplicationDatabase } from "@server/db/types.js";
 import {
   createTestApp,
   csrfHeaders,
@@ -73,9 +72,9 @@ async function uploadDuringMutation(
   username: string,
   noteId: string,
   payload: ReturnType<typeof attachmentPayload>,
-  mutate: (db: AppDb, userId: string) => Promise<void>
+  mutate: (db: ApplicationDatabase, userId: string) => Promise<void>
 ): Promise<{ body: unknown; status: number }> {
-  const db = app.locals.db as AppDb;
+  const db = app.locals.db as ApplicationDatabase;
   const user = (await testSql(db).get<{ id: string }>(
     "SELECT id FROM users WHERE username = ?",
     username
@@ -139,7 +138,7 @@ async function uploadDuringMutation(
   }
 }
 
-async function waitForReservation(db: AppDb, size: number): Promise<void> {
+async function waitForReservation(db: ApplicationDatabase, size: number): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const account = await testSql(db).get(
       "SELECT reserved_bytes AS reservedBytes FROM storage_accounts"
@@ -161,7 +160,7 @@ describe("attachments routes", () => {
 
     await uploadAttachment(agent, noteId, payload).expect(201);
 
-    const stored = await testSql(app.locals.db as AppDb).get(
+    const stored = await testSql(app.locals.db as ApplicationDatabase).get(
       "SELECT filename, mime_type AS mimeType, metadata_cipher AS metadataCipher FROM attachments WHERE id = ?",
       payload.id
     );
@@ -192,7 +191,7 @@ describe("attachments routes", () => {
     await agent.delete(`/api/attachments/${payload.id}`).set(csrfHeaders()).expect(204);
     await agent.get(`/api/attachments/${payload.id}`).expect(404);
     expect(
-      await testSql(app.locals.db as AppDb).get(
+      await testSql(app.locals.db as ApplicationDatabase).get(
         "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
       )
     ).toEqual({ usedBytes: 0, reservedBytes: 0 });
@@ -242,7 +241,7 @@ describe("attachments routes", () => {
     const app = await createTestApp({ storageQuotaBytes: 8 });
     const agent = await registerAgent(app, "quota_attachment_user");
     const noteId = await createNote(agent);
-    const db = app.locals.db as AppDb;
+    const db = app.locals.db as ApplicationDatabase;
     await uploadAttachment(agent, noteId, attachmentPayload()).expect(201);
     const payload = attachmentPayload(1);
 
@@ -298,11 +297,10 @@ describe("attachments routes", () => {
       body: { error: { code: "stale_epoch" } }
     });
     expect(
-      await testSql(app.locals.db as AppDb).get(
+      await testSql(app.locals.db as ApplicationDatabase).get(
         "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
       )
     ).toEqual({ usedBytes: 0, reservedBytes: 0 });
-    expect(fs.readdirSync(String(app.locals.config.dataDir))).toHaveLength(0);
   });
 
   it("rechecks editor authorization after asynchronously receiving ciphertext", async () => {
@@ -310,7 +308,7 @@ describe("attachments routes", () => {
     const owner = await registerAgent(app, "attachment_auth_owner");
     await registerAgent(app, "attachment_auth_editor");
     const noteId = await createNote(owner);
-    const db = app.locals.db as AppDb;
+    const db = app.locals.db as ApplicationDatabase;
     const editor = (await testSql(db).get(
       "SELECT id FROM users WHERE username = ?",
       "attachment_auth_editor"
@@ -351,7 +349,7 @@ describe("attachments routes", () => {
     const alice = await registerAgent(app, "alice_shared_attachments");
     const bob = await registerAgent(app, "bob_shared_attachments");
     const carol = await registerAgent(app, "carol_shared_attachments");
-    const db = app.locals.db as AppDb;
+    const db = app.locals.db as ApplicationDatabase;
     const noteId = await createNote(alice);
     const payload = attachmentPayload();
     const owner = (await testSql(db).get(
@@ -414,7 +412,7 @@ describe("attachments routes", () => {
   it("rolls back attachment uploads and removes stored bytes when event writes fail", async () => {
     const app = await createTestApp();
     const agent = await registerAgent(app, "rollback_attachment_upload_user");
-    const db = app.locals.db as AppDb;
+    const db = app.locals.db as ApplicationDatabase;
     const noteId = await createNote(agent);
     const payload = attachmentPayload();
 
@@ -427,7 +425,6 @@ describe("attachments routes", () => {
       payload.id
     );
     expect(attachment).toBeUndefined();
-    expect(fs.readdirSync(String(app.locals.config.dataDir))).toHaveLength(0);
     expect(
       await testSql(db).get(
         "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
@@ -438,7 +435,7 @@ describe("attachments routes", () => {
   it("rolls back attachment deletes and keeps stored bytes when event writes fail", async () => {
     const app = await createTestApp();
     const agent = await registerAgent(app, "rollback_attachment_delete_user");
-    const db = app.locals.db as AppDb;
+    const db = app.locals.db as ApplicationDatabase;
     const noteId = await createNote(agent);
     const payload = attachmentPayload();
 
@@ -468,7 +465,7 @@ describe("attachments routes", () => {
 
     await agent.get(`/api/attachments/${payload.id}`).expect(404);
     expect(
-      await testSql(app.locals.db as AppDb).get(
+      await testSql(app.locals.db as ApplicationDatabase).get(
         "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
       )
     ).toEqual({ usedBytes: 0, reservedBytes: 0 });

@@ -25,6 +25,8 @@
     "lint": "eslint .",
     "smoke:compose": "node scripts/smoke-compose.mjs",
     "test": "pnpm typecheck && pnpm -r --workspace-concurrency=1 --if-present test",
+    "test:db:start": "node scripts/test-database.mjs start",
+    "test:db:stop": "node scripts/test-database.mjs stop",
     "typecheck": "pnpm -r --if-present typecheck && tsc -p tests/tsconfig.json --noEmit"
   },
   "engines": {

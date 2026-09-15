@@ -1,3 +1,5 @@
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { Pool } from "pg";
 import type { AttachmentMetadataRepository } from "../attachments/metadataRepository.js";
 import type { AttachmentMutationRepository } from "../attachments/mutationRepository.js";
 import type { AttachmentStorage } from "../attachments/storage.js";
@@ -6,7 +8,7 @@ import type { SessionRepository } from "../auth/sessionRepository.js";
 import type { ContentMaintenanceRepository } from "../content/maintenanceRepository.js";
 import type { ContentManifestRepository } from "../content/manifests.js";
 import type { ContentStorage } from "../content/storage.js";
-import type { ContentUploadRepository } from "../content/uploadRepository.js";
+import type { ContentUploadRepository } from "../content/uploadRepository/contracts.js";
 import type { EventReplayRepository } from "../events/replay.js";
 import type { FolderRepository } from "../folders/repository.js";
 import type { NoteLifecycleRepository } from "../notes/lifecycleRepository.js";
@@ -15,13 +17,17 @@ import type { NoteMutationRepository } from "../notes/mutationRepository.js";
 import type { NoteAccessRepository } from "../notes/noteAccessRepository.js";
 import type { NoteQueryRepository } from "../notes/queryRepository.js";
 import type { NoteRotationRepository } from "../notes/rotationRepository.js";
-import type { NoteSectionRepository } from "../notes/sectionRepository.js";
+import type { NoteSectionRepository } from "../notes/sectionRepository/contracts.js";
 import type { LegacyHistoryRepository } from "../realtime/legacyHistory.js";
 import type { SectionHistoryRepository } from "../realtime/history.js";
 import type { SharingKeyRepository } from "../sharingKeys/repository.js";
+import type * as schema from "./schema.js";
+
+export type Database = NodePgDatabase<typeof schema>;
 
 export interface ApplicationDatabase {
-  readonly provider: "sqlite" | "postgres";
+  readonly pool: Pool;
+  readonly orm: Database;
   readonly attachmentStorage: AttachmentStorage;
   readonly sessions: SessionRepository;
   readonly noteAccess: NoteAccessRepository;

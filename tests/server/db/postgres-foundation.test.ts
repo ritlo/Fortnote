@@ -1,19 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { findPostgresMigrationsDirectory } from "@server/db/postgres/client.js";
+import { findMigrationsDirectory } from "@server/db/client.js";
 
-describe("PostgreSQL foundation", () => {
+describe("database migrations", () => {
   it("discovers versioned migrations from a nested server directory", () => {
-    const migrationsDirectory = findPostgresMigrationsDirectory(
+    const migrationsDirectory = findMigrationsDirectory(
       path.join(process.cwd(), "apps/server/src")
     );
 
-    expect(migrationsDirectory).toBe(path.join(process.cwd(), "drizzle/postgres"));
+    expect(migrationsDirectory).toBe(path.join(process.cwd(), "drizzle"));
   });
 
   it("defines chunked bytea attachment storage and folder integrity triggers", () => {
-    const migrationsDirectory = findPostgresMigrationsDirectory(process.cwd());
+    const migrationsDirectory = findMigrationsDirectory(process.cwd());
     const migrationSql = fs
       .readdirSync(migrationsDirectory)
       .filter((filename) => filename.endsWith(".sql"))

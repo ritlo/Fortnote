@@ -8,11 +8,8 @@ import {
   reconcileStorageAccountsPage,
   removeOrphanContentObjectsPage
 } from "@server/content/maintenance.js";
-import { createApplicationDatabase } from "@server/db/application.js";
-import {
-  createPostgresResources,
-  type PostgresApplicationDatabase
-} from "@server/db/postgres/client.js";
+import { createApplicationDatabase } from "@server/db/client.js";
+import { createDatabaseResources } from "@server/db/client.js";
 import type { ApplicationDatabase } from "@server/db/types.js";
 import { createApp } from "@server/http/app.js";
 import { readStoredAttachment, readStoredNote } from "../../e2e/support/stored.js";
@@ -31,12 +28,10 @@ import {
   membershipRevocationState,
   migrationFailureState,
   noteDeletionState,
-  postgresUrl,
   registerAndCreateNote,
   registerUser,
   requiredRow,
   rotationState,
-  runtimeProviders,
   sharingKeyPayload,
   storageAccountStates,
   storageCounts,
@@ -45,426 +40,397 @@ import {
   uploadLifecycleState
 } from "./postgres-runtime.fixtures.js";
 
-describe.each(runtimeProviders)("$name runtime contract", (runtime) => {
-  it.skipIf(!runtime.enabled)(
-    "runs auth, note, and encrypted attachment workflows",
-    async () => {
-      const harness = await runtime.createHarness();
-      try {
-        expect(harness.database.provider).toBe(runtime.provider);
-        const agent = request.agent(
-          createApp({ config: harness.config, db: harness.database })
-        );
-        await agent
-          .get("/api/ready")
-          .expect(200)
-          .expect({ ok: true, checks: { database: "up" } });
-        const account = await registerUser(agent, runtime.provider);
-        const note = notePayload();
+describe("PostgreSQL runtime contract", () => {
+  it("runs auth, note, and encrypted attachment workflows", async () => {
+    const harness = await createPostgresHarness();
+    try {
+      const agent = request.agent(
+        createApp({ config: harness.config, db: harness.database })
+      );
+      await agent
+        .get("/api/ready")
+        .expect(200)
+        .expect({ ok: true, checks: { database: "up" } });
+      const account = await registerUser(agent, "postgres");
+      const note = notePayload();
+      await agent.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
+      const noteId = note.id;
+      const attachment = attachmentPayload();
+
+      await uploadAttachment(agent, noteId, attachment).expect(201);
+      const stored = await harness.database.attachmentMetadata.find(attachment.id);
+      expect(stored).toMatchObject({
+        id: attachment.id,
+        noteId,
+        size: attachment.ciphertext.byteLength
+      });
+      const download = await agent.get(`/api/attachments/${attachment.id}`).expect(200);
+      expect(download.body).toEqual(attachment.ciphertext);
+
+      const contentBytes = Buffer.from("stored-content-probe-ciphertext");
+      await uploadContent(agent, noteId, contentBytes, true);
+      const inspected = await readStoredNote(account.username, harness.config);
+      expect(inspected.attachments).toHaveLength(1);
+      expect(inspected.attachments[0]?.bytes).toEqual(attachment.ciphertext);
+      expect(inspected.contentBytes).toContainEqual(contentBytes);
+      expect(inspected.databasePayload).toContain(note.encryptedNoteKey);
+      const storageKey = inspected.attachments[0]!.storageKey;
+      expect(await readStoredAttachment(storageKey, harness.config)).toEqual(
+        attachment.ciphertext
+      );
+
+      await agent
+        .delete(`/api/attachments/${attachment.id}`)
+        .set(csrfHeaders())
+        .expect(204);
+      await agent.get(`/api/attachments/${attachment.id}`).expect(404);
+      await expect(readStoredAttachment(storageKey, harness.config)).rejects.toThrow(
+        "Stored ciphertext not found"
+      );
+    } finally {
+      await harness.database.close();
+      await harness.cleanup();
+    }
+  });
+
+  it("returns canonical timestamps from both save APIs", async () => {
+    const harness = await createPostgresHarness();
+    try {
+      const agent = request.agent(
+        createApp({ config: harness.config, db: harness.database })
+      );
+      await registerUser(agent, `postgres_timestamps`);
+      for (const format of ["legacy", "protected"] as const) {
+        const note = format === "legacy" ? notePayload() : protectedNotePayload();
         await agent.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
-        const noteId = note.id;
-        const attachment = attachmentPayload();
-
-        await uploadAttachment(agent, noteId, attachment).expect(201);
-        const stored = await harness.database.attachmentMetadata.find(attachment.id);
-        expect(stored).toMatchObject({
-          id: attachment.id,
-          noteId,
-          size: attachment.ciphertext.byteLength
-        });
-        const download = await agent.get(`/api/attachments/${attachment.id}`).expect(200);
-        expect(download.body).toEqual(attachment.ciphertext);
-
-        const contentBytes = Buffer.from("stored-content-probe-ciphertext");
-        await uploadContent(agent, noteId, contentBytes, true);
-        const inspected = await readStoredNote(account.username, harness.config);
-        expect(inspected.attachments).toHaveLength(1);
-        expect(inspected.attachments[0]?.bytes).toEqual(attachment.ciphertext);
-        expect(inspected.contentBytes).toContainEqual(contentBytes);
-        expect(inspected.databasePayload).toContain(note.encryptedNoteKey);
-        const storageKey = inspected.attachments[0]!.storageKey;
-        expect(await readStoredAttachment(storageKey, harness.config)).toEqual(
-          attachment.ciphertext
-        );
-
-        await agent
-          .delete(`/api/attachments/${attachment.id}`)
+        const response = await agent
+          .put(`/api/notes/${note.id}`)
           .set(csrfHeaders())
-          .expect(204);
-        await agent.get(`/api/attachments/${attachment.id}`).expect(404);
-        await expect(readStoredAttachment(storageKey, harness.config)).rejects.toThrow(
-          "Stored ciphertext not found"
-        );
-      } finally {
-        await harness.database.close();
-        await harness.cleanup();
-      }
-    }
-  );
-
-  it.skipIf(!runtime.enabled)(
-    "returns canonical timestamps from both save APIs",
-    async () => {
-      const harness = await runtime.createHarness();
-      try {
-        const agent = request.agent(
-          createApp({ config: harness.config, db: harness.database })
-        );
-        await registerUser(agent, `${runtime.provider}_timestamps`);
-        for (const format of ["legacy", "protected"] as const) {
-          const note = format === "legacy" ? notePayload() : protectedNotePayload();
-          await agent.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
-          const response = await agent
-            .put(`/api/notes/${note.id}`)
-            .set(csrfHeaders())
-            .send(
-              format === "legacy"
-                ? {
-                    version: 1,
-                    contentCipher: "timestamp_content_cipher",
-                    contentNonce: "timestamp_content_nonce",
-                    contentLength: 24
-                  }
-                : { rootVersion: 1, keyEpoch: 1 }
-            )
-            .expect(200);
-          const updatedAt = response.body.updatedAt as string;
-          expect(updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-          expect(new Date(updatedAt).toISOString()).toBe(updatedAt);
-        }
-      } finally {
-        await harness.database.close();
-        await harness.cleanup();
-      }
-    }
-  );
-
-  it.skipIf(!runtime.enabled)(
-    "rejects mis-sized content chunks with provider-neutral errors",
-    async () => {
-      const harness = await runtime.createHarness();
-      try {
-        const declared = Buffer.from("declared-content-chunk-ciphertext");
-        const write = (source: Buffer, maxBytes = 1024) =>
-          harness.database.contentStorage.write({
-            uploadId: crypto.randomUUID(),
-            chunkIndex: 0,
-            expectedLength: declared.byteLength,
-            expectedHash: createHash("sha256").update(declared).digest("hex"),
-            maxBytes,
-            source: Readable.from([source])
-          });
-        // The chunk route maps these messages to 400 responses.
-        await expect(write(declared.subarray(0, 8))).rejects.toThrow(
-          "Encrypted content chunk length mismatch"
-        );
-        await expect(
-          write(Buffer.concat([declared, declared]), declared.byteLength)
-        ).rejects.toThrow("Encrypted content chunk exceeds maximum bytes");
-      } finally {
-        await harness.database.close();
-        await harness.cleanup();
-      }
-    }
-  );
-
-  it.skipIf(!runtime.enabled)(
-    "returns canonical UTC timestamps from read APIs",
-    async () => {
-      const harness = await runtime.createHarness();
-      try {
-        const app = createApp({ config: harness.config, db: harness.database });
-        const owner = request.agent(app);
-        const recipient = request.agent(app);
-        await registerUser(owner, `${runtime.provider}_timestamp_owner`);
-        const member = await registerUser(
-          recipient,
-          `${runtime.provider}_timestamp_member`
-        );
-        for (const agent of [owner, recipient]) {
-          await agent
-            .put("/api/sharing-keys/current")
-            .set(csrfHeaders())
-            .send(sharingKeyPayload(1))
-            .expect(201);
-        }
-        const folderId = crypto.randomUUID();
-        await owner
-          .post("/api/folders")
-          .set(csrfHeaders())
-          .send({ id: folderId, name: "Timestamp folder" })
-          .expect(201);
-        const note = notePayload(folderId);
-        await owner.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
-        await uploadAttachment(owner, note.id, attachmentPayload()).expect(201);
-        const upload = contentBeginPayload(note.id);
-        await owner
-          .post("/api/content/uploads")
-          .set(csrfHeaders())
-          .send(upload)
-          .expect(201);
-        await owner
-          .post(`/api/notes/${note.id}/memberships`)
-          .set(csrfHeaders())
-          .send({
-            username: member.username,
-            role: "viewer",
-            sharingKeyVersion: 1,
-            encryptedNoteKey: "contract_member_note_key_abcdefghijklmnopqrstuvwxyz",
-            formatVersion: 1
-          })
-          .expect(201);
-
-        const timestamps: unknown[] = [];
-        const folders = (await owner.get("/api/folders").expect(200)).body.folders;
-        timestamps.push(folders[0].createdAt, folders[0].updatedAt);
-        const listed = (await owner.get("/api/notes").expect(200)).body.notes;
-        timestamps.push(listed[0].createdAt, listed[0].updatedAt);
-        const detail = (await owner.get(`/api/notes/${note.id}`).expect(200)).body;
-        timestamps.push(detail.createdAt, detail.updatedAt);
-        const attachments = (
-          await owner.get(`/api/notes/${note.id}/attachments`).expect(200)
-        ).body.attachments;
-        timestamps.push(attachments[0].createdAt);
-        const memberships = (
-          await owner.get(`/api/notes/${note.id}/memberships`).expect(200)
-        ).body.memberships as { createdAt: unknown; updatedAt: unknown }[];
-        expect(memberships).toHaveLength(2);
-        for (const membership of memberships) {
-          timestamps.push(membership.createdAt, membership.updatedAt);
-        }
-        const currentKey = (await owner.get("/api/sharing-keys/current").expect(200))
-          .body;
-        timestamps.push(currentKey.createdAt, currentKey.updatedAt);
-        const versionKey = (await owner.get("/api/sharing-keys/versions/1").expect(200))
-          .body;
-        timestamps.push(versionKey.createdAt, versionKey.updatedAt);
-        const lookup = (
-          await owner
-            .get("/api/sharing-keys/lookup")
-            .query({ username: member.username })
-            .expect(200)
-        ).body;
-        timestamps.push(lookup.createdAt);
-        const status = (
-          await owner.get(`/api/content/uploads/${upload.uploadId}`).expect(200)
-        ).body;
-        timestamps.push(status.expiresAt);
-        const events = (await owner.get("/api/events").expect(200)).body.events as {
-          createdAt: unknown;
-        }[];
-        expect(events.length).toBeGreaterThan(0);
-        timestamps.push(...events.map(({ createdAt }) => createdAt));
-        await owner.delete(`/api/notes/${note.id}`).set(csrfHeaders()).expect(204);
-        const deleted = (
-          await owner.get("/api/notes").query({ deleted: "true" }).expect(200)
-        ).body.notes as { id: string; deletedAt: unknown }[];
-        timestamps.push(deleted.find(({ id }) => id === note.id)?.deletedAt);
-
-        for (const timestamp of timestamps) {
-          expect(timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-          expect(new Date(timestamp as string).toISOString()).toBe(timestamp);
-        }
-      } finally {
-        await harness.database.close();
-        await harness.cleanup();
-      }
-    }
-  );
-
-  it.skipIf(!runtime.enabled)(
-    "rotates account credentials and encrypted key material",
-    async () => {
-      const harness = await runtime.createHarness();
-      try {
-        const app = createApp({ config: harness.config, db: harness.database });
-        const agent = request.agent(app);
-        const account = await registerUser(agent, `${runtime.provider}_key_rotation`);
-        const initial = registerPayload(account.username);
-
-        await request(app)
-          .get("/api/auth/kdf-params")
-          .query({ username: account.username })
-          .expect(200)
-          .expect(({ body }) => {
-            expect(body).toMatchObject({
-              authKdfVersion: 1,
-              vaultKdfVersion: 1
-            });
-          });
-        await request(app)
-          .get("/api/auth/recovery-params")
-          .query({ username: account.username })
-          .expect(200)
-          .expect(({ body }) => {
-            expect(body).toMatchObject({
-              recoveryKdfVersion: 1,
-              keyMaterialVersion: 1
-            });
-          });
-        await agent
-          .get("/api/key-material")
-          .expect(200)
-          .expect(({ body }) => {
-            expect(body).toMatchObject({
-              encryptedRootKey: initial.encryptedRootKey,
-              keyMaterialVersion: 1
-            });
-          });
-
-        const newAuthVerifier = `rotated_auth_verifier_${account.userId}`;
-        await agent
-          .put("/api/key-material")
-          .set(csrfHeaders())
-          .send({
-            newAuthVerifier,
-            authKdf: {
-              salt: `rotated_auth_salt_${account.userId}`,
-              opsLimit: 4,
-              memLimit: 67108864,
-              version: 1
-            },
-            encryptedRootKey: `rotated_encrypted_root_key_${account.userId}`,
-            rootKeyNonce: `rotated_root_key_nonce_${account.userId}`,
-            rootKeyFormatVersion: 2,
-            rootKeyContextVersion: 2,
-            vaultKdf: {
-              salt: `rotated_vault_salt_${account.userId}`,
-              opsLimit: 4,
-              memLimit: 67108864,
-              version: 1
-            },
-            keyMaterialVersion: 1
-          })
-          .expect(200)
-          .expect({ keyMaterialVersion: 2 });
-        await agent
-          .put("/api/key-material")
-          .set(csrfHeaders())
-          .send({
-            encryptedRootKey: `stale_encrypted_root_key_${account.userId}`,
-            rootKeyNonce: `stale_root_key_nonce_${account.userId}`,
-            vaultKdf: {
-              salt: `stale_vault_salt_${account.userId}`,
-              opsLimit: 4,
-              memLimit: 67108864,
-              version: 1
-            },
-            keyMaterialVersion: 1
-          })
-          .expect(409);
-
-        await agent.post("/api/auth/logout").set(csrfHeaders()).expect(204);
-        await request(app)
-          .post("/api/auth/login")
-          .set(csrfHeaders())
-          .send({
-            username: account.username,
-            authVerifier: initial.authVerifier
-          })
-          .expect(401);
-        await request(app)
-          .post("/api/auth/login")
-          .set(csrfHeaders())
-          .send({ username: account.username, authVerifier: newAuthVerifier })
+          .send(
+            format === "legacy"
+              ? {
+                  version: 1,
+                  contentCipher: "timestamp_content_cipher",
+                  contentNonce: "timestamp_content_nonce",
+                  contentLength: 24
+                }
+              : { rootVersion: 1, keyEpoch: 1 }
+          )
           .expect(200);
-      } finally {
-        await harness.database.close();
-        await harness.cleanup();
+        const updatedAt = response.body.updatedAt as string;
+        expect(updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+        expect(new Date(updatedAt).toISOString()).toBe(updatedAt);
       }
+    } finally {
+      await harness.database.close();
+      await harness.cleanup();
     }
-  );
+  });
 
-  it.skipIf(!runtime.enabled)(
-    "retains and cleans sharing keys across membership changes",
-    async () => {
-      const harness = await runtime.createHarness();
-      try {
-        const app = createApp({ config: harness.config, db: harness.database });
-        const owner = request.agent(app);
-        const recipient = request.agent(app);
-        await registerUser(owner, `${runtime.provider}_sharing_owner`);
-        const member = await registerUser(
-          recipient,
-          `${runtime.provider}_sharing_recipient`
-        );
-        await recipient
+  it("rejects mis-sized content chunks with provider-neutral errors", async () => {
+    const harness = await createPostgresHarness();
+    try {
+      const declared = Buffer.from("declared-content-chunk-ciphertext");
+      const write = (source: Buffer, maxBytes = 1024) =>
+        harness.database.contentStorage.write({
+          uploadId: crypto.randomUUID(),
+          chunkIndex: 0,
+          expectedLength: declared.byteLength,
+          expectedHash: createHash("sha256").update(declared).digest("hex"),
+          maxBytes,
+          source: Readable.from([source])
+        });
+      // The chunk route maps these messages to 400 responses.
+      await expect(write(declared.subarray(0, 8))).rejects.toThrow(
+        "Encrypted content chunk length mismatch"
+      );
+      await expect(
+        write(Buffer.concat([declared, declared]), declared.byteLength)
+      ).rejects.toThrow("Encrypted content chunk exceeds maximum bytes");
+    } finally {
+      await harness.database.close();
+      await harness.cleanup();
+    }
+  });
+
+  it("returns canonical UTC timestamps from read APIs", async () => {
+    const harness = await createPostgresHarness();
+    try {
+      const app = createApp({ config: harness.config, db: harness.database });
+      const owner = request.agent(app);
+      const recipient = request.agent(app);
+      await registerUser(owner, `postgres_timestamp_owner`);
+      const member = await registerUser(recipient, `postgres_timestamp_member`);
+      for (const agent of [owner, recipient]) {
+        await agent
           .put("/api/sharing-keys/current")
           .set(csrfHeaders())
           .send(sharingKeyPayload(1))
           .expect(201);
-        await recipient
-          .put("/api/sharing-keys/current")
-          .set(csrfHeaders())
-          .send(sharingKeyPayload(2))
-          .expect(201);
+      }
+      const folderId = crypto.randomUUID();
+      await owner
+        .post("/api/folders")
+        .set(csrfHeaders())
+        .send({ id: folderId, name: "Timestamp folder" })
+        .expect(201);
+      const note = notePayload(folderId);
+      await owner.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
+      await uploadAttachment(owner, note.id, attachmentPayload()).expect(201);
+      const upload = contentBeginPayload(note.id);
+      await owner
+        .post("/api/content/uploads")
+        .set(csrfHeaders())
+        .send(upload)
+        .expect(201);
+      await owner
+        .post(`/api/notes/${note.id}/memberships`)
+        .set(csrfHeaders())
+        .send({
+          username: member.username,
+          role: "viewer",
+          sharingKeyVersion: 1,
+          encryptedNoteKey: "contract_member_note_key_abcdefghijklmnopqrstuvwxyz",
+          formatVersion: 1
+        })
+        .expect(201);
+
+      const timestamps: unknown[] = [];
+      const folders = (await owner.get("/api/folders").expect(200)).body.folders;
+      timestamps.push(folders[0].createdAt, folders[0].updatedAt);
+      const listed = (await owner.get("/api/notes").expect(200)).body.notes;
+      timestamps.push(listed[0].createdAt, listed[0].updatedAt);
+      const detail = (await owner.get(`/api/notes/${note.id}`).expect(200)).body;
+      timestamps.push(detail.createdAt, detail.updatedAt);
+      const attachments = (
+        await owner.get(`/api/notes/${note.id}/attachments`).expect(200)
+      ).body.attachments;
+      timestamps.push(attachments[0].createdAt);
+      const memberships = (
+        await owner.get(`/api/notes/${note.id}/memberships`).expect(200)
+      ).body.memberships as { createdAt: unknown; updatedAt: unknown }[];
+      expect(memberships).toHaveLength(2);
+      for (const membership of memberships) {
+        timestamps.push(membership.createdAt, membership.updatedAt);
+      }
+      const currentKey = (await owner.get("/api/sharing-keys/current").expect(200)).body;
+      timestamps.push(currentKey.createdAt, currentKey.updatedAt);
+      const versionKey = (await owner.get("/api/sharing-keys/versions/1").expect(200))
+        .body;
+      timestamps.push(versionKey.createdAt, versionKey.updatedAt);
+      const lookup = (
         await owner
           .get("/api/sharing-keys/lookup")
           .query({ username: member.username })
           .expect(200)
-          .expect(({ body }) => {
-            expect(body).toMatchObject({
-              userId: member.userId,
-              sharingKeyVersion: 2,
-              publicKey: sharingKeyPayload(2).publicKey
-            });
-            expect(body.encryptedPrivateKey).toBeUndefined();
-          });
+      ).body;
+      timestamps.push(lookup.createdAt);
+      const status = (
+        await owner.get(`/api/content/uploads/${upload.uploadId}`).expect(200)
+      ).body;
+      timestamps.push(status.expiresAt);
+      const events = (await owner.get("/api/events").expect(200)).body.events as {
+        createdAt: unknown;
+      }[];
+      expect(events.length).toBeGreaterThan(0);
+      timestamps.push(...events.map(({ createdAt }) => createdAt));
+      await owner.delete(`/api/notes/${note.id}`).set(csrfHeaders()).expect(204);
+      const deleted = (
+        await owner.get("/api/notes").query({ deleted: "true" }).expect(200)
+      ).body.notes as { id: string; deletedAt: unknown }[];
+      timestamps.push(deleted.find(({ id }) => id === note.id)?.deletedAt);
 
-        const note = await owner
-          .post("/api/notes")
-          .set(csrfHeaders())
-          .send(notePayload())
-          .expect(201);
-        const noteId = String(note.body.id);
-        await owner
-          .post(`/api/notes/${noteId}/memberships`)
-          .set(csrfHeaders())
-          .send({
-            username: member.username,
-            role: "viewer",
-            sharingKeyVersion: 1,
-            encryptedNoteKey: "contract_member_note_key_abcdefghijklmnopqrstuvwxyz",
-            formatVersion: 1
-          })
-          .expect(201);
-        await recipient
-          .post("/api/sharing-keys/cleanup")
-          .set(csrfHeaders())
-          .expect(200)
-          .expect({ deleted: 0 });
-
-        await owner
-          .delete(`/api/notes/${noteId}/memberships/${member.userId}`)
-          .set(csrfHeaders())
-          .expect(204);
-        await recipient
-          .post("/api/sharing-keys/cleanup")
-          .set(csrfHeaders())
-          .expect(200)
-          .expect({ deleted: 1 });
-        await recipient
-          .get("/api/sharing-keys/current")
-          .expect(200)
-          .expect(({ body }) => {
-            expect(body).toMatchObject(sharingKeyPayload(2));
-          });
-      } finally {
-        await harness.database.close();
-        await harness.cleanup();
+      for (const timestamp of timestamps) {
+        expect(timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+        expect(new Date(timestamp as string).toISOString()).toBe(timestamp);
       }
+    } finally {
+      await harness.database.close();
+      await harness.cleanup();
     }
-  );
+  });
+
+  it("rotates account credentials and encrypted key material", async () => {
+    const harness = await createPostgresHarness();
+    try {
+      const app = createApp({ config: harness.config, db: harness.database });
+      const agent = request.agent(app);
+      const account = await registerUser(agent, `postgres_key_rotation`);
+      const initial = registerPayload(account.username);
+
+      await request(app)
+        .get("/api/auth/kdf-params")
+        .query({ username: account.username })
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body).toMatchObject({
+            authKdfVersion: 1,
+            vaultKdfVersion: 1
+          });
+        });
+      await request(app)
+        .get("/api/auth/recovery-params")
+        .query({ username: account.username })
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body).toMatchObject({
+            recoveryKdfVersion: 1,
+            keyMaterialVersion: 1
+          });
+        });
+      await agent
+        .get("/api/key-material")
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body).toMatchObject({
+            encryptedRootKey: initial.encryptedRootKey,
+            keyMaterialVersion: 1
+          });
+        });
+
+      const newAuthVerifier = `rotated_auth_verifier_${account.userId}`;
+      await agent
+        .put("/api/key-material")
+        .set(csrfHeaders())
+        .send({
+          newAuthVerifier,
+          authKdf: {
+            salt: `rotated_auth_salt_${account.userId}`,
+            opsLimit: 4,
+            memLimit: 67108864,
+            version: 1
+          },
+          encryptedRootKey: `rotated_encrypted_root_key_${account.userId}`,
+          rootKeyNonce: `rotated_root_key_nonce_${account.userId}`,
+          rootKeyFormatVersion: 2,
+          rootKeyContextVersion: 2,
+          vaultKdf: {
+            salt: `rotated_vault_salt_${account.userId}`,
+            opsLimit: 4,
+            memLimit: 67108864,
+            version: 1
+          },
+          keyMaterialVersion: 1
+        })
+        .expect(200)
+        .expect({ keyMaterialVersion: 2 });
+      await agent
+        .put("/api/key-material")
+        .set(csrfHeaders())
+        .send({
+          encryptedRootKey: `stale_encrypted_root_key_${account.userId}`,
+          rootKeyNonce: `stale_root_key_nonce_${account.userId}`,
+          vaultKdf: {
+            salt: `stale_vault_salt_${account.userId}`,
+            opsLimit: 4,
+            memLimit: 67108864,
+            version: 1
+          },
+          keyMaterialVersion: 1
+        })
+        .expect(409);
+
+      await agent.post("/api/auth/logout").set(csrfHeaders()).expect(204);
+      await request(app)
+        .post("/api/auth/login")
+        .set(csrfHeaders())
+        .send({
+          username: account.username,
+          authVerifier: initial.authVerifier
+        })
+        .expect(401);
+      await request(app)
+        .post("/api/auth/login")
+        .set(csrfHeaders())
+        .send({ username: account.username, authVerifier: newAuthVerifier })
+        .expect(200);
+    } finally {
+      await harness.database.close();
+      await harness.cleanup();
+    }
+  });
+
+  it("retains and cleans sharing keys across membership changes", async () => {
+    const harness = await createPostgresHarness();
+    try {
+      const app = createApp({ config: harness.config, db: harness.database });
+      const owner = request.agent(app);
+      const recipient = request.agent(app);
+      await registerUser(owner, `postgres_sharing_owner`);
+      const member = await registerUser(recipient, `postgres_sharing_recipient`);
+      await recipient
+        .put("/api/sharing-keys/current")
+        .set(csrfHeaders())
+        .send(sharingKeyPayload(1))
+        .expect(201);
+      await recipient
+        .put("/api/sharing-keys/current")
+        .set(csrfHeaders())
+        .send(sharingKeyPayload(2))
+        .expect(201);
+      await owner
+        .get("/api/sharing-keys/lookup")
+        .query({ username: member.username })
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body).toMatchObject({
+            userId: member.userId,
+            sharingKeyVersion: 2,
+            publicKey: sharingKeyPayload(2).publicKey
+          });
+          expect(body.encryptedPrivateKey).toBeUndefined();
+        });
+
+      const note = await owner
+        .post("/api/notes")
+        .set(csrfHeaders())
+        .send(notePayload())
+        .expect(201);
+      const noteId = String(note.body.id);
+      await owner
+        .post(`/api/notes/${noteId}/memberships`)
+        .set(csrfHeaders())
+        .send({
+          username: member.username,
+          role: "viewer",
+          sharingKeyVersion: 1,
+          encryptedNoteKey: "contract_member_note_key_abcdefghijklmnopqrstuvwxyz",
+          formatVersion: 1
+        })
+        .expect(201);
+      await recipient
+        .post("/api/sharing-keys/cleanup")
+        .set(csrfHeaders())
+        .expect(200)
+        .expect({ deleted: 0 });
+
+      await owner
+        .delete(`/api/notes/${noteId}/memberships/${member.userId}`)
+        .set(csrfHeaders())
+        .expect(204);
+      await recipient
+        .post("/api/sharing-keys/cleanup")
+        .set(csrfHeaders())
+        .expect(200)
+        .expect({ deleted: 1 });
+      await recipient
+        .get("/api/sharing-keys/current")
+        .expect(200)
+        .expect(({ body }) => {
+          expect(body).toMatchObject(sharingKeyPayload(2));
+        });
+    } finally {
+      await harness.database.close();
+      await harness.cleanup();
+    }
+  });
 });
 
-describe.skipIf(!postgresUrl)("PostgreSQL startup lifecycle", () => {
+describe("PostgreSQL startup lifecycle", () => {
   it("applies bounded connection, statement, and lock waits", async () => {
     const harness = await createPostgresHarness();
-    const postgres = harness.database as PostgresApplicationDatabase;
+    const postgres = harness.database;
     try {
-      if (harness.config.database.provider !== "postgres") {
-        throw new Error("PostgreSQL harness returned SQLite configuration");
-      }
       expect(postgres.pool.options.connectionTimeoutMillis).toBe(
         harness.config.database.connectionTimeoutMs
       );
@@ -530,15 +496,12 @@ describe.skipIf(!postgresUrl)("PostgreSQL startup lifecycle", () => {
 
   it("rolls back a failed migration, closes its pool, and recovers", async () => {
     const harness = await createPostgresHarness();
-    const postgres = harness.database as PostgresApplicationDatabase;
+    const postgres = harness.database;
     const migrationsDirectory = await failingMigrationsDirectory();
     try {
-      if (harness.config.database.provider !== "postgres") {
-        throw new Error("PostgreSQL harness returned SQLite configuration");
-      }
       const connectionsBefore = await activeConnectionCount(postgres);
       await expect(
-        createPostgresResources(harness.config.database, {
+        createDatabaseResources(harness.config.database, {
           migrationsDirectory
         })
       ).rejects.toThrow(/migration_failure_missing_table|does not exist/iu);
@@ -558,14 +521,11 @@ describe.skipIf(!postgresUrl)("PostgreSQL startup lifecycle", () => {
   });
 });
 
-describe.skipIf(!postgresUrl)("PostgreSQL storage lifecycle", () => {
+describe("PostgreSQL storage lifecycle", () => {
   it("releases pooled connections while an attachment upload stream stalls", async () => {
     const harness = await createPostgresHarness();
     try {
-      if (harness.config.database.provider !== "postgres") {
-        throw new Error("PostgreSQL harness returned SQLite configuration");
-      }
-      const resources = await createPostgresResources({
+      const resources = await createDatabaseResources({
         ...harness.config.database,
         maxConnections: 1,
         connectionTimeoutMs: 2_000
@@ -632,7 +592,7 @@ describe.skipIf(!postgresUrl)("PostgreSQL storage lifecycle", () => {
 
   it("streams attachment ciphertext across database chunks in order", async () => {
     const harness = await createPostgresHarness();
-    const postgres = harness.database as PostgresApplicationDatabase;
+    const postgres = harness.database;
     try {
       const agent = request.agent(
         createApp({ config: harness.config, db: harness.database })
@@ -673,7 +633,7 @@ describe.skipIf(!postgresUrl)("PostgreSQL storage lifecycle", () => {
 
   it("expires uploads, removes old orphans, and reconciles quota in pages", async () => {
     const harness = await createPostgresHarness();
-    const postgres = harness.database as PostgresApplicationDatabase;
+    const postgres = harness.database;
     const config = { ...harness.config, maintenanceBatchSize: 2 };
     const context = { config, db: harness.database };
     try {
@@ -789,10 +749,10 @@ describe.skipIf(!postgresUrl)("PostgreSQL storage lifecycle", () => {
   });
 });
 
-describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
+describe("PostgreSQL concurrency", () => {
   it("allows only one concurrent attachment reservation within quota", async () => {
     const harness = await createPostgresHarness(6);
-    const postgres = harness.database as PostgresApplicationDatabase;
+    const postgres = harness.database;
     try {
       const agent = request.agent(
         createApp({ config: harness.config, db: harness.database })
@@ -818,7 +778,7 @@ describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
 
   it("serializes concurrent attachment deletion without quota underflow", async () => {
     const harness = await createPostgresHarness();
-    const postgres = harness.database as PostgresApplicationDatabase;
+    const postgres = harness.database;
     try {
       const agent = request.agent(
         createApp({ config: harness.config, db: harness.database })
@@ -847,7 +807,7 @@ describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
 
   it("allows only one concurrent content reservation within quota", async () => {
     const harness = await createPostgresHarness(6);
-    const postgres = harness.database as PostgresApplicationDatabase;
+    const postgres = harness.database;
     try {
       const agent = request.agent(
         createApp({ config: harness.config, db: harness.database })
@@ -881,7 +841,7 @@ describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
 
   it("serializes concurrent permanent note deletion and ciphertext cleanup", async () => {
     const harness = await createPostgresHarness();
-    const postgres = harness.database as PostgresApplicationDatabase;
+    const postgres = harness.database;
     try {
       const agent = request.agent(
         createApp({ config: harness.config, db: harness.database })
@@ -912,7 +872,7 @@ describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
 
   it("serializes concurrent membership revocation", async () => {
     const harness = await createPostgresHarness();
-    const postgres = harness.database as PostgresApplicationDatabase;
+    const postgres = harness.database;
     try {
       const app = createApp({ config: harness.config, db: harness.database });
       const owner = request.agent(app);
@@ -962,7 +922,7 @@ describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
 
   it("allows only one concurrent key rotation for a note version", async () => {
     const harness = await createPostgresHarness();
-    const postgres = harness.database as PostgresApplicationDatabase;
+    const postgres = harness.database;
     try {
       const agent = request.agent(
         createApp({ config: harness.config, db: harness.database })
@@ -997,7 +957,7 @@ describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
 
   it("prunes events after concurrent acknowledgements reach the same cursor", async () => {
     const harness = await createPostgresHarness();
-    const postgres = harness.database as PostgresApplicationDatabase;
+    const postgres = harness.database;
     try {
       const app = createApp({ config: harness.config, db: harness.database });
       const owner = request.agent(app);
@@ -1044,7 +1004,7 @@ describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
 
   it("publishes one manifest for concurrent content commits", async () => {
     const harness = await createPostgresHarness();
-    const postgres = harness.database as PostgresApplicationDatabase;
+    const postgres = harness.database;
     try {
       const agent = request.agent(
         createApp({ config: harness.config, db: harness.database })

@@ -1,10 +1,6 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { Client } from "pg";
 import { getConfig, type ServerConfig } from "../../../apps/server/src/config.js";
 import { validateStorageId } from "../../../apps/server/src/attachments/storage.js";
-import { contentChunkPath } from "../../../apps/server/src/content/storage.js";
 import { e2eServerEnvironment } from "./environment.js";
 
 type Row = Record<string, unknown>;
@@ -18,19 +14,6 @@ async function inspect<T>(
   config: ServerConfig,
   read: (select: Select) => Promise<T>
 ): Promise<T> {
-  if (config.database.provider === "sqlite") {
-    const database = new DatabaseSync(config.database.path, {
-      readOnly: true,
-      timeout: 5_000
-    });
-    try {
-      return await read((sql, parameters) =>
-        Promise.resolve(database.prepare(sql).all(...parameters))
-      );
-    } finally {
-      database.close();
-    }
-  }
   const client = new Client({
     connectionString: config.database.url,
     connectionTimeoutMillis: 5_000
@@ -50,20 +33,8 @@ async function inspect<T>(
   }
 }
 
-async function readCiphertext(
-  config: ServerConfig,
-  select: Select,
-  storageKey: string
-): Promise<Buffer> {
+async function readCiphertext(select: Select, storageKey: string): Promise<Buffer> {
   validateStorageId(storageKey);
-  if (config.database.provider === "sqlite") {
-    return readFile(resolve(config.dataDir, storageKey)).catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        throw new Error("Stored ciphertext not found");
-      }
-      throw error;
-    });
-  }
   const object = (
     await select("SELECT byte_length FROM attachment_objects WHERE storage_key = ?", [
       storageKey
@@ -89,7 +60,7 @@ export function readStoredAttachment(
   storageKey: string,
   config = inspectionConfig()
 ): Promise<Buffer> {
-  return inspect(config, (select) => readCiphertext(config, select, storageKey));
+  return inspect(config, (select) => readCiphertext(select, storageKey));
 }
 
 export function readStoredNote(ownerUsername: string, config = inspectionConfig()) {
@@ -119,28 +90,21 @@ export function readStoredNote(ownerUsername: string, config = inspectionConfig(
     };
     const attachments = await Promise.all(
       metadata.attachments.map(async (row) => {
-        const storageKey = row.storage_key ?? row.file_cipher_path;
-        if (typeof row.id !== "string" || typeof storageKey !== "string")
+        if (typeof row.id !== "string" || typeof row.storage_key !== "string")
           throw new Error("Invalid stored attachment");
         return {
           id: row.id,
-          storageKey,
-          bytes: await readCiphertext(config, select, storageKey)
+          storageKey: row.storage_key,
+          bytes: await readCiphertext(select, row.storage_key)
         };
       })
     );
     const contentBytes: Buffer[] = [];
     for (const row of metadata.content_chunks) {
-      if (typeof row.file_cipher_path !== "string" || typeof row.upload_id !== "string") {
+      if (typeof row.file_cipher_path !== "string") {
         throw new Error("Invalid stored content chunk");
       }
-      contentBytes.push(
-        config.database.provider === "sqlite"
-          ? await readFile(
-              contentChunkPath(config, row.upload_id, Number(row.chunk_index))
-            )
-          : await readCiphertext(config, select, row.file_cipher_path)
-      );
+      contentBytes.push(await readCiphertext(select, row.file_cipher_path));
     }
     for (const row of metadata.section_updates) {
       if (Buffer.isBuffer(row.inline_cipher) || row.inline_cipher instanceof Uint8Array) {

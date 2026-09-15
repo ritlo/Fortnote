@@ -1,16 +1,14 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { getConfig, type ServerConfig } from "@server/config.js";
-import { createApplicationDatabase } from "@server/db/application.js";
-import type { PostgresApplicationDatabase } from "@server/db/postgres/client.js";
+import { createApplicationDatabase } from "@server/db/client.js";
 import type { ApplicationDatabase } from "@server/db/types.js";
 import { contentManifestHash } from "@server/content/manifests.js";
+import { TEST_DATABASE_URL } from "../support/database.js";
 import { csrfHeaders, notePayload, registerPayload } from "../support/http.js";
-
-export const postgresUrl = process.env.FORTNOTE_POSTGRES_TEST_URL;
 
 export interface RuntimeHarness {
   config: ServerConfig;
@@ -20,57 +18,12 @@ export interface RuntimeHarness {
 
 type HttpAgent = ReturnType<typeof request.agent>;
 
-export const runtimeProviders: {
-  createHarness: () => Promise<RuntimeHarness>;
-  enabled: boolean;
-  name: string;
-  provider: ApplicationDatabase["provider"];
-}[] = [
-  {
-    createHarness: createSqliteHarness,
-    enabled: true,
-    name: "SQLite",
-    provider: "sqlite"
-  },
-  {
-    createHarness: createPostgresHarness,
-    enabled: Boolean(postgresUrl),
-    name: "PostgreSQL",
-    provider: "postgres"
-  }
-];
-
-export async function createSqliteHarness(): Promise<RuntimeHarness> {
-  const dataDir = await mkdtemp(join(tmpdir(), "fortnote-sqlite-contract-"));
-  const config: ServerConfig = {
-    ...getConfig({}),
-    database: { provider: "sqlite", path: join(dataDir, "contract.sqlite") },
-    dataDir,
-    cookieSecure: false
-  };
-  try {
-    const database = await createApplicationDatabase(config);
-    return {
-      config,
-      database,
-      cleanup: () => rm(dataDir, { recursive: true, force: true })
-    };
-  } catch (error) {
-    await rm(dataDir, { recursive: true, force: true });
-    throw error;
-  }
-}
-
 export async function createPostgresHarness(
   storageQuotaBytes?: number
 ): Promise<RuntimeHarness> {
-  if (!postgresUrl) {
-    throw new Error("FORTNOTE_POSTGRES_TEST_URL is required");
-  }
   const config: ServerConfig = {
     ...getConfig({
-      DATABASE_PROVIDER: "postgres",
-      DATABASE_URL: postgresUrl,
+      DATABASE_URL: TEST_DATABASE_URL,
       DATABASE_MAX_CONNECTIONS: "8"
     }),
     ...(storageQuotaBytes === undefined ? {} : { storageQuotaBytes }),
@@ -78,8 +31,7 @@ export async function createPostgresHarness(
   };
   const database = await createApplicationDatabase(config);
   try {
-    const postgres = database as PostgresApplicationDatabase;
-    await postgres.pool.query("TRUNCATE TABLE users, attachment_objects CASCADE");
+    await database.pool.query("TRUNCATE TABLE users, attachment_objects CASCADE");
     return { config, database, cleanup: () => Promise.resolve() };
   } catch (error) {
     await database.close();
@@ -230,7 +182,7 @@ export function uploadAttachment(
     .send(attachment.ciphertext);
 }
 
-export async function storageCounts(database: PostgresApplicationDatabase) {
+export async function storageCounts(database: ApplicationDatabase) {
   const result = await database.pool.query<{
     chunks: number;
     objects: number;
@@ -251,7 +203,7 @@ export async function storageCounts(database: PostgresApplicationDatabase) {
 }
 
 export async function attachmentObjectState(
-  database: PostgresApplicationDatabase,
+  database: ApplicationDatabase,
   attachmentId: string
 ) {
   const result = await database.pool.query<{
@@ -282,7 +234,7 @@ export async function attachmentObjectState(
 }
 
 export async function uploadLifecycleState(
-  database: PostgresApplicationDatabase,
+  database: ApplicationDatabase,
   uploadIds: string[],
   userId: string
 ) {
@@ -308,7 +260,7 @@ export async function uploadLifecycleState(
 }
 
 export async function storageAccountStates(
-  database: PostgresApplicationDatabase,
+  database: ApplicationDatabase,
   userIds: string[]
 ): Promise<Record<string, { reservedBytes: number; usedBytes: number }>> {
   const result = await database.pool.query<{
@@ -334,10 +286,7 @@ export async function storageAccountStates(
   );
 }
 
-export async function noteDeletionState(
-  database: PostgresApplicationDatabase,
-  noteId: string
-) {
+export async function noteDeletionState(database: ApplicationDatabase, noteId: string) {
   const result = await database.pool.query<{
     attachments: number;
     notes: number;
@@ -363,7 +312,7 @@ export async function noteDeletionState(
 }
 
 export async function membershipRevocationState(
-  database: PostgresApplicationDatabase,
+  database: ApplicationDatabase,
   noteId: string,
   userId: string
 ) {
@@ -386,10 +335,7 @@ export async function membershipRevocationState(
   return requiredRow(result.rows[0], "membership revocation state");
 }
 
-export async function rotationState(
-  database: PostgresApplicationDatabase,
-  noteId: string
-) {
+export async function rotationState(database: ApplicationDatabase, noteId: string) {
   const result = await database.pool.query<{
     keyEpoch: number;
     rotationEvents: number;
@@ -408,10 +354,7 @@ export async function rotationState(
   return requiredRow(result.rows[0], "rotation state");
 }
 
-export async function eventPruningState(
-  database: PostgresApplicationDatabase,
-  cursor: number
-) {
+export async function eventPruningState(database: ApplicationDatabase, cursor: number) {
   const result = await database.pool.query<{
     acknowledgements: number;
     events: number;
@@ -431,7 +374,7 @@ export async function eventPruningState(
 }
 
 export async function contentCommitState(
-  database: PostgresApplicationDatabase,
+  database: ApplicationDatabase,
   uploadId: string,
   noteId: string
 ) {
@@ -495,7 +438,7 @@ export async function failingMigrationsDirectory(): Promise<string> {
 }
 
 export async function activeConnectionCount(
-  database: PostgresApplicationDatabase
+  database: ApplicationDatabase
 ): Promise<number> {
   const result = await database.pool.query<{ count: number }>(`
     SELECT COUNT(*)::integer AS count
@@ -505,7 +448,7 @@ export async function activeConnectionCount(
   return requiredRow(result.rows[0], "active connection count").count;
 }
 
-export async function migrationFailureState(database: PostgresApplicationDatabase) {
+export async function migrationFailureState(database: ApplicationDatabase) {
   const result = await database.pool.query<{
     activeConnections: number;
     probeTable: string | null;

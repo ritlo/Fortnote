@@ -1,7 +1,7 @@
 import { fromCanonicalBase64 } from "@fortnote/shared";
 import { and, eq, gt, lte, ne, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import * as schema from "../db/postgres/schema.js";
+import * as schema from "../db/schema.js";
 import {
   matchingUpdate,
   paginateHistory,

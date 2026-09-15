@@ -1,52 +1,64 @@
 import { sql } from "drizzle-orm";
 import {
-  type AnySQLiteColumn,
-  blob,
+  type AnyPgColumn,
+  bigint,
+  bigserial,
+  boolean,
   check,
+  customType,
   index,
   integer,
+  pgTable,
   primaryKey,
-  sqliteTable,
   text,
-  uniqueIndex
-} from "drizzle-orm/sqlite-core";
+  timestamp,
+  uniqueIndex,
+  uuid
+} from "drizzle-orm/pg-core";
 
-export const users = sqliteTable("users", {
-  id: text("id").primaryKey(),
-  username: text("username").notNull().unique(),
-  displayName: text("display_name"),
-  canonicalHandle: text("canonical_handle"),
-  handleState: text("handle_state").notNull().default("legacy"),
-  authVerifierHash: text("auth_verifier_hash").notNull(),
-  authKdfSalt: text("auth_kdf_salt").notNull(),
-  authKdfOpsLimit: integer("auth_kdf_ops_limit").notNull(),
-  authKdfMemLimit: integer("auth_kdf_mem_limit").notNull(),
-  authKdfVersion: integer("auth_kdf_version").notNull(),
-  createdAt: text("created_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text("updated_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`)
+const bytea = customType<{ data: Buffer }>({
+  dataType: () => "bytea"
 });
+const dateTime = (name: string) =>
+  timestamp(name, { mode: "string", withTimezone: true });
+const byteCount = (name: string) => bigint(name, { mode: "number" });
 
-export const sessions = sqliteTable("sessions", {
+export const users = pgTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    username: text("username").notNull().unique(),
+    displayName: text("display_name"),
+    canonicalHandle: text("canonical_handle"),
+    handleState: text("handle_state").notNull().default("legacy"),
+    authVerifierHash: text("auth_verifier_hash").notNull(),
+    authKdfSalt: text("auth_kdf_salt").notNull(),
+    authKdfOpsLimit: integer("auth_kdf_ops_limit").notNull(),
+    authKdfMemLimit: integer("auth_kdf_mem_limit").notNull(),
+    authKdfVersion: integer("auth_kdf_version").notNull(),
+    createdAt: dateTime("created_at").notNull().defaultNow(),
+    updatedAt: dateTime("updated_at").notNull().defaultNow()
+  },
+  (table) => [
+    uniqueIndex("idx_users_canonical_handle")
+      .on(table.canonicalHandle)
+      .where(sql`${table.canonicalHandle} IS NOT NULL`)
+  ]
+);
+
+export const sessions = pgTable("sessions", {
   id: text("id").primaryKey(),
   userId: text("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   sessionHash: text("session_hash").notNull().unique(),
-  idleExpiresAt: text("idle_expires_at").notNull(),
-  absoluteExpiresAt: text("absolute_expires_at").notNull(),
-  createdAt: text("created_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`),
-  lastSeenAt: text("last_seen_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`)
+  idleExpiresAt: dateTime("idle_expires_at").notNull(),
+  absoluteExpiresAt: dateTime("absolute_expires_at").notNull(),
+  createdAt: dateTime("created_at").notNull().defaultNow(),
+  lastSeenAt: dateTime("last_seen_at").notNull().defaultNow()
 });
 
-export const userKeyMaterial = sqliteTable("user_key_material", {
+export const userKeyMaterial = pgTable("user_key_material", {
   userId: text("user_id")
     .primaryKey()
     .references(() => users.id, { onDelete: "cascade" }),
@@ -72,15 +84,11 @@ export const userKeyMaterial = sqliteTable("user_key_material", {
   recoveryKdfMemLimit: integer("recovery_kdf_mem_limit").notNull(),
   recoveryKdfVersion: integer("recovery_kdf_version").notNull(),
   keyMaterialVersion: integer("key_material_version").notNull().default(1),
-  createdAt: text("created_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text("updated_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`)
+  createdAt: dateTime("created_at").notNull().defaultNow(),
+  updatedAt: dateTime("updated_at").notNull().defaultNow()
 });
 
-export const folders = sqliteTable("folders", {
+export const folders = pgTable("folders", {
   id: text("id").primaryKey(),
   userId: text("user_id")
     .notNull()
@@ -89,18 +97,14 @@ export const folders = sqliteTable("folders", {
   nameCipher: text("name_cipher"),
   nameNonce: text("name_nonce"),
   nameFormatVersion: integer("name_format_version"),
-  parentFolderId: text("parent_folder_id").references((): AnySQLiteColumn => folders.id, {
+  parentFolderId: text("parent_folder_id").references((): AnyPgColumn => folders.id, {
     onDelete: "set null"
   }),
-  createdAt: text("created_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text("updated_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`)
+  createdAt: dateTime("created_at").notNull().defaultNow(),
+  updatedAt: dateTime("updated_at").notNull().defaultNow()
 });
 
-export const notes = sqliteTable("notes", {
+export const notes = pgTable("notes", {
   id: text("id").primaryKey(),
   userId: text("user_id")
     .notNull()
@@ -118,43 +122,45 @@ export const notes = sqliteTable("notes", {
   noteKeyFormatVersion: integer("note_key_format_version").notNull().default(1),
   contentCipher: text("content_cipher").notNull(),
   contentNonce: text("content_nonce").notNull(),
-  contentLength: integer("content_length").notNull(),
-  contentUpdatedAt: text("content_updated_at").notNull(),
+  contentLength: byteCount("content_length").notNull(),
+  contentUpdatedAt: dateTime("content_updated_at").notNull(),
   version: integer("version").notNull().default(1),
   rootVersion: integer("root_version").notNull().default(1),
   rootSectionId: text("root_section_id"),
   keyEpoch: integer("key_epoch").notNull().default(1),
-  rotationFenced: integer("rotation_fenced", { mode: "boolean" })
-    .notNull()
-    .default(false),
-  isDeleted: integer("is_deleted", { mode: "boolean" }).notNull().default(false),
-  deletedAt: text("deleted_at"),
-  createdAt: text("created_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text("updated_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`)
+  rotationFenced: boolean("rotation_fenced").notNull().default(false),
+  isDeleted: boolean("is_deleted").notNull().default(false),
+  deletedAt: dateTime("deleted_at"),
+  createdAt: dateTime("created_at").notNull().defaultNow(),
+  updatedAt: dateTime("updated_at").notNull().defaultNow()
 });
 
-export const noteUpdates = sqliteTable("note_updates", {
-  updateId: text("update_id").primaryKey(),
-  noteId: text("note_id")
-    .notNull()
-    .references(() => notes.id, { onDelete: "cascade" }),
-  cryptoOwnerId: text("crypto_owner_id").notNull(),
-  keyEpoch: integer("key_epoch").notNull(),
-  formatVersion: integer("format_version").notNull(),
-  cipher: text("cipher").notNull(),
-  nonce: text("nonce").notNull(),
-  kind: text("kind").notNull().default("update"),
-  compactedUpdateIds: text("compacted_update_ids"),
-  createdAt: text("created_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`)
-});
+export const noteUpdates = pgTable(
+  "note_updates",
+  {
+    updateId: text("update_id").primaryKey(),
+    noteId: text("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
+    cryptoOwnerId: text("crypto_owner_id").notNull(),
+    keyEpoch: integer("key_epoch").notNull(),
+    formatVersion: integer("format_version").notNull(),
+    cipher: text("cipher").notNull(),
+    nonce: text("nonce").notNull(),
+    kind: text("kind").notNull().default("update"),
+    compactedUpdateIds: text("compacted_update_ids"),
+    createdAt: dateTime("created_at").notNull().defaultNow()
+  },
+  (table) => [
+    index("idx_note_updates_note_epoch_created").on(
+      table.noteId,
+      table.keyEpoch,
+      table.createdAt
+    )
+  ]
+);
 
-export const noteSections = sqliteTable(
+export const noteSections = pgTable(
   "note_sections",
   {
     id: text("id").primaryKey(),
@@ -164,18 +170,14 @@ export const noteSections = sqliteTable(
     createdEpoch: integer("created_epoch").notNull(),
     currentSequence: integer("current_sequence").notNull().default(0),
     initializationManifestId: text("initialization_manifest_id"),
-    isDeleted: integer("is_deleted", { mode: "boolean" }).notNull().default(false),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+    isDeleted: boolean("is_deleted").notNull().default(false),
+    createdAt: dateTime("created_at").notNull().defaultNow(),
+    updatedAt: dateTime("updated_at").notNull().defaultNow()
   },
   (table) => [index("idx_note_sections_note_deleted").on(table.noteId, table.isDeleted)]
 );
 
-export const sectionUpdates = sqliteTable(
+export const sectionUpdates = pgTable(
   "section_updates",
   {
     updateId: text("update_id").primaryKey(),
@@ -190,13 +192,11 @@ export const sectionUpdates = sqliteTable(
     keyEpoch: integer("key_epoch").notNull(),
     formatVersion: integer("format_version").notNull(),
     kind: text("kind").notNull(),
-    inlineCipher: blob("inline_cipher", { mode: "buffer" }),
-    nonce: blob("nonce", { mode: "buffer" }),
+    inlineCipher: bytea("inline_cipher"),
+    nonce: bytea("nonce"),
     checkpointSequenceCutoff: integer("checkpoint_sequence_cutoff"),
     manifestId: text("manifest_id"),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+    createdAt: dateTime("created_at").notNull().defaultNow()
   },
   (table) => [
     uniqueIndex("idx_section_updates_sequence").on(
@@ -210,11 +210,15 @@ export const sectionUpdates = sqliteTable(
       table.sectionId,
       table.keyEpoch,
       table.serverSequence
+    ),
+    check(
+      "section_updates_kind",
+      sql`${table.kind} IN ('update', 'checkpoint', 'root-update')`
     )
   ]
 );
 
-export const contentUploads = sqliteTable(
+export const contentUploads = pgTable(
   "content_uploads",
   {
     id: text("id").primaryKey(),
@@ -229,29 +233,33 @@ export const contentUploads = sqliteTable(
     keyEpoch: integer("key_epoch").notNull(),
     kind: text("kind").notNull(),
     formatVersion: integer("format_version").notNull(),
-    totalCipherBytes: integer("total_cipher_bytes").notNull(),
+    totalCipherBytes: byteCount("total_cipher_bytes").notNull(),
     chunkCount: integer("chunk_count").notNull(),
     manifestHash: text("manifest_hash").notNull(),
     checkpointSequenceCutoff: integer("checkpoint_sequence_cutoff"),
     status: text("status").notNull(),
-    expiresAt: text("expires_at").notNull(),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+    expiresAt: dateTime("expires_at").notNull(),
+    createdAt: dateTime("created_at").notNull().defaultNow(),
+    updatedAt: dateTime("updated_at").notNull().defaultNow()
   },
   (table) => [
     uniqueIndex("idx_content_uploads_update").on(table.updateId),
     index("idx_content_uploads_note_status").on(table.noteId, table.status),
     index("idx_content_uploads_expiry").on(table.status, table.expiresAt),
     check("content_uploads_positive_bytes", sql`${table.totalCipherBytes} > 0`),
-    check("content_uploads_positive_chunks", sql`${table.chunkCount} > 0`)
+    check("content_uploads_positive_chunks", sql`${table.chunkCount} > 0`),
+    check(
+      "content_uploads_kind",
+      sql`${table.kind} IN ('update', 'checkpoint', 'root-update')`
+    ),
+    check(
+      "content_uploads_status",
+      sql`${table.status} IN ('receiving', 'complete', 'committed', 'aborted', 'expired', 'invalid')`
+    )
   ]
 );
 
-export const contentChunks = sqliteTable(
+export const contentChunks = pgTable(
   "content_chunks",
   {
     uploadId: text("upload_id")
@@ -260,11 +268,9 @@ export const contentChunks = sqliteTable(
     chunkIndex: integer("chunk_index").notNull(),
     cipherLength: integer("cipher_length").notNull(),
     cipherHash: text("cipher_hash").notNull(),
-    fileCipherPath: text("file_cipher_path").notNull(),
-    nonce: blob("nonce", { mode: "buffer" }).notNull(),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+    storageKey: text("file_cipher_path").notNull(),
+    nonce: bytea("nonce").notNull(),
+    createdAt: dateTime("created_at").notNull().defaultNow()
   },
   (table) => [
     primaryKey({ columns: [table.uploadId, table.chunkIndex] }),
@@ -273,7 +279,7 @@ export const contentChunks = sqliteTable(
   ]
 );
 
-export const contentManifests = sqliteTable(
+export const contentManifests = pgTable(
   "content_manifests",
   {
     id: text("id").primaryKey(),
@@ -292,13 +298,11 @@ export const contentManifests = sqliteTable(
     formatVersion: integer("format_version").notNull(),
     firstSequence: integer("first_sequence").notNull(),
     lastSequence: integer("last_sequence").notNull(),
-    totalCipherBytes: integer("total_cipher_bytes").notNull(),
+    totalCipherBytes: byteCount("total_cipher_bytes").notNull(),
     chunkCount: integer("chunk_count").notNull(),
     manifestHash: text("manifest_hash").notNull(),
     checkpointSequenceCutoff: integer("checkpoint_sequence_cutoff"),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+    createdAt: dateTime("created_at").notNull().defaultNow()
   },
   (table) => [
     uniqueIndex("idx_content_manifests_upload").on(table.uploadId),
@@ -308,11 +312,17 @@ export const contentManifests = sqliteTable(
       table.sectionId,
       table.keyEpoch,
       table.lastSequence
-    )
+    ),
+    check(
+      "content_manifests_kind",
+      sql`${table.kind} IN ('update', 'checkpoint', 'root-update')`
+    ),
+    check("content_manifests_positive_bytes", sql`${table.totalCipherBytes} > 0`),
+    check("content_manifests_positive_chunks", sql`${table.chunkCount} > 0`)
   ]
 );
 
-export const crdtInitializations = sqliteTable(
+export const crdtInitializations = pgTable(
   "crdt_initializations",
   {
     noteId: text("note_id")
@@ -326,24 +336,20 @@ export const crdtInitializations = sqliteTable(
       .notNull()
       .references(() => contentManifests.id, { onDelete: "restrict" }),
     legacyRootVersion: integer("legacy_root_version").notNull(),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+    createdAt: dateTime("created_at").notNull().defaultNow()
   },
   (table) => [primaryKey({ columns: [table.noteId, table.sectionId, table.keyEpoch] })]
 );
 
-export const storageAccounts = sqliteTable(
+export const storageAccounts = pgTable(
   "storage_accounts",
   {
     userId: text("user_id")
       .primaryKey()
       .references(() => users.id, { onDelete: "cascade" }),
-    usedBytes: integer("used_bytes").notNull().default(0),
-    reservedBytes: integer("reserved_bytes").notNull().default(0),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+    usedBytes: byteCount("used_bytes").notNull().default(0),
+    reservedBytes: byteCount("reserved_bytes").notNull().default(0),
+    updatedAt: dateTime("updated_at").notNull().defaultNow()
   },
   (table) => [
     check("storage_accounts_used_nonnegative", sql`${table.usedBytes} >= 0`),
@@ -351,7 +357,7 @@ export const storageAccounts = sqliteTable(
   ]
 );
 
-export const noteEpochLinks = sqliteTable(
+export const noteEpochLinks = pgTable(
   "note_epoch_links",
   {
     noteId: text("note_id")
@@ -362,9 +368,7 @@ export const noteEpochLinks = sqliteTable(
     previousKeyCipher: text("previous_key_cipher").notNull(),
     nonce: text("nonce").notNull(),
     formatVersion: integer("format_version").notNull(),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+    createdAt: dateTime("created_at").notNull().defaultNow()
   },
   (table) => [
     primaryKey({ columns: [table.noteId, table.targetEpoch] }),
@@ -375,7 +379,38 @@ export const noteEpochLinks = sqliteTable(
   ]
 );
 
-export const attachments = sqliteTable("attachments", {
+export const attachmentObjects = pgTable(
+  "attachment_objects",
+  {
+    storageKey: uuid("storage_key").primaryKey(),
+    byteLength: byteCount("byte_length").notNull(),
+    createdAt: dateTime("created_at").notNull().defaultNow()
+  },
+  (table) => [
+    check("attachment_objects_nonnegative_length", sql`${table.byteLength} >= 0`)
+  ]
+);
+
+export const attachmentObjectChunks = pgTable(
+  "attachment_object_chunks",
+  {
+    storageKey: uuid("storage_key")
+      .notNull()
+      .references(() => attachmentObjects.storageKey, { onDelete: "cascade" }),
+    chunkIndex: integer("chunk_index").notNull(),
+    ciphertext: bytea("ciphertext").notNull()
+  },
+  (table) => [
+    primaryKey({ columns: [table.storageKey, table.chunkIndex] }),
+    check("attachment_object_chunks_nonnegative_index", sql`${table.chunkIndex} >= 0`),
+    check(
+      "attachment_object_chunks_nonempty_ciphertext",
+      sql`octet_length(${table.ciphertext}) > 0`
+    )
+  ]
+);
+
+export const attachments = pgTable("attachments", {
   id: text("id").primaryKey(),
   noteId: text("note_id")
     .notNull()
@@ -389,17 +424,17 @@ export const attachments = sqliteTable("attachments", {
   metadataNonce: text("metadata_nonce"),
   metadataFormatVersion: integer("metadata_format_version"),
   keyEpoch: integer("key_epoch").notNull().default(1),
-  size: integer("size").notNull(),
+  size: byteCount("size").notNull(),
   encryptedAttachmentKey: text("encrypted_attachment_key").notNull(),
   attachmentKeyNonce: text("attachment_key_nonce").notNull(),
-  storageKey: text("file_cipher_path").notNull(),
-  fileNonce: text("file_nonce").notNull(),
-  createdAt: text("created_at")
+  storageKey: uuid("storage_key")
     .notNull()
-    .default(sql`CURRENT_TIMESTAMP`)
+    .references(() => attachmentObjects.storageKey, { onDelete: "restrict" }),
+  fileNonce: text("file_nonce").notNull(),
+  createdAt: dateTime("created_at").notNull().defaultNow()
 });
 
-export const userSharingKeys = sqliteTable(
+export const userSharingKeys = pgTable(
   "user_sharing_keys",
   {
     userId: text("user_id")
@@ -410,17 +445,13 @@ export const userSharingKeys = sqliteTable(
     encryptedPrivateKey: text("encrypted_private_key").notNull(),
     privateKeyNonce: text("private_key_nonce").notNull(),
     formatVersion: integer("format_version").notNull(),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+    createdAt: dateTime("created_at").notNull().defaultNow(),
+    updatedAt: dateTime("updated_at").notNull().defaultNow()
   },
   (table) => [primaryKey({ columns: [table.userId, table.sharingKeyVersion] })]
 );
 
-export const noteMemberships = sqliteTable(
+export const noteMemberships = pgTable(
   "note_memberships",
   {
     noteId: text("note_id")
@@ -431,17 +462,22 @@ export const noteMemberships = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     role: text("role").notNull(),
     status: text("status").notNull(),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+    createdAt: dateTime("created_at").notNull().defaultNow(),
+    updatedAt: dateTime("updated_at").notNull().defaultNow()
   },
-  (table) => [primaryKey({ columns: [table.noteId, table.userId] })]
+  (table) => [
+    primaryKey({ columns: [table.noteId, table.userId] }),
+    index("idx_note_memberships_user_status").on(table.userId, table.status),
+    index("idx_note_memberships_note").on(table.noteId),
+    check("note_memberships_role", sql`${table.role} IN ('owner', 'editor', 'viewer')`),
+    check(
+      "note_memberships_status",
+      sql`${table.status} IN ('active', 'invited', 'revoked')`
+    )
+  ]
 );
 
-export const noteKeyShares = sqliteTable(
+export const noteKeyShares = pgTable(
   "note_key_shares",
   {
     noteId: text("note_id")
@@ -456,51 +492,64 @@ export const noteKeyShares = sqliteTable(
     sharingKeyVersion: integer("sharing_key_version").notNull(),
     encryptedNoteKey: text("encrypted_note_key").notNull(),
     formatVersion: integer("format_version").notNull(),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+    createdAt: dateTime("created_at").notNull().defaultNow()
   },
-  (table) => [primaryKey({ columns: [table.noteId, table.recipientUserId] })]
+  (table) => [
+    primaryKey({ columns: [table.noteId, table.recipientUserId] }),
+    index("idx_note_key_shares_recipient").on(table.recipientUserId)
+  ]
 );
 
-export const noteEvents = sqliteTable("note_events", {
-  cursor: integer("cursor").primaryKey({ autoIncrement: true }),
-  eventId: text("event_id").notNull().unique(),
-  resourceType: text("resource_type").notNull(),
-  resourceId: text("resource_id").notNull(),
-  noteId: text("note_id"),
-  actorUserId: text("actor_user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  eventType: text("event_type").notNull(),
-  noteVersion: integer("note_version"),
-  payloadMetadata: text("payload_metadata"),
-  createdAt: text("created_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`)
-});
+export const noteEvents = pgTable(
+  "note_events",
+  {
+    cursor: bigserial("cursor", { mode: "number" }).primaryKey(),
+    eventId: text("event_id").notNull().unique(),
+    resourceType: text("resource_type").notNull(),
+    resourceId: text("resource_id").notNull(),
+    noteId: text("note_id"),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    noteVersion: integer("note_version"),
+    payloadMetadata: text("payload_metadata"),
+    createdAt: dateTime("created_at").notNull().defaultNow()
+  },
+  (table) => [
+    index("idx_note_events_note_cursor").on(table.noteId, table.cursor),
+    index("idx_note_events_resource_cursor").on(
+      table.resourceType,
+      table.resourceId,
+      table.cursor
+    )
+  ]
+);
 
-export const eventAcknowledgements = sqliteTable(
+export const eventAcknowledgements = pgTable(
   "event_acknowledgements",
   {
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     noteId: text("note_id").notNull(),
-    cursor: integer("cursor").notNull(),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+    cursor: byteCount("cursor").notNull(),
+    updatedAt: dateTime("updated_at").notNull().defaultNow()
   },
-  (table) => [primaryKey({ columns: [table.userId, table.noteId] })]
+  (table) => [
+    primaryKey({ columns: [table.userId, table.noteId] }),
+    index("idx_event_acknowledgements_user_cursor").on(table.userId, table.cursor)
+  ]
 );
 
-export const eventCursors = sqliteTable("event_cursors", {
-  userId: text("user_id")
-    .primaryKey()
-    .references(() => users.id, { onDelete: "cascade" }),
-  cursor: integer("cursor").notNull().default(0),
-  updatedAt: text("updated_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`)
-});
+export const eventCursors = pgTable(
+  "event_cursors",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    cursor: byteCount("cursor").notNull().default(0),
+    updatedAt: dateTime("updated_at").notNull().defaultNow()
+  },
+  (table) => [index("idx_event_cursors_cursor").on(table.cursor)]
+);

@@ -8,14 +8,12 @@ server:
   webRoot: null
 
 database:
-  # For PostgreSQL, set DATABASE_PROVIDER=postgres and provide DATABASE_URL.
-  # PostgreSQL also supports maxConnections, connectionTimeoutMs, statementTimeoutMs,
-  # lockTimeoutMs, startupRetryAttempts, and startupRetryDelayMs.
-  provider: sqlite
-  path: data/fortnote.sqlite
+  # Matches the postgres service in compose.postgres.yaml. DATABASE_URL overrides it.
+  # Also supports maxConnections, connectionTimeoutMs, statementTimeoutMs, lockTimeoutMs,
+  # startupRetryAttempts, and startupRetryDelayMs.
+  url: postgresql://fortnote:fortnote-local@127.0.0.1:5432/fortnote
 
-localstorage:
-  dataDir: data/attachments
+storage:
   quotaBytes: 10737418240
   maintenanceBatchSize: 100
   uploadExpiryMs: 86400000

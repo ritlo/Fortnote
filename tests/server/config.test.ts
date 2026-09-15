@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getConfig } from "@server/config.js";
 
+const DATABASE_URL = "postgresql://localhost/fortnote";
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
@@ -15,16 +16,20 @@ afterEach(() => {
 describe("server configuration", () => {
   it("loads safe defaults when no configuration file exists", () => {
     const cwd = temporaryDirectory();
-    const config = getConfig({}, { cwd });
+    const config = getConfig({ DATABASE_URL }, { cwd });
 
-    expect(config).toMatchObject({
+    expect(config).toEqual({
       port: 3001,
       host: "0.0.0.0",
       database: {
-        provider: "sqlite",
-        path: path.join(cwd, "data/fortnote.sqlite")
+        url: DATABASE_URL,
+        maxConnections: 10,
+        connectionTimeoutMs: 5_000,
+        statementTimeoutMs: 30_000,
+        lockTimeoutMs: 5_000,
+        startupRetryAttempts: 10,
+        startupRetryDelayMs: 1_000
       },
-      dataDir: path.join(cwd, "data/attachments"),
       cookieSecure: true,
       allowedOrigin: "http://localhost:5173",
       webRoot: null,
@@ -43,7 +48,7 @@ describe("server configuration", () => {
     });
   });
 
-  it("loads config.yaml and resolves data paths relative to it", () => {
+  it("loads config.yaml and resolves the web root relative to it", () => {
     const cwd = temporaryDirectory();
     writeFileSync(
       path.join(cwd, "config.yaml"),
@@ -55,10 +60,14 @@ server:
   allowedOrigin: http://127.0.0.1:5173
   webRoot: public
 database:
-  provider: sqlite
-  path: state/fortnote.sqlite
-localstorage:
-  dataDir: state/attachments
+  url: postgresql://yaml-user:yaml-password@localhost:5432/fortnote
+  maxConnections: 8
+  connectionTimeoutMs: 6000
+  statementTimeoutMs: 31000
+  lockTimeoutMs: 7000
+  startupRetryAttempts: 12
+  startupRetryDelayMs: 1500
+storage:
   quotaBytes: 2048
   maintenanceBatchSize: 25
   uploadExpiryMs: 3600000
@@ -77,16 +86,18 @@ auth:
 `
     );
 
-    const config = getConfig({}, { cwd });
-
-    expect(config).toMatchObject({
+    expect(getConfig({}, { cwd })).toEqual({
       port: 4100,
       host: "127.0.0.1",
       database: {
-        provider: "sqlite",
-        path: path.join(cwd, "state/fortnote.sqlite")
+        url: "postgresql://yaml-user:yaml-password@localhost:5432/fortnote",
+        maxConnections: 8,
+        connectionTimeoutMs: 6000,
+        statementTimeoutMs: 31000,
+        lockTimeoutMs: 7000,
+        startupRetryAttempts: 12,
+        startupRetryDelayMs: 1500
       },
-      dataDir: path.join(cwd, "state/attachments"),
       cookieSecure: false,
       allowedOrigin: "http://127.0.0.1:5173",
       webRoot: path.join(cwd, "public"),
@@ -108,7 +119,10 @@ auth:
   it("finds the root configuration from a nested working directory", () => {
     const cwd = temporaryDirectory();
     const nested = path.join(cwd, "apps/server");
-    writeFileSync(path.join(cwd, "config.yaml"), "server:\n  port: 4300\n");
+    writeFileSync(
+      path.join(cwd, "config.yaml"),
+      `server:\n  port: 4300\ndatabase:\n  url: ${DATABASE_URL}\n`
+    );
     mkdirSync(nested, { recursive: true });
 
     expect(getConfig({}, { cwd: nested }).port).toBe(4300);
@@ -122,9 +136,9 @@ auth:
 server:
   port: 4100
 database:
-  provider: sqlite
-  path: yaml.sqlite
-localstorage:
+  url: postgresql://yaml-user@localhost/fortnote
+  maxConnections: 8
+storage:
   quotaBytes: 2048
 `
     );
@@ -133,7 +147,13 @@ localstorage:
       {
         FORTNOTE_CONFIG: "settings.yaml",
         PORT: "4200",
-        DATABASE_PATH: "environment.sqlite",
+        DATABASE_URL: "postgres://environment-user:secret@database:5432/fortnote",
+        DATABASE_MAX_CONNECTIONS: "16",
+        DATABASE_CONNECTION_TIMEOUT_MS: "7000",
+        DATABASE_STATEMENT_TIMEOUT_MS: "32000",
+        DATABASE_LOCK_TIMEOUT_MS: "8000",
+        DATABASE_STARTUP_RETRY_ATTEMPTS: "14",
+        DATABASE_STARTUP_RETRY_DELAY_MS: "2000",
         STORAGE_QUOTA_BYTES: "4096",
         WEB_ROOT: "web"
       },
@@ -142,56 +162,6 @@ localstorage:
 
     expect(config.port).toBe(4200);
     expect(config.database).toEqual({
-      provider: "sqlite",
-      path: path.join(cwd, "environment.sqlite")
-    });
-    expect(config.storageQuotaBytes).toBe(4096);
-    expect(config.webRoot).toBe(path.join(cwd, "web"));
-  });
-
-  it("loads PostgreSQL settings from YAML and environment overrides", () => {
-    const cwd = temporaryDirectory();
-    writeFileSync(
-      path.join(cwd, "config.yaml"),
-      `
-database:
-  provider: postgres
-  url: postgresql://yaml-user:yaml-password@localhost:5432/fortnote
-  maxConnections: 8
-  connectionTimeoutMs: 6000
-  statementTimeoutMs: 31000
-  lockTimeoutMs: 7000
-  startupRetryAttempts: 12
-  startupRetryDelayMs: 1500
-`
-    );
-
-    expect(getConfig({}, { cwd }).database).toEqual({
-      provider: "postgres",
-      url: "postgresql://yaml-user:yaml-password@localhost:5432/fortnote",
-      maxConnections: 8,
-      connectionTimeoutMs: 6000,
-      statementTimeoutMs: 31000,
-      lockTimeoutMs: 7000,
-      startupRetryAttempts: 12,
-      startupRetryDelayMs: 1500
-    });
-    expect(
-      getConfig(
-        {
-          DATABASE_PROVIDER: "postgres",
-          DATABASE_URL: "postgres://environment-user:secret@database:5432/fortnote",
-          DATABASE_MAX_CONNECTIONS: "16",
-          DATABASE_CONNECTION_TIMEOUT_MS: "7000",
-          DATABASE_STATEMENT_TIMEOUT_MS: "32000",
-          DATABASE_LOCK_TIMEOUT_MS: "8000",
-          DATABASE_STARTUP_RETRY_ATTEMPTS: "14",
-          DATABASE_STARTUP_RETRY_DELAY_MS: "2000"
-        },
-        { cwd }
-      ).database
-    ).toEqual({
-      provider: "postgres",
       url: "postgres://environment-user:secret@database:5432/fortnote",
       maxConnections: 16,
       connectionTimeoutMs: 7000,
@@ -200,45 +170,52 @@ database:
       startupRetryAttempts: 14,
       startupRetryDelayMs: 2000
     });
+    expect(config.storageQuotaBytes).toBe(4096);
+    expect(config.webRoot).toBe(path.join(cwd, "web"));
   });
 
-  it("requires a PostgreSQL URL and rejects unsupported providers", () => {
+  it("requires a valid PostgreSQL URL", () => {
     const cwd = temporaryDirectory();
 
-    expect(() => getConfig({ DATABASE_PROVIDER: "postgres" }, { cwd })).toThrow(
-      /DATABASE_URL is required/iu
-    );
-    expect(() => getConfig({ DATABASE_PROVIDER: "mongo" }, { cwd })).toThrow(
-      /expected sqlite or postgres/iu
+    expect(() => getConfig({}, { cwd })).toThrow(
+      /DATABASE_URL or database.url is required/iu
     );
     expect(() =>
-      getConfig(
-        {
-          DATABASE_PROVIDER: "postgres",
-          DATABASE_URL: "postgresql://localhost/fortnote",
-          DATABASE_MAX_CONNECTIONS: "0"
-        },
-        { cwd }
-      )
-    ).toThrow("Invalid DATABASE_MAX_CONNECTIONS");
+      getConfig({ DATABASE_URL: "mysql://localhost/fortnote" }, { cwd })
+    ).toThrow("Invalid DATABASE_URL");
+    expect(() => getConfig({ DATABASE_URL: "not a url" }, { cwd })).toThrow(
+      "Invalid DATABASE_URL"
+    );
+  });
+
+  it("rejects removed SQLite and local storage settings", () => {
+    const cwd = temporaryDirectory();
+    writeFileSync(
+      path.join(cwd, "config.yaml"),
+      "database:\n  provider: sqlite\n  path: data/fortnote.sqlite\n"
+    );
+    expect(() => getConfig({ DATABASE_URL }, { cwd })).toThrow(/Invalid configuration/iu);
+
+    writeFileSync(path.join(cwd, "config.yaml"), "localstorage:\n  dataDir: data\n");
+    expect(() => getConfig({ DATABASE_URL }, { cwd })).toThrow(/Invalid configuration/iu);
   });
 
   it("rejects malformed YAML and unknown settings", () => {
     const cwd = temporaryDirectory();
     writeFileSync(path.join(cwd, "config.yaml"), "unknownSetting: true\n");
 
-    expect(() => getConfig({}, { cwd })).toThrow(/Invalid configuration/iu);
+    expect(() => getConfig({ DATABASE_URL }, { cwd })).toThrow(/Invalid configuration/iu);
 
     writeFileSync(path.join(cwd, "config.yaml"), "server: [\n");
-    expect(() => getConfig({}, { cwd })).toThrow(/Could not parse/iu);
+    expect(() => getConfig({ DATABASE_URL }, { cwd })).toThrow(/Could not parse/iu);
   });
 
   it("rejects a missing explicitly selected configuration file", () => {
     const cwd = temporaryDirectory();
 
-    expect(() => getConfig({ FORTNOTE_CONFIG: "missing.yaml" }, { cwd })).toThrow(
-      /Configuration file not found/iu
-    );
+    expect(() =>
+      getConfig({ DATABASE_URL, FORTNOTE_CONFIG: "missing.yaml" }, { cwd })
+    ).toThrow(/Configuration file not found/iu);
   });
 
   it.each([
@@ -249,30 +226,18 @@ database:
     ["MAINTENANCE_BATCH_SIZE", "1.5"],
     ["REALTIME_FRAME_MAX_BYTES", "-1"],
     ["SESSION_ABSOLUTE_TIMEOUT_MS", "0"],
-    ["STORAGE_QUOTA_BYTES", "9007199254740992"]
-  ])("rejects unsafe %s values", (name, value) => {
-    const cwd = temporaryDirectory();
-    expect(() => getConfig({ [name]: value }, { cwd })).toThrow(`Invalid ${name}`);
-  });
-
-  it.each([
+    ["STORAGE_QUOTA_BYTES", "9007199254740992"],
+    ["DATABASE_MAX_CONNECTIONS", "0"],
     ["DATABASE_CONNECTION_TIMEOUT_MS", "0"],
     ["DATABASE_LOCK_TIMEOUT_MS", "-1"],
     ["DATABASE_STARTUP_RETRY_ATTEMPTS", "1.5"],
     ["DATABASE_STARTUP_RETRY_DELAY_MS", "0"],
     ["DATABASE_STATEMENT_TIMEOUT_MS", "NaN"]
-  ])("rejects unsafe PostgreSQL %s values", (name, value) => {
+  ])("rejects unsafe %s values", (name, value) => {
     const cwd = temporaryDirectory();
-    expect(() =>
-      getConfig(
-        {
-          DATABASE_PROVIDER: "postgres",
-          DATABASE_URL: "postgresql://localhost/fortnote",
-          [name]: value
-        },
-        { cwd }
-      )
-    ).toThrow(`Invalid ${name}`);
+    expect(() => getConfig({ DATABASE_URL, [name]: value }, { cwd })).toThrow(
+      `Invalid ${name}`
+    );
   });
 });
 

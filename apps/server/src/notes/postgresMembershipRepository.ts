@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, ne, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import * as schema from "../db/postgres/schema.js";
+import * as schema from "../db/schema.js";
 import { serializedEventMetadata } from "./events.js";
 import type {
   ChangeNoteMemberInput,

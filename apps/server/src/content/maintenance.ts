@@ -1,11 +1,6 @@
-import type { Dir } from "node:fs";
-import fsPromises from "node:fs/promises";
-import path from "node:path";
 import type { AppContext } from "../http/app.js";
 import { logError } from "../observability/log.js";
 
-const STORAGE_ID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const ORPHAN_GRACE_MS = 60 * 60 * 1000;
 
 export interface MaintenancePage {
@@ -41,61 +36,6 @@ export async function expireContentUploadsPage(
   return { processed: page.uploads.length, hasMore: page.hasMore };
 }
 
-export class ContentStorageScanner {
-  #directory: Dir | null = null;
-  #done = false;
-
-  constructor(private readonly context: AppContext) {}
-
-  async nextPage(): Promise<StorageCleanupPage> {
-    if (this.#done) {
-      return { scanned: 0, removed: 0, done: true };
-    }
-    if (!this.context.db.contentStorage.usesLocalUploadDirectories) {
-      this.#done = true;
-      return { scanned: 0, removed: 0, done: true };
-    }
-    if (!this.#directory) {
-      const root = path.join(this.context.config.dataDir, "content");
-      await fsPromises.mkdir(root, { recursive: true, mode: 0o700 });
-      this.#directory = await fsPromises.opendir(root);
-    }
-
-    let scanned = 0;
-    let removed = 0;
-    while (scanned < this.context.config.maintenanceBatchSize) {
-      const entry = await this.#directory.read();
-      if (!entry) {
-        await this.close();
-        break;
-      }
-      scanned += 1;
-      if (
-        entry.isDirectory() &&
-        STORAGE_ID_PATTERN.test(entry.name) &&
-        (await this.context.db.contentMaintenance.canRemoveUpload(entry.name))
-      ) {
-        await this.context.db.contentStorage.deleteUpload(entry.name);
-        removed += 1;
-      }
-    }
-    return { scanned, removed, done: this.#done };
-  }
-
-  async close(): Promise<void> {
-    const directory = this.#directory;
-    this.#directory = null;
-    this.#done = true;
-    if (directory) {
-      await directory.close().catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code !== "ERR_DIR_CLOSED") {
-          throw error;
-        }
-      });
-    }
-  }
-}
-
 export function reconcileStorageAccountsPage(
   context: AppContext,
   afterUserId: string | null = null
@@ -125,15 +65,6 @@ export async function runContentStartupMaintenance(context: AppContext): Promise
     }
   } while (expiryPage.hasMore);
 
-  const scanner = new ContentStorageScanner(context);
-  for (;;) {
-    const page = await scanner.nextPage();
-    if (page.done) {
-      break;
-    }
-    await yieldToEventLoop();
-  }
-
   let objectPage: StorageCleanupPage;
   do {
     objectPage = await removeOrphanContentObjectsPage(context);
@@ -154,7 +85,6 @@ export async function runContentStartupMaintenance(context: AppContext): Promise
 }
 
 export function startContentMaintenance(context: AppContext): ContentMaintenanceHandle {
-  let scanner = new ContentStorageScanner(context);
   let timer: NodeJS.Timeout | null = null;
   let activePage: Promise<void> | null = null;
   let stopped = false;
@@ -182,19 +112,9 @@ export function startContentMaintenance(context: AppContext): ContentMaintenance
   const runPage = async () => {
     try {
       await expireContentUploadsPage(context);
-      const page = await scanner.nextPage();
-      if (page.done) {
-        scanner = new ContentStorageScanner(context);
-      }
       await removeOrphanContentObjectsPage(context);
     } catch (error) {
-      logError(
-        "maintenance.content.failed",
-        {
-          provider: context.db.provider
-        },
-        error
-      );
+      logError("maintenance.content.failed", {}, error);
     } finally {
       schedule();
     }
@@ -211,7 +131,6 @@ export function startContentMaintenance(context: AppContext): ContentMaintenance
       if (activePage) {
         await activePage;
       }
-      await scanner.close();
     }
   };
 }

@@ -1,6 +1,6 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import * as schema from "../db/postgres/schema.js";
+import * as schema from "../db/schema.js";
 import type {
   PublicSharingKeyRecord,
   PutSharingKeyOutcome,

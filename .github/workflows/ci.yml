@@ -17,24 +17,6 @@ jobs:
     name: Format, lint, typecheck, test, and build
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm format:check
-      - run: pnpm lint
-      # Runs the workspace typecheck before the SQLite-backed test suites.
-      - run: pnpm test
-      - run: pnpm build
-
-  postgres:
-    name: Server tests on PostgreSQL
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
     services:
       postgres:
         image: postgres:18-alpine
@@ -50,6 +32,7 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     env:
+      # The server suite creates and drops one database per test on this service.
       FORTNOTE_POSTGRES_TEST_URL: postgresql://fortnote:fortnote-ci@127.0.0.1:5432/fortnote
     steps:
       - uses: actions/checkout@v4
@@ -59,4 +42,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @fortnote/server test:postgres
+      - run: pnpm format:check
+      - run: pnpm lint
+      # Runs the workspace typecheck before the test suites.
+      - run: pnpm test
+      - run: pnpm build

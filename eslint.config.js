@@ -43,7 +43,7 @@ export default tseslint.config(
   },
   {
     ...tseslint.configs.disableTypeChecked,
-    files: ["drizzle.postgres.config.ts", "scripts/*.mjs", "stryker.config.mjs"]
+    files: ["drizzle.config.ts", "scripts/*.mjs", "stryker.config.mjs"]
   },
   {
     files: ["**/*.test.ts", "**/*.test.tsx"],

@@ -1,11 +1,9 @@
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import fs from "node:fs";
 import { createServer, request as sendHttpRequest } from "node:http";
-import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSession } from "@server/auth/session.js";
-import type { AppDb } from "@server/db/client.js";
+import type { ApplicationDatabase } from "@server/db/types.js";
 import type { RealtimePublisher } from "@server/realtime/types.js";
 import {
   createTestApp,
@@ -29,18 +27,13 @@ const apps: TestApp[] = [];
 
 afterEach(async () => {
   for (const app of apps.splice(0)) {
-    await (app.locals.db as AppDb).close();
-    fs.rmSync(String(app.locals.config.dataDir), { recursive: true, force: true });
+    await (app.locals.db as ApplicationDatabase).close();
   }
 });
 
-function usesLocalUploads(app: TestApp): boolean {
-  return (app.locals.db as AppDb).contentStorage.usesLocalUploadDirectories;
-}
-
 describe("resumable encrypted content routes", () => {
   it("begins idempotently, reports progress, reserves quota, and aborts cleanly", async () => {
-    const { app, agent, noteId } = await setup({ storageQuotaBytes: 15 });
+    const { agent, noteId } = await setup({ storageQuotaBytes: 15 });
     const chunk = testChunk("reserved");
     const payload = beginPayload(noteId, [chunk]);
 
@@ -65,18 +58,6 @@ describe("resumable encrypted content routes", () => {
       .get(`/api/content/uploads/${payload.uploadId}`)
       .expect(200);
     expect(status.body).toMatchObject({ status: "complete", receivedChunkIndexes: [0] });
-    if (usesLocalUploads(app)) {
-      expect(
-        fs.existsSync(
-          path.join(
-            String(app.locals.config.dataDir),
-            "content",
-            payload.uploadId,
-            "0.bin"
-          )
-        )
-      ).toBe(true);
-    }
 
     await agent
       .delete(`/api/content/uploads/${payload.uploadId}`)
@@ -86,11 +67,6 @@ describe("resumable encrypted content routes", () => {
       usedBytes: 0,
       reservedBytes: 0
     });
-    expect(
-      fs.existsSync(
-        path.join(String(app.locals.config.dataDir), "content", payload.uploadId)
-      )
-    ).toBe(false);
 
     const restarted = await begin(agent, payload).expect(200);
     expect(restarted.body).toMatchObject({
@@ -227,8 +203,10 @@ describe("resumable encrypted content routes", () => {
     await begin(agent, payload).expect(201);
     await putChunk(agent, payload.uploadId, 0, chunk).expect(204);
 
-    const db = app.locals.db as AppDb;
-    await testSql(db).run("UPDATE notes SET key_epoch = 2 WHERE id = ?", noteId);
+    await testSql(app.locals.db).run(
+      "UPDATE notes SET key_epoch = 2 WHERE id = ?",
+      noteId
+    );
     const response = await commit(agent, payload).expect(409);
     expect(response.body.error.code).toBe("stale_epoch");
     expect((await agent.get("/api/content/quota").expect(200)).body.reservedBytes).toBe(
@@ -261,20 +239,17 @@ describe("resumable encrypted content routes", () => {
     );
     expect(response.status).toBe(409);
     expect(response.body).toMatchObject({ error: { code: "stale_epoch" } });
-    const db = app.locals.db as AppDb;
     expect(
-      (await testSql(db).get(
+      (await testSql(app.locals.db).get<{ count: number }>(
         "SELECT COUNT(*) AS count FROM content_chunks WHERE upload_id = ?",
         payload.uploadId
       ))!.count
     ).toBe(0);
-    expect(
-      fs.existsSync(
-        path.join(String(app.locals.config.dataDir), "content", payload.uploadId, "0.bin")
-      )
-    ).toBe(false);
 
-    await testSql(db).run("UPDATE notes SET key_epoch = 1 WHERE id = ?", noteId);
+    await testSql(app.locals.db).run(
+      "UPDATE notes SET key_epoch = 1 WHERE id = ?",
+      noteId
+    );
     await agent
       .delete(`/api/content/uploads/${payload.uploadId}`)
       .set(csrfHeaders())
@@ -294,8 +269,11 @@ describe("resumable encrypted content routes", () => {
     );
     expect(checkpoint.firstSequence).toBe(3);
 
-    const db = app.locals.db as AppDb;
-    const updates = await testSql(db).all(
+    const updates = await testSql(app.locals.db).all<{
+      updateId: string;
+      serverSequence: number;
+      kind: string;
+    }>(
       `
         SELECT update_id AS updateId, server_sequence AS serverSequence, kind
         FROM section_updates WHERE note_id = ? ORDER BY server_sequence
@@ -427,8 +405,7 @@ async function uploadAndCommit(
 }
 
 async function manifestCount(app: TestApp): Promise<number> {
-  const db = app.locals.db as AppDb;
-  return (await testSql(db).get<{ count: number }>(
+  return (await testSql(app.locals.db).get<{ count: number }>(
     "SELECT COUNT(*) AS count FROM content_manifests"
   ))!.count;
 }
@@ -438,9 +415,9 @@ async function putChunkDuringMutation(
   username: string,
   uploadId: string,
   chunk: TestChunk,
-  mutate: (db: AppDb) => Promise<void>
+  mutate: (db: ApplicationDatabase) => Promise<void>
 ): Promise<{ body: unknown; status: number }> {
-  const db = app.locals.db as AppDb;
+  const db = app.locals.db as ApplicationDatabase;
   const user = (await testSql(db).get<{ id: string }>(
     "SELECT id FROM users WHERE username = ?",
     username
@@ -486,7 +463,7 @@ async function putChunkDuringMutation(
       upload.on("error", reject);
       const midpoint = Math.floor(chunk.bytes.length / 2);
       upload.write(chunk.bytes.subarray(0, midpoint));
-      void waitForPartialChunk(app, uploadId)
+      void waitForPartialChunk(app)
         .then(async () => {
           await mutate(db);
           upload.end(chunk.bytes.subarray(midpoint));
@@ -506,22 +483,13 @@ async function putChunkDuringMutation(
   }
 }
 
-// Local storage writes a .part file; object storage inserts its object row first.
-async function waitForPartialChunk(app: TestApp, uploadId: string): Promise<void> {
-  const directory = path.join(String(app.locals.config.dataDir), "content", uploadId);
+// Object storage inserts the chunk's object row before it reads the request body.
+async function waitForPartialChunk(app: TestApp): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    const started = usesLocalUploads(app)
-      ? (await fs.promises.readdir(directory).catch(() => [])).some((entry) =>
-          entry.endsWith(".part")
-        )
-      : Boolean(
-          (
-            await testSql(app.locals.db).get<{ count: number }>(
-              "SELECT COUNT(*) AS count FROM attachment_objects"
-            )
-          )?.count
-        );
-    if (started) {
+    const objects = await testSql(app.locals.db).get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM attachment_objects"
+    );
+    if (objects?.count) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 5));

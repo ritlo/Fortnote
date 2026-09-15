@@ -10,7 +10,7 @@ import {
   type CrdtBinaryHeader
 } from "@fortnote/shared";
 import { getConfig, type ServerConfig } from "@server/config.js";
-import { createApplicationDatabase } from "@server/db/application.js";
+import { createApplicationDatabase } from "@server/db/client.js";
 import type { ApplicationDatabase } from "@server/db/types.js";
 import { createApp, type AppContext } from "@server/http/app.js";
 import { RealtimeHub } from "@server/realtime/hub.js";

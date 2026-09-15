@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { and, eq, gt, lte, or } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-import * as schema from "../db/postgres/schema.js";
+import * as schema from "../db/schema.js";
 import { hashToken, type SessionRecord } from "./session.js";
 import type { SessionRepository } from "./sessionRepository.js";
 

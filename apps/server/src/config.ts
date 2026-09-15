@@ -8,13 +8,6 @@ const MIB = 1024 * KIB;
 const GIB = 1024 * MIB;
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
-const DEFAULT_SQLITE_PATH = "data/fortnote.sqlite";
-const DEFAULT_POSTGRES_MAX_CONNECTIONS = 10;
-const DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS = 5_000;
-const DEFAULT_POSTGRES_STATEMENT_TIMEOUT_MS = 30_000;
-const DEFAULT_POSTGRES_LOCK_TIMEOUT_MS = 5_000;
-const DEFAULT_POSTGRES_STARTUP_RETRY_ATTEMPTS = 10;
-const DEFAULT_POSTGRES_STARTUP_RETRY_DELAY_MS = 1_000;
 
 const positiveIntegerSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const serverSchema = z.strictObject({
@@ -24,32 +17,16 @@ const serverSchema = z.strictObject({
   allowedOrigin: z.string().min(1).default("http://localhost:5173"),
   webRoot: z.string().min(1).nullable().default(null)
 });
-const databaseSchema = z.discriminatedUnion("provider", [
-  z.strictObject({
-    provider: z.literal("sqlite"),
-    path: z.string().min(1).default(DEFAULT_SQLITE_PATH)
-  }),
-  z.strictObject({
-    provider: z.literal("postgres"),
-    url: z.string().min(1).optional(),
-    maxConnections: positiveIntegerSchema.default(DEFAULT_POSTGRES_MAX_CONNECTIONS),
-    connectionTimeoutMs: positiveIntegerSchema.default(
-      DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS
-    ),
-    statementTimeoutMs: positiveIntegerSchema.default(
-      DEFAULT_POSTGRES_STATEMENT_TIMEOUT_MS
-    ),
-    lockTimeoutMs: positiveIntegerSchema.default(DEFAULT_POSTGRES_LOCK_TIMEOUT_MS),
-    startupRetryAttempts: positiveIntegerSchema.default(
-      DEFAULT_POSTGRES_STARTUP_RETRY_ATTEMPTS
-    ),
-    startupRetryDelayMs: positiveIntegerSchema.default(
-      DEFAULT_POSTGRES_STARTUP_RETRY_DELAY_MS
-    )
-  })
-]);
-const localStorageSchema = z.strictObject({
-  dataDir: z.string().min(1).default("data/attachments"),
+const databaseSchema = z.strictObject({
+  url: z.string().min(1).optional(),
+  maxConnections: positiveIntegerSchema.default(10),
+  connectionTimeoutMs: positiveIntegerSchema.default(5_000),
+  statementTimeoutMs: positiveIntegerSchema.default(30_000),
+  lockTimeoutMs: positiveIntegerSchema.default(5_000),
+  startupRetryAttempts: positiveIntegerSchema.default(10),
+  startupRetryDelayMs: positiveIntegerSchema.default(1_000)
+});
+const storageSchema = z.strictObject({
   quotaBytes: positiveIntegerSchema.default(10 * GIB),
   maintenanceBatchSize: positiveIntegerSchema.default(100),
   uploadExpiryMs: positiveIntegerSchema.default(24 * HOUR_MS)
@@ -71,20 +48,14 @@ const authSchema = z.strictObject({
 });
 const configFileSchema = z.strictObject({
   server: serverSchema.prefault({}),
-  database: databaseSchema.prefault({ provider: "sqlite" }),
-  localstorage: localStorageSchema.prefault({}),
+  database: databaseSchema.prefault({}),
+  storage: storageSchema.prefault({}),
   limits: limitsSchema.prefault({}),
   sessions: sessionsSchema.prefault({}),
   auth: authSchema.prefault({})
 });
 
-export interface SqliteDatabaseConfig {
-  provider: "sqlite";
-  path: string;
-}
-
-export interface PostgresDatabaseConfig {
-  provider: "postgres";
+export interface DatabaseConfig {
   url: string;
   maxConnections: number;
   connectionTimeoutMs: number;
@@ -97,8 +68,7 @@ export interface PostgresDatabaseConfig {
 export interface ServerConfig {
   port: number;
   host: string;
-  database: SqliteDatabaseConfig | PostgresDatabaseConfig;
-  dataDir: string;
+  database: DatabaseConfig;
   cookieSecure: boolean;
   allowedOrigin: string;
   webRoot: string | null;
@@ -137,84 +107,39 @@ export function getConfig(
   const fileConfig = parseConfigFile(configPath);
   const baseDirectory = configPath ? path.dirname(configPath) : cwd;
   const configuredWebRoot = env.WEB_ROOT ?? fileConfig.server.webRoot;
-  const databaseProvider = env.DATABASE_PROVIDER ?? fileConfig.database.provider;
-  if (databaseProvider !== "sqlite" && databaseProvider !== "postgres") {
-    throw new Error("Invalid DATABASE_PROVIDER: expected sqlite or postgres");
-  }
-
-  const database =
-    databaseProvider === "sqlite"
-      ? {
-          provider: "sqlite" as const,
-          path: resolveConfiguredPath(
-            baseDirectory,
-            env.DATABASE_PATH ??
-              (fileConfig.database.provider === "sqlite"
-                ? fileConfig.database.path
-                : DEFAULT_SQLITE_PATH),
-            true
-          )
-        }
-      : {
-          provider: "postgres" as const,
-          url: postgresUrl(
-            env.DATABASE_URL ??
-              (fileConfig.database.provider === "postgres"
-                ? fileConfig.database.url
-                : undefined)
-          ),
-          maxConnections: environmentPositiveInteger(
-            env,
-            "DATABASE_MAX_CONNECTIONS",
-            fileConfig.database.provider === "postgres"
-              ? fileConfig.database.maxConnections
-              : DEFAULT_POSTGRES_MAX_CONNECTIONS
-          ),
-          connectionTimeoutMs: environmentPositiveInteger(
-            env,
-            "DATABASE_CONNECTION_TIMEOUT_MS",
-            fileConfig.database.provider === "postgres"
-              ? fileConfig.database.connectionTimeoutMs
-              : DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS
-          ),
-          statementTimeoutMs: environmentPositiveInteger(
-            env,
-            "DATABASE_STATEMENT_TIMEOUT_MS",
-            fileConfig.database.provider === "postgres"
-              ? fileConfig.database.statementTimeoutMs
-              : DEFAULT_POSTGRES_STATEMENT_TIMEOUT_MS
-          ),
-          lockTimeoutMs: environmentPositiveInteger(
-            env,
-            "DATABASE_LOCK_TIMEOUT_MS",
-            fileConfig.database.provider === "postgres"
-              ? fileConfig.database.lockTimeoutMs
-              : DEFAULT_POSTGRES_LOCK_TIMEOUT_MS
-          ),
-          startupRetryAttempts: environmentPositiveInteger(
-            env,
-            "DATABASE_STARTUP_RETRY_ATTEMPTS",
-            fileConfig.database.provider === "postgres"
-              ? fileConfig.database.startupRetryAttempts
-              : DEFAULT_POSTGRES_STARTUP_RETRY_ATTEMPTS
-          ),
-          startupRetryDelayMs: environmentPositiveInteger(
-            env,
-            "DATABASE_STARTUP_RETRY_DELAY_MS",
-            fileConfig.database.provider === "postgres"
-              ? fileConfig.database.startupRetryDelayMs
-              : DEFAULT_POSTGRES_STARTUP_RETRY_DELAY_MS
-          )
-        };
+  const integer = (name: string, fallback: number) =>
+    environmentPositiveInteger(env, name, fallback);
 
   return {
-    port: environmentPositiveInteger(env, "PORT", fileConfig.server.port),
+    port: integer("PORT", fileConfig.server.port),
     host: env.HOST ?? fileConfig.server.host,
-    database,
-    dataDir: resolveConfiguredPath(
-      baseDirectory,
-      env.DATA_DIR ?? fileConfig.localstorage.dataDir
-    ),
+    database: {
+      url: databaseUrl(env.DATABASE_URL ?? fileConfig.database.url),
+      maxConnections: integer(
+        "DATABASE_MAX_CONNECTIONS",
+        fileConfig.database.maxConnections
+      ),
+      connectionTimeoutMs: integer(
+        "DATABASE_CONNECTION_TIMEOUT_MS",
+        fileConfig.database.connectionTimeoutMs
+      ),
+      statementTimeoutMs: integer(
+        "DATABASE_STATEMENT_TIMEOUT_MS",
+        fileConfig.database.statementTimeoutMs
+      ),
+      lockTimeoutMs: integer(
+        "DATABASE_LOCK_TIMEOUT_MS",
+        fileConfig.database.lockTimeoutMs
+      ),
+      startupRetryAttempts: integer(
+        "DATABASE_STARTUP_RETRY_ATTEMPTS",
+        fileConfig.database.startupRetryAttempts
+      ),
+      startupRetryDelayMs: integer(
+        "DATABASE_STARTUP_RETRY_DELAY_MS",
+        fileConfig.database.startupRetryDelayMs
+      )
+    },
     cookieSecure: environmentBoolean(
       env,
       "COOKIE_SECURE",
@@ -222,74 +147,53 @@ export function getConfig(
     ),
     allowedOrigin: env.ALLOWED_ORIGIN ?? fileConfig.server.allowedOrigin,
     webRoot:
-      configuredWebRoot === null
-        ? null
-        : resolveConfiguredPath(baseDirectory, configuredWebRoot),
-    jsonControlMaxBytes: environmentPositiveInteger(
-      env,
+      configuredWebRoot === null ? null : path.resolve(baseDirectory, configuredWebRoot),
+    jsonControlMaxBytes: integer(
       "JSON_CONTROL_MAX_BYTES",
       fileConfig.limits.jsonControlMaxBytes
     ),
-    realtimeFrameMaxBytes: environmentPositiveInteger(
-      env,
+    realtimeFrameMaxBytes: integer(
       "REALTIME_FRAME_MAX_BYTES",
       fileConfig.limits.realtimeFrameMaxBytes
     ),
-    contentChunkMaxBytes: environmentPositiveInteger(
-      env,
+    contentChunkMaxBytes: integer(
       "CONTENT_CHUNK_MAX_BYTES",
       fileConfig.limits.contentChunkMaxBytes
     ),
-    storageQuotaBytes: environmentPositiveInteger(
-      env,
-      "STORAGE_QUOTA_BYTES",
-      fileConfig.localstorage.quotaBytes
-    ),
-    maintenanceBatchSize: environmentPositiveInteger(
-      env,
+    storageQuotaBytes: integer("STORAGE_QUOTA_BYTES", fileConfig.storage.quotaBytes),
+    maintenanceBatchSize: integer(
       "MAINTENANCE_BATCH_SIZE",
-      fileConfig.localstorage.maintenanceBatchSize
+      fileConfig.storage.maintenanceBatchSize
     ),
-    contentUploadExpiryMs: environmentPositiveInteger(
-      env,
+    contentUploadExpiryMs: integer(
       "CONTENT_UPLOAD_EXPIRY_MS",
-      fileConfig.localstorage.uploadExpiryMs
+      fileConfig.storage.uploadExpiryMs
     ),
-    sessionIdleTimeoutMs: environmentPositiveInteger(
-      env,
+    sessionIdleTimeoutMs: integer(
       "SESSION_IDLE_TIMEOUT_MS",
       fileConfig.sessions.idleTimeoutMs
     ),
-    sessionAbsoluteTimeoutMs: environmentPositiveInteger(
-      env,
+    sessionAbsoluteTimeoutMs: integer(
       "SESSION_ABSOLUTE_TIMEOUT_MS",
       fileConfig.sessions.absoluteTimeoutMs
     ),
-    authIpRateLimitMaxAttempts: environmentPositiveInteger(
-      env,
+    authIpRateLimitMaxAttempts: integer(
       "AUTH_IP_RATE_LIMIT_MAX_ATTEMPTS",
       fileConfig.auth.ipRateLimitMaxAttempts
     ),
-    authAccountRateLimitMaxAttempts: environmentPositiveInteger(
-      env,
+    authAccountRateLimitMaxAttempts: integer(
       "AUTH_ACCOUNT_RATE_LIMIT_MAX_ATTEMPTS",
       fileConfig.auth.accountRateLimitMaxAttempts
     ),
-    historyPageMaxItems: environmentPositiveInteger(
-      env,
+    historyPageMaxItems: integer(
       "HISTORY_PAGE_MAX_ITEMS",
       fileConfig.limits.historyPageMaxItems
     ),
-    historyPageMaxBytes: environmentPositiveInteger(
-      env,
+    historyPageMaxBytes: integer(
       "HISTORY_PAGE_MAX_BYTES",
       fileConfig.limits.historyPageMaxBytes
     )
   };
-}
-
-export function resolveDataPath(config: ServerConfig, value: string): string {
-  return path.resolve(value.startsWith("/") ? value : config.dataDir, value);
 }
 
 function findConfigFile(startDirectory: string): string | undefined {
@@ -333,17 +237,6 @@ function parseConfigFile(
   return parsed.data;
 }
 
-function resolveConfiguredPath(
-  baseDirectory: string,
-  value: string,
-  allowMemoryDatabase = false
-): string {
-  if (allowMemoryDatabase && value === ":memory:") {
-    return value;
-  }
-  return path.resolve(baseDirectory, value);
-}
-
 function environmentPositiveInteger(
   env: NodeJS.ProcessEnv,
   name: string,
@@ -375,9 +268,9 @@ function environmentBoolean(
   throw new Error(`Invalid ${name}`);
 }
 
-function postgresUrl(value: string | undefined): string {
+function databaseUrl(value: string | undefined): string {
   if (!value) {
-    throw new Error("DATABASE_URL is required when database provider is postgres");
+    throw new Error("DATABASE_URL or database.url is required");
   }
   let parsed: URL;
   try {

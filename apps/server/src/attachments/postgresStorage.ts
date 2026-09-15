@@ -7,7 +7,7 @@ import {
   validateAttachmentSize,
   validateStorageId
 } from "./storage.js";
-import * as schema from "../db/postgres/schema.js";
+import * as schema from "../db/schema.js";
 
 const DATABASE_CHUNK_BYTES = 256 * 1024;
 const ORPHAN_GRACE_MS = 60 * 60 * 1000;
