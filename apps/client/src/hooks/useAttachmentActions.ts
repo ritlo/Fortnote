@@ -403,31 +403,28 @@ export async function decryptAttachmentSummary(
   selectedNote: DecryptedNote,
   attachment: EncryptedAttachmentSummary
 ): Promise<AttachmentSummary> {
-  let metadata: { filename: string; mimeType: string };
-  if (attachment.metadataFormatVersion === 2) {
-    if (!attachment.metadataCipher || !attachment.metadataNonce) {
-      throw new Error("Attachment metadata is incomplete");
-    }
-    if (attachment.keyEpoch !== selectedNote.keyEpoch) {
-      throw new Error("Historical attachment key is not loaded");
-    }
-    metadata = await decryptAttachmentMetadataV2({
-      cryptoOwnerId: selectedNote.cryptoOwnerId,
-      noteId: selectedNote.id,
-      attachmentId: attachment.id,
-      keyEpoch: attachment.keyEpoch,
-      noteKey: fromBase64(selectedNote.noteKeyBase64),
-      envelope: {
-        cipher: attachment.metadataCipher,
-        nonce: attachment.metadataNonce,
-        formatVersion: 2
-      }
-    });
-  } else if (attachment.filename && attachment.mimeType) {
-    metadata = { filename: attachment.filename, mimeType: attachment.mimeType };
-  } else {
-    throw new Error("Attachment metadata is unavailable");
+  if (
+    attachment.metadataFormatVersion !== 2 ||
+    !attachment.metadataCipher ||
+    !attachment.metadataNonce
+  ) {
+    throw new Error("Attachment metadata is incomplete");
   }
+  if (attachment.keyEpoch !== selectedNote.keyEpoch) {
+    throw new Error("Historical attachment key is not loaded");
+  }
+  const metadata = await decryptAttachmentMetadataV2({
+    cryptoOwnerId: selectedNote.cryptoOwnerId,
+    noteId: selectedNote.id,
+    attachmentId: attachment.id,
+    keyEpoch: attachment.keyEpoch,
+    noteKey: fromBase64(selectedNote.noteKeyBase64),
+    envelope: {
+      cipher: attachment.metadataCipher,
+      nonce: attachment.metadataNonce,
+      formatVersion: 2
+    }
+  });
 
   return {
     id: attachment.id,

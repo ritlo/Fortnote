@@ -3,6 +3,7 @@ import type { ApplicationDatabase } from "@server/db/types.js";
 import {
   createTestApp,
   csrfHeaders,
+  folderPayload,
   notePayload,
   registerAgent
 } from "../support/http.js";
@@ -17,14 +18,17 @@ describe("folders routes", () => {
     const created = await alice
       .post("/api/folders")
       .set(csrfHeaders())
-      .send({ name: "Projects" })
+      .send(folderPayload())
       .expect(201);
     const folderId = String(created.body.id);
 
     await alice
       .put(`/api/folders/${folderId}`)
       .set(csrfHeaders())
-      .send({ name: "Archive" })
+      .send({
+        ...folderPayload(),
+        nameCipher: "archive_folder_name_abcdefghijklmnopqrstuvwxyz"
+      })
       .expect(200);
     await alice.delete(`/api/folders/${folderId}`).set(csrfHeaders()).expect(204);
 
@@ -59,7 +63,7 @@ describe("folders routes", () => {
     await agent
       .post("/api/folders")
       .set(csrfHeaders())
-      .send({ id: folderId, name: "Drafts" })
+      .send({ ...folderPayload(), id: folderId })
       .expect(500);
 
     const storedFolder = await testSql(db).get(
@@ -76,7 +80,7 @@ describe("folders routes", () => {
     const folder = await agent
       .post("/api/folders")
       .set(csrfHeaders())
-      .send({ name: "Inbox" })
+      .send(folderPayload())
       .expect(201);
     const folderId = String(folder.body.id);
 
@@ -85,14 +89,17 @@ describe("folders routes", () => {
     await agent
       .put(`/api/folders/${folderId}`)
       .set(csrfHeaders())
-      .send({ name: "Renamed" })
+      .send({
+        ...folderPayload(),
+        nameCipher: "renamed_folder_name_abcdefghijklmnopqrstuvwxyz"
+      })
       .expect(500);
 
     const storedFolder = await testSql(db).get(
-      "SELECT name FROM folders WHERE id = ?",
+      "SELECT name_cipher AS nameCipher FROM folders WHERE id = ?",
       folderId
     );
-    expect(storedFolder).toEqual({ name: "Inbox" });
+    expect(storedFolder).toEqual({ nameCipher: folderPayload().nameCipher });
   });
 
   it("rolls back folder deletes when event writes fail", async () => {
@@ -103,7 +110,7 @@ describe("folders routes", () => {
     const folder = await agent
       .post("/api/folders")
       .set(csrfHeaders())
-      .send({ name: "Inbox" })
+      .send(folderPayload())
       .expect(201);
     const folderId = String(folder.body.id);
     const note = await agent
@@ -137,13 +144,13 @@ describe("folders routes", () => {
     const parent = await agent
       .post("/api/folders")
       .set(csrfHeaders())
-      .send({ name: "Parent" })
+      .send(folderPayload())
       .expect(201);
     const parentId = String(parent.body.id);
     const nested = await agent
       .post("/api/folders")
       .set(csrfHeaders())
-      .send({ name: "Nested", parentFolderId: parentId })
+      .send(folderPayload(parentId))
       .expect(201);
     const nestedId = String(nested.body.id);
     const note = await agent

@@ -25,8 +25,6 @@ export class PostgresAttachmentMetadataRepository implements AttachmentMetadataR
     return this.orm
       .select({
         id: schema.attachments.id,
-        filename: schema.attachments.filename,
-        mimeType: schema.attachments.mimeType,
         metadataCipher: schema.attachments.metadataCipher,
         metadataNonce: schema.attachments.metadataNonce,
         metadataFormatVersion: schema.attachments.metadataFormatVersion,

@@ -21,7 +21,7 @@ export interface PublicSharingKeyRecord {
   createdAt: string;
 }
 
-export type PutSharingKeyOutcome = "conflict" | "created" | "upgraded";
+export type PutSharingKeyOutcome = "conflict" | "created";
 
 export interface SharingKeyRepository {
   current(userId: string): Promise<SharingKeyRecord | null>;

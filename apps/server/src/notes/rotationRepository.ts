@@ -5,19 +5,10 @@ export interface RotatedNoteKeyShare {
   formatVersion: number;
 }
 
-export interface RotatedAttachmentKey {
-  attachmentId: string;
-  encryptedAttachmentKey: string;
-  attachmentKeyNonce: string;
-}
-
-interface RotationInput {
+export interface LinkedNoteRotationInput {
   noteId: string;
   actorUserId: string;
   clientInstanceId?: string;
-}
-
-export interface LinkedNoteRotationInput extends RotationInput {
   revokedUserId: string;
   rootVersion: number;
   sourceEpoch: number;
@@ -46,32 +37,6 @@ export type LinkedNoteRotationOutcome =
   | { kind: "invalid-set" }
   | { kind: "conflict" };
 
-export interface LegacyNoteRotationInput extends RotationInput {
-  encryptedNoteKey: string;
-  noteKeyNonce: string;
-  contentCipher: string;
-  contentNonce: string;
-  contentLength: number;
-  version: number;
-  shares: RotatedNoteKeyShare[];
-  attachmentKeys: RotatedAttachmentKey[];
-}
-
-export type LegacyNoteRotationOutcome =
-  | {
-      kind: "rotated";
-      eventCursor: number;
-      version: number;
-      keyEpoch: number;
-    }
-  | { kind: "not-found" }
-  | { kind: "deleted" }
-  | { kind: "conflict" }
-  | { kind: "invalid-members" }
-  | { kind: "invalid-sharing-key" }
-  | { kind: "invalid-attachments" };
-
 export interface NoteRotationRepository {
   rotateLinked(input: LinkedNoteRotationInput): Promise<LinkedNoteRotationOutcome>;
-  rotateLegacy(input: LegacyNoteRotationInput): Promise<LegacyNoteRotationOutcome>;
 }

@@ -12,7 +12,7 @@ export function sharingKeyPayload(version = 1) {
     publicKey: `public_sharing_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
     encryptedPrivateKey: `encrypted_private_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
     privateKeyNonce: `private_key_nonce_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
-    formatVersion: 1
+    formatVersion: 2
   };
 }
 

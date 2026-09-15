@@ -23,7 +23,6 @@ import { PostgresNoteQueryRepository } from "../notes/postgresQueryRepository.js
 import { PostgresNoteRotationRepository } from "../notes/postgresRotationRepository.js";
 import { PostgresNoteSectionRepository } from "../notes/postgresSectionRepository.js";
 import { PostgresSectionHistoryRepository } from "../realtime/postgresHistory.js";
-import { PostgresLegacyHistoryRepository } from "../realtime/postgresLegacyHistory.js";
 import { PostgresSharingKeyRepository } from "../sharingKeys/postgresRepository.js";
 import { logInfo } from "../observability/log.js";
 import type { ApplicationDatabase, Database } from "./types.js";
@@ -107,7 +106,6 @@ export async function createApplicationDatabase(
     noteMutations: new PostgresNoteMutationRepository(orm),
     noteSections: new PostgresNoteSectionRepository(orm),
     sectionHistory: new PostgresSectionHistoryRepository(orm),
-    legacyHistory: new PostgresLegacyHistoryRepository(orm),
     contentStorage: new AttachmentBackedContentStorage(attachmentStorage),
     contentUploads: new PostgresContentUploadRepository(orm),
     contentManifests: new PostgresContentManifestRepository(orm),

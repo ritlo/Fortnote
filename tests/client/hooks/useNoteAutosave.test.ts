@@ -447,35 +447,6 @@ describe("note autosave", () => {
     await advanceAutosave();
     expect(mocks.updateNote).toHaveBeenCalledTimes(2);
   });
-
-  it("upgrades owned legacy metadata and note-key envelopes without plaintext", async () => {
-    useAppStore.setState({
-      notes: [
-        note({
-          metadataMigration: "write-v2-pending",
-          rootSectionId: null
-        })
-      ]
-    });
-    const { result } = renderHook(() => useNoteActions(note()));
-
-    act(() => {
-      result.current.updateSelectedNote({ title: "Migrated private title" });
-    });
-    await advanceAutosave();
-
-    expect(mocks.updateNote).toHaveBeenCalledWith(
-      "note_1",
-      expect.objectContaining({
-        encryptedNoteKey: "protected-note-key",
-        noteKeyFormatVersion: 2,
-        rootSectionId: expect.any(String),
-        titleCipher: "cipher"
-      })
-    );
-    expect(mocks.updateNote.mock.calls[0]?.[1]).not.toHaveProperty("title");
-    expect(useAppStore.getState().notes[0]?.metadataMigration).toBe("current");
-  });
 });
 
 describe("note save conflict handling", () => {

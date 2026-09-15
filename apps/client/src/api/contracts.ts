@@ -63,24 +63,6 @@ export interface LogicalNoteSectionSummary {
   isDeleted: boolean;
 }
 
-export interface LegacyNoteContent {
-  contentCipher: string;
-  contentNonce: string;
-  contentLength: number;
-  version: number;
-  rootVersion: number;
-  keyEpoch: number;
-}
-
-export interface LegacySectionReservation {
-  status: "reserved" | "pending" | "complete";
-  sectionId: string;
-  keyEpoch: number;
-  rootVersion: number;
-  version: number;
-  manifestId?: string;
-}
-
 export interface SectionInitializationResult {
   status: "installed" | "already-initialized";
   manifestId: string;
@@ -138,7 +120,6 @@ export interface User {
   username: string;
   displayName?: string;
   canonicalHandle?: string | null;
-  handleState?: "active" | "repair-required";
 }
 
 export interface AuthKdfResponse {
@@ -188,17 +169,13 @@ export interface KeyMaterialResponse {
 export interface NoteSummary {
   id: string;
   folderId: string | null;
-  title: string;
   titleCipher?: string | null;
   titleNonce?: string | null;
   titleFormatVersion?: number | null;
   encryptedNoteKey: string | null;
   noteKeyNonce: string | null;
   noteKeyFormatVersion?: number | null;
-  contentCipher?: string;
-  contentNonce?: string;
   contentLength: number;
-  legacyContentAvailable?: boolean;
   version: number;
   rootVersion?: number;
   rootSectionId?: string | null;
@@ -214,7 +191,6 @@ export interface NoteSummary {
 export interface FolderSummary {
   id: string;
   name: string;
-  metadataMigration?: "current" | "write-v2-pending" | "retry-required";
   parentFolderId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -222,24 +198,12 @@ export interface FolderSummary {
 
 export interface EncryptedFolderSummary {
   id: string;
-  name: string;
   nameCipher: string | null;
   nameNonce: string | null;
   nameFormatVersion: number | null;
   parentFolderId: string | null;
   createdAt: string;
   updatedAt: string;
-}
-
-interface LegacyCreateNotePayload {
-  id: string;
-  folderId?: string | null;
-  title: string;
-  encryptedNoteKey: string;
-  noteKeyNonce: string;
-  contentCipher: string;
-  contentNonce: string;
-  contentLength: number;
 }
 
 export interface ProtectedCreateNotePayload {
@@ -254,16 +218,7 @@ export interface ProtectedCreateNotePayload {
   noteKeyFormatVersion: 2;
 }
 
-export type CreateNotePayload = LegacyCreateNotePayload | ProtectedCreateNotePayload;
-
-interface LegacyUpdateNotePayload {
-  title?: string;
-  folderId?: string | null;
-  contentCipher: string;
-  contentNonce: string;
-  contentLength: number;
-  version: number;
-}
+export type CreateNotePayload = ProtectedCreateNotePayload;
 
 export interface ProtectedUpdateNotePayload {
   folderId?: string | null;
@@ -278,27 +233,7 @@ export interface ProtectedUpdateNotePayload {
   keyEpoch: number;
 }
 
-export type UpdateNotePayload = LegacyUpdateNotePayload | ProtectedUpdateNotePayload;
-
-export interface LegacyRotateNoteKeyPayload {
-  encryptedNoteKey: string;
-  noteKeyNonce: string;
-  contentCipher: string;
-  contentNonce: string;
-  contentLength: number;
-  version: number;
-  shares: {
-    recipientUserId: string;
-    sharingKeyVersion: number;
-    encryptedNoteKey: string;
-    formatVersion: number;
-  }[];
-  attachmentKeys: {
-    attachmentId: string;
-    encryptedAttachmentKey: string;
-    attachmentKeyNonce: string;
-  }[];
-}
+export type UpdateNotePayload = ProtectedUpdateNotePayload;
 
 export interface LinkedRotateNoteKeyPayload {
   mode: "linked";
@@ -323,8 +258,7 @@ export interface LinkedRotateNoteKeyPayload {
   }[];
 }
 
-export type RotateNoteKeyPayload =
-  LegacyRotateNoteKeyPayload | LinkedRotateNoteKeyPayload;
+export type RotateNoteKeyPayload = LinkedRotateNoteKeyPayload;
 
 export interface NoteEpochLink {
   sourceEpoch: number;
@@ -349,8 +283,6 @@ export interface AttachmentSummary {
 
 export interface EncryptedAttachmentSummary {
   id: string;
-  filename?: string;
-  mimeType?: string;
   metadataCipher: string | null;
   metadataNonce: string | null;
   metadataFormatVersion: number | null;

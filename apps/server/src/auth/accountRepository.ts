@@ -3,7 +3,6 @@ export interface AccountIdentity {
   username: string;
   displayName: string | null;
   canonicalHandle: string | null;
-  handleState: string;
 }
 
 export interface KdfParametersRecord {
@@ -148,16 +147,12 @@ export type RotateKeyMaterialOutcome =
   | { kind: "not-found" };
 
 export interface AccountRepository {
-  findIdentity(
-    suppliedHandle: string,
-    canonicalHandle: string | null
-  ): Promise<AccountIdentity | null>;
+  findIdentity(canonicalHandle: string): Promise<AccountIdentity | null>;
   kdfParameters(userId: string): Promise<KdfParametersRecord | null>;
   recoveryParameters(userId: string): Promise<RecoveryParametersRecord | null>;
   authVerifierHash(userId: string): Promise<string | null>;
   recoveryVerifier(userId: string): Promise<RecoveryVerifierRecord | null>;
   register(input: RegisterAccountInput): Promise<void>;
-  activateHandle(userId: string, canonicalHandle: string): Promise<boolean>;
   recover(input: RecoverAccountInput): Promise<RecoverAccountOutcome>;
   keyMaterial(userId: string): Promise<KeyMaterialRecord | null>;
   rotateKeyMaterial(input: RotateKeyMaterialInput): Promise<RotateKeyMaterialOutcome>;

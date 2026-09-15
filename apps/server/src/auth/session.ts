@@ -10,7 +10,6 @@ export interface SessionRecord {
   username: string;
   displayName: string;
   canonicalHandle: string | null;
-  handleState: string;
 }
 
 export function hashToken(token: string): string {

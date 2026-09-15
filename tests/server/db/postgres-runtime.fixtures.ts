@@ -69,7 +69,7 @@ export function sharingKeyPayload(version = 1) {
     publicKey: `contract_public_sharing_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
     encryptedPrivateKey: `contract_encrypted_private_sharing_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
     privateKeyNonce: `contract_private_key_nonce_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
-    formatVersion: 1
+    formatVersion: 2
   };
 }
 
@@ -346,8 +346,8 @@ export async function rotationState(database: ApplicationDatabase, noteId: strin
       (SELECT key_epoch FROM notes WHERE id = $1) AS "keyEpoch",
       (SELECT version FROM notes WHERE id = $1) AS version,
       (SELECT COUNT(*)::integer FROM note_events
-        WHERE note_id = $1 AND event_type = 'note.updated'
-          AND payload_metadata LIKE '%"keyRotated":true%') AS "rotationEvents"
+        WHERE note_id = $1 AND event_type = 'membership.revoked'
+          AND payload_metadata LIKE '%"targetEpoch":%') AS "rotationEvents"
   `,
     [noteId]
   );

@@ -1,16 +1,13 @@
 import type { ContentManifestSummary, PresenceState } from "../api";
 import {
   CRDT_BINARY_FORMAT_VERSION,
-  CRDT_REALTIME_CAPABILITY,
   CRDT_REALTIME_CAPABILITY_V2,
   encodeCrdtBinaryFrame,
   fromCanonicalBase64,
   randomUuid,
   toBase64,
-  type CrdtAck,
   type CrdtAckV2,
-  type CrdtRejectV2,
-  type EncryptedCrdtMessage
+  type CrdtRejectV2
 } from "@fortnote/shared";
 import {
   openFortnoteIndexedDb,
@@ -33,7 +30,6 @@ import {
   type VerifiedContentDownloadInput
 } from "./contentTransfer";
 import type { ScopedEncryptedCrdtMessage } from "./crdt";
-import { flushCrdtOutbox, persistCrdtOutbox, readCrdtOutbox } from "./legacyOutbox";
 import {
   CLIENT_REALTIME_FRAME_MAX_BYTES,
   parseRealtimeBinaryMessage,
@@ -67,19 +63,16 @@ interface RealtimeClientOptions {
 export interface RealtimeConnection {
   close: () => void;
   suspend: () => void;
-  discardCrdtUpdates: (noteId: string, beforeKeyEpoch: number) => void;
   downloadCrdtContent: (input: VerifiedContentDownloadInput) => Promise<Uint8Array>;
   sendPresence: (noteId: string, state: ClientPresenceState) => void;
   subscribeCrdt: (
     noteId: string,
-    sectionId?: string,
-    keyEpoch?: number,
+    sectionId: string,
+    keyEpoch: number,
     afterSequence?: number
   ) => void;
   unsubscribeCrdt: (noteId: string, sectionId: string, keyEpoch: number) => void;
-  sendCrdtUpdate: (
-    update: EncryptedCrdtMessage | ScopedEncryptedCrdtMessage
-  ) => Promise<void>;
+  sendCrdtUpdate: (update: ScopedEncryptedCrdtMessage) => Promise<void>;
   sendCrdtUpdateDurably: (
     update: ScopedEncryptedCrdtMessage
   ) => DurableRealtimeDelivery<void>;
@@ -112,7 +105,6 @@ export function connectRealtime({
   const transportClientId = randomUuid();
   const socket = new WebSocket(realtimeUrl(after, transportClientId));
   socket.binaryType = "arraybuffer";
-  const pendingSubscriptions = new Set<string>();
   const pendingSectionSubscriptions = new Map<
     string,
     OutboxFence & { afterSequence: number }
@@ -121,7 +113,6 @@ export function connectRealtime({
     string,
     { reject: (error: Error) => void; resolve: () => void }
   >();
-  let crdtEnabled = false;
   let crdtV2Enabled = false;
   let ownedDatabase: FortnoteIndexedDb | null = null;
   let ownedDatabasePromise: Promise<FortnoteIndexedDb> | null = null;
@@ -146,14 +137,7 @@ export function connectRealtime({
           onCrdtError?.("Realtime session changed; reconnect to continue editing.");
           return;
         }
-        crdtEnabled = message.capabilities.includes(CRDT_REALTIME_CAPABILITY);
         crdtV2Enabled = message.capabilities.includes(CRDT_REALTIME_CAPABILITY_V2);
-        if (crdtEnabled) {
-          for (const noteId of pendingSubscriptions) {
-            socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
-          }
-          flushCrdtOutbox(socket, userId);
-        }
         if (crdtV2Enabled) {
           void resumeDurableOutbox().catch(() => {
             onCrdtError?.("Encrypted offline work could not resume; it remains queued.");
@@ -163,27 +147,9 @@ export function connectRealtime({
           }
         }
       } else if (message.type === "crdt-ack") {
-        if (isCrdtAckV2(message)) {
-          void acknowledgeDurableUpdate(message);
-        } else {
-          acknowledgeCrdtUpdate(message.updateId);
-        }
-      } else if (message.type === "crdt-reject" && "code" in message) {
+        void acknowledgeDurableUpdate(message);
+      } else if (message.type === "crdt-reject") {
         handleDurableReject(message);
-      } else if (message.type === "crdt-reject" && message.reason === "storage-limit") {
-        onCrdtError?.(
-          "Realtime storage is full; encrypted work remains queued.",
-          message
-        );
-      } else if (message.type === "crdt-reject" && message.reason !== "storage-limit") {
-        readCrdtOutbox(userId).delete(message.updateId);
-        persistCrdtOutbox(userId);
-        rejectPendingAck(
-          message.updateId,
-          message.reason === "forbidden"
-            ? "Realtime write access was revoked."
-            : "Realtime update is too large."
-        );
       } else if (message.type === "crdt-history-page" && message.hasMore) {
         const subscription = pendingSectionSubscriptions.get(
           sectionSubscriptionKey(message.noteId, message.sectionId, message.keyEpoch)
@@ -205,18 +171,6 @@ export function connectRealtime({
   socket.addEventListener("error", () => {
     onError?.();
   });
-
-  function acknowledgeCrdtUpdate(updateId: string): void {
-    const outbox = readCrdtOutbox(userId);
-    const acknowledged = outbox.get(updateId);
-    outbox.delete(updateId);
-    persistCrdtOutbox(userId);
-    pendingCrdtAcks.get(updateId)?.resolve();
-    pendingCrdtAcks.delete(updateId);
-    if (acknowledged?.type === "crdt-checkpoint") {
-      flushCrdtOutbox(socket, userId, crdtEnabled);
-    }
-  }
 
   async function getDurableOutbox(): Promise<EncryptedOutbox> {
     if (durableStorageClosing) {
@@ -430,26 +384,12 @@ export function connectRealtime({
     );
   }
 
-  function discardCrdtUpdates(noteId: string, beforeKeyEpoch: number): void {
-    const outbox = readCrdtOutbox(userId);
-    for (const [updateId, update] of outbox) {
-      if (update.noteId === noteId && update.keyEpoch < beforeKeyEpoch) {
-        outbox.delete(updateId);
-        rejectPendingAck(updateId, "Superseded by note-key rotation.");
-      }
-    }
-    persistCrdtOutbox(userId);
-  }
-
   function rejectPendingAck(updateId: string, message: string): void {
     pendingCrdtAcks.get(updateId)?.reject(new Error(message));
     pendingCrdtAcks.delete(updateId);
   }
 
   return {
-    discardCrdtUpdates: (noteId, beforeKeyEpoch) => {
-      discardCrdtUpdates(noteId, beforeKeyEpoch);
-    },
     downloadCrdtContent: (input) =>
       trackContentTransfer(
         (async () => {
@@ -467,21 +407,14 @@ export function connectRealtime({
       socket.send(JSON.stringify({ type: "presence", noteId, state }));
     },
     subscribeCrdt: (noteId, sectionId, keyEpoch, afterSequence = 0) => {
-      if (sectionId && keyEpoch) {
-        const subscription = { noteId, sectionId, keyEpoch, afterSequence };
-        pendingSectionSubscriptions.set(
-          sectionSubscriptionKey(noteId, sectionId, keyEpoch),
-          subscription
-        );
-        if (socket.readyState === WebSocket.OPEN && crdtV2Enabled) {
-          sendSectionSubscription(subscription);
-          void getDurableOutbox().then((outbox) => outbox.activate(subscription));
-        }
-      } else {
-        pendingSubscriptions.add(noteId);
-        if (socket.readyState === WebSocket.OPEN && crdtEnabled) {
-          socket.send(JSON.stringify({ type: "crdt-subscribe", noteId }));
-        }
+      const subscription = { noteId, sectionId, keyEpoch, afterSequence };
+      pendingSectionSubscriptions.set(
+        sectionSubscriptionKey(noteId, sectionId, keyEpoch),
+        subscription
+      );
+      if (socket.readyState === WebSocket.OPEN && crdtV2Enabled) {
+        sendSectionSubscription(subscription);
+        void getDurableOutbox().then((outbox) => outbox.activate(subscription));
       }
     },
     unsubscribeCrdt: (noteId, sectionId, keyEpoch) => {
@@ -500,24 +433,9 @@ export function connectRealtime({
       }
     },
     sendCrdtUpdate: (update) => {
-      if (isScopedCrdtUpdate(update)) {
-        const delivery = startScopedCrdtDelivery(update);
-        void delivery.durable.catch(() => undefined);
-        return delivery.delivered;
-      }
-      const delivered = new Promise<void>((resolve, reject) => {
-        pendingCrdtAcks.set(update.updateId, { reject, resolve });
-      });
-      try {
-        readCrdtOutbox(userId).set(update.updateId, update);
-        persistCrdtOutbox(userId, true);
-      } catch {
-        onCrdtError?.(
-          "Offline edits could not be saved durably; keep this tab open until realtime reconnects."
-        );
-      }
-      flushCrdtOutbox(socket, userId, crdtEnabled);
-      return delivered;
+      const delivery = startScopedCrdtDelivery(update);
+      void delivery.durable.catch(() => undefined);
+      return delivery.delivered;
     },
     sendCrdtUpdateDurably: startScopedCrdtDelivery,
     sendCrdtContent: (prepared) => {
@@ -667,15 +585,9 @@ function realtimeUrl(after: number, clientId: string): string {
   const query = new URLSearchParams({
     after: String(after),
     clientId,
-    capabilities: `${CRDT_REALTIME_CAPABILITY},${CRDT_REALTIME_CAPABILITY_V2}`
+    capabilities: CRDT_REALTIME_CAPABILITY_V2
   });
   return `${protocol}//${window.location.host}/api/realtime?${query.toString()}`;
-}
-
-function isScopedCrdtUpdate(
-  update: EncryptedCrdtMessage | ScopedEncryptedCrdtMessage
-): update is ScopedEncryptedCrdtMessage {
-  return "sectionId" in update;
 }
 
 function sectionSubscriptionKey(
@@ -684,17 +596,6 @@ function sectionSubscriptionKey(
   keyEpoch: number
 ): string {
   return JSON.stringify([noteId, sectionId, keyEpoch]);
-}
-
-function isCrdtAckV2(message: CrdtAck | CrdtAckV2): message is CrdtAckV2 {
-  return (
-    "serverSequence" in message &&
-    typeof message.serverSequence === "number" &&
-    "sectionId" in message &&
-    typeof message.sectionId === "string" &&
-    "keyEpoch" in message &&
-    typeof message.keyEpoch === "number"
-  );
 }
 
 function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {

@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gt, ne, sql } from "drizzle-orm";
+import { and, eq, gt, ne, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "../db/schema.js";
 import { serializedEventMetadata } from "./events.js";
 import type {
   InitializeSectionInput,
-  LegacySectionReservationOutcome,
   NoteSectionRepository,
   SectionInitializationOutcome,
   SectionMutationOutcome,
@@ -111,13 +110,6 @@ async function insertEvent(
   return event.cursor;
 }
 
-function staleReservation(updatedAt: string | null): boolean {
-  if (!updatedAt) {
-    return true;
-  }
-  return Date.parse(updatedAt) <= Date.now() - 30_000;
-}
-
 export class PostgresNoteSectionRepository implements NoteSectionRepository {
   constructor(private readonly orm: PostgresDatabase) {}
 
@@ -140,180 +132,6 @@ export class PostgresNoteSectionRepository implements NoteSectionRepository {
         )
       )
       .orderBy(schema.noteSections.createdAt, schema.noteSections.id);
-  }
-
-  reserveLegacy(input: SectionWriteInput): Promise<LegacySectionReservationOutcome> {
-    return this.orm.transaction(async (transaction) => {
-      if (!(await activeSession(transaction, input.sessionId))) {
-        return { status: "rejected", code: "forbidden" } as const;
-      }
-      const rows = await transaction
-        .select({
-          rootSectionId: schema.notes.rootSectionId,
-          rootVersion: schema.notes.rootVersion,
-          version: schema.notes.version,
-          keyEpoch: schema.notes.keyEpoch,
-          rotationFenced: schema.notes.rotationFenced,
-          isDeleted: schema.notes.isDeleted,
-          contentCipher: schema.notes.contentCipher,
-          role: schema.noteMemberships.role,
-          membershipStatus: schema.noteMemberships.status,
-          initializationManifestId: schema.noteSections.initializationManifestId,
-          sectionUpdatedAt: schema.noteSections.updatedAt
-        })
-        .from(schema.notes)
-        .innerJoin(
-          schema.noteMemberships,
-          and(
-            eq(schema.noteMemberships.noteId, schema.notes.id),
-            eq(schema.noteMemberships.userId, input.userId)
-          )
-        )
-        .leftJoin(
-          schema.noteSections,
-          and(
-            eq(schema.noteSections.id, schema.notes.rootSectionId),
-            eq(schema.noteSections.noteId, schema.notes.id)
-          )
-        )
-        .where(eq(schema.notes.id, input.noteId))
-        .limit(1)
-        .for("update", { of: [schema.notes, schema.noteMemberships] });
-      const current = rows[0];
-      if (
-        current?.membershipStatus !== "active" ||
-        current.isDeleted ||
-        (current.role !== "owner" && current.role !== "editor")
-      ) {
-        return { status: "rejected", code: "forbidden" } as const;
-      }
-      if (current.keyEpoch !== input.expectedKeyEpoch) {
-        return { status: "rejected", code: "stale-epoch" } as const;
-      }
-      if (current.rotationFenced) {
-        return { status: "rejected", code: "rotation-pending" } as const;
-      }
-      if (current.rootSectionId) {
-        const sections = await transaction
-          .select({
-            initializationManifestId: schema.noteSections.initializationManifestId,
-            updatedAt: schema.noteSections.updatedAt
-          })
-          .from(schema.noteSections)
-          .where(
-            and(
-              eq(schema.noteSections.id, current.rootSectionId),
-              eq(schema.noteSections.noteId, input.noteId)
-            )
-          )
-          .limit(1)
-          .for("update");
-        const rootSection = sections[0];
-        const manifests = await transaction
-          .select({ id: schema.contentManifests.id })
-          .from(schema.contentManifests)
-          .where(
-            and(
-              eq(schema.contentManifests.noteId, input.noteId),
-              eq(schema.contentManifests.sectionId, current.rootSectionId),
-              eq(schema.contentManifests.keyEpoch, current.keyEpoch),
-              eq(schema.contentManifests.kind, "checkpoint")
-            )
-          )
-          .orderBy(desc(schema.contentManifests.lastSequence))
-          .limit(1);
-        const manifest = manifests[0];
-        const base = {
-          sectionId: current.rootSectionId,
-          keyEpoch: current.keyEpoch,
-          rootVersion: current.rootVersion,
-          version: current.version,
-          manifestId: manifest?.id ?? null,
-          changed: false,
-          eventCursor: null
-        };
-        if (current.contentCipher === "" || rootSection?.initializationManifestId) {
-          return { status: "complete", ...base } as const;
-        }
-        if (current.rootSectionId === input.sectionId) {
-          return { status: "reserved", ...base } as const;
-        }
-        if (manifest || !staleReservation(rootSection?.updatedAt ?? null)) {
-          return { status: "pending", ...base } as const;
-        }
-        if (current.rootVersion !== input.expectedRootVersion) {
-          return { status: "rejected", code: "stale-version" } as const;
-        }
-        await transaction
-          .update(schema.noteSections)
-          .set({ isDeleted: true, updatedAt: sql`CURRENT_TIMESTAMP` })
-          .where(
-            and(
-              eq(schema.noteSections.id, current.rootSectionId),
-              eq(schema.noteSections.noteId, input.noteId),
-              sql`${schema.noteSections.initializationManifestId} IS NULL`
-            )
-          );
-      } else if (current.rootVersion !== input.expectedRootVersion) {
-        return { status: "rejected", code: "stale-version" } as const;
-      }
-
-      const sectionsInUse = await transaction
-        .select({ id: schema.noteSections.id })
-        .from(schema.noteSections)
-        .where(eq(schema.noteSections.id, input.sectionId))
-        .limit(1)
-        .for("update");
-      if (sectionsInUse[0]) {
-        return { status: "rejected", code: "forbidden" } as const;
-      }
-      const updated = await transaction
-        .update(schema.notes)
-        .set({
-          rootSectionId: input.sectionId,
-          rootVersion: sql`${schema.notes.rootVersion} + 1`,
-          version: sql`${schema.notes.version} + 1`,
-          updatedAt: sql`CURRENT_TIMESTAMP`
-        })
-        .where(
-          and(
-            eq(schema.notes.id, input.noteId),
-            eq(schema.notes.rootVersion, current.rootVersion),
-            eq(schema.notes.keyEpoch, input.expectedKeyEpoch),
-            eq(schema.notes.rotationFenced, false),
-            ne(schema.notes.contentCipher, "")
-          )
-        )
-        .returning({ id: schema.notes.id });
-      if (updated.length !== 1) {
-        return { status: "rejected", code: "stale-version" } as const;
-      }
-      await transaction.insert(schema.noteSections).values({
-        id: input.sectionId,
-        noteId: input.noteId,
-        createdEpoch: input.expectedKeyEpoch
-      });
-      const version = current.version + 1;
-      const eventCursor = await insertEvent(transaction, {
-        eventType: "note.updated",
-        resourceType: "note",
-        resourceId: input.noteId,
-        noteId: input.noteId,
-        actorUserId: input.userId,
-        noteVersion: version,
-        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
-      });
-      return {
-        status: "reserved",
-        sectionId: input.sectionId,
-        keyEpoch: input.expectedKeyEpoch,
-        rootVersion: current.rootVersion + 1,
-        version,
-        manifestId: null,
-        changed: true,
-        eventCursor
-      } as const;
-    });
   }
 
   create(input: SectionWriteInput): Promise<SectionMutationOutcome> {
@@ -541,15 +359,6 @@ export class PostgresNoteSectionRepository implements NoteSectionRepository {
       ) {
         return { status: "rejected", code: "forbidden" } as const;
       }
-      const legacyRows = await transaction
-        .select({
-          contentCipher: schema.notes.contentCipher,
-          rootSectionId: schema.notes.rootSectionId
-        })
-        .from(schema.notes)
-        .where(eq(schema.notes.id, input.noteId))
-        .limit(1);
-      const legacy = legacyRows[0];
       const initializations = await transaction
         .select({ manifestId: schema.crdtInitializations.manifestId })
         .from(schema.crdtInitializations)
@@ -621,38 +430,20 @@ export class PostgresNoteSectionRepository implements NoteSectionRepository {
         manifestId = input.manifestId;
       }
 
-      const legacyAvailable = Boolean(legacy?.contentCipher);
-      if (legacyAvailable && legacy?.rootSectionId === storedSectionId) {
-        await transaction
-          .update(schema.notes)
-          .set({
-            contentCipher: "",
-            contentNonce: "",
-            contentLength: 0,
-            contentUpdatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(
-            and(
-              eq(schema.notes.id, input.noteId),
-              eq(schema.notes.rootSectionId, storedSectionId),
-              ne(schema.notes.contentCipher, "")
-            )
-          );
-      }
-      const shouldWriteEvent = status === "installed" || legacyAvailable;
-      const eventCursor = shouldWriteEvent
-        ? await insertEvent(transaction, {
-            eventType: "note.updated",
-            resourceType: "note",
-            resourceId: input.noteId,
-            noteId: input.noteId,
-            actorUserId: input.userId,
-            noteVersion: access.version,
-            ...(input.clientInstanceId
-              ? { clientInstanceId: input.clientInstanceId }
-              : {})
-          })
-        : null;
+      const eventCursor =
+        status === "installed"
+          ? await insertEvent(transaction, {
+              eventType: "note.updated",
+              resourceType: "note",
+              resourceId: input.noteId,
+              noteId: input.noteId,
+              actorUserId: input.userId,
+              noteVersion: access.version,
+              ...(input.clientInstanceId
+                ? { clientInstanceId: input.clientInstanceId }
+                : {})
+            })
+          : null;
       return {
         status,
         manifestId,

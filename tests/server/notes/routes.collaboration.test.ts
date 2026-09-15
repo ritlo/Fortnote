@@ -1,8 +1,9 @@
-import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
 import {
   createTestApp,
   csrfHeaders,
+  folderPayload,
+  noteMetadataUpdate,
   notePayload,
   registerAgent
 } from "../support/http.js";
@@ -26,12 +27,7 @@ describe("note CRUD and collaboration routes", () => {
     await agent
       .put(`/api/notes/${String(created.body.id)}`)
       .set(csrfHeaders())
-      .send({
-        contentCipher: "updated_content_cipher_abcdefghijklmnopqrstuvwxyz",
-        contentNonce: "updated_content_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentLength: 256,
-        version: 2
-      })
+      .send(noteMetadataUpdate(2))
       .expect(409);
   });
 
@@ -50,28 +46,20 @@ describe("note CRUD and collaboration routes", () => {
     await agent
       .put(`/api/notes/${noteId}`)
       .set(csrfHeaders())
-      .send({
-        title: "Should roll back",
-        contentCipher: "rollback_content_cipher_abcdefghijklmnopqrstuvwxyz",
-        contentNonce: "rollback_content_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentLength: 512,
-        version: 1
-      })
+      .send(noteMetadataUpdate(1, "rollback"))
       .expect(500);
 
     const note = (await testSql(app.locals.db).get(
-      `SELECT title,
-                content_cipher AS contentCipher,
-                content_length AS contentLength,
+      `SELECT title_cipher AS titleCipher,
+                root_version AS rootVersion,
                 version
          FROM notes
          WHERE id = ?`,
       noteId
     ))!;
     expect(note).toEqual({
-      contentCipher: "content_cipher_abcdefghijklmnopqrstuvwxyz",
-      contentLength: 128,
-      title: "Encrypted note",
+      titleCipher: notePayload().titleCipher,
+      rootVersion: 1,
       version: 1
     });
   });
@@ -105,7 +93,7 @@ describe("note CRUD and collaboration routes", () => {
     const folder = await alice
       .post("/api/folders")
       .set(csrfHeaders())
-      .send({ name: "Alice" })
+      .send(folderPayload())
       .expect(201);
 
     const created = await alice
@@ -137,7 +125,7 @@ describe("note CRUD and collaboration routes", () => {
     const folder = await agent
       .post("/api/folders")
       .set(csrfHeaders())
-      .send({ name: "Temporary" })
+      .send(folderPayload())
       .expect(201);
     const created = await agent
       .post("/api/notes")
@@ -208,7 +196,7 @@ describe("note CRUD and collaboration routes", () => {
         role: "viewer",
         sharingKeyVersion: 1,
         encryptedNoteKey: "encrypted_share_for_carol_abcdefghijklmnopqrstuvwxyz",
-        formatVersion: 1
+        formatVersion: 2
       })
       .expect(404);
 
@@ -220,7 +208,7 @@ describe("note CRUD and collaboration routes", () => {
         role: "editor",
         sharingKeyVersion: 1,
         encryptedNoteKey: "encrypted_share_for_bob_abcdefghijklmnopqrstuvwxyz",
-        formatVersion: 1
+        formatVersion: 2
       })
       .expect(201);
     expect(invited.body).toMatchObject({
@@ -237,7 +225,7 @@ describe("note CRUD and collaboration routes", () => {
       senderUserId: expect.any(String),
       sharingKeyVersion: 1,
       encryptedNoteKey: "encrypted_share_for_bob_abcdefghijklmnopqrstuvwxyz",
-      formatVersion: 1
+      formatVersion: 2
     });
 
     const bobList = await bob.get("/api/notes").expect(200);
@@ -262,18 +250,13 @@ describe("note CRUD and collaboration routes", () => {
     await bob
       .put(`/api/notes/${noteId}`)
       .set(csrfHeaders())
-      .send({
-        title: "Shared edit",
-        contentCipher: "shared_updated_content_cipher_abcdefghijklmnopqrstuvwxyz",
-        contentNonce: "shared_updated_content_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentLength: 512,
-        version: 1
-      })
+      .send(noteMetadataUpdate(1, "shared"))
       .expect(200);
 
     const aliceRead = await alice.get(`/api/notes/${noteId}`).expect(200);
     expect(aliceRead.body).toMatchObject({
-      title: "Shared edit",
+      titleCipher: noteMetadataUpdate(1, "shared").titleCipher,
+      rootVersion: 2,
       version: 2,
       encryptedNoteKey: expect.any(String),
       noteKeyNonce: expect.any(String),
@@ -297,12 +280,7 @@ describe("note CRUD and collaboration routes", () => {
     await bob
       .put(`/api/notes/${noteId}`)
       .set(csrfHeaders())
-      .send({
-        contentCipher: "viewer_updated_content_cipher_abcdefghijklmnopqrstuvwxyz",
-        contentNonce: "viewer_updated_content_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentLength: 1024,
-        version: 2
-      })
+      .send(noteMetadataUpdate(2, "viewer"))
       .expect(404);
 
     await alice
@@ -346,289 +324,6 @@ describe("note CRUD and collaboration routes", () => {
     });
   });
 
-  it("rotates note keys for all active members and attachments", async () => {
-    const app = await createTestApp();
-    const alice = await registerAgent(app, "rotate_alice");
-    const bob = await registerAgent(app, "rotate_bob");
-    const bobSession = await bob.get("/api/auth/me").expect(200);
-    const bobUserId = String(bobSession.body.id);
-
-    await bob
-      .put("/api/sharing-keys/current")
-      .set(csrfHeaders())
-      .send(sharingKeyPayload(2))
-      .expect(201);
-    const created = await alice
-      .post("/api/notes")
-      .set(csrfHeaders())
-      .send(notePayload())
-      .expect(201);
-    const noteId = String(created.body.id);
-    await alice
-      .post(`/api/notes/${noteId}/memberships`)
-      .set(csrfHeaders())
-      .send({
-        username: "rotate_bob",
-        role: "editor",
-        sharingKeyVersion: 2,
-        encryptedNoteKey: "old_share_for_bob_abcdefghijklmnopqrstuvwxyz",
-        formatVersion: 1
-      })
-      .expect(201);
-    await alice
-      .post(`/api/notes/${noteId}/attachments`)
-      .set(csrfHeaders())
-      .set({
-        "content-type": "application/octet-stream",
-        "x-fortnote-attachment-id": "00000000-0000-4000-8000-000000000001",
-        "x-fortnote-filename": "rotate.txt",
-        "x-fortnote-mime-type": "text/plain",
-        "x-fortnote-size": "8",
-        "x-fortnote-encrypted-attachment-key":
-          "old_attachment_key_abcdefghijklmnopqrstuvwxyz",
-        "x-fortnote-attachment-key-nonce":
-          "old_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
-        "x-fortnote-file-nonce": "file_nonce_abcdefghijklmnopqrstuvwxyz"
-      })
-      .send(Buffer.from("ciphered"))
-      .expect(201);
-
-    const rotated = await alice
-      .post(`/api/notes/${noteId}/key-rotation`)
-      .set(csrfHeaders())
-      .send({
-        encryptedNoteKey: "rotated_owner_note_key_abcdefghijklmnopqrstuvwxyz",
-        noteKeyNonce: "rotated_owner_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentCipher: "rotated_content_cipher_abcdefghijklmnopqrstuvwxyz",
-        contentNonce: "rotated_content_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentLength: 777,
-        version: 1,
-        shares: [
-          {
-            recipientUserId: bobUserId,
-            sharingKeyVersion: 2,
-            encryptedNoteKey: "rotated_share_for_bob_abcdefghijklmnopqrstuvwxyz",
-            formatVersion: 1
-          }
-        ],
-        attachmentKeys: [
-          {
-            attachmentId: "00000000-0000-4000-8000-000000000001",
-            encryptedAttachmentKey: "rotated_attachment_key_abcdefghijklmnopqrstuvwxyz",
-            attachmentKeyNonce: "rotated_attachment_nonce_abcdefghijklmnopqrstuvwxyz"
-          }
-        ]
-      })
-      .expect(200);
-    expect(rotated.body).toMatchObject({ id: noteId, version: 2 });
-
-    const note = (await testSql(app.locals.db).get(
-      `SELECT encrypted_note_key AS encryptedNoteKey,
-                note_key_nonce AS noteKeyNonce,
-                content_cipher AS contentCipher,
-                content_length AS contentLength,
-                version
-         FROM notes
-         WHERE id = ?`,
-      noteId
-    ))!;
-    expect(note).toEqual({
-      contentCipher: "rotated_content_cipher_abcdefghijklmnopqrstuvwxyz",
-      contentLength: 777,
-      encryptedNoteKey: "rotated_owner_note_key_abcdefghijklmnopqrstuvwxyz",
-      noteKeyNonce: "rotated_owner_nonce_abcdefghijklmnopqrstuvwxyz",
-      version: 2
-    });
-    const share = (await testSql(app.locals.db).get(
-      `SELECT encrypted_note_key AS encryptedNoteKey,
-                sharing_key_version AS sharingKeyVersion
-         FROM note_key_shares
-         WHERE note_id = ? AND recipient_user_id = ?`,
-      noteId,
-      bobUserId
-    ))!;
-    expect(share).toEqual({
-      encryptedNoteKey: "rotated_share_for_bob_abcdefghijklmnopqrstuvwxyz",
-      sharingKeyVersion: 2
-    });
-    const attachment = (await testSql(app.locals.db).get(
-      `SELECT encrypted_attachment_key AS encryptedAttachmentKey,
-                attachment_key_nonce AS attachmentKeyNonce
-         FROM attachments
-         WHERE id = ?`,
-      "00000000-0000-4000-8000-000000000001"
-    ))!;
-    expect(attachment).toEqual({
-      attachmentKeyNonce: "rotated_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
-      encryptedAttachmentKey: "rotated_attachment_key_abcdefghijklmnopqrstuvwxyz"
-    });
-  });
-
-  it("rolls back key rotations when event writes fail", async () => {
-    const app = await createTestApp();
-    const alice = await registerAgent(app, "rollback_rotation_alice");
-    const bob = await registerAgent(app, "rollback_rotation_bob");
-    const bobSession = await bob.get("/api/auth/me").expect(200);
-    const bobUserId = String(bobSession.body.id);
-
-    await bob
-      .put("/api/sharing-keys/current")
-      .set(csrfHeaders())
-      .send(sharingKeyPayload(2))
-      .expect(201);
-    const created = await alice
-      .post("/api/notes")
-      .set(csrfHeaders())
-      .send(notePayload())
-      .expect(201);
-    const noteId = String(created.body.id);
-    await alice
-      .post(`/api/notes/${noteId}/memberships`)
-      .set(csrfHeaders())
-      .send({
-        username: "rollback_rotation_bob",
-        role: "editor",
-        sharingKeyVersion: 2,
-        encryptedNoteKey: "old_rotation_share_for_bob_abcdefghijklmnopqrstuvwxyz",
-        formatVersion: 1
-      })
-      .expect(201);
-    await alice
-      .post(`/api/notes/${noteId}/attachments`)
-      .set(csrfHeaders())
-      .set({
-        "content-type": "application/octet-stream",
-        "x-fortnote-attachment-id": "00000000-0000-4000-8000-000000000002",
-        "x-fortnote-filename": "rollback-rotate.txt",
-        "x-fortnote-mime-type": "text/plain",
-        "x-fortnote-size": "8",
-        "x-fortnote-encrypted-attachment-key":
-          "old_rotation_attachment_key_abcdefghijklmnopqrstuvwxyz",
-        "x-fortnote-attachment-key-nonce":
-          "old_rotation_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
-        "x-fortnote-file-nonce": "file_nonce_abcdefghijklmnopqrstuvwxyz"
-      })
-      .send(Buffer.from("ciphered"))
-      .expect(201);
-
-    await failNoteEventWrites(app);
-
-    await alice
-      .post(`/api/notes/${noteId}/key-rotation`)
-      .set(csrfHeaders())
-      .send({
-        encryptedNoteKey: "failed_rotation_owner_note_key_abcdefghijklmnopqrstuvwxyz",
-        noteKeyNonce: "failed_rotation_owner_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentCipher: "failed_rotation_content_cipher_abcdefghijklmnopqrstuvwxyz",
-        contentNonce: "failed_rotation_content_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentLength: 888,
-        version: 1,
-        shares: [
-          {
-            recipientUserId: bobUserId,
-            sharingKeyVersion: 2,
-            encryptedNoteKey: "failed_rotation_share_for_bob_abcdefghijklmnopqrstuvwxyz",
-            formatVersion: 1
-          }
-        ],
-        attachmentKeys: [
-          {
-            attachmentId: "00000000-0000-4000-8000-000000000002",
-            encryptedAttachmentKey:
-              "failed_rotation_attachment_key_abcdefghijklmnopqrstuvwxyz",
-            attachmentKeyNonce:
-              "failed_rotation_attachment_nonce_abcdefghijklmnopqrstuvwxyz"
-          }
-        ]
-      })
-      .expect(500);
-
-    const note = await testSql(app.locals.db).get(
-      `SELECT encrypted_note_key AS encryptedNoteKey,
-                note_key_nonce AS noteKeyNonce,
-                content_cipher AS contentCipher,
-                content_length AS contentLength,
-                version
-         FROM notes
-         WHERE id = ?`,
-      noteId
-    );
-    expect(note).toEqual({
-      contentCipher: "content_cipher_abcdefghijklmnopqrstuvwxyz",
-      contentLength: 128,
-      encryptedNoteKey: "encrypted_note_key_abcdefghijklmnopqrstuvwxyz",
-      noteKeyNonce: "note_key_nonce_abcdefghijklmnopqrstuvwxyz",
-      version: 1
-    });
-    const share = await testSql(app.locals.db).get(
-      `SELECT encrypted_note_key AS encryptedNoteKey,
-                sharing_key_version AS sharingKeyVersion
-         FROM note_key_shares
-         WHERE note_id = ? AND recipient_user_id = ?`,
-      noteId,
-      bobUserId
-    );
-    expect(share).toEqual({
-      encryptedNoteKey: "old_rotation_share_for_bob_abcdefghijklmnopqrstuvwxyz",
-      sharingKeyVersion: 2
-    });
-    const attachment = await testSql(app.locals.db).get(
-      `SELECT encrypted_attachment_key AS encryptedAttachmentKey,
-                attachment_key_nonce AS attachmentKeyNonce
-         FROM attachments
-         WHERE id = ?`,
-      "00000000-0000-4000-8000-000000000002"
-    );
-    expect(attachment).toEqual({
-      attachmentKeyNonce: "old_rotation_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
-      encryptedAttachmentKey: "old_rotation_attachment_key_abcdefghijklmnopqrstuvwxyz"
-    });
-  });
-
-  it("rejects partial key rotations", async () => {
-    const app = await createTestApp();
-    const alice = await registerAgent(app, "partial_rotate_alice");
-    const bob = await registerAgent(app, "partial_rotate_bob");
-
-    await bob
-      .put("/api/sharing-keys/current")
-      .set(csrfHeaders())
-      .send(sharingKeyPayload())
-      .expect(201);
-    const created = await alice
-      .post("/api/notes")
-      .set(csrfHeaders())
-      .send(notePayload())
-      .expect(201);
-    const noteId = String(created.body.id);
-    await alice
-      .post(`/api/notes/${noteId}/memberships`)
-      .set(csrfHeaders())
-      .send({
-        username: "partial_rotate_bob",
-        role: "viewer",
-        sharingKeyVersion: 1,
-        encryptedNoteKey: "old_share_for_bob_abcdefghijklmnopqrstuvwxyz",
-        formatVersion: 1
-      })
-      .expect(201);
-
-    await alice
-      .post(`/api/notes/${noteId}/key-rotation`)
-      .set(csrfHeaders())
-      .send({
-        encryptedNoteKey: "rotated_owner_note_key_abcdefghijklmnopqrstuvwxyz",
-        noteKeyNonce: "rotated_owner_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentCipher: "rotated_content_cipher_abcdefghijklmnopqrstuvwxyz",
-        contentNonce: "rotated_content_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentLength: 777,
-        version: 1,
-        shares: [],
-        attachmentKeys: []
-      })
-      .expect(400);
-  });
-
   it("rolls back membership invites when event writes fail", async () => {
     const app = await createTestApp();
     const alice = await registerAgent(app, "rollback_member_alice");
@@ -659,7 +354,7 @@ describe("note CRUD and collaboration routes", () => {
         role: "editor",
         sharingKeyVersion: 1,
         encryptedNoteKey: "rollback_share_for_bob_abcdefghijklmnopqrstuvwxyz",
-        formatVersion: 1
+        formatVersion: 2
       })
       .expect(500);
 
@@ -710,7 +405,7 @@ describe("note CRUD and collaboration routes", () => {
         role: "editor",
         sharingKeyVersion: 1,
         encryptedNoteKey: "rollback_role_share_for_bob_abcdefghijklmnopqrstuvwxyz",
-        formatVersion: 1
+        formatVersion: 2
       })
       .expect(201);
 
@@ -760,7 +455,7 @@ describe("note CRUD and collaboration routes", () => {
         role: "editor",
         sharingKeyVersion: 1,
         encryptedNoteKey: "rollback_revoke_share_for_bob_abcdefghijklmnopqrstuvwxyz",
-        formatVersion: 1
+        formatVersion: 2
       })
       .expect(201);
 
@@ -798,19 +493,19 @@ describe("note CRUD and collaboration routes", () => {
     const parent = await agent
       .post("/api/folders")
       .set(csrfHeaders())
-      .send({ name: "Parent" })
+      .send(folderPayload())
       .expect(201);
 
     const child = await agent
       .post("/api/folders")
       .set(csrfHeaders())
-      .send({ name: "Child", parentFolderId: parent.body.id })
+      .send(folderPayload(String(parent.body.id)))
       .expect(201);
 
     await agent
       .post("/api/folders")
       .set(csrfHeaders())
-      .send({ name: "Too deep", parentFolderId: child.body.id })
+      .send(folderPayload(String(child.body.id)))
       .expect(400);
   });
 

@@ -1,7 +1,6 @@
 export interface NoteQueryRecord {
   id: string;
   folderId: string | null;
-  title: string;
   titleCipher: string | null;
   titleNonce: string | null;
   titleFormatVersion: number | null;
@@ -9,7 +8,6 @@ export interface NoteQueryRecord {
   noteKeyNonce: string | null;
   noteKeyFormatVersion: number | null;
   contentLength: number;
-  legacyContentAvailable: boolean;
   version: number;
   rootVersion: number;
   rootSectionId: string | null;
@@ -21,15 +19,6 @@ export interface NoteQueryRecord {
   ownerUserId: string;
   cryptoOwnerId: string;
   role: string;
-}
-
-export interface LegacyNoteContent {
-  contentCipher: string;
-  contentNonce: string;
-  contentLength: number;
-  version: number;
-  rootVersion: number;
-  keyEpoch: number;
 }
 
 export interface NoteMembershipRecord {
@@ -63,7 +52,6 @@ export interface NoteEpochLinkRecord {
 export interface NoteQueryRepository {
   list(userId: string, includeDeleted: boolean): Promise<NoteQueryRecord[]>;
   find(noteId: string, userId: string): Promise<NoteQueryRecord | null>;
-  legacyContent(noteId: string): Promise<LegacyNoteContent | null>;
   memberships(noteId: string): Promise<NoteMembershipRecord[]>;
   keyShare(noteId: string, recipientUserId: string): Promise<NoteKeyShareRecord | null>;
   epochLinks(noteId: string): Promise<NoteEpochLinkRecord[]>;

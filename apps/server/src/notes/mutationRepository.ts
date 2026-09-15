@@ -6,17 +6,13 @@ interface NoteMutationInput {
 
 export interface CreateNoteInput extends NoteMutationInput {
   folderId: string | null;
-  title: string;
-  titleCipher: string | null;
-  titleNonce: string | null;
-  titleFormatVersion: number | null;
+  titleCipher: string;
+  titleNonce: string;
+  titleFormatVersion: number;
   encryptedNoteKey: string;
   noteKeyNonce: string;
   noteKeyFormatVersion: number;
-  contentCipher: string;
-  contentNonce: string;
-  contentLength: number;
-  rootSectionId: string | null;
+  rootSectionId: string;
 }
 
 export type CreateNoteOutcome =
@@ -47,30 +43,7 @@ export type ProtectedNoteUpdateOutcome =
   | { kind: "invalid-folder" }
   | { kind: "conflict" };
 
-export interface LegacyNoteUpdateInput extends NoteMutationInput {
-  expectedVersion: number;
-  folderId: string | null | undefined;
-  title: string | undefined;
-  contentCipher: string;
-  contentNonce: string;
-  contentLength: number;
-}
-
-export type LegacyNoteUpdateOutcome =
-  | {
-      kind: "saved";
-      eventCursor: number;
-      version: number;
-      updatedAt: string;
-    }
-  | { kind: "not-found" }
-  | { kind: "deleted" }
-  | { kind: "conflict" }
-  | { kind: "shared-folder" }
-  | { kind: "invalid-folder" };
-
 export interface NoteMutationRepository {
   create(input: CreateNoteInput): Promise<CreateNoteOutcome>;
   updateProtected(input: ProtectedNoteUpdateInput): Promise<ProtectedNoteUpdateOutcome>;
-  updateLegacy(input: LegacyNoteUpdateInput): Promise<LegacyNoteUpdateOutcome>;
 }

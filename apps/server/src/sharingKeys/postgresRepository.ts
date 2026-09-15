@@ -51,58 +51,13 @@ export class PostgresSharingKeyRepository implements SharingKeyRepository {
     return rows[0] ?? null;
   }
 
-  put(userId: string, input: SharingKeyInput): Promise<PutSharingKeyOutcome> {
-    return this.orm.transaction(async (transaction) => {
-      const existingRows = await transaction
-        .select({
-          publicKey: schema.userSharingKeys.publicKey,
-          formatVersion: schema.userSharingKeys.formatVersion
-        })
-        .from(schema.userSharingKeys)
-        .where(
-          and(
-            eq(schema.userSharingKeys.userId, userId),
-            eq(schema.userSharingKeys.sharingKeyVersion, input.sharingKeyVersion)
-          )
-        )
-        .limit(1)
-        .for("update");
-      const existing = existingRows[0];
-      if (existing) {
-        if (
-          existing.publicKey !== input.publicKey ||
-          existing.formatVersion !== 1 ||
-          input.formatVersion !== 2
-        ) {
-          return "conflict" as const;
-        }
-        const migrated = await transaction
-          .update(schema.userSharingKeys)
-          .set({
-            encryptedPrivateKey: input.encryptedPrivateKey,
-            privateKeyNonce: input.privateKeyNonce,
-            formatVersion: 2,
-            updatedAt: sql`CURRENT_TIMESTAMP`
-          })
-          .where(
-            and(
-              eq(schema.userSharingKeys.userId, userId),
-              eq(schema.userSharingKeys.sharingKeyVersion, input.sharingKeyVersion),
-              eq(schema.userSharingKeys.publicKey, input.publicKey),
-              eq(schema.userSharingKeys.formatVersion, 1)
-            )
-          )
-          .returning({ userId: schema.userSharingKeys.userId });
-        return migrated.length === 1 ? ("upgraded" as const) : ("conflict" as const);
-      }
-
-      const inserted = await transaction
-        .insert(schema.userSharingKeys)
-        .values({ userId, ...input })
-        .onConflictDoNothing()
-        .returning({ userId: schema.userSharingKeys.userId });
-      return inserted.length === 1 ? ("created" as const) : ("conflict" as const);
-    });
+  async put(userId: string, input: SharingKeyInput): Promise<PutSharingKeyOutcome> {
+    const inserted = await this.orm
+      .insert(schema.userSharingKeys)
+      .values({ userId, ...input })
+      .onConflictDoNothing()
+      .returning({ userId: schema.userSharingKeys.userId });
+    return inserted.length === 1 ? "created" : "conflict";
   }
 
   async cleanup(userId: string): Promise<number> {
@@ -141,12 +96,7 @@ export class PostgresSharingKeyRepository implements SharingKeyRepository {
         schema.userSharingKeys,
         eq(schema.userSharingKeys.userId, schema.users.id)
       )
-      .where(
-        and(
-          eq(schema.users.canonicalHandle, canonicalHandle),
-          eq(schema.users.handleState, "active")
-        )
-      )
+      .where(eq(schema.users.canonicalHandle, canonicalHandle))
       .orderBy(desc(schema.userSharingKeys.sharingKeyVersion))
       .limit(1);
     return rows[0] ?? null;

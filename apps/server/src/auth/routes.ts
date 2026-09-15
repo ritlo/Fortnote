@@ -171,14 +171,12 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function findAccountIdentity(
+async function findAccountIdentity(
   context: AppContext,
   suppliedHandle: string
 ): Promise<AccountIdentity | null> {
-  return context.db.accounts.findIdentity(
-    suppliedHandle,
-    canonicalizeHandle(suppliedHandle)
-  );
+  const canonicalHandle = canonicalizeHandle(suppliedHandle);
+  return canonicalHandle ? context.db.accounts.findIdentity(canonicalHandle) : null;
 }
 
 function accountResponse(identity: AccountIdentity) {
@@ -186,8 +184,7 @@ function accountResponse(identity: AccountIdentity) {
     id: identity.id,
     username: identity.canonicalHandle ?? identity.username,
     displayName: identity.displayName ?? identity.username,
-    canonicalHandle: identity.canonicalHandle,
-    handleState: identity.handleState
+    canonicalHandle: identity.canonicalHandle
   };
 }
 
@@ -295,8 +292,7 @@ export function createAuthRouter(context: AppContext): Router {
         id: userId,
         username: canonicalHandle,
         displayName,
-        canonicalHandle,
-        handleState: "active"
+        canonicalHandle
       })
     );
   });
@@ -393,48 +389,6 @@ export function createAuthRouter(context: AppContext): Router {
     }
     clearSessionCookie(response, context.config.cookieSecure);
     response.status(204).send();
-  });
-
-  router.put("/handle", async (request, response) => {
-    const session = await context.db.sessions.find(
-      readSessionToken(request.get("cookie"))
-    );
-    if (!session) {
-      sendApiError(response, "unauthorized", "Not signed in");
-      return;
-    }
-    const parsed = z
-      .object({ handle: z.string().min(1).max(128) })
-      .safeParse(request.body);
-    const canonicalHandle = parsed.success
-      ? canonicalizeHandle(parsed.data.handle)
-      : null;
-    if (!canonicalHandle) {
-      sendApiError(response, "bad_request", "Invalid account handle");
-      return;
-    }
-    try {
-      const activated = await context.db.accounts.activateHandle(
-        session.userId,
-        canonicalHandle
-      );
-      if (!activated) {
-        sendApiError(response, "conflict", "Account handle is already active");
-        return;
-      }
-    } catch {
-      sendApiError(response, "conflict", "Account handle is unavailable");
-      return;
-    }
-    response.json(
-      accountResponse({
-        id: session.userId,
-        username: canonicalHandle,
-        displayName: session.displayName,
-        canonicalHandle,
-        handleState: "active"
-      })
-    );
   });
 
   router.get("/me", async (request, response) => {

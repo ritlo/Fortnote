@@ -11,7 +11,7 @@ const sharingKeySchema = z.object({
   publicKey: z.string().min(32),
   encryptedPrivateKey: z.string().min(32),
   privateKeyNonce: z.string().min(16),
-  formatVersion: z.number().int().min(1).max(2)
+  formatVersion: z.literal(2)
 });
 
 export function createSharingKeysRouter(context: AppContext): Router {
@@ -72,11 +72,6 @@ export function createSharingKeysRouter(context: AppContext): Router {
       sendApiError(response, "conflict", "Sharing key version already exists");
       return;
     }
-    if (outcome === "upgraded") {
-      response.json({ sharingKeyVersion: parsed.data.sharingKeyVersion });
-      return;
-    }
-
     response.status(201).json({
       sharingKeyVersion: parsed.data.sharingKeyVersion
     });

@@ -2,8 +2,6 @@ export interface AttachmentRecord {
   id: string;
   noteId: string;
   userId: string;
-  filename: string;
-  mimeType: string;
   metadataCipher: string | null;
   metadataNonce: string | null;
   metadataFormatVersion: number | null;

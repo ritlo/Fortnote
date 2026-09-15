@@ -34,15 +34,6 @@ describe("realtime binary sections", () => {
       .set(csrfHeaders())
       .send(protectedNotePayload(noteId, sectionId))
       .expect(201);
-    await testSql(server.db).run(
-      `
-        UPDATE notes
-        SET content_cipher = 'legacy-cipher', content_nonce = 'legacy-nonce',
-            content_length = 42
-        WHERE id = ?
-      `,
-      noteId
-    );
     const cryptoOwnerId = (await testSql(server.db).get<{ cryptoOwnerId: string }>(
       "SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?",
       noteId
@@ -640,15 +631,5 @@ describe("realtime binary sections", () => {
       legacyRootVersion: 1,
       sectionManifestId: winnerManifestId
     });
-    expect(
-      await testSql(server.db).get(
-        `
-          SELECT content_cipher AS contentCipher, content_nonce AS contentNonce,
-                 content_length AS contentLength
-          FROM notes WHERE id = ?
-        `,
-        noteId
-      )
-    ).toEqual({ contentCipher: "", contentNonce: "", contentLength: 0 });
   });
 });

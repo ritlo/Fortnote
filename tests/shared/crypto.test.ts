@@ -19,7 +19,6 @@ import {
   fromCanonicalBase64,
   generateRecoverySecret,
   hkdfSha256,
-  noteAssociatedData,
   openSealedBytes,
   randomBytes,
   sealBytes,
@@ -27,7 +26,6 @@ import {
   utf8,
   validateEncryptedPayload
 } from "@shared/crypto.js";
-import { crdtCheckpointAssociatedData, crdtUpdateAssociatedData } from "@shared/crdt.js";
 
 describe("crypto helpers", () => {
   beforeAll(async () => {
@@ -61,45 +59,6 @@ describe("crypto helpers", () => {
     );
   });
 
-  it("round-trips note ciphertext with associated data", async () => {
-    const key = randomBytes(32);
-    const aad = noteAssociatedData({
-      userId: "user_a",
-      noteId: "note_a",
-      formatVersion: 1
-    });
-
-    const encrypted = await encryptBytes(utf8("private note"), key, aad);
-    const decrypted = await decryptBytes(encrypted, key, aad);
-
-    expect(toBase64(decrypted)).toEqual(toBase64(utf8("private note")));
-  });
-
-  it("rejects ciphertext moved to another note", async () => {
-    const key = randomBytes(32);
-    const encrypted = await encryptBytes(
-      utf8("private note"),
-      key,
-      noteAssociatedData({
-        userId: "user_a",
-        noteId: "note_a",
-        formatVersion: 1
-      })
-    );
-
-    await expect(
-      decryptBytes(
-        encrypted,
-        key,
-        noteAssociatedData({
-          userId: "user_a",
-          noteId: "note_b",
-          formatVersion: 1
-        })
-      )
-    ).rejects.toThrow();
-  });
-
   it("rejects attachment ciphertext moved to another note", async () => {
     const key = randomBytes(32);
     const encrypted = await encryptBytes(
@@ -122,58 +81,6 @@ describe("crypto helpers", () => {
           noteId: "note_b",
           attachmentId: "attachment_a",
           formatVersion: 1
-        })
-      )
-    ).rejects.toThrow();
-  });
-
-  it("binds CRDT updates to their note, epoch, owner, and identity", async () => {
-    const key = randomBytes(32);
-    const input = {
-      cryptoOwnerId: "user_a",
-      noteId: "note_a",
-      keyEpoch: 1,
-      updateId: "update_a",
-      formatVersion: 1
-    };
-    const encrypted = await encryptBytes(
-      utf8("crdt update"),
-      key,
-      crdtUpdateAssociatedData(input)
-    );
-
-    await expect(
-      decryptBytes(
-        encrypted,
-        key,
-        crdtUpdateAssociatedData({ ...input, updateId: "update_b" })
-      )
-    ).rejects.toThrow();
-  });
-
-  it("binds CRDT checkpoints to the updates they compact", async () => {
-    const key = randomBytes(32);
-    const input = {
-      cryptoOwnerId: "user_a",
-      noteId: "note_a",
-      keyEpoch: 1,
-      updateId: "checkpoint_a",
-      formatVersion: 1,
-      compactedUpdateIds: ["update_a"]
-    };
-    const encrypted = await encryptBytes(
-      utf8("checkpoint"),
-      key,
-      crdtCheckpointAssociatedData(input)
-    );
-
-    await expect(
-      decryptBytes(
-        encrypted,
-        key,
-        crdtCheckpointAssociatedData({
-          ...input,
-          compactedUpdateIds: ["update_b"]
         })
       )
     ).rejects.toThrow();

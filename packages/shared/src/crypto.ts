@@ -305,14 +305,6 @@ export async function openSealedBytes(input: {
   );
 }
 
-export function noteAssociatedData(input: {
-  userId: string;
-  noteId: string;
-  formatVersion: number;
-}): Uint8Array {
-  return utf8(`note:${String(input.formatVersion)}:${input.userId}:${input.noteId}`);
-}
-
 export function attachmentAssociatedData(input: {
   userId: string;
   noteId: string;

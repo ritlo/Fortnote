@@ -63,13 +63,6 @@ export function logout(): Promise<undefined> {
   return apiRequest<undefined>("/auth/logout", { method: "POST" });
 }
 
-export function repairAccountHandle(handle: string): Promise<User> {
-  return apiRequest<User>("/auth/handle", {
-    method: "PUT",
-    body: JSON.stringify({ handle: normalizeAccountHandle(handle) })
-  });
-}
-
 export function getKeyMaterial(): Promise<KeyMaterialResponse> {
   return apiRequest<KeyMaterialResponse>("/key-material");
 }

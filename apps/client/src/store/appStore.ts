@@ -23,8 +23,6 @@ export interface DecryptedNote {
   title: string;
   noteKeyBase64: string;
   contentLength: number;
-  legacyContentAvailable?: boolean;
-  legacyBodyLoaded?: boolean;
   version: number;
   keyEpoch: number;
   isDeleted: boolean;
@@ -34,7 +32,6 @@ export interface DecryptedNote {
   role: "owner" | "editor" | "viewer";
   rootVersion?: number;
   rootSectionId?: string | null;
-  metadataMigration?: "current" | "write-v2-pending" | "retry-required";
 }
 
 export type SectionIndexStatus = "idle" | "loading" | "ready" | "error";

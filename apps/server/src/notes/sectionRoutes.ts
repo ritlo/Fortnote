@@ -5,12 +5,7 @@ import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { canReadNote, getNoteAccessAsync } from "./access.js";
 import { requestClientInstanceId } from "./events.js";
-
-const legacySectionReservationSchema = z.object({
-  sectionId: z.uuid(),
-  expectedKeyEpoch: z.number().int().positive(),
-  expectedRootVersion: z.number().int().positive()
-});
+import type { SectionRejectionCode } from "./sectionRepository/contracts.js";
 
 const sectionInitializationSchema = z.object({
   manifestId: z.string().min(1),
@@ -26,47 +21,6 @@ const sectionMutationSchema = z.object({
 const sectionCreateSchema = sectionMutationSchema.extend({ sectionId: z.uuid() });
 
 export function registerSectionRoutes(router: Router, context: AppContext): void {
-  router.post("/:id/sections/legacy-reservation", async (request, response) => {
-    const session = await requireSessionAsync(context.db, request, response);
-    if (!session) {
-      return;
-    }
-    const parsed = legacySectionReservationSchema.safeParse(request.body);
-    if (!parsed.success) {
-      sendApiError(response, "bad_request", "Invalid legacy migration reservation");
-      return;
-    }
-    const clientInstanceId = requestClientInstanceId(request);
-    const outcome = await context.db.noteSections.reserveLegacy({
-      sessionId: session.id,
-      userId: session.userId,
-      noteId: request.params.id,
-      sectionId: parsed.data.sectionId,
-      expectedKeyEpoch: parsed.data.expectedKeyEpoch,
-      expectedRootVersion: parsed.data.expectedRootVersion,
-      ...(clientInstanceId ? { clientInstanceId } : {})
-    });
-    if (outcome.status === "rejected") {
-      if (outcome.code === "forbidden") {
-        sendApiError(response, "not_found", "Note not found");
-      } else {
-        sendApiError(response, "conflict", legacyMigrationConflict(outcome.code));
-      }
-      return;
-    }
-    if (outcome.eventCursor !== null) {
-      publishEventCursor(context, outcome.eventCursor);
-    }
-    response.status(outcome.changed ? 201 : 200).json({
-      status: outcome.status,
-      sectionId: outcome.sectionId,
-      keyEpoch: outcome.keyEpoch,
-      rootVersion: outcome.rootVersion,
-      version: outcome.version,
-      ...(outcome.manifestId ? { manifestId: outcome.manifestId } : {})
-    });
-  });
-
   router.post("/:id/sections", async (request, response) => {
     const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
@@ -88,7 +42,7 @@ export function registerSectionRoutes(router: Router, context: AppContext): void
       ...(clientInstanceId ? { clientInstanceId } : {})
     });
     if (outcome.status === "rejected") {
-      sendSectionMutationError(response, outcome.code);
+      sendSectionError(response, outcome.code);
       return;
     }
     if (outcome.eventCursor !== null) {
@@ -130,7 +84,7 @@ export function registerSectionRoutes(router: Router, context: AppContext): void
       ...(clientInstanceId ? { clientInstanceId } : {})
     });
     if (outcome.status === "rejected") {
-      sendSectionMutationError(response, outcome.code);
+      sendSectionError(response, outcome.code);
       return;
     }
     if (outcome.eventCursor !== null) {
@@ -165,11 +119,7 @@ export function registerSectionRoutes(router: Router, context: AppContext): void
       ...(clientInstanceId ? { clientInstanceId } : {})
     });
     if (outcome.status === "rejected") {
-      if (outcome.code === "forbidden") {
-        sendApiError(response, "not_found", "Note not found");
-      } else {
-        sendApiError(response, "conflict", legacyMigrationConflict(outcome.code));
-      }
+      sendSectionError(response, outcome.code);
       return;
     }
     if (outcome.eventCursor !== null) {
@@ -211,19 +161,9 @@ function publishEventCursor(context: AppContext, cursor: number): void {
   context.realtime?.publishEvents([cursor]);
 }
 
-function legacyMigrationConflict(
-  code: "rotation-pending" | "stale-epoch" | "stale-version"
-): string {
-  if (code === "rotation-pending") {
-    return "Note-key rotation is pending";
-  }
-  return code === "stale-epoch" ? "Note key epoch changed" : "Note metadata changed";
-}
-
-function sendSectionMutationError(
+function sendSectionError(
   response: Parameters<typeof sendApiError>[0],
-  code:
-    "forbidden" | "last-section" | "rotation-pending" | "stale-epoch" | "stale-version"
+  code: SectionRejectionCode
 ): void {
   if (code === "forbidden") {
     sendApiError(response, "not_found", "Note not found");
@@ -233,5 +173,13 @@ function sendSectionMutationError(
     sendApiError(response, "conflict", "A note must keep at least one section");
     return;
   }
-  sendApiError(response, "conflict", legacyMigrationConflict(code));
+  if (code === "rotation-pending") {
+    sendApiError(response, "conflict", "Note-key rotation is pending");
+    return;
+  }
+  sendApiError(
+    response,
+    "conflict",
+    code === "stale-epoch" ? "Note key epoch changed" : "Note metadata changed"
+  );
 }

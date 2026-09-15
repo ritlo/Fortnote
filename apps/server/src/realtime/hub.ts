@@ -4,8 +4,7 @@ import {
   type CrdtBinaryHeader,
   type CrdtManifestReferenceV2,
   type CrdtSubscribeV2,
-  type CrdtUnsubscribeV2,
-  type EncryptedCrdtMessage
+  type CrdtUnsubscribeV2
 } from "@fortnote/shared";
 import type { AppContext } from "../http/app.js";
 import { canReadNote } from "../notes/access.js";
@@ -19,9 +18,7 @@ export interface RealtimeClient {
   userId: string;
   username: string;
   socket: WebSocket;
-  crdtEnabled: boolean;
   crdtV2Enabled: boolean;
-  subscribedNoteIds: Set<string>;
   subscribedCrdtScopes: Set<string>;
 }
 
@@ -46,9 +43,6 @@ const DEFAULT_PRESENCE_TTL_MS = 45_000;
 const DEFAULT_PRESENCE_SWEEP_INTERVAL_MS = 15_000;
 const DEFAULT_SESSION_SWEEP_INTERVAL_MS = 15_000;
 const SESSION_CLOSED_CODE = 1008;
-// ponytail: fixed ceiling; make this configurable only if real note sizes demand it.
-const MAX_CRDT_ENVELOPES_PER_EPOCH = 128;
-const MAX_CRDT_BYTES_PER_EPOCH = 4 * 1024 * 1024;
 
 export class RealtimeHub implements RealtimePublisher {
   private readonly clients = new Set<RealtimeClient>();
@@ -123,7 +117,6 @@ export class RealtimeHub implements RealtimePublisher {
     userId: string;
     username: string;
     socket: WebSocket;
-    crdtEnabled: boolean;
     crdtV2Enabled?: boolean;
     clientInstanceId?: string;
   }): RealtimeClient {
@@ -133,9 +126,7 @@ export class RealtimeHub implements RealtimePublisher {
       userId: input.userId,
       username: input.username,
       socket: input.socket,
-      crdtEnabled: input.crdtEnabled,
       crdtV2Enabled: input.crdtV2Enabled ?? false,
-      subscribedNoteIds: new Set<string>(),
       subscribedCrdtScopes: new Set<string>()
     };
     if (input.clientInstanceId !== undefined) {
@@ -162,7 +153,6 @@ export class RealtimeHub implements RealtimePublisher {
       if (client.userId !== userId) {
         continue;
       }
-      client.subscribedNoteIds.delete(noteId);
       for (const scope of client.subscribedCrdtScopes) {
         if (scope.startsWith(`${noteId}:`)) {
           client.subscribedCrdtScopes.delete(scope);
@@ -273,30 +263,6 @@ export class RealtimeHub implements RealtimePublisher {
     });
     this.presenceByNote.set(noteId, notePresence);
     await this.queuePresenceBroadcast(noteId);
-  }
-
-  async subscribeCrdt(client: RealtimeClient, noteId: string): Promise<void> {
-    if (!this.context || !client.crdtEnabled) {
-      return;
-    }
-    if (!(await this.ensureClientSessionAsync(client))) {
-      return;
-    }
-    const access = await this.context.db.noteAccess.find(noteId, client.userId);
-    if (!canReadNote(access)) {
-      return;
-    }
-    client.subscribedNoteIds.add(noteId);
-    const updates = await this.context.db.legacyHistory.list(noteId, access.keyEpoch);
-    for (const update of updates) {
-      sendJson(client.socket, update);
-    }
-    sendJson(client.socket, {
-      type: "crdt-sync",
-      noteId,
-      keyEpoch: access.keyEpoch,
-      hasUpdates: updates.length > 0
-    });
   }
 
   async subscribeCrdtV2(client: RealtimeClient, request: CrdtSubscribeV2): Promise<void> {
@@ -435,55 +401,6 @@ export class RealtimeHub implements RealtimePublisher {
       recipient.socket.send(frame);
     }
     return outcome;
-  }
-
-  async publishCrdtUpdate(
-    client: RealtimeClient,
-    update: EncryptedCrdtMessage
-  ): Promise<"accepted" | "forbidden" | "storage-limit"> {
-    if (!this.context || !client.crdtEnabled) {
-      return "forbidden";
-    }
-    if (!(await this.ensureClientSessionAsync(client))) {
-      return "forbidden";
-    }
-    const outcome = await this.context.db.legacyHistory.persist({
-      sessionId: client.sessionId,
-      userId: client.userId,
-      update,
-      maxEnvelopes: MAX_CRDT_ENVELOPES_PER_EPOCH,
-      maxBytes: MAX_CRDT_BYTES_PER_EPOCH
-    });
-    if (outcome === "storage-limit") {
-      return "storage-limit";
-    }
-    if (outcome === "forbidden") {
-      return "forbidden";
-    }
-    if (outcome === "duplicate") {
-      return "accepted";
-    }
-    for (const recipient of this.clients) {
-      if (
-        recipient === client ||
-        !recipient.crdtEnabled ||
-        !recipient.subscribedNoteIds.has(update.noteId)
-      ) {
-        continue;
-      }
-      if (!(await this.ensureClientSessionAsync(recipient))) {
-        continue;
-      }
-      const access = await this.context.db.noteAccess.find(
-        update.noteId,
-        recipient.userId
-      );
-      if (!canReadNote(access)) {
-        continue;
-      }
-      sendJson(recipient.socket, update);
-    }
-    return "accepted";
   }
 
   private clearPresence(client: RealtimeClient): void {

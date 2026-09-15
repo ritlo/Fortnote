@@ -6,8 +6,6 @@ import { serializedEventMetadata } from "./events.js";
 import type {
   CreateNoteInput,
   CreateNoteOutcome,
-  LegacyNoteUpdateInput,
-  LegacyNoteUpdateOutcome,
   NoteMutationRepository,
   ProtectedNoteUpdateInput,
   ProtectedNoteUpdateOutcome
@@ -75,26 +73,24 @@ export class PostgresNoteMutationRepository implements NoteMutationRepository {
         userId: input.actorUserId,
         cryptoOwnerId: input.actorUserId,
         folderId: input.folderId,
-        title: input.title,
+        title: "",
         titleCipher: input.titleCipher,
         titleNonce: input.titleNonce,
         titleFormatVersion: input.titleFormatVersion,
         encryptedNoteKey: input.encryptedNoteKey,
         noteKeyNonce: input.noteKeyNonce,
         noteKeyFormatVersion: input.noteKeyFormatVersion,
-        contentCipher: input.contentCipher,
-        contentNonce: input.contentNonce,
-        contentLength: input.contentLength,
+        contentCipher: "",
+        contentNonce: "",
+        contentLength: 0,
         rootSectionId: input.rootSectionId,
         contentUpdatedAt: sql`CURRENT_TIMESTAMP`
       });
-      if (input.rootSectionId) {
-        await transaction.insert(schema.noteSections).values({
-          id: input.rootSectionId,
-          noteId: input.noteId,
-          createdEpoch: 1
-        });
-      }
+      await transaction.insert(schema.noteSections).values({
+        id: input.rootSectionId,
+        noteId: input.noteId,
+        createdEpoch: 1
+      });
       await transaction.insert(schema.noteMemberships).values({
         noteId: input.noteId,
         userId: input.actorUserId,
@@ -181,7 +177,6 @@ export class PostgresNoteMutationRepository implements NoteMutationRepository {
         .update(schema.notes)
         .set({
           folderId,
-          title: input.titleCipher ? "" : undefined,
           titleCipher: input.titleCipher,
           titleNonce: input.titleNonce,
           titleFormatVersion: input.titleFormatVersion,
@@ -229,98 +224,6 @@ export class PostgresNoteMutationRepository implements NoteMutationRepository {
         eventCursor,
         rootVersion,
         keyEpoch: current.keyEpoch,
-        updatedAt: saved.updatedAt
-      } as const;
-    });
-  }
-
-  updateLegacy(input: LegacyNoteUpdateInput): Promise<LegacyNoteUpdateOutcome> {
-    return this.orm.transaction(async (transaction) => {
-      const currentRows = await transaction
-        .select({
-          noteId: schema.notes.id,
-          folderId: schema.notes.folderId,
-          version: schema.notes.version,
-          isDeleted: schema.notes.isDeleted,
-          role: schema.noteMemberships.role,
-          status: schema.noteMemberships.status
-        })
-        .from(schema.notes)
-        .innerJoin(
-          schema.noteMemberships,
-          eq(schema.noteMemberships.noteId, schema.notes.id)
-        )
-        .where(
-          and(
-            eq(schema.notes.id, input.noteId),
-            eq(schema.noteMemberships.userId, input.actorUserId)
-          )
-        )
-        .limit(1)
-        .for("update", { of: [schema.notes, schema.noteMemberships] });
-      const current = currentRows[0];
-      if (
-        current?.status !== "active" ||
-        (current.role !== "owner" && current.role !== "editor")
-      ) {
-        return { kind: "not-found" } as const;
-      }
-      if (current.isDeleted) {
-        return { kind: "deleted" } as const;
-      }
-      if (current.version !== input.expectedVersion) {
-        return { kind: "conflict" } as const;
-      }
-      const folderId = input.folderId ?? current.folderId;
-      if (
-        current.role !== "owner" &&
-        input.folderId !== undefined &&
-        input.folderId !== current.folderId
-      ) {
-        return { kind: "shared-folder" } as const;
-      }
-      if (
-        current.role === "owner" &&
-        !(await validFolder(transaction, input.actorUserId, folderId))
-      ) {
-        return { kind: "invalid-folder" } as const;
-      }
-
-      const updated = await transaction
-        .update(schema.notes)
-        .set({
-          folderId,
-          title: input.title,
-          contentCipher: input.contentCipher,
-          contentNonce: input.contentNonce,
-          contentLength: input.contentLength,
-          contentUpdatedAt: sql`CURRENT_TIMESTAMP`,
-          version: sql`${schema.notes.version} + 1`,
-          updatedAt: sql`CURRENT_TIMESTAMP`
-        })
-        .where(
-          and(
-            eq(schema.notes.id, current.noteId),
-            eq(schema.notes.version, input.expectedVersion)
-          )
-        )
-        .returning({ updatedAt: schema.notes.updatedAt });
-      const saved = updated[0];
-      if (!saved) {
-        return { kind: "conflict" } as const;
-      }
-      const version = current.version + 1;
-      const eventCursor = await insertNoteEvent(transaction, {
-        noteId: current.noteId,
-        actorUserId: input.actorUserId,
-        eventType: "note.updated",
-        noteVersion: version,
-        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
-      });
-      return {
-        kind: "saved",
-        eventCursor,
-        version,
         updatedAt: saved.updatedAt
       } as const;
     });

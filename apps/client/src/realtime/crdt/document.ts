@@ -55,10 +55,6 @@ export function replaceSectionContent(
   replaceBlockNoteFragmentSnapshot(fragment, snapshot);
 }
 
-export function replaceLegacySectionContent(fragment: Y.XmlFragment, body: string): void {
-  replaceBlockNoteFragment(fragment, body);
-}
-
 export function appendSectionContent(
   fragment: Y.XmlFragment,
   snapshot: BlockNoteFragmentSnapshot
@@ -101,23 +97,4 @@ export function getSnapshotVersion(doc: Y.Doc): number {
 
 export function setSnapshotVersion(doc: Y.Doc, version: number): void {
   doc.getMap<number>("metadata").set(SNAPSHOT_VERSION_KEY, version);
-}
-
-export function replaceWithSnapshot(
-  doc: Y.Doc,
-  fragment: Y.XmlFragment,
-  sectionId: string,
-  note: DecryptedNote
-): void {
-  doc.transact(() => {
-    if (sectionId === ROOT_SECTION_ID) {
-      const text = doc.getText("title");
-      text.delete(0, text.length);
-      text.insert(0, note.title);
-    }
-    if (sectionId !== ROOT_SECTION_ID && fragment.length === 0) {
-      replaceBlockNoteFragment(fragment, undefined);
-    }
-    setSnapshotVersion(doc, note.version);
-  }, SNAPSHOT_SEED);
 }

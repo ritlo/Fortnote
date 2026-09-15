@@ -3,12 +3,11 @@ import { notifyCrdtSectionChange } from "./changes";
 import { REMOTE_UPDATE } from "./document";
 import { clearCheckpointCoverage, trackUpdate } from "./outbound";
 import { getCrdtTransport } from "./runtime";
-import { bindingKey, bindings, defaultSectionId, isActiveBinding } from "./state";
+import { bindingKey, bindings, isActiveBinding } from "./state";
 import { decryptReceivedUpdate, type IncomingCrdtMessage } from "./transport";
 
 export function receiveCrdtUpdate(update: IncomingCrdtMessage): Promise<void> {
-  const sectionId = scopedSectionId(update) ?? defaultSectionId(update.noteId);
-  const binding = bindings.get(bindingKey(update.noteId, sectionId));
+  const binding = bindings.get(bindingKey(update.noteId, update.sectionId));
   if (
     binding?.note.cryptoOwnerId !== update.cryptoOwnerId ||
     binding.note.keyEpoch !== messageKeyEpoch(update)
@@ -37,17 +36,7 @@ export function receiveCrdtUpdate(update: IncomingCrdtMessage): Promise<void> {
       Y.applyUpdate(binding.doc, plaintext, REMOTE_UPDATE);
       binding.appliedUpdateCount += 1;
       binding.failedUpdateIds.delete(update.updateId);
-      if (update.type === "crdt-checkpoint") {
-        update.compactedUpdateIds?.forEach((id) => {
-          binding.pendingUpdateIds.delete(id);
-          binding.failedUpdateIds.delete(id);
-          binding.receivedServerSequences.delete(id);
-        });
-      }
-      if (
-        (update.type === "crdt-binary" || update.type === "crdt-manifest") &&
-        update.serverSequence
-      ) {
+      if (update.serverSequence) {
         binding.observedServerSequence = Math.max(
           binding.observedServerSequence,
           update.serverSequence
@@ -63,10 +52,7 @@ export function receiveCrdtUpdate(update: IncomingCrdtMessage): Promise<void> {
       }
       binding.failedUpdateIds.add(update.updateId);
       binding.pendingUpdateIds.add(update.updateId);
-      if (
-        (update.type === "crdt-binary" || update.type === "crdt-manifest") &&
-        update.serverSequence
-      ) {
+      if (update.serverSequence) {
         binding.receivedServerSequences.set(update.updateId, update.serverSequence);
       }
       throw error;
@@ -74,12 +60,6 @@ export function receiveCrdtUpdate(update: IncomingCrdtMessage): Promise<void> {
   });
   binding.receiving = received.catch(() => undefined);
   return received;
-}
-
-function scopedSectionId(update: IncomingCrdtMessage): string | null {
-  return "sectionId" in update && typeof update.sectionId === "string"
-    ? update.sectionId
-    : null;
 }
 
 function messageKeyEpoch(update: IncomingCrdtMessage): number {

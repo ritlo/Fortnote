@@ -516,7 +516,7 @@ function searchableNoteSignature(notes: DecryptedNote[]): string {
 }
 
 function isSearchableNote(note: DecryptedNote): boolean {
-  return !note.isDeleted && !note.legacyContentAvailable && Boolean(note.rootSectionId);
+  return !note.isDeleted && Boolean(note.rootSectionId);
 }
 
 function visitSnapshotNodes(values: unknown[], blocks: SearchIndexBlock[]): void {

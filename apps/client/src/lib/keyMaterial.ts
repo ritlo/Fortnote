@@ -7,16 +7,13 @@ import type {
 } from "../api";
 import { fromBase64, randomBytes, type KdfParams } from "@fortnote/shared";
 import {
-  decryptLegacyNoteKey,
   decryptNoteKeyEnvelopeV2,
-  decryptNoteKeyShare,
   decryptNoteKeyShareV2,
   decryptNoteTitleV2,
   createEpochLinkV2,
   encryptNoteKeyEnvelopeV2,
   encryptNoteTitleV2,
   encryptRootKeyEnvelopeV2,
-  encryptSharingPrivateKeyEnvelopeV2,
   noteKeyToBase64,
   openUserSharingKey,
   traverseEpochLinksBackward,
@@ -26,9 +23,7 @@ import {
   getNoteKeyShare,
   getSharingKeyVersion,
   updateKeyMaterial,
-  type NoteEpochLink,
-  type SharingKeyEnvelope,
-  type StoreSharingKeyPayload
+  type NoteEpochLink
 } from "../api";
 import type { DecryptedNote } from "../store/appStore";
 
@@ -168,20 +163,17 @@ export async function decryptNoteSummary(
   note: NoteSummary,
   openedSharingKey: OpenedSharingKey | null = null
 ): Promise<DecryptedNote> {
-  const decrypted =
+  const noteKey =
     note.role === "owner"
-      ? await decryptOwnedNote(user, rootKey, note)
-      : await decryptSharedNote(user, rootKey, note, openedSharingKey);
+      ? await decryptOwnedNoteKey(rootKey, note)
+      : await decryptSharedNoteKey(user, rootKey, note, openedSharingKey);
 
-  const title = await decryptNoteTitle(note, decrypted.noteKey);
   return {
     id: note.id,
     folderId: note.folderId,
-    title,
-    noteKeyBase64: decrypted.noteKeyBase64,
+    title: await decryptNoteTitle(note, noteKey),
+    noteKeyBase64: noteKeyToBase64(noteKey),
     contentLength: note.contentLength,
-    legacyContentAvailable: Boolean(note.legacyContentAvailable),
-    legacyBodyLoaded: false,
     version: note.version,
     keyEpoch: note.keyEpoch,
     isDeleted: Boolean(note.isDeleted),
@@ -190,60 +182,40 @@ export async function decryptNoteSummary(
     cryptoOwnerId: note.cryptoOwnerId,
     role: note.role,
     rootVersion: note.rootVersion ?? note.version,
-    rootSectionId: note.rootSectionId ?? null,
-    metadataMigration:
-      note.titleFormatVersion === 2 && note.noteKeyFormatVersion === 2
-        ? "current"
-        : "write-v2-pending"
+    rootSectionId: note.rootSectionId ?? null
   };
 }
 
-async function decryptOwnedNote(
-  user: User,
+function decryptOwnedNoteKey(
   rootKey: Uint8Array,
   note: NoteSummary
-): Promise<{ noteKey: Uint8Array; noteKeyBase64: string }> {
-  if (!note.encryptedNoteKey || !note.noteKeyNonce) {
+): Promise<Uint8Array> {
+  if (note.noteKeyFormatVersion !== 2 || !note.encryptedNoteKey || !note.noteKeyNonce) {
     throw new Error("Owned note key is missing");
   }
-
-  const noteKey =
-    note.noteKeyFormatVersion === 2
-      ? await decryptNoteKeyEnvelopeV2({
-          cryptoOwnerId: note.cryptoOwnerId,
-          noteId: note.id,
-          keyEpoch: note.keyEpoch,
-          rootKey,
-          envelope: {
-            cipher: note.encryptedNoteKey,
-            nonce: note.noteKeyNonce,
-            formatVersion: 2
-          }
-        })
-      : await decryptLegacyNoteKey({
-          userId: user.id,
-          rootKey,
-          noteId: note.id,
-          encryptedNoteKey: {
-            cipher: note.encryptedNoteKey,
-            nonce: note.noteKeyNonce,
-            formatVersion: 1
-          }
-        });
-  const noteKeyBase64 = noteKeyToBase64(noteKey);
-  return {
-    noteKey,
-    noteKeyBase64
-  };
+  return decryptNoteKeyEnvelopeV2({
+    cryptoOwnerId: note.cryptoOwnerId,
+    noteId: note.id,
+    keyEpoch: note.keyEpoch,
+    rootKey,
+    envelope: {
+      cipher: note.encryptedNoteKey,
+      nonce: note.noteKeyNonce,
+      formatVersion: 2
+    }
+  });
 }
 
-async function decryptSharedNote(
+async function decryptSharedNoteKey(
   user: User,
   rootKey: Uint8Array,
   note: NoteSummary,
   openedSharingKey: OpenedSharingKey | null
-): Promise<{ noteKey: Uint8Array; noteKeyBase64: string }> {
+): Promise<Uint8Array> {
   const keyShare = await getNoteKeyShare(note.id);
+  if (keyShare.formatVersion !== 2) {
+    throw new Error("Unsupported note key share");
+  }
   const sharingKey =
     openedSharingKey?.sharingKeyVersion === keyShare.sharingKeyVersion
       ? openedSharingKey
@@ -252,64 +224,21 @@ async function decryptSharedNote(
           rootKey,
           envelope: await getSharingKeyVersion(keyShare.sharingKeyVersion)
         });
-  const noteKey =
-    keyShare.formatVersion === 2
-      ? await decryptNoteKeyShareV2({
-          cryptoOwnerId: note.cryptoOwnerId,
-          noteId: note.id,
-          keyEpoch: note.keyEpoch,
-          recipientUserId: keyShare.recipientUserId,
-          recipientSharingKeyVersion: keyShare.sharingKeyVersion,
-          senderUserId: keyShare.senderUserId,
-          encryptedNoteKey: keyShare.encryptedNoteKey,
-          publicKey: sharingKey.publicKey,
-          privateKey: sharingKey.privateKey
-        })
-      : fromBase64(
-          await decryptNoteKeyShare({
-            encryptedNoteKey: keyShare.encryptedNoteKey,
-            publicKey: sharingKey.publicKey,
-            privateKey: sharingKey.privateKey
-          })
-        );
-  const noteKeyBase64 = noteKeyToBase64(noteKey);
-
-  return {
-    noteKey,
-    noteKeyBase64
-  };
-}
-
-export async function prepareSharingKeyEnvelopeMigrationV2(input: {
-  userId: string;
-  rootKey: Uint8Array;
-  envelope: SharingKeyEnvelope;
-  opened: OpenedSharingKey;
-}): Promise<StoreSharingKeyPayload | null> {
-  if (input.envelope.formatVersion === 2) {
-    return null;
-  }
-  const encrypted = await encryptSharingPrivateKeyEnvelopeV2({
-    userId: input.userId,
-    sharingKeyVersion: input.envelope.sharingKeyVersion,
-    publicKey: input.envelope.publicKey,
-    rootKey: input.rootKey,
-    privateKey: fromBase64(input.opened.privateKey)
+  return decryptNoteKeyShareV2({
+    cryptoOwnerId: note.cryptoOwnerId,
+    noteId: note.id,
+    keyEpoch: note.keyEpoch,
+    recipientUserId: keyShare.recipientUserId,
+    recipientSharingKeyVersion: keyShare.sharingKeyVersion,
+    senderUserId: keyShare.senderUserId,
+    encryptedNoteKey: keyShare.encryptedNoteKey,
+    publicKey: sharingKey.publicKey,
+    privateKey: sharingKey.privateKey
   });
-  return {
-    sharingKeyVersion: input.envelope.sharingKeyVersion,
-    publicKey: input.envelope.publicKey,
-    encryptedPrivateKey: encrypted.cipher,
-    privateKeyNonce: encrypted.nonce,
-    formatVersion: 2
-  };
 }
 
-async function decryptNoteTitle(note: NoteSummary, noteKey: Uint8Array): Promise<string> {
-  if (note.titleFormatVersion !== 2) {
-    return note.title;
-  }
-  if (!note.titleCipher || !note.titleNonce) {
+function decryptNoteTitle(note: NoteSummary, noteKey: Uint8Array): Promise<string> {
+  if (note.titleFormatVersion !== 2 || !note.titleCipher || !note.titleNonce) {
     throw new Error("Protected note title is incomplete");
   }
   return decryptNoteTitleV2({

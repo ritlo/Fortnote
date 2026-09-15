@@ -1,26 +1,5 @@
-import {
-  cryptoReady,
-  decryptBytes,
-  encryptBytes,
-  fromBase64,
-  randomBytes,
-  randomUuid,
-  toBase64,
-  utf8,
-  type EncryptedPayload
-} from "@fortnote/shared";
+import { cryptoReady, randomBytes, randomUuid, toBase64 } from "@fortnote/shared";
 import { encryptNoteKeyEnvelopeV2, encryptNoteTitleV2 } from "./protected";
-
-export interface EncryptedNoteDraft {
-  id: string;
-  title: string;
-  encryptedNoteKey: string;
-  noteKeyNonce: string;
-  contentCipher: string;
-  contentNonce: string;
-  contentLength: number;
-  noteKey: Uint8Array;
-}
 
 export interface ProtectedNoteDraftV2 {
   id: string;
@@ -32,38 +11,6 @@ export interface ProtectedNoteDraftV2 {
   noteKeyNonce: string;
   noteKeyFormatVersion: 2;
   noteKey: Uint8Array;
-}
-
-export async function createEncryptedNoteDraft(input: {
-  userId: string;
-  rootKey: Uint8Array;
-  title: string;
-  body: string;
-}): Promise<EncryptedNoteDraft> {
-  await cryptoReady();
-  const id = randomUuid();
-  const noteKey = randomBytes(32);
-  const encryptedNoteKey = await encryptBytes(
-    noteKey,
-    input.rootKey,
-    noteKeyAad(input.userId, id)
-  );
-  const encryptedBody = await encryptBytes(
-    utf8(input.body),
-    noteKey,
-    noteBodyAad(input.userId, id)
-  );
-
-  return {
-    id,
-    title: input.title,
-    encryptedNoteKey: encryptedNoteKey.cipher,
-    noteKeyNonce: encryptedNoteKey.nonce,
-    contentCipher: encryptedBody.cipher,
-    contentNonce: encryptedBody.nonce,
-    contentLength: encryptedBody.cipher.length,
-    noteKey
-  };
 }
 
 export async function createProtectedNoteDraftV2(input: {
@@ -104,84 +51,6 @@ export async function createProtectedNoteDraftV2(input: {
   };
 }
 
-export function decryptLegacyNoteKey(input: {
-  userId: string;
-  rootKey: Uint8Array;
-  noteId: string;
-  encryptedNoteKey: EncryptedPayload;
-}): Promise<Uint8Array> {
-  return decryptBytes(
-    input.encryptedNoteKey,
-    input.rootKey,
-    noteKeyAad(input.userId, input.noteId)
-  );
-}
-
-export async function decryptNote(input: {
-  userId: string;
-  rootKey: Uint8Array;
-  noteId: string;
-  encryptedNoteKey: EncryptedPayload;
-  encryptedBody: EncryptedPayload;
-}): Promise<{ body: string; noteKey: Uint8Array }> {
-  const noteKey = await decryptBytes(
-    input.encryptedNoteKey,
-    input.rootKey,
-    noteKeyAad(input.userId, input.noteId)
-  );
-  const bodyBytes = await decryptBytes(
-    input.encryptedBody,
-    noteKey,
-    noteBodyAad(input.userId, input.noteId)
-  );
-
-  return {
-    body: new TextDecoder().decode(bodyBytes),
-    noteKey
-  };
-}
-
-export async function decryptNoteBodyWithKey(input: {
-  cryptoOwnerId: string;
-  noteId: string;
-  noteKeyBase64: string;
-  encryptedBody: EncryptedPayload;
-}): Promise<string> {
-  const bodyBytes = await decryptBytes(
-    input.encryptedBody,
-    fromBase64(input.noteKeyBase64),
-    noteBodyAad(input.cryptoOwnerId, input.noteId)
-  );
-  return new TextDecoder().decode(bodyBytes);
-}
-
-export async function encryptExistingNoteBody(input: {
-  userId: string;
-  noteId: string;
-  noteKeyBase64: string;
-  body: string;
-}): Promise<{ contentCipher: string; contentNonce: string; contentLength: number }> {
-  const encrypted = await encryptBytes(
-    utf8(input.body),
-    fromBase64(input.noteKeyBase64),
-    noteBodyAad(input.userId, input.noteId)
-  );
-
-  return {
-    contentCipher: encrypted.cipher,
-    contentNonce: encrypted.nonce,
-    contentLength: encrypted.cipher.length
-  };
-}
-
 export function noteKeyToBase64(noteKey: Uint8Array): string {
   return toBase64(noteKey);
-}
-
-function noteKeyAad(userId: string, noteId: string): Uint8Array {
-  return utf8(`fortnote:note-key:v1:${userId}:${noteId}`);
-}
-
-function noteBodyAad(userId: string, noteId: string): Uint8Array {
-  return utf8(`fortnote:note-body:v1:${userId}:${noteId}`);
 }

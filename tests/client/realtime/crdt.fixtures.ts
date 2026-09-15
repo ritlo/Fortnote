@@ -1,4 +1,4 @@
-import type { EncryptedCrdtMessage } from "@fortnote/shared";
+import type { ReceivedBinaryCrdtMessage } from "@client/realtime/crdt";
 import type { DecryptedNote } from "@client/store/appStore";
 import * as Y from "yjs";
 
@@ -53,15 +53,21 @@ export function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   };
 }
 
-export function encryptedUpdate(current: DecryptedNote): EncryptedCrdtMessage {
+export function encryptedUpdate(
+  current: DecryptedNote,
+  sectionId = current.rootSectionId ?? "root"
+): ReceivedBinaryCrdtMessage {
   return {
-    type: "crdt-update",
-    formatVersion: 1,
+    type: "crdt-binary",
+    kind: "update",
+    formatVersion: 2,
     updateId: crypto.randomUUID(),
     noteId: current.id,
+    sectionId,
     cryptoOwnerId: current.cryptoOwnerId,
-    keyEpoch: current.keyEpoch,
-    cipher: "cipher",
-    nonce: "nonce"
+    expectedKeyEpoch: current.keyEpoch,
+    nonce: "nonce",
+    cipherLength: 1,
+    cipher: Uint8Array.of(1)
   };
 }

@@ -31,7 +31,6 @@ export function setCrdtTransport(next: CrdtTransport | null): void {
     for (const binding of bindings.values()) {
       const note = binding.note as DecryptedNote | undefined;
       if (note) {
-        next.discard(note.id, note.keyEpoch);
         next.subscribe(
           note.id,
           binding.sectionId,

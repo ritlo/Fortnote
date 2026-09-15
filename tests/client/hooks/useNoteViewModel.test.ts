@@ -452,23 +452,6 @@ describe("ordered content regression fixtures", () => {
     expect(result.current.selectedNote).toBeNull();
     expect(result.current.filteredNotes).toEqual([]);
   });
-
-  it("keeps legacy content flag visible in the view model", () => {
-    useAppStore.setState({
-      notes: [
-        note({
-          legacyContentAvailable: true,
-          legacyBodyLoaded: true,
-          rootSectionId: null
-        })
-      ],
-      notesView: "notes",
-      selectedNoteId: "note_1"
-    });
-    const { result } = renderHook(() => useNoteViewModel());
-    expect(result.current.selectedNote?.legacyContentAvailable).toBe(true);
-    expect(result.current.selectedNote?.legacyBodyLoaded).toBe(true);
-  });
 });
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {

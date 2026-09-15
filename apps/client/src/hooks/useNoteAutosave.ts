@@ -1,7 +1,7 @@
-import { fromBase64, randomUuid } from "@fortnote/shared";
+import { fromBase64 } from "@fortnote/shared";
 import { useEffect, useRef } from "react";
 import { isApiRequestError, updateNote } from "../api";
-import { encryptNoteKeyEnvelopeV2, encryptNoteTitleV2 } from "../cryptoClient";
+import { encryptNoteTitleV2 } from "../cryptoClient";
 import { editCrdtNote } from "../realtime/crdt";
 import { useAppStore, type DecryptedNote } from "../store/appStore";
 import { loadDecryptedNotes } from "./useAppData";
@@ -127,38 +127,13 @@ export function useNoteAutosave() {
         finishSuccessfulSave(noteId);
         return "skipped";
       }
-      const shouldMigrateOwnedKey =
-        noteToSave.role === "owner" && noteToSave.metadataMigration !== "current";
-      const rootSectionId =
-        noteToSave.rootSectionId ?? (shouldMigrateOwnedKey ? randomUuid() : null);
-      const encryptedNoteKey = shouldMigrateOwnedKey
-        ? await encryptNoteKeyEnvelopeV2({
-            cryptoOwnerId: noteToSave.cryptoOwnerId,
-            noteId: noteToSave.id,
-            keyEpoch: noteToSave.keyEpoch,
-            rootKey: state.rootKey,
-            noteKey
-          })
-        : null;
-      if (!isCurrentNoteOperation(operation)) {
-        finishSuccessfulSave(noteId);
-        return "skipped";
-      }
       const saved = await updateNote(noteToSave.id, {
         titleCipher: encryptedTitle.cipher,
         titleNonce: encryptedTitle.nonce,
         titleFormatVersion: 2,
         folderId: noteToSave.folderId,
         rootVersion: noteToSave.rootVersion ?? noteToSave.version,
-        keyEpoch: noteToSave.keyEpoch,
-        ...(encryptedNoteKey && rootSectionId
-          ? {
-              encryptedNoteKey: encryptedNoteKey.cipher,
-              noteKeyNonce: encryptedNoteKey.nonce,
-              noteKeyFormatVersion: 2 as const,
-              rootSectionId
-            }
-          : {})
+        keyEpoch: noteToSave.keyEpoch
       });
       if (!isCurrentNoteOperation(operation)) {
         finishSuccessfulSave(noteId);
@@ -173,12 +148,7 @@ export function useNoteAutosave() {
                   ...note,
                   version: saved.version ?? note.version,
                   rootVersion: saved.rootVersion ?? note.rootVersion ?? note.version,
-                  rootSectionId: rootSectionId ?? note.rootSectionId ?? null,
-                  updatedAt: saved.updatedAt,
-                  metadataMigration:
-                    note.metadataMigration === "current" || shouldMigrateOwnedKey
-                      ? "current"
-                      : "retry-required"
+                  updatedAt: saved.updatedAt
                 }
             : note
         )

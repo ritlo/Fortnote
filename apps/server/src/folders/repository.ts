@@ -1,5 +1,4 @@
 export interface FolderNameValues {
-  name: string;
   nameCipher: string | null;
   nameNonce: string | null;
   nameFormatVersion: number | null;

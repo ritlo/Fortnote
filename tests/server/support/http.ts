@@ -79,11 +79,31 @@ export function notePayload(folderId: string | null = null) {
   return {
     id: crypto.randomUUID(),
     folderId,
-    title: "Encrypted note",
+    rootSectionId: crypto.randomUUID(),
+    titleCipher: "encrypted_title_cipher_abcdefghijklmnopqrstuvwxyz",
+    titleNonce: "encrypted_title_nonce_abcdefghijklmnopqrstuvwxyz",
+    titleFormatVersion: 2,
     encryptedNoteKey: "encrypted_note_key_abcdefghijklmnopqrstuvwxyz",
     noteKeyNonce: "note_key_nonce_abcdefghijklmnopqrstuvwxyz",
-    contentCipher: "content_cipher_abcdefghijklmnopqrstuvwxyz",
-    contentNonce: "content_nonce_abcdefghijklmnopqrstuvwxyz",
-    contentLength: 128
+    noteKeyFormatVersion: 2
+  };
+}
+
+export function folderPayload(parentFolderId?: string | null) {
+  return {
+    nameCipher: "encrypted_folder_name_abcdefghijklmnopqrstuvwxyz",
+    nameNonce: "encrypted_folder_nonce_abcdefghijklmnopqrstuvwxyz",
+    nameFormatVersion: 2,
+    ...(parentFolderId === undefined ? {} : { parentFolderId })
+  };
+}
+
+export function noteMetadataUpdate(rootVersion: number, label = "updated") {
+  return {
+    titleCipher: `${label}_title_cipher_abcdefghijklmnopqrstuvwxyz`,
+    titleNonce: `${label}_title_nonce_abcdefghijklmnopqrstuvwxyz`,
+    titleFormatVersion: 2,
+    rootVersion,
+    keyEpoch: 1
   };
 }

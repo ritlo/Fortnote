@@ -227,7 +227,7 @@ export function sharingKeyPayload(username: string) {
     publicKey: `public_sharing_key_${username}_abcdefghijklmnopqrstuvwxyz`,
     encryptedPrivateKey: `encrypted_private_key_${username}_abcdefghijklmnopqrstuvwxyz`,
     privateKeyNonce: `private_key_nonce_${username}_abcdefghijklmnopqrstuvwxyz`,
-    formatVersion: 1
+    formatVersion: 2
   };
 }
 
@@ -237,7 +237,7 @@ export function invitePayload(username: string, role: "editor" | "viewer") {
     role,
     sharingKeyVersion: 1,
     encryptedNoteKey: `encrypted_share_for_${username}_abcdefghijklmnopqrstuvwxyz`,
-    formatVersion: 1
+    formatVersion: 2
   };
 }
 
@@ -344,12 +344,10 @@ export async function connectBinary(
 export async function connect(
   baseUrl: string,
   cookie: string,
-  after: number,
-  crdt = true
+  after: number
 ): Promise<SocketClient> {
-  const capabilities = crdt ? "&capabilities=crdt-v1" : "";
   const socket = new WebSocket(
-    `${baseUrl.replace(/^http/, "ws")}/api/realtime?after=${String(after)}${capabilities}`,
+    `${baseUrl.replace(/^http/, "ws")}/api/realtime?after=${String(after)}`,
     { headers: { Cookie: cookie, Origin: TEST_ALLOWED_ORIGIN } }
   );
   const messages: Record<string, unknown>[] = [];

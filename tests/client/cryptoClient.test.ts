@@ -1,15 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   createAccountRecoveryCrypto,
-  createEncryptedNoteDraft,
   createEpochLinkV2,
   createUserSharingKey,
   createLoginAuthVerifier,
   createPasswordChangeCrypto,
+  createProtectedNoteDraftV2,
   createRegistrationCrypto,
   createRecoveryRotationCrypto,
-  decryptNoteKeyShare,
-  decryptNote,
   decryptCrdtMessage,
   decryptAttachmentMetadataV2,
   decryptContentChunkV2,
@@ -30,7 +28,6 @@ import {
   encryptNoteTitleV2,
   encryptRootKeyEnvelopeV2,
   encryptSharingPrivateKeyEnvelopeV2,
-  encryptNoteKeyShare,
   noteKeyToBase64,
   openUserSharingKey,
   openVault,
@@ -38,7 +35,7 @@ import {
 } from "@client/cryptoClient";
 
 describe("client crypto workflows", () => {
-  it("registers, opens the vault, and decrypts a note", async () => {
+  it("registers, opens the vault, and unwraps a note key", async () => {
     const registration = await createRegistrationCrypto(
       "alice",
       "correct horse battery staple"
@@ -53,29 +50,24 @@ describe("client crypto workflows", () => {
 
     expect(opened.authVerifier).toBe(registration.payload.authVerifier);
 
-    const draft = await createEncryptedNoteDraft({
-      userId: "user_a",
+    const draft = await createProtectedNoteDraftV2({
+      cryptoOwnerId: "user_a",
       rootKey: opened.rootKey,
-      title: "Note",
-      body: "Secret body"
+      title: "Note"
     });
-    const decrypted = await decryptNote({
-      userId: "user_a",
-      rootKey: opened.rootKey,
-      noteId: draft.id,
-      encryptedNoteKey: {
-        cipher: draft.encryptedNoteKey,
-        nonce: draft.noteKeyNonce,
-        formatVersion: 1
-      },
-      encryptedBody: {
-        cipher: draft.contentCipher,
-        nonce: draft.contentNonce,
-        formatVersion: 1
-      }
-    });
-
-    expect(decrypted.body).toBe("Secret body");
+    await expect(
+      decryptNoteKeyEnvelopeV2({
+        cryptoOwnerId: "user_a",
+        noteId: draft.id,
+        keyEpoch: 1,
+        rootKey: opened.rootKey,
+        envelope: {
+          cipher: draft.encryptedNoteKey,
+          nonce: draft.noteKeyNonce,
+          formatVersion: 2
+        }
+      })
+    ).resolves.toEqual(draft.noteKey);
   });
 
   it("recovers the root key and creates a new password envelope", async () => {
@@ -144,9 +136,10 @@ describe("client crypto workflows", () => {
 
   it("wraps sharing keys with the root key", async () => {
     const registration = await createRegistrationCrypto("alice", "password");
-    const sharingKey = await createUserSharingKey(registration.rootKey);
+    const sharingKey = await createUserSharingKey(registration.rootKey, 1, "alice_user");
 
     const opened = await openUserSharingKey({
+      userId: "alice_user",
       rootKey: registration.rootKey,
       envelope: {
         ...sharingKey.payload,
@@ -158,86 +151,14 @@ describe("client crypto workflows", () => {
     expect(opened).toEqual(sharingKey.opened);
   });
 
-  it("encrypts note key shares for one collaborator", async () => {
-    const alice = await createRegistrationCrypto("alice", "password");
-    const bob = await createRegistrationCrypto("bob", "password");
-    const carol = await createRegistrationCrypto("carol", "password");
-    const bobSharingKey = await createUserSharingKey(bob.rootKey);
-    const carolSharingKey = await createUserSharingKey(carol.rootKey);
-    const note = await createEncryptedNoteDraft({
-      userId: "alice_user",
-      rootKey: alice.rootKey,
-      title: "Shared",
-      body: "Shared body"
-    });
-    const noteKeyBase64 = noteKeyToBase64(note.noteKey);
-
-    const encryptedShare = await encryptNoteKeyShare({
-      noteKeyBase64,
-      recipientPublicKey: bobSharingKey.opened.publicKey
-    });
-
-    await expect(
-      decryptNoteKeyShare({
-        encryptedNoteKey: encryptedShare,
-        publicKey: carolSharingKey.opened.publicKey,
-        privateKey: carolSharingKey.opened.privateKey
-      })
-    ).rejects.toThrow();
-
-    await expect(
-      decryptNoteKeyShare({
-        encryptedNoteKey: encryptedShare,
-        publicKey: bobSharingKey.opened.publicKey,
-        privateKey: bobSharingKey.opened.privateKey
-      })
-    ).resolves.toBe(noteKeyBase64);
-  });
-
-  it("round-trips encrypted CRDT checkpoints", async () => {
-    const registration = await createRegistrationCrypto("alice", "password");
-    const note = await createEncryptedNoteDraft({
-      userId: "alice_user",
-      rootKey: registration.rootKey,
-      title: "Shared",
-      body: "Shared body"
-    });
-    const input = {
-      type: "crdt-checkpoint" as const,
-      formatVersion: 1,
-      cryptoOwnerId: "alice_user",
-      noteId: note.id,
-      noteKeyBase64: noteKeyToBase64(note.noteKey),
-      keyEpoch: 1,
-      updateId: crypto.randomUUID(),
-      compactedUpdateIds: [crypto.randomUUID()],
-      update: new Uint8Array([1, 2, 3])
-    };
-    const encrypted = await encryptCrdtMessage(input);
-
-    await expect(
-      decryptCrdtMessage({
-        ...input,
-        ...encrypted
-      })
-    ).resolves.toEqual(input.update);
-  });
-
   it("round-trips section-bound v2 CRDT checkpoints", async () => {
-    const registration = await createRegistrationCrypto("alice", "password");
-    const note = await createEncryptedNoteDraft({
-      userId: "alice_user",
-      rootKey: registration.rootKey,
-      title: "Shared",
-      body: "Shared body"
-    });
     const input = {
       type: "crdt-checkpoint" as const,
       formatVersion: 2 as const,
       cryptoOwnerId: "alice_user",
-      noteId: note.id,
+      noteId: crypto.randomUUID(),
       sectionId: crypto.randomUUID(),
-      noteKeyBase64: noteKeyToBase64(note.noteKey),
+      noteKeyBase64: noteKeyToBase64(key(13)),
       keyEpoch: 1,
       updateId: crypto.randomUUID(),
       kind: "checkpoint" as const,
@@ -405,7 +326,7 @@ describe("client crypto workflows", () => {
   });
 
   it("validates the exact note-share account, key version, note, and epoch", async () => {
-    const recipient = await createUserSharingKey(key(7), 5);
+    const recipient = await createUserSharingKey(key(7), 5, "recipient-a");
     const context = {
       cryptoOwnerId: "owner-a",
       noteId: "note-a",

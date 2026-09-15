@@ -17,8 +17,6 @@ function attachmentPayload(size = 8) {
   const bytes = Buffer.alloc(size, 7);
   return {
     id: crypto.randomUUID(),
-    filename: "receipt.pdf",
-    mimeType: "application/pdf",
     expectedKeyEpoch: 1,
     metadataCipher: "encrypted_attachment_metadata_abcdefghijklmnopqrstuvwxyz",
     metadataNonce: "attachment_metadata_nonce_abcdefghijklmnopqrstuvwxyz",
@@ -161,14 +159,10 @@ describe("attachments routes", () => {
     await uploadAttachment(agent, noteId, payload).expect(201);
 
     const stored = await testSql(app.locals.db as ApplicationDatabase).get(
-      "SELECT filename, mime_type AS mimeType, metadata_cipher AS metadataCipher FROM attachments WHERE id = ?",
+      "SELECT metadata_cipher AS metadataCipher FROM attachments WHERE id = ?",
       payload.id
     );
-    expect(stored).toEqual({
-      filename: "",
-      mimeType: "",
-      metadataCipher: payload.metadataCipher
-    });
+    expect(stored).toEqual({ metadataCipher: payload.metadataCipher });
 
     const list = await agent.get(`/api/notes/${noteId}/attachments`).expect(200);
     expect(list.body.attachments).toHaveLength(1);
@@ -197,26 +191,26 @@ describe("attachments routes", () => {
     ).toEqual({ usedBytes: 0, reservedBytes: 0 });
   });
 
-  it("rejects malformed legacy filenames and ciphertext size mismatches", async () => {
+  it("rejects plaintext metadata and ciphertext size mismatches", async () => {
     const app = await createTestApp();
     const agent = await registerAgent(app, "bad_attachment_user");
     const noteId = await createNote(agent);
 
-    const unsafe = attachmentPayload();
+    const plaintext = attachmentPayload();
+    const plaintextHeaders = Object.fromEntries(
+      Object.entries(attachmentHeaders(plaintext)).filter(
+        ([name]) => !name.startsWith("x-fortnote-metadata-")
+      )
+    );
     await agent
       .post(`/api/notes/${noteId}/attachments`)
       .set(csrfHeaders())
       .set({
-        "content-type": "application/octet-stream",
-        "x-fortnote-attachment-id": unsafe.id,
-        "x-fortnote-filename": "../secret.txt",
-        "x-fortnote-mime-type": unsafe.mimeType,
-        "x-fortnote-size": String(unsafe.size),
-        "x-fortnote-encrypted-attachment-key": unsafe.encryptedAttachmentKey,
-        "x-fortnote-attachment-key-nonce": unsafe.attachmentKeyNonce,
-        "x-fortnote-file-nonce": unsafe.fileNonce
+        ...plaintextHeaders,
+        "x-fortnote-filename": "receipt.pdf",
+        "x-fortnote-mime-type": "application/pdf"
       })
-      .send(unsafe.encryptedBytes)
+      .send(plaintext.encryptedBytes)
       .expect(400);
 
     await uploadAttachment(agent, noteId, { ...attachmentPayload(), size: 99 }).expect(

@@ -20,6 +20,7 @@ import {
   snapshotReadyCrdtSection,
   subscribeCrdtSectionChanges,
   waitForCrdtSectionDurable,
+  type ReceivedBinaryCrdtMessage,
   type ScopedEncryptedCrdtMessage
 } from "@client/realtime/crdt";
 import {
@@ -104,20 +105,19 @@ describe("CRDT collaboration", () => {
       chunks: []
     });
     setCrdtTransport({
-      discard: vi.fn(),
       send: vi.fn().mockResolvedValue(undefined),
       sendDurably,
       sendContentDurably,
       subscribe: vi.fn()
     });
     openCrdtSection(current, "root");
-    await finishCrdtSync(current.id, 1, false, "root");
+    await finishCrdtSync(current.id, 1, "root", 0);
     expect(replaceCrdtSectionOrder(current.id, [sectionId, sectionId])).toBe(true);
     await waitForCrdtSectionDurable(current.id, 1, "root");
     expect(getCrdtSectionOrder(current.id)).toEqual([sectionId]);
 
     openCrdtSection(current, sectionId);
-    await finishCrdtSync(current.id, 1, false, sectionId);
+    await finishCrdtSync(current.id, 1, sectionId, 0);
     await expect(
       createCrdtSectionInitializationManifest(current.id, 1, sectionId)
     ).resolves.toEqual(manifest);
@@ -144,14 +144,13 @@ describe("CRDT collaboration", () => {
       });
     const unsubscribe = vi.fn();
     setCrdtTransport({
-      discard: vi.fn(),
       send,
       sendDurably,
       subscribe: vi.fn(),
       unsubscribe
     });
     const first = openCrdtSection(current, sectionId);
-    await finishCrdtSync(current.id, current.keyEpoch, false, sectionId);
+    await finishCrdtSync(current.id, current.keyEpoch, sectionId, 0);
     sendDurably.mockClear();
 
     appendFragment(first.provider.doc, "pending edit");
@@ -191,13 +190,12 @@ describe("CRDT collaboration", () => {
         })
     );
     setCrdtTransport({
-      discard: vi.fn(),
       downloadContent,
       send: vi.fn().mockResolvedValue(undefined),
       subscribe: vi.fn()
     });
     openCrdtNote(current, vi.fn());
-    await finishCrdtSync(current.id, current.keyEpoch, false, sectionId);
+    await finishCrdtSync(current.id, current.keyEpoch, sectionId, 0);
     const provider = getCrdtProvider(current.id, current.keyEpoch, sectionId);
     const remote = new Y.Doc();
     setFragmentBody(remote, "Verified remote content");
@@ -236,7 +234,6 @@ describe("CRDT collaboration", () => {
       noteKeyBase64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
     });
     setCrdtTransport({
-      discard: vi.fn(),
       send: vi.fn().mockResolvedValue(undefined),
       subscribe: vi.fn()
     });
@@ -285,7 +282,7 @@ describe("CRDT collaboration", () => {
       manifestHash: "a".repeat(64),
       serverSequence: 2
     });
-    await finishCrdtSync(current.id, current.keyEpoch, true, sectionId);
+    await finishCrdtSync(current.id, current.keyEpoch, sectionId, 1);
 
     await expect(
       ensureCrdtHistoryReadable(current.id, sectionId)
@@ -302,15 +299,15 @@ describe("CRDT collaboration", () => {
     const send = vi
       .fn<(message: ScopedEncryptedCrdtMessage) => Promise<void>>()
       .mockResolvedValue(undefined);
-    setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
+    setCrdtTransport({ send, subscribe: vi.fn() });
 
     openCrdtNote(current, vi.fn());
-    await finishCrdtSync(current.id, current.keyEpoch, false, "root");
+    await finishCrdtSync(current.id, current.keyEpoch, "root", 0);
     await finishCrdtSync(
       current.id,
       current.keyEpoch,
-      false,
-      current.rootSectionId ?? "root"
+      current.rootSectionId ?? "root",
+      0
     );
 
     const root = getCrdtProvider(current.id, current.keyEpoch, "root").doc;
@@ -338,7 +335,6 @@ describe("CRDT collaboration", () => {
       changes.push(change);
     });
     setCrdtTransport({
-      discard: vi.fn(),
       send: vi.fn().mockResolvedValue(undefined),
       subscribe: vi.fn()
     });
@@ -354,7 +350,6 @@ describe("CRDT collaboration", () => {
     await finishCrdtSync(
       current.id,
       current.keyEpoch,
-      false,
       current.rootSectionId ?? "root",
       4
     );
@@ -402,7 +397,6 @@ describe("CRDT collaboration", () => {
         delivered
       });
     setCrdtTransport({
-      discard: vi.fn(),
       send: vi.fn().mockResolvedValue(undefined),
       sendDurably,
       subscribe: vi.fn()
@@ -411,8 +405,8 @@ describe("CRDT collaboration", () => {
     await finishCrdtSync(
       current.id,
       current.keyEpoch,
-      false,
-      current.rootSectionId ?? "root"
+      current.rootSectionId ?? "root",
+      0
     );
     const states: unknown[] = [];
     section.provider.on("save-state", (state) => {
@@ -437,17 +431,15 @@ describe("CRDT collaboration", () => {
     const current = note();
     const firstSubscribe = vi.fn();
     setCrdtTransport({
-      discard: vi.fn(),
       send: vi.fn().mockResolvedValue(undefined),
       subscribe: firstSubscribe
     });
     openCrdtNote(current, vi.fn());
-    await finishCrdtSync(current.id, current.keyEpoch, false, "root", 12);
+    await finishCrdtSync(current.id, current.keyEpoch, "root", 12);
 
     setCrdtTransport(null);
     const resumedSubscribe = vi.fn();
     setCrdtTransport({
-      discard: vi.fn(),
       send: vi.fn().mockResolvedValue(undefined),
       subscribe: resumedSubscribe
     });
@@ -463,12 +455,11 @@ describe("CRDT collaboration", () => {
   it("ignores a delayed decrypt after its provider generation is replaced", async () => {
     const current = note();
     setCrdtTransport({
-      discard: vi.fn(),
       send: vi.fn().mockResolvedValue(undefined),
       subscribe: vi.fn()
     });
     openCrdtNote(current, vi.fn());
-    await finishCrdtSync(current.id, 1, false);
+    await finishCrdtSync(current.id, 1, "root", 0);
     let finishDecrypt!: (update: Uint8Array) => void;
     vi.mocked(decryptCrdtMessage).mockImplementationOnce(
       () =>
@@ -477,14 +468,17 @@ describe("CRDT collaboration", () => {
         })
     );
     const receiving = receiveCrdtUpdate({
-      type: "crdt-update",
-      formatVersion: 1,
+      type: "crdt-binary",
+      kind: "update",
+      formatVersion: 2,
       updateId: crypto.randomUUID(),
       noteId: current.id,
+      sectionId: "root",
       cryptoOwnerId: current.cryptoOwnerId,
-      keyEpoch: 1,
-      cipher: "cipher",
-      nonce: "nonce"
+      expectedKeyEpoch: 1,
+      nonce: "nonce",
+      cipherLength: 1,
+      cipher: Uint8Array.of(1)
     });
     await vi.waitFor(() => {
       expect(finishDecrypt).toBeTypeOf("function");
@@ -528,14 +522,14 @@ describe("CRDT collaboration", () => {
     const send = vi
       .fn<(message: ScopedEncryptedCrdtMessage) => Promise<void>>()
       .mockResolvedValue(undefined);
-    setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
+    setCrdtTransport({ send, subscribe: vi.fn() });
     openCrdtNote(current, vi.fn());
 
     await finishCrdtSync(
       current.id,
       current.keyEpoch,
-      false,
-      current.rootSectionId ?? "root"
+      current.rootSectionId ?? "root",
+      0
     );
 
     expect(send).toHaveBeenCalledWith(
@@ -557,13 +551,13 @@ describe("CRDT collaboration", () => {
       .fn<(message: ScopedEncryptedCrdtMessage) => Promise<void>>()
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error("stale-epoch"));
-    setCrdtTransport({ discard: vi.fn(), send, subscribe: vi.fn() });
+    setCrdtTransport({ send, subscribe: vi.fn() });
     openCrdtNote(current, vi.fn());
     await finishCrdtSync(
       current.id,
       current.keyEpoch,
-      false,
-      current.rootSectionId ?? "root"
+      current.rootSectionId ?? "root",
+      0
     );
 
     const section = getCrdtProvider(
@@ -589,7 +583,6 @@ describe("CRDT collaboration", () => {
   it("merges concurrent BlockNote edits through the encrypted transport", async () => {
     const sent: ScopedEncryptedCrdtMessage[] = [];
     setCrdtTransport({
-      discard: vi.fn(),
       send: (message: ScopedEncryptedCrdtMessage) => {
         sent.push(message);
         return Promise.resolve();
@@ -599,7 +592,7 @@ describe("CRDT collaboration", () => {
     const plaintext = new Map<string, Uint8Array>();
     vi.mocked(encryptCrdtMessage).mockImplementation((input) => {
       plaintext.set(input.updateId, input.update);
-      return Promise.resolve({ cipher: "cipher", nonce: "nonce", formatVersion: 1 });
+      return Promise.resolve({ cipher: "cipher", nonce: "nonce", formatVersion: 2 });
     });
     vi.mocked(decryptCrdtMessage).mockImplementation((message) => {
       const update = plaintext.get(message.updateId);
@@ -612,7 +605,7 @@ describe("CRDT collaboration", () => {
     const aliceId = "00000000-0000-4000-8000-0000000000a1";
     const bobId = "00000000-0000-4000-8000-0000000000b1";
     openCrdtNote(note({ id: aliceId }), vi.fn());
-    await finishCrdtSync(aliceId, 1, false);
+    await finishCrdtSync(aliceId, 1, "root", 0);
     setFragmentBody(getCrdtProvider(aliceId).doc, "shared");
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -620,9 +613,9 @@ describe("CRDT collaboration", () => {
     const aliceMessages = sent.filter((message) => message.noteId === aliceId);
     openCrdtNote(note({ id: bobId }), vi.fn());
     for (const message of aliceMessages) {
-      await receiveCrdtUpdate({ ...message, noteId: bobId });
+      await receiveCrdtUpdate(received(message, bobId));
     }
-    await finishCrdtSync(bobId, 1, false);
+    await finishCrdtSync(bobId, 1, "root", 0);
     expect(fragmentText(getCrdtProvider(bobId).doc)).toBe("shared");
 
     // Concurrent edits on the shared node merge deterministically via the transport.
@@ -636,10 +629,10 @@ describe("CRDT collaboration", () => {
       (message) => message.noteId === bobId && message.type === "crdt-update"
     );
     for (const message of aliceEdits) {
-      await receiveCrdtUpdate({ ...message, noteId: bobId });
+      await receiveCrdtUpdate(received(message, bobId));
     }
     for (const message of bobEdits) {
-      await receiveCrdtUpdate({ ...message, noteId: aliceId });
+      await receiveCrdtUpdate(received(message, aliceId));
     }
 
     expect(fragmentText(getCrdtProvider(aliceId).doc)).toBe(
@@ -647,3 +640,25 @@ describe("CRDT collaboration", () => {
     );
   });
 });
+
+function received(
+  message: ScopedEncryptedCrdtMessage,
+  noteId: string
+): ReceivedBinaryCrdtMessage {
+  return {
+    type: "crdt-binary",
+    kind: message.kind,
+    formatVersion: 2,
+    updateId: message.updateId,
+    noteId,
+    sectionId: message.sectionId,
+    cryptoOwnerId: message.cryptoOwnerId,
+    expectedKeyEpoch: message.keyEpoch,
+    nonce: message.nonce,
+    cipherLength: 1,
+    cipher: Uint8Array.of(1),
+    ...(message.checkpointSequenceCutoff === undefined
+      ? {}
+      : { checkpointSequenceCutoff: message.checkpointSequenceCutoff })
+  };
+}

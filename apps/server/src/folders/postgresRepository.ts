@@ -82,7 +82,6 @@ export class PostgresFolderRepository implements FolderRepository {
     return this.orm
       .select({
         id: schema.folders.id,
-        name: schema.folders.name,
         nameCipher: schema.folders.nameCipher,
         nameNonce: schema.folders.nameNonce,
         nameFormatVersion: schema.folders.nameFormatVersion,
@@ -103,7 +102,7 @@ export class PostgresFolderRepository implements FolderRepository {
       await transaction.insert(schema.folders).values({
         id: input.folderId,
         userId: input.userId,
-        name: input.name,
+        name: "",
         nameCipher: input.nameCipher,
         nameNonce: input.nameNonce,
         nameFormatVersion: input.nameFormatVersion,
@@ -134,7 +133,6 @@ export class PostgresFolderRepository implements FolderRepository {
       const updated = await transaction
         .update(schema.folders)
         .set({
-          name: input.name,
           nameCipher: input.nameCipher,
           nameNonce: input.nameNonce,
           nameFormatVersion: input.nameFormatVersion,

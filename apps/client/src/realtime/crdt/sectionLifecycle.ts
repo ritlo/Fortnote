@@ -4,11 +4,6 @@ import type { ContentManifestSummary } from "../../api";
 import { encryptContentChunksV2 } from "../../cryptoClient";
 import type { DecryptedNote } from "../../store/appStore";
 import { notifyCrdtSectionChange } from "./changes";
-import {
-  replaceLegacySectionContent,
-  setSnapshotVersion,
-  SNAPSHOT_SEED
-} from "./document";
 import { getOrCreateBinding } from "./lifecycle";
 import { CrdtProvider } from "./provider";
 import { getCrdtTransport, waitForCrdtTransport } from "./runtime";
@@ -95,23 +90,6 @@ export function retryCrdtSection(
     );
   }
   return binding.observedServerSequence;
-}
-
-export function seedLegacyCrdtSection(
-  note: DecryptedNote,
-  sectionId: string,
-  body: string
-): void {
-  const binding = getOrCreateBinding(note.id, sectionId, note.keyEpoch);
-  binding.note = note;
-  binding.doc.transact(() => {
-    replaceLegacySectionContent(binding.fragment, body);
-    setSnapshotVersion(binding.doc, note.version);
-  }, SNAPSHOT_SEED);
-  binding.titleAuthorityVersion = Math.max(binding.titleAuthorityVersion, note.version);
-  binding.snapshotSeeded = true;
-  binding.ready = true;
-  binding.provider.emit("synced");
 }
 
 export async function waitForCrdtSectionDurable(

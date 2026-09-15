@@ -9,18 +9,7 @@ import { requestClientInstanceId } from "./events.js";
 import { registerMembershipRoutes } from "./membershipRoutes.js";
 import { registerSectionRoutes } from "./sectionRoutes.js";
 
-const legacyCreateNoteSchema = z.object({
-  id: z.uuid(),
-  folderId: z.uuid().nullable().optional(),
-  title: z.string().min(1).max(200),
-  encryptedNoteKey: z.string().min(16),
-  noteKeyNonce: z.string().min(16),
-  contentCipher: z.string().min(1),
-  contentNonce: z.string().min(16),
-  contentLength: z.number().int().nonnegative()
-});
-
-const protectedCreateNoteSchema = z.object({
+const createNoteSchema = z.object({
   id: z.uuid(),
   folderId: z.uuid().nullable().optional(),
   rootSectionId: z.uuid(),
@@ -32,17 +21,7 @@ const protectedCreateNoteSchema = z.object({
   noteKeyFormatVersion: z.literal(2)
 });
 
-const createNoteSchema = z.union([protectedCreateNoteSchema, legacyCreateNoteSchema]);
-
-const legacyUpdateNoteSchema = z.object({
-  folderId: z.uuid().nullable().optional(),
-  title: z.string().min(1).max(200).optional(),
-  contentCipher: z.string().min(1),
-  contentNonce: z.string().min(16),
-  contentLength: z.number().int().nonnegative(),
-  version: z.number().int().positive()
-});
-const protectedUpdateNoteSchema = z
+const updateNoteSchema = z
   .object({
     folderId: z.uuid().nullable().optional(),
     titleCipher: z.string().min(1).optional(),
@@ -74,31 +53,8 @@ const protectedUpdateNoteSchema = z
       context.addIssue({ code: "custom", message: "Incomplete protected note key" });
     }
   });
-const updateNoteSchema = z.union([protectedUpdateNoteSchema, legacyUpdateNoteSchema]);
-const legacyRotateNoteKeySchema = z.object({
-  encryptedNoteKey: z.string().min(16),
-  noteKeyNonce: z.string().min(16),
-  contentCipher: z.string().min(1),
-  contentNonce: z.string().min(16),
-  contentLength: z.number().int().nonnegative(),
-  version: z.number().int().positive(),
-  shares: z.array(
-    z.object({
-      recipientUserId: z.uuid(),
-      sharingKeyVersion: z.number().int().positive(),
-      encryptedNoteKey: z.string().min(32),
-      formatVersion: z.number().int().positive()
-    })
-  ),
-  attachmentKeys: z.array(
-    z.object({
-      attachmentId: z.uuid(),
-      encryptedAttachmentKey: z.string().min(16),
-      attachmentKeyNonce: z.string().min(16)
-    })
-  )
-});
-const linkedRotateNoteKeySchema = z.object({
+
+const rotateNoteKeySchema = z.object({
   mode: z.literal("linked"),
   revokedUserId: z.uuid(),
   rootVersion: z.number().int().positive(),
@@ -122,10 +78,6 @@ const linkedRotateNoteKeySchema = z.object({
     })
   )
 });
-const rotateNoteKeySchema = z.union([
-  linkedRotateNoteKeySchema,
-  legacyRotateNoteKeySchema
-]);
 
 function publishEventCursors(context: AppContext, cursors: number[]): void {
   context.realtime?.publishEvents(cursors);
@@ -158,24 +110,18 @@ export function createNotesRouter(context: AppContext): Router {
     }
 
     const payload = parsed.data;
-    const folderId = payload.folderId ?? null;
-    const rootSectionId = "rootSectionId" in payload ? payload.rootSectionId : null;
     const clientInstanceId = requestClientInstanceId(request);
     const outcome = await context.db.noteMutations.create({
       noteId: payload.id,
       actorUserId: session.userId,
-      folderId,
-      title: "title" in payload ? payload.title : "",
-      titleCipher: "titleCipher" in payload ? payload.titleCipher : null,
-      titleNonce: "titleCipher" in payload ? payload.titleNonce : null,
-      titleFormatVersion: "titleCipher" in payload ? payload.titleFormatVersion : null,
+      folderId: payload.folderId ?? null,
+      titleCipher: payload.titleCipher,
+      titleNonce: payload.titleNonce,
+      titleFormatVersion: payload.titleFormatVersion,
       encryptedNoteKey: payload.encryptedNoteKey,
       noteKeyNonce: payload.noteKeyNonce,
-      noteKeyFormatVersion: "titleCipher" in payload ? payload.noteKeyFormatVersion : 1,
-      contentCipher: "contentCipher" in payload ? payload.contentCipher : "",
-      contentNonce: "contentCipher" in payload ? payload.contentNonce : "",
-      contentLength: "contentCipher" in payload ? payload.contentLength : 0,
-      rootSectionId,
+      noteKeyFormatVersion: payload.noteKeyFormatVersion,
+      rootSectionId: payload.rootSectionId,
       ...(clientInstanceId ? { clientInstanceId } : {})
     });
     if (outcome.kind === "invalid-folder") {
@@ -189,9 +135,10 @@ export function createNotesRouter(context: AppContext): Router {
       version: 1,
       rootVersion: 1,
       keyEpoch: 1,
-      rootSectionId
+      rootSectionId: payload.rootSectionId
     });
   });
+
   router.get("/:id", async (request, response) => {
     const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
@@ -206,24 +153,6 @@ export function createNotesRouter(context: AppContext): Router {
     }
 
     response.json(withCanonicalTimestamps(row));
-  });
-
-  router.get("/:id/legacy-content", async (request, response) => {
-    const session = await requireSessionAsync(context.db, request, response);
-    if (!session) {
-      return;
-    }
-    const access = await getNoteAccessAsync(context, request.params.id, session.userId);
-    if (!canReadNote(access)) {
-      sendApiError(response, "not_found", "Note not found");
-      return;
-    }
-    const legacy = await context.db.noteQueries.legacyContent(access.noteId);
-    if (!legacy) {
-      sendApiError(response, "conflict", "Legacy note content is already migrated");
-      return;
-    }
-    response.json(legacy);
   });
 
   registerSectionRoutes(router, context);
@@ -281,96 +210,49 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const clientInstanceId = requestClientInstanceId(request);
-    if ("mode" in parsed.data) {
-      const rotation = parsed.data;
-      const outcome = await context.db.noteRotations.rotateLinked({
-        noteId: request.params.id,
-        actorUserId: session.userId,
-        revokedUserId: rotation.revokedUserId,
-        rootVersion: rotation.rootVersion,
-        sourceEpoch: rotation.sourceEpoch,
-        targetEpoch: rotation.targetEpoch,
-        encryptedNoteKey: rotation.encryptedNoteKey,
-        noteKeyNonce: rotation.noteKeyNonce,
-        noteKeyFormatVersion: rotation.noteKeyFormatVersion,
-        titleCipher: rotation.titleCipher,
-        titleNonce: rotation.titleNonce,
-        titleFormatVersion: rotation.titleFormatVersion,
-        previousKeyCipher: rotation.previousKeyCipher,
-        previousKeyNonce: rotation.previousKeyNonce,
-        linkFormatVersion: rotation.linkFormatVersion,
-        shares: rotation.shares,
-        ...(clientInstanceId ? { clientInstanceId } : {})
-      });
-      if (outcome.kind === "not-found") {
-        sendApiError(response, "not_found", "Note not found");
-        return;
-      }
-      if (outcome.kind === "invalid-set") {
-        sendApiError(response, "bad_request", "Key shares must match active members");
-        return;
-      }
-      if (outcome.kind === "conflict") {
-        sendApiError(response, "conflict", "Note rotation state changed");
-        return;
-      }
-      context.realtime?.closeNoteAccess(request.params.id, rotation.revokedUserId);
-      publishEventCursors(context, [outcome.eventCursor]);
-      response.json({
-        id: request.params.id,
-        version: outcome.version,
-        rootVersion: outcome.rootVersion,
-        keyEpoch: outcome.keyEpoch
-      });
-      return;
-    }
-
     const rotation = parsed.data;
-    const outcome = await context.db.noteRotations.rotateLegacy({
+    const clientInstanceId = requestClientInstanceId(request);
+    const outcome = await context.db.noteRotations.rotateLinked({
       noteId: request.params.id,
       actorUserId: session.userId,
+      revokedUserId: rotation.revokedUserId,
+      rootVersion: rotation.rootVersion,
+      sourceEpoch: rotation.sourceEpoch,
+      targetEpoch: rotation.targetEpoch,
       encryptedNoteKey: rotation.encryptedNoteKey,
       noteKeyNonce: rotation.noteKeyNonce,
-      contentCipher: rotation.contentCipher,
-      contentNonce: rotation.contentNonce,
-      contentLength: rotation.contentLength,
-      version: rotation.version,
+      noteKeyFormatVersion: rotation.noteKeyFormatVersion,
+      titleCipher: rotation.titleCipher,
+      titleNonce: rotation.titleNonce,
+      titleFormatVersion: rotation.titleFormatVersion,
+      previousKeyCipher: rotation.previousKeyCipher,
+      previousKeyNonce: rotation.previousKeyNonce,
+      linkFormatVersion: rotation.linkFormatVersion,
       shares: rotation.shares,
-      attachmentKeys: rotation.attachmentKeys,
       ...(clientInstanceId ? { clientInstanceId } : {})
     });
     if (outcome.kind === "not-found") {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
-    if (outcome.kind === "deleted") {
-      sendApiError(response, "conflict", "Restore note before rotating keys");
+    if (outcome.kind === "invalid-set") {
+      sendApiError(response, "bad_request", "Key shares must match active members");
       return;
     }
     if (outcome.kind === "conflict") {
-      sendApiError(response, "conflict", "Note version conflict");
+      sendApiError(response, "conflict", "Note rotation state changed");
       return;
     }
-    if (outcome.kind === "invalid-members") {
-      sendApiError(response, "bad_request", "Key shares must cover all active members");
-      return;
-    }
-    if (outcome.kind === "invalid-sharing-key") {
-      sendApiError(response, "bad_request", "Invalid sharing key version");
-      return;
-    }
-    if (outcome.kind === "invalid-attachments") {
-      sendApiError(response, "bad_request", "Attachment keys must cover all attachments");
-      return;
-    }
+    context.realtime?.closeNoteAccess(request.params.id, rotation.revokedUserId);
     publishEventCursors(context, [outcome.eventCursor]);
     response.json({
       id: request.params.id,
       version: outcome.version,
+      rootVersion: outcome.rootVersion,
       keyEpoch: outcome.keyEpoch
     });
   });
+
   router.put("/:id", async (request, response) => {
     const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
@@ -383,85 +265,44 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const clientInstanceId = requestClientInstanceId(request);
-    if ("rootVersion" in parsed.data) {
-      const update = parsed.data;
-      const outcome = await context.db.noteMutations.updateProtected({
-        noteId: request.params.id,
-        actorUserId: session.userId,
-        expectedRootVersion: update.rootVersion,
-        expectedKeyEpoch: update.keyEpoch,
-        folderId: update.folderId,
-        titleCipher: update.titleCipher,
-        titleNonce: update.titleNonce,
-        titleFormatVersion: update.titleFormatVersion,
-        encryptedNoteKey: update.encryptedNoteKey,
-        noteKeyNonce: update.noteKeyNonce,
-        noteKeyFormatVersion: update.noteKeyFormatVersion,
-        rootSectionId: update.rootSectionId,
-        ...(clientInstanceId ? { clientInstanceId } : {})
-      });
-      if (outcome.kind === "not-found") {
-        sendApiError(response, "not_found", "Note not found");
-        return;
-      }
-      if (outcome.kind === "invalid-folder") {
-        sendApiError(response, "bad_request", "Invalid folder");
-        return;
-      }
-      if (outcome.kind === "conflict") {
-        sendApiError(response, "conflict", "Note metadata changed");
-        return;
-      }
-      publishEventCursors(context, [outcome.eventCursor]);
-      response.json({
-        id: request.params.id,
-        rootVersion: outcome.rootVersion,
-        keyEpoch: outcome.keyEpoch,
-        updatedAt: canonicalTimestamp(outcome.updatedAt)
-      });
-      return;
-    }
-
     const update = parsed.data;
-    const outcome = await context.db.noteMutations.updateLegacy({
+    const clientInstanceId = requestClientInstanceId(request);
+    const outcome = await context.db.noteMutations.updateProtected({
       noteId: request.params.id,
       actorUserId: session.userId,
-      expectedVersion: update.version,
+      expectedRootVersion: update.rootVersion,
+      expectedKeyEpoch: update.keyEpoch,
       folderId: update.folderId,
-      title: update.title,
-      contentCipher: update.contentCipher,
-      contentNonce: update.contentNonce,
-      contentLength: update.contentLength,
+      titleCipher: update.titleCipher,
+      titleNonce: update.titleNonce,
+      titleFormatVersion: update.titleFormatVersion,
+      encryptedNoteKey: update.encryptedNoteKey,
+      noteKeyNonce: update.noteKeyNonce,
+      noteKeyFormatVersion: update.noteKeyFormatVersion,
+      rootSectionId: update.rootSectionId,
       ...(clientInstanceId ? { clientInstanceId } : {})
     });
     if (outcome.kind === "not-found") {
       sendApiError(response, "not_found", "Note not found");
       return;
     }
-    if (outcome.kind === "deleted") {
-      sendApiError(response, "conflict", "Restore note before updating");
+    if (outcome.kind === "invalid-folder") {
+      sendApiError(response, "bad_request", "Invalid folder");
       return;
     }
     if (outcome.kind === "conflict") {
-      sendApiError(response, "conflict", "Note version conflict");
-      return;
-    }
-    if (outcome.kind === "shared-folder") {
-      sendApiError(response, "bad_request", "Shared notes cannot be moved");
-      return;
-    }
-    if (outcome.kind === "invalid-folder") {
-      sendApiError(response, "bad_request", "Invalid folder");
+      sendApiError(response, "conflict", "Note metadata changed");
       return;
     }
     publishEventCursors(context, [outcome.eventCursor]);
     response.json({
       id: request.params.id,
-      version: outcome.version,
+      rootVersion: outcome.rootVersion,
+      keyEpoch: outcome.keyEpoch,
       updatedAt: canonicalTimestamp(outcome.updatedAt)
     });
   });
+
   router.delete("/:id", async (request, response) => {
     const session = await requireSessionAsync(context.db, request, response);
     if (!session) {

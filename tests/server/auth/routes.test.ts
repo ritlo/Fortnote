@@ -32,8 +32,7 @@ describe("auth routes", () => {
         expect(body).toMatchObject({
           username: "alice.example",
           canonicalHandle: "alice.example",
-          displayName: "Alice.Example",
-          handleState: "active"
+          displayName: "Alice.Example"
         });
       });
     await owner
@@ -91,57 +90,6 @@ describe("auth routes", () => {
       message: missingLookup.body.error.message
     });
     expect(collaborator.body.canonicalHandle).toBe("collaborator");
-  });
-
-  it("keeps colliding legacy identities exact until handle repair", async () => {
-    const app = await createTestApp();
-    const first = request.agent(app);
-    const second = request.agent(app);
-    await first
-      .post("/api/auth/register")
-      .set(csrfHeaders())
-      .send(registerPayload("legacy_one"))
-      .expect(201);
-    await second
-      .post("/api/auth/register")
-      .set(csrfHeaders())
-      .send(registerPayload("legacy_two"))
-      .expect(201);
-    await testSql(app.locals.db).run(
-      "UPDATE users SET username = ?, display_name = ?, canonical_handle = NULL, handle_state = 'repair-required' WHERE username = ?",
-      " Legacy Name ",
-      "Legacy Name",
-      "legacy_one"
-    );
-    await testSql(app.locals.db).run(
-      "UPDATE users SET username = ?, display_name = ?, canonical_handle = NULL, handle_state = 'repair-required' WHERE username = ?",
-      "legacy name",
-      "legacy name",
-      "legacy_two"
-    );
-
-    await first
-      .get("/api/auth/me")
-      .expect(200)
-      .expect(({ body }) => {
-        expect(body).toMatchObject({
-          username: " Legacy Name ",
-          canonicalHandle: null,
-          handleState: "repair-required"
-        });
-      });
-    await second
-      .put("/api/auth/handle")
-      .set(csrfHeaders())
-      .send({ handle: "repaired.handle" })
-      .expect(200)
-      .expect(({ body }) => {
-        expect(body).toMatchObject({
-          canonicalHandle: "repaired.handle",
-          username: "repaired.handle",
-          handleState: "active"
-        });
-      });
   });
 
   it("uses the configured absolute session lifetime", async () => {

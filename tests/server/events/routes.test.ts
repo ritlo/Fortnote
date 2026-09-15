@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   createTestApp,
   csrfHeaders,
+  folderPayload,
+  noteMetadataUpdate,
   notePayload,
   registerAgent
 } from "../support/http.js";
@@ -14,7 +16,7 @@ function sharingKeyPayload(username: string) {
     publicKey: `public_sharing_key_${username}_abcdefghijklmnopqrstuvwxyz`,
     encryptedPrivateKey: `encrypted_private_key_${username}_abcdefghijklmnopqrstuvwxyz`,
     privateKeyNonce: `private_key_nonce_${username}_abcdefghijklmnopqrstuvwxyz`,
-    formatVersion: 1
+    formatVersion: 2
   };
 }
 
@@ -24,7 +26,7 @@ function invitePayload(username: string, role: "editor" | "viewer") {
     role,
     sharingKeyVersion: 1,
     encryptedNoteKey: `encrypted_share_for_${username}_abcdefghijklmnopqrstuvwxyz`,
-    formatVersion: 1
+    formatVersion: 2
   };
 }
 
@@ -83,13 +85,7 @@ describe("event replay routes", () => {
         ...csrfHeaders(),
         "x-fortnote-client-id": clientInstanceId
       })
-      .send({
-        title: "Alice offline replay edit",
-        contentCipher: "alice_event_update_cipher_abcdefghijklmnopqrstuvwxyz",
-        contentNonce: "alice_event_update_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentLength: 400,
-        version: 1
-      })
+      .send(noteMetadataUpdate(1, "alice"))
       .expect(200);
 
     const bobReplay = await bob
@@ -149,13 +145,7 @@ describe("event replay routes", () => {
     await bob
       .put(`/api/notes/${noteId}`)
       .set(csrfHeaders())
-      .send({
-        title: "Bob event edit",
-        contentCipher: "bob_event_update_cipher_abcdefghijklmnopqrstuvwxyz",
-        contentNonce: "bob_event_update_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentLength: 500,
-        version: 2
-      })
+      .send(noteMetadataUpdate(2, "bob"))
       .expect(200);
 
     const carolAfterRevoke = await carol
@@ -223,11 +213,7 @@ describe("event replay routes", () => {
     const alice = await registerAgent(app, "retention_folder_alice");
     await registerAgent(app, "retention_folder_bob");
 
-    await alice
-      .post("/api/folders")
-      .set(csrfHeaders())
-      .send({ name: "Private folder" })
-      .expect(201);
+    await alice.post("/api/folders").set(csrfHeaders()).send(folderPayload()).expect(201);
 
     const latest = (await testSql(app.locals.db).get(
       "SELECT MAX(cursor) AS cursor FROM note_events"

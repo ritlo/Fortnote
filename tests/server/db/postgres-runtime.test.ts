@@ -14,7 +14,12 @@ import type { ApplicationDatabase } from "@server/db/types.js";
 import { createApp } from "@server/http/app.js";
 import { readStoredAttachment, readStoredNote } from "../../e2e/support/stored.js";
 import { protectedNotePayload } from "../notes/routes.fixtures.js";
-import { csrfHeaders, notePayload, registerPayload } from "../support/http.js";
+import {
+  csrfHeaders,
+  folderPayload,
+  notePayload,
+  registerPayload
+} from "../support/http.js";
 import {
   activeConnectionCount,
   attachmentObjectState,
@@ -93,34 +98,23 @@ describe("PostgreSQL runtime contract", () => {
     }
   });
 
-  it("returns canonical timestamps from both save APIs", async () => {
+  it("returns canonical timestamps from note saves", async () => {
     const harness = await createPostgresHarness();
     try {
       const agent = request.agent(
         createApp({ config: harness.config, db: harness.database })
       );
       await registerUser(agent, `postgres_timestamps`);
-      for (const format of ["legacy", "protected"] as const) {
-        const note = format === "legacy" ? notePayload() : protectedNotePayload();
-        await agent.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
-        const response = await agent
-          .put(`/api/notes/${note.id}`)
-          .set(csrfHeaders())
-          .send(
-            format === "legacy"
-              ? {
-                  version: 1,
-                  contentCipher: "timestamp_content_cipher",
-                  contentNonce: "timestamp_content_nonce",
-                  contentLength: 24
-                }
-              : { rootVersion: 1, keyEpoch: 1 }
-          )
-          .expect(200);
-        const updatedAt = response.body.updatedAt as string;
-        expect(updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-        expect(new Date(updatedAt).toISOString()).toBe(updatedAt);
-      }
+      const note = protectedNotePayload();
+      await agent.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
+      const response = await agent
+        .put(`/api/notes/${note.id}`)
+        .set(csrfHeaders())
+        .send({ rootVersion: 1, keyEpoch: 1 })
+        .expect(200);
+      const updatedAt = response.body.updatedAt as string;
+      expect(updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(new Date(updatedAt).toISOString()).toBe(updatedAt);
     } finally {
       await harness.database.close();
       await harness.cleanup();
@@ -172,7 +166,7 @@ describe("PostgreSQL runtime contract", () => {
       await owner
         .post("/api/folders")
         .set(csrfHeaders())
-        .send({ id: folderId, name: "Timestamp folder" })
+        .send({ ...folderPayload(), id: folderId })
         .expect(201);
       const note = notePayload(folderId);
       await owner.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
@@ -191,7 +185,7 @@ describe("PostgreSQL runtime contract", () => {
           role: "viewer",
           sharingKeyVersion: 1,
           encryptedNoteKey: "contract_member_note_key_abcdefghijklmnopqrstuvwxyz",
-          formatVersion: 1
+          formatVersion: 2
         })
         .expect(201);
 
@@ -395,7 +389,7 @@ describe("PostgreSQL runtime contract", () => {
           role: "viewer",
           sharingKeyVersion: 1,
           encryptedNoteKey: "contract_member_note_key_abcdefghijklmnopqrstuvwxyz",
-          formatVersion: 1
+          formatVersion: 2
         })
         .expect(201);
       await recipient
@@ -892,7 +886,7 @@ describe("PostgreSQL concurrency", () => {
           role: "editor",
           sharingKeyVersion: 1,
           encryptedNoteKey: "concurrent_member_note_key_abcdefghijklmnopqrstuvwxyz",
-          formatVersion: 1
+          formatVersion: 2
         })
         .expect(201);
 
@@ -924,23 +918,47 @@ describe("PostgreSQL concurrency", () => {
     const harness = await createPostgresHarness();
     const postgres = harness.database;
     try {
-      const agent = request.agent(
-        createApp({ config: harness.config, db: harness.database })
-      );
-      const noteId = await registerAndCreateNote(agent, "concurrent_rotation");
+      const app = createApp({ config: harness.config, db: harness.database });
+      const owner = request.agent(app);
+      const collaborator = request.agent(app);
+      const noteId = await registerAndCreateNote(owner, "concurrent_rotation_owner");
+      const member = await registerUser(collaborator, "concurrent_rotation_member");
+      await collaborator
+        .put("/api/sharing-keys/current")
+        .set(csrfHeaders())
+        .send(sharingKeyPayload())
+        .expect(201);
+      await owner
+        .post(`/api/notes/${noteId}/memberships`)
+        .set(csrfHeaders())
+        .send({
+          username: member.username,
+          role: "editor",
+          sharingKeyVersion: 1,
+          encryptedNoteKey: "concurrent_rotation_share_abcdefghijklmnopqrstuvwxyz",
+          formatVersion: 2
+        })
+        .expect(201);
       const rotation = {
+        mode: "linked",
+        revokedUserId: member.userId,
+        rootVersion: 1,
+        sourceEpoch: 1,
+        targetEpoch: 2,
         encryptedNoteKey: "concurrent_rotated_note_key_abcdefghijklmnopqrstuvwxyz",
         noteKeyNonce: "concurrent_rotated_note_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentCipher: "concurrent_rotated_content_cipher_abcdefghijklmnopqrstuvwxyz",
-        contentNonce: "concurrent_rotated_content_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentLength: 512,
-        version: 1,
-        shares: [],
-        attachmentKeys: []
+        noteKeyFormatVersion: 2,
+        titleCipher: "concurrent_rotated_title_cipher_abcdefghijklmnopqrstuvwxyz",
+        titleNonce: "concurrent_rotated_title_nonce_abcdefghijklmnopqrstuvwxyz",
+        titleFormatVersion: 2,
+        previousKeyCipher: "concurrent_previous_key_cipher_abcdefghijklmnopqrstuvwxyz",
+        previousKeyNonce: "concurrent_previous_key_nonce_abcdefghijklmnopqrstuvwxyz",
+        linkFormatVersion: 2,
+        shares: []
       };
       const responses = await Promise.all([
-        agent.post(`/api/notes/${noteId}/key-rotation`).set(csrfHeaders()).send(rotation),
-        agent.post(`/api/notes/${noteId}/key-rotation`).set(csrfHeaders()).send(rotation)
+        owner.post(`/api/notes/${noteId}/key-rotation`).set(csrfHeaders()).send(rotation),
+        owner.post(`/api/notes/${noteId}/key-rotation`).set(csrfHeaders()).send(rotation)
       ]);
 
       expect(responses.map(({ status }) => status).sort()).toEqual([200, 409]);
@@ -977,7 +995,7 @@ describe("PostgreSQL concurrency", () => {
           role: "editor",
           sharingKeyVersion: 1,
           encryptedNoteKey: "concurrent_ack_note_key_abcdefghijklmnopqrstuvwxyz",
-          formatVersion: 1
+          formatVersion: 2
         })
         .expect(201);
       const cursorResult = await postgres.pool.query<{ cursor: number }>(

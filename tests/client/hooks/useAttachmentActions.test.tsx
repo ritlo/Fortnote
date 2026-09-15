@@ -64,7 +64,7 @@ beforeEach(() => {
     mimeType: "image/png"
   });
   mocks.downloadAttachment.mockResolvedValue(download());
-  mocks.listAttachments.mockResolvedValue({ attachments: [attachment()] });
+  mocks.listAttachments.mockResolvedValue({ attachments: [encryptedAttachment()] });
   mocks.listNoteEpochLinks.mockResolvedValue({ links: [] });
   mocks.resolveNoteKeyAtEpoch.mockResolvedValue(new Uint8Array([9, 8, 7]));
   mocks.uploadAttachment.mockResolvedValue({ id: ATTACHMENT_ID, keyEpoch: 1 });
@@ -390,7 +390,7 @@ function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
     id: "note-1",
     isDeleted: false,
     keyEpoch: 1,
-    noteKeyBase64: "note-key",
+    noteKeyBase64: "AQIDBA==",
     ownerUserId: "alice",
     role: "owner",
     title: "Title",

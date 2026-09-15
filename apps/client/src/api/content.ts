@@ -4,8 +4,6 @@ import type {
   ContentUploadBeginPayload,
   ContentUploadStatus,
   DownloadedContentChunk,
-  LegacyNoteContent,
-  LegacySectionReservation,
   LogicalNoteSectionSummary,
   SectionCreationResult,
   SectionDeletionResult,
@@ -101,24 +99,6 @@ export function listNoteSections(
 ): Promise<{ sections: LogicalNoteSectionSummary[] }> {
   return apiRequest<{ sections: LogicalNoteSectionSummary[] }>(
     `/notes/${noteId}/sections`
-  );
-}
-
-export function getLegacyNoteContent(noteId: string): Promise<LegacyNoteContent> {
-  return apiRequest<LegacyNoteContent>(`/notes/${noteId}/legacy-content`);
-}
-
-export function reserveLegacyRootSection(
-  noteId: string,
-  payload: {
-    sectionId: string;
-    expectedKeyEpoch: number;
-    expectedRootVersion: number;
-  }
-): Promise<LegacySectionReservation> {
-  return apiRequest<LegacySectionReservation>(
-    `/notes/${noteId}/sections/legacy-reservation`,
-    { method: "POST", body: JSON.stringify(payload) }
   );
 }
 

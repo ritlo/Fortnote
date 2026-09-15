@@ -128,7 +128,6 @@ export function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
     folderId: null,
     id: "note_1",
     isDeleted: false,
-    metadataMigration: "current",
     noteKeyBase64: "AQIDBA==",
     ownerUserId: "alice",
     role: "owner",

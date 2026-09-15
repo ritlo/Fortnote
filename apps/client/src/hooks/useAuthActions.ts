@@ -9,7 +9,6 @@ import {
   login,
   logout,
   normalizeAccountHandle,
-  repairAccountHandle,
   recover,
   register,
   storeCurrentSharingKey,
@@ -43,11 +42,7 @@ export function useSessionBootstrap() {
     void getMe()
       .then((currentUser) => {
         setUsername(currentUser.username);
-        setStatus(
-          currentUser.handleState === "repair-required"
-            ? "Handle repair required. Sign in again, then choose a unique handle before sharing"
-            : "Session active. Sign in again to renew and decrypt"
-        );
+        setStatus("Session active. Sign in again to renew and decrypt");
       })
       .catch(() => {
         setStatus("Signed out");
@@ -65,7 +60,6 @@ export function useAuthActions() {
   const recoverySecret = useAppStore((state) => state.recoverySecret);
   const rootKey = useAppStore((state) => state.rootKey);
   const user = useAppStore((state) => state.user);
-  const setUsername = useAppStore((state) => state.setUsername);
   const setUser = useAppStore((state) => state.setUser);
   const setRootKey = useAppStore((state) => state.setRootKey);
   const setKeyMaterialVersion = useAppStore((state) => state.setKeyMaterialVersion);
@@ -115,7 +109,7 @@ export function useAuthActions() {
         await loadFolders();
         await loadDecryptedNotes(currentUser, registration.rootKey);
         setPassword("");
-        setStatus(authenticatedStatus(currentUser, "Signed in and decrypted"));
+        setStatus("Signed in and decrypted");
         return;
       }
 
@@ -163,7 +157,7 @@ export function useAuthActions() {
         await ensureSharingKey(recovery.rootKey);
         await loadFolders();
         await loadDecryptedNotes(currentUser, recovery.rootKey);
-        setStatus(authenticatedStatus(currentUser, "Recovered and decrypted"));
+        setStatus("Recovered and decrypted");
         return;
       }
 
@@ -205,7 +199,7 @@ export function useAuthActions() {
       await loadFolders();
       await loadDecryptedNotes(currentUser, openedVault.rootKey);
       setPassword("");
-      setStatus(authenticatedStatus(currentUser, "Signed in and decrypted"));
+      setStatus("Signed in and decrypted");
     } catch (authError) {
       setStatus("Auth failed");
       setError(authError instanceof Error ? authError.message : "Unable to sign in");
@@ -287,24 +281,6 @@ export function useAuthActions() {
       );
     } else if (cleanupFailure) {
       setError("Signed out, but some encrypted browser data could not be removed");
-    }
-  }
-
-  async function repairLegacyHandle(handle: string) {
-    setError(null);
-    setStatus("Repairing account handle");
-    try {
-      const currentUser = await repairAccountHandle(handle);
-      setUser(currentUser);
-      setUsername(currentUser.username);
-      setStatus("Account handle repaired");
-    } catch (repairError) {
-      setStatus("Handle repair failed");
-      setError(
-        repairError instanceof Error
-          ? repairError.message
-          : "Unable to repair account handle"
-      );
     }
   }
 
@@ -452,16 +428,9 @@ export function useAuthActions() {
     cleanupSharingKeys,
     copyRecoverySecret,
     lockVault,
-    repairLegacyHandle,
     rotateRecoveryKey,
     rotateSharingKey,
     submitAuth,
     submitLogout
   };
-}
-
-function authenticatedStatus(user: { handleState?: string }, ready: string): string {
-  return user.handleState === "repair-required"
-    ? "Handle repair required before sharing. Open settings to choose a unique handle"
-    : ready;
 }

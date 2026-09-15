@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "../db/schema.js";
 import type {
@@ -23,8 +23,7 @@ const identitySelection = {
   id: schema.users.id,
   username: schema.users.username,
   displayName: schema.users.displayName,
-  canonicalHandle: schema.users.canonicalHandle,
-  handleState: schema.users.handleState
+  canonicalHandle: schema.users.canonicalHandle
 };
 
 export class PostgresAccountRepository implements AccountRepository {
@@ -34,29 +33,11 @@ export class PostgresAccountRepository implements AccountRepository {
     private readonly sessionAbsoluteTimeoutMs: number
   ) {}
 
-  async findIdentity(
-    suppliedHandle: string,
-    canonicalHandle: string | null
-  ): Promise<AccountIdentity | null> {
-    if (canonicalHandle) {
-      const rows = await this.orm
-        .select(identitySelection)
-        .from(schema.users)
-        .where(eq(schema.users.canonicalHandle, canonicalHandle))
-        .limit(1);
-      if (rows[0]) {
-        return rows[0];
-      }
-    }
+  async findIdentity(canonicalHandle: string): Promise<AccountIdentity | null> {
     const rows = await this.orm
       .select(identitySelection)
       .from(schema.users)
-      .where(
-        and(
-          isNull(schema.users.canonicalHandle),
-          eq(schema.users.username, suppliedHandle)
-        )
-      )
+      .where(eq(schema.users.canonicalHandle, canonicalHandle))
       .limit(1);
     return rows[0] ?? null;
   }
@@ -141,20 +122,6 @@ export class PostgresAccountRepository implements AccountRepository {
         ...input.keyMaterial
       });
     });
-  }
-
-  async activateHandle(userId: string, canonicalHandle: string): Promise<boolean> {
-    const rows = await this.orm
-      .update(schema.users)
-      .set({
-        username: canonicalHandle,
-        canonicalHandle,
-        handleState: "active",
-        updatedAt: sql`CURRENT_TIMESTAMP`
-      })
-      .where(and(eq(schema.users.id, userId), isNull(schema.users.canonicalHandle)))
-      .returning({ id: schema.users.id });
-    return rows.length === 1;
   }
 
   recover(input: RecoverAccountInput): Promise<RecoverAccountOutcome> {

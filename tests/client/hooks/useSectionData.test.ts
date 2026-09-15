@@ -16,7 +16,6 @@ const mocks = vi.hoisted(() => ({
   getStorageQuota: vi.fn(),
   initializeNoteSection: vi.fn(),
   listNoteSections: vi.fn(),
-  migrateLegacyNote: vi.fn(),
   openCrdtSection: vi.fn(),
   progressListener: undefined as ((value?: unknown) => void) | undefined,
   releaseCrdtSection: vi.fn(),
@@ -36,10 +35,6 @@ vi.mock("@client/realtime/crdt", () => ({
   openCrdtSection: mocks.openCrdtSection,
   releaseCrdtSection: mocks.releaseCrdtSection,
   waitForCrdtSectionReady: mocks.waitForCrdtSectionReady
-}));
-
-vi.mock("@client/hooks/useAppData", () => ({
-  ensureLegacyNoteMigrated: mocks.migrateLegacyNote
 }));
 
 import { useSectionData } from "@client/hooks/useSectionData";
@@ -65,7 +60,6 @@ describe("useSectionData", () => {
       version: 1
     });
     mocks.listNoteSections.mockResolvedValue({ sections: sections(5) });
-    mocks.migrateLegacyNote.mockResolvedValue(undefined);
     mocks.getStorageQuota.mockResolvedValue({
       usedBytes: 100,
       reservedBytes: 20,
@@ -202,28 +196,6 @@ describe("useSectionData", () => {
     expect(sectionState(current.id, "section-1")).toMatchObject({
       status: "ready",
       currentSequence: 1
-    });
-  });
-
-  it("gates section subscriptions while a legacy body is migrating", async () => {
-    const current = installNote({
-      legacyContentAvailable: true,
-      legacyBodyLoaded: false,
-      rootSectionId: null
-    });
-
-    renderHook(() => useSectionData(current));
-
-    await waitFor(() => {
-      expect(mocks.migrateLegacyNote).toHaveBeenCalledWith(
-        current,
-        expect.any(AbortSignal)
-      );
-    });
-    expect(mocks.openCrdtSection).not.toHaveBeenCalled();
-    expect(mocks.listNoteSections).not.toHaveBeenCalled();
-    expect(useAppStore.getState().sectionIndexes[current.id]).toMatchObject({
-      status: "loading"
     });
   });
 
@@ -384,32 +356,6 @@ describe("useSectionData", () => {
         [current.id]: "undecryptable"
       });
     });
-  });
-
-  it("retains stable ordered section blocks for legacy encrypted content after migration", async () => {
-    const current = installNote({
-      legacyContentAvailable: true,
-      legacyBodyLoaded: false,
-      rootSectionId: null
-    });
-    mocks.getCrdtSectionOrder.mockReturnValue(["section-1", "section-2"]);
-    mocks.waitForCrdtSectionReady.mockResolvedValue(undefined);
-
-    renderHook(() => useSectionData(current));
-
-    await waitFor(() => {
-      expect(mocks.migrateLegacyNote).toHaveBeenCalled();
-    });
-    act(() => {
-      useAppStore.getState().setSectionIndex(current.id, {
-        noteId: current.id,
-        status: "ready",
-        orderedSectionIds: ["section-1", "section-2"],
-        sections: sections(2)
-      });
-    });
-    const index = useAppStore.getState().sectionIndexes[current.id];
-    expect(index?.orderedSectionIds).toEqual(["section-1", "section-2"]);
   });
 
   it("handles empty section index without exposing navigation", () => {

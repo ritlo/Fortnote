@@ -3,7 +3,6 @@ import type { Duplex } from "node:stream";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { z } from "zod";
 import {
-  CRDT_REALTIME_CAPABILITY,
   CRDT_REALTIME_CAPABILITY_V2,
   decodeCrdtBinaryFrame,
   parseCrdtControlMessage
@@ -13,7 +12,6 @@ import { allowedOriginAliases } from "../http/csrf.js";
 import type { AppContext } from "../http/app.js";
 import { RealtimeHub, sendJson, type RealtimeClient } from "./hub.js";
 
-const MAX_CRDT_CIPHER_LENGTH = 1024 * 1024;
 const MAX_REALTIME_MESSAGE_BYTES = 2 * 1024 * 1024;
 
 const realtimeQuerySchema = z.object({
@@ -22,43 +20,11 @@ const realtimeQuerySchema = z.object({
   clientId: z.uuid().optional()
 });
 
-const clientMessageSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("presence"),
-    noteId: z.uuid(),
-    state: z.enum(["idle", "editing", "left"])
-  }),
-  z.object({
-    type: z.literal("crdt-subscribe"),
-    noteId: z.uuid()
-  }),
-  z.object({
-    type: z.literal("crdt-update"),
-    formatVersion: z.literal(1),
-    updateId: z.uuid(),
-    noteId: z.uuid(),
-    cryptoOwnerId: z.uuid(),
-    keyEpoch: z.number().int().positive(),
-    cipher: z.string().min(1),
-    nonce: z.string().min(16).max(128)
-  }),
-  z
-    .object({
-      type: z.literal("crdt-checkpoint"),
-      formatVersion: z.literal(1),
-      updateId: z.uuid(),
-      noteId: z.uuid(),
-      cryptoOwnerId: z.uuid(),
-      keyEpoch: z.number().int().positive(),
-      cipher: z.string().min(1),
-      nonce: z.string().min(16).max(128),
-      compactedUpdateIds: z
-        .array(z.uuid())
-        .max(100)
-        .refine((ids) => new Set(ids).size === ids.length)
-    })
-    .refine((message) => !message.compactedUpdateIds.includes(message.updateId))
-]);
+const presenceMessageSchema = z.object({
+  type: z.literal("presence"),
+  noteId: z.uuid(),
+  state: z.enum(["idle", "editing", "left"])
+});
 
 export function attachRealtimeServer(
   context: AppContext,
@@ -109,9 +75,6 @@ export function attachRealtimeServer(
       Object.fromEntries(url.searchParams.entries())
     );
     const after = parsed.success ? parsed.data.after : 0;
-    const crdtEnabled =
-      parsed.success &&
-      parsed.data.capabilities.split(",").includes(CRDT_REALTIME_CAPABILITY);
     const crdtV2Enabled =
       parsed.success &&
       parsed.data.capabilities.split(",").includes(CRDT_REALTIME_CAPABILITY_V2);
@@ -123,7 +86,6 @@ export function attachRealtimeServer(
         socket,
         session,
         after,
-        crdtEnabled,
         crdtV2Enabled,
         parsed.success ? parsed.data.clientId : undefined
       );
@@ -143,7 +105,6 @@ function connectClient(
   socket: WebSocket,
   session: SessionRecord,
   after: number,
-  crdtEnabled: boolean,
   crdtV2Enabled: boolean,
   clientInstanceId?: string
 ): void {
@@ -152,7 +113,6 @@ function connectClient(
     userId: session.userId,
     username: session.username,
     socket,
-    crdtEnabled,
     crdtV2Enabled,
     ...(clientInstanceId === undefined ? {} : { clientInstanceId })
   });
@@ -170,10 +130,7 @@ function connectClient(
     type: "connected",
     userId: session.userId,
     username: session.username,
-    capabilities: [
-      ...(crdtEnabled ? [CRDT_REALTIME_CAPABILITY] : []),
-      ...(crdtV2Enabled ? [CRDT_REALTIME_CAPABILITY_V2] : [])
-    ]
+    capabilities: crdtV2Enabled ? [CRDT_REALTIME_CAPABILITY_V2] : []
   });
   void context.db.events
     .listVisible(session.userId, after, 500)
@@ -204,45 +161,18 @@ async function handleClientMessage(
     return;
   }
 
-  const parsedV2 = parseV2Control(raw);
-  if (parsedV2) {
-    if (parsedV2.type === "crdt-subscribe") {
-      await hub.subscribeCrdtV2(client, parsedV2);
+  const control = parseCrdtControl(raw);
+  if (control) {
+    if (control.type === "crdt-subscribe") {
+      await hub.subscribeCrdtV2(client, control);
     } else {
-      hub.unsubscribeCrdtV2(client, parsedV2);
+      hub.unsubscribeCrdtV2(client, control);
     }
     return;
   }
-  const parsed = parseClientMessage(raw);
-  if (!parsed) {
-    return;
-  }
-  if (parsed.type === "presence") {
-    await hub.updatePresence(client, parsed.noteId, parsed.state);
-  } else if (parsed.type === "crdt-subscribe") {
-    await hub.subscribeCrdt(client, parsed.noteId);
-  } else {
-    if (parsed.cipher.length > MAX_CRDT_CIPHER_LENGTH) {
-      sendJson(socket, {
-        type: "crdt-reject",
-        noteId: parsed.noteId,
-        updateId: parsed.updateId,
-        reason: "payload-too-large"
-      });
-      return;
-    }
-    const outcome = await hub.publishCrdtUpdate(client, parsed);
-    if (outcome === "accepted") {
-      sendJson(socket, { type: "crdt-ack", updateId: parsed.updateId });
-    } else {
-      const reason = outcome === "storage-limit" ? "storage-limit" : "forbidden";
-      sendJson(socket, {
-        type: "crdt-reject",
-        noteId: parsed.noteId,
-        updateId: parsed.updateId,
-        reason
-      });
-    }
+  const presence = parsePresenceMessage(raw);
+  if (presence) {
+    await hub.updatePresence(client, presence.noteId, presence.state);
   }
 }
 
@@ -291,7 +221,7 @@ async function handleBinaryMessage(
   });
 }
 
-function parseV2Control(raw: string) {
+function parseCrdtControl(raw: string) {
   try {
     const parsed = parseCrdtControlMessage(JSON.parse(raw) as unknown);
     return parsed.type === "crdt-subscribe" || parsed.type === "crdt-unsubscribe"
@@ -302,14 +232,14 @@ function parseV2Control(raw: string) {
   }
 }
 
-function parseClientMessage(raw: string): z.infer<typeof clientMessageSchema> | null {
+function parsePresenceMessage(raw: string): z.infer<typeof presenceMessageSchema> | null {
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(raw) as unknown;
   } catch {
     return null;
   }
-  const parsed = clientMessageSchema.safeParse(parsedJson);
+  const parsed = presenceMessageSchema.safeParse(parsedJson);
   return parsed.success ? parsed.data : null;
 }
 

@@ -22,19 +22,6 @@ export type SectionRejectionCode =
 
 type SectionFenceRejectionCode = Exclude<SectionRejectionCode, "last-section">;
 
-export type LegacySectionReservationOutcome =
-  | {
-      status: "reserved" | "pending" | "complete";
-      sectionId: string;
-      keyEpoch: number;
-      rootVersion: number;
-      version: number;
-      manifestId: string | null;
-      changed: boolean;
-      eventCursor: number | null;
-    }
-  | { status: "rejected"; code: SectionFenceRejectionCode };
-
 export type SectionMutationOutcome =
   | {
       status: "created" | "already-created" | "deleted" | "already-deleted";
@@ -60,7 +47,6 @@ export type SectionInitializationOutcome =
 
 export interface NoteSectionRepository {
   list(noteId: string): Promise<SectionRecord[]>;
-  reserveLegacy(input: SectionWriteInput): Promise<LegacySectionReservationOutcome>;
   create(input: SectionWriteInput): Promise<SectionMutationOutcome>;
   tombstone(input: SectionWriteInput): Promise<SectionMutationOutcome>;
   initialize(input: InitializeSectionInput): Promise<SectionInitializationOutcome>;

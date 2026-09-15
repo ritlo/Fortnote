@@ -1,8 +1,7 @@
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "../db/schema.js";
 import type {
-  LegacyNoteContent,
   NoteEpochLinkRecord,
   NoteKeyShareRecord,
   NoteMembershipRecord,
@@ -15,7 +14,6 @@ type PostgresDatabase = NodePgDatabase<typeof schema>;
 const noteSelection = {
   id: schema.notes.id,
   folderId: schema.notes.folderId,
-  title: schema.notes.title,
   titleCipher: schema.notes.titleCipher,
   titleNonce: schema.notes.titleNonce,
   titleFormatVersion: schema.notes.titleFormatVersion,
@@ -29,7 +27,6 @@ const noteSelection = {
     number | null
   >`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyFormatVersion} ELSE NULL END`,
   contentLength: schema.notes.contentLength,
-  legacyContentAvailable: sql<boolean>`${schema.notes.contentCipher} <> ''`,
   version: schema.notes.version,
   rootVersion: schema.notes.rootVersion,
   rootSectionId: schema.notes.rootSectionId,
@@ -79,22 +76,6 @@ export class PostgresNoteQueryRepository implements NoteQueryRepository {
           eq(schema.noteMemberships.status, "active")
         )
       )
-      .limit(1);
-    return rows[0] ?? null;
-  }
-
-  async legacyContent(noteId: string): Promise<LegacyNoteContent | null> {
-    const rows = await this.orm
-      .select({
-        contentCipher: schema.notes.contentCipher,
-        contentNonce: schema.notes.contentNonce,
-        contentLength: schema.notes.contentLength,
-        version: schema.notes.version,
-        rootVersion: schema.notes.rootVersion,
-        keyEpoch: schema.notes.keyEpoch
-      })
-      .from(schema.notes)
-      .where(and(eq(schema.notes.id, noteId), ne(schema.notes.contentCipher, "")))
       .limit(1);
     return rows[0] ?? null;
   }

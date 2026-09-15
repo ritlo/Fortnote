@@ -46,7 +46,6 @@ vi.mock("@client/realtime/client", () => ({
     const connection: RealtimeConnection = {
       close: vi.fn(),
       suspend: vi.fn(),
-      discardCrdtUpdates: vi.fn(),
       downloadCrdtContent: vi.fn(),
       sendPresence: vi.fn(),
       subscribeCrdt: vi.fn(),

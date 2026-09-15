@@ -14,7 +14,7 @@ const inviteMemberSchema = z.object({
   role: memberRoleSchema,
   sharingKeyVersion: z.number().int().positive(),
   encryptedNoteKey: z.string().min(32),
-  formatVersion: z.number().int().positive()
+  formatVersion: z.literal(2)
 });
 
 const updateMemberSchema = z.object({

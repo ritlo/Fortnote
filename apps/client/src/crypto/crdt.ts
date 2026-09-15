@@ -1,22 +1,11 @@
 import {
   crdtBinaryAssociatedData,
-  crdtCheckpointAssociatedData,
-  crdtUpdateAssociatedData,
   decryptBytes,
-  encryptBytes,
   encryptBytesV2,
   fromBase64
 } from "@fortnote/shared";
 
-type LegacyCrdtAadInput = {
-  cryptoOwnerId: string;
-  noteId: string;
-  keyEpoch: number;
-  updateId: string;
-  formatVersion: number;
-} & ({ type: "crdt-update" } | { type: "crdt-checkpoint"; compactedUpdateIds: string[] });
-
-interface BinaryCrdtAadInput {
+interface CrdtAadInput {
   type: "crdt-update" | "crdt-checkpoint";
   formatVersion: 2;
   cryptoOwnerId: string;
@@ -28,16 +17,17 @@ interface BinaryCrdtAadInput {
   checkpointSequenceCutoff?: number;
 }
 
-type CrdtAadInput = LegacyCrdtAadInput | BinaryCrdtAadInput;
-
 export async function encryptCrdtMessage(
   input: CrdtAadInput & {
     noteKeyBase64: string;
     update: Uint8Array;
   }
 ) {
-  const encrypt = input.formatVersion === 2 ? encryptBytesV2 : encryptBytes;
-  return encrypt(input.update, fromBase64(input.noteKeyBase64), crdtMessageAad(input));
+  return encryptBytesV2(
+    input.update,
+    fromBase64(input.noteKeyBase64),
+    crdtBinaryAssociatedData(input)
+  );
 }
 
 export async function decryptCrdtMessage(
@@ -54,15 +44,6 @@ export async function decryptCrdtMessage(
       formatVersion: input.formatVersion
     },
     fromBase64(input.noteKeyBase64),
-    crdtMessageAad(input)
+    crdtBinaryAssociatedData(input)
   );
-}
-
-function crdtMessageAad(input: CrdtAadInput): Uint8Array {
-  if ("sectionId" in input) {
-    return crdtBinaryAssociatedData(input);
-  }
-  return input.type === "crdt-checkpoint"
-    ? crdtCheckpointAssociatedData(input)
-    : crdtUpdateAssociatedData(input);
 }

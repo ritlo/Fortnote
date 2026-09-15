@@ -540,11 +540,12 @@ function notePayload() {
   return {
     id: crypto.randomUUID(),
     folderId: null,
-    title: "Compose smoke encrypted note",
+    rootSectionId: crypto.randomUUID(),
+    titleCipher: "compose_smoke_title_cipher_abcdefghijklmnopqrstuvwxyz",
+    titleNonce: "compose_smoke_title_nonce_abcdefghijklmnopqrstuvwxyz",
+    titleFormatVersion: 2,
     encryptedNoteKey: "compose_smoke_encrypted_note_key_abcdefghijklmnopqrstuvwxyz",
     noteKeyNonce: "compose_smoke_note_key_nonce_abcdefghijklmnopqrstuvwxyz",
-    contentCipher: "compose_smoke_content_cipher_abcdefghijklmnopqrstuvwxyz",
-    contentNonce: "compose_smoke_content_nonce_abcdefghijklmnopqrstuvwxyz",
-    contentLength: 128
+    noteKeyFormatVersion: 2
   };
 }

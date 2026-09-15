@@ -4,8 +4,7 @@ import {
   fromBase64,
   toBase64,
   type CrdtBinaryHeader,
-  type CrdtManifestReferenceV2,
-  type EncryptedCrdtMessage
+  type CrdtManifestReferenceV2
 } from "@fortnote/shared";
 import {
   CONTENT_CHUNK_AUTH_BYTES,
@@ -43,18 +42,13 @@ export interface ScopedEncryptedCrdtMessage {
 }
 
 export type ReceivedBinaryCrdtMessage = CrdtBinaryHeader & { cipher: Uint8Array };
-export type IncomingCrdtMessage =
-  | EncryptedCrdtMessage
-  | ScopedEncryptedCrdtMessage
-  | ReceivedBinaryCrdtMessage
-  | CrdtManifestReferenceV2;
+export type IncomingCrdtMessage = ReceivedBinaryCrdtMessage | CrdtManifestReferenceV2;
 
 export interface CrdtTransport {
-  discard: (noteId: string, beforeKeyEpoch: number) => void;
   subscribe: (
     noteId: string,
-    sectionId?: string,
-    keyEpoch?: number,
+    sectionId: string,
+    keyEpoch: number,
     afterSequence?: number
   ) => void;
   unsubscribe?: (noteId: string, sectionId: string, keyEpoch: number) => void;
@@ -173,12 +167,6 @@ export function decryptReceivedUpdate(input: {
       cryptoOwnerId: update.cryptoOwnerId,
       noteKey: fromBase64(input.noteKeyBase64),
       onProgress: input.onProgress
-    });
-  }
-  if (update.type !== "crdt-binary") {
-    return decryptCrdtMessage({
-      ...update,
-      noteKeyBase64: input.noteKeyBase64
     });
   }
   return decryptCrdtMessage({

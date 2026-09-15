@@ -2,13 +2,10 @@ import type { CollaborationEvent, PresenceUser } from "../api";
 import {
   decodeCrdtBinaryFrame,
   parseCrdtControlMessage,
-  type CrdtAck,
   type CrdtAckV2,
   type CrdtHistoryPageV2,
   type CrdtManifestReferenceV2,
-  type CrdtReject,
-  type CrdtRejectV2,
-  type EncryptedCrdtMessage
+  type CrdtRejectV2
 } from "@fortnote/shared";
 import type { ReceivedBinaryCrdtMessage } from "./crdt";
 
@@ -19,12 +16,8 @@ export type RealtimeMessage =
   | { type: "replay"; events: CollaborationEvent[] }
   | { type: "event"; event: CollaborationEvent }
   | { type: "presence"; noteId: string; users: PresenceUser[] }
-  | { type: "crdt-sync"; noteId: string; keyEpoch: number; hasUpdates: boolean }
-  | EncryptedCrdtMessage
   | ReceivedBinaryCrdtMessage
-  | CrdtAck
   | CrdtAckV2
-  | CrdtReject
   | CrdtRejectV2
   | CrdtHistoryPageV2
   | CrdtManifestReferenceV2
@@ -41,23 +34,21 @@ export function parseRealtimeMessage(data: unknown): RealtimeMessage | null {
   } catch {
     return null;
   }
-  try {
-    const control = parseCrdtControlMessage(parsed);
-    if (
-      control.type === "crdt-ack" ||
-      control.type === "crdt-reject" ||
-      control.type === "crdt-history-page" ||
-      control.type === "crdt-manifest"
-    ) {
-      return control;
+  if (
+    isRecord(parsed) &&
+    typeof parsed.type === "string" &&
+    parsed.type.startsWith("crdt-")
+  ) {
+    try {
+      const control = parseCrdtControlMessage(parsed);
+      return control.type === "crdt-subscribe" || control.type === "crdt-unsubscribe"
+        ? null
+        : control;
+    } catch {
+      return null;
     }
-  } catch {
-    // Legacy realtime JSON is validated below during migration.
   }
-  if (!isRealtimeMessage(parsed)) {
-    return null;
-  }
-  return parsed;
+  return isRealtimeMessage(parsed) ? parsed : null;
 }
 
 export function parseRealtimeBinaryMessage(
@@ -102,40 +93,6 @@ export function isRealtimeMessage(value: unknown): value is RealtimeMessage {
         Array.isArray(value.users) &&
         value.users.every(isPresenceUser)
       );
-    case "crdt-update":
-      return isCrdtEnvelope(value);
-    case "crdt-sync":
-      return (
-        typeof value.noteId === "string" &&
-        typeof value.keyEpoch === "number" &&
-        Number.isInteger(value.keyEpoch) &&
-        value.keyEpoch > 0 &&
-        typeof value.hasUpdates === "boolean"
-      );
-    case "crdt-checkpoint":
-      return (
-        isCrdtEnvelope(value) &&
-        Array.isArray(value.compactedUpdateIds) &&
-        value.compactedUpdateIds.every((id) => typeof id === "string")
-      );
-    case "crdt-ack":
-      return typeof value.updateId === "string";
-    case "crdt-reject":
-      return typeof value.code === "string"
-        ? typeof value.updateId === "string" &&
-            typeof value.sectionId === "string" &&
-            [
-              "storage-limit",
-              "frame-too-large",
-              "stale-epoch",
-              "rotation-pending",
-              "forbidden"
-            ].includes(value.code)
-        : typeof value.noteId === "string" &&
-            typeof value.updateId === "string" &&
-            (value.reason === "forbidden" ||
-              value.reason === "payload-too-large" ||
-              value.reason === "storage-limit");
     case "pong":
       return true;
     default:
@@ -170,18 +127,6 @@ function isPresenceUser(value: unknown): value is PresenceUser {
     typeof value.username === "string" &&
     (value.state === "idle" || value.state === "editing") &&
     typeof value.updatedAt === "string"
-  );
-}
-
-function isCrdtEnvelope(value: Record<string, unknown>): boolean {
-  return (
-    value.formatVersion === 1 &&
-    typeof value.updateId === "string" &&
-    typeof value.noteId === "string" &&
-    typeof value.cryptoOwnerId === "string" &&
-    typeof value.keyEpoch === "number" &&
-    typeof value.cipher === "string" &&
-    typeof value.nonce === "string"
   );
 }
 

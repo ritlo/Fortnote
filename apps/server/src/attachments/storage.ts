@@ -27,18 +27,6 @@ export class AttachmentCiphertextSizeError extends Error {
   }
 }
 
-export function safeDisplayFilename(filename: string): boolean {
-  const trimmed = filename.trim();
-  return (
-    trimmed.length > 0 &&
-    trimmed.length <= 180 &&
-    !trimmed.includes("/") &&
-    !trimmed.includes("\\") &&
-    trimmed !== "." &&
-    trimmed !== ".."
-  );
-}
-
 export function validateAttachmentSize(expectedBytes: number, maxBytes: number): void {
   if (
     !Number.isSafeInteger(expectedBytes) ||

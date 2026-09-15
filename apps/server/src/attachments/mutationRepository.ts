@@ -20,7 +20,7 @@ export interface ReserveAttachmentUploadInput {
   userId: string;
   attachmentId: string;
   size: number;
-  expectedKeyEpoch?: number;
+  expectedKeyEpoch: number;
   storageQuotaBytes: number;
 }
 
@@ -34,11 +34,9 @@ export interface CommitAttachmentUploadInput {
   attachment: {
     id: string;
     size: number;
-    filename: string;
-    mimeType: string;
-    metadataCipher: string | null;
-    metadataNonce: string | null;
-    metadataFormatVersion: number | null;
+    metadataCipher: string;
+    metadataNonce: string;
+    metadataFormatVersion: number;
     encryptedAttachmentKey: string;
     attachmentKeyNonce: string;
     fileNonce: string;

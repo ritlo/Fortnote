@@ -5,32 +5,22 @@ import { requireSessionAsync } from "../auth/session.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { withCanonicalTimestamps } from "../db/timestamps.js";
-import { AttachmentCiphertextSizeError, safeDisplayFilename } from "./storage.js";
+import { AttachmentCiphertextSizeError } from "./storage.js";
 import { canEditNote, canReadNote, getNoteAccessAsync } from "../notes/access.js";
 import { requestClientInstanceId } from "../notes/events.js";
 import type { AttachmentGateError } from "./mutationRepository.js";
 
-const uploadAttachmentBaseSchema = z.object({
+const uploadAttachmentSchema = z.object({
   id: z.uuid(),
   size: z.number().int().nonnegative(),
+  expectedKeyEpoch: z.number().int().positive(),
+  metadataCipher: z.string().min(1),
+  metadataNonce: z.string().min(16),
+  metadataFormatVersion: z.literal(2),
   encryptedAttachmentKey: z.string().min(16),
   attachmentKeyNonce: z.string().min(16),
   fileNonce: z.string().min(16)
 });
-const protectedUploadAttachmentSchema = uploadAttachmentBaseSchema.extend({
-  expectedKeyEpoch: z.number().int().positive(),
-  metadataCipher: z.string().min(1),
-  metadataNonce: z.string().min(16),
-  metadataFormatVersion: z.literal(2)
-});
-const legacyUploadAttachmentSchema = uploadAttachmentBaseSchema.extend({
-  filename: z.string().min(1).max(180),
-  mimeType: z.string().min(1).max(120)
-});
-const uploadAttachmentSchema = z.union([
-  protectedUploadAttachmentSchema,
-  legacyUploadAttachmentSchema
-]);
 
 function getAttachment(context: AppContext, attachmentId: string) {
   return context.db.attachmentMetadata.find(attachmentId);
@@ -56,8 +46,6 @@ function decodeHeaderValue(value: string): string {
 function uploadMetadata(request: Request) {
   return {
     id: headerValue(request, "x-fortnote-attachment-id"),
-    filename: headerValue(request, "x-fortnote-filename"),
-    mimeType: headerValue(request, "x-fortnote-mime-type"),
     size: Number(headerValue(request, "x-fortnote-size")),
     expectedKeyEpoch: Number(headerValue(request, "x-fortnote-expected-key-epoch")),
     metadataCipher: headerValue(request, "x-fortnote-metadata-cipher"),
@@ -128,19 +116,13 @@ export function createAttachmentsRouter(context: AppContext): Router {
       sendApiError(response, "bad_request", "Attachment size mismatch");
       return;
     }
-    if ("filename" in payload && !safeDisplayFilename(payload.filename)) {
-      sendApiError(response, "bad_request", "Invalid attachment filename");
-      return;
-    }
     const reservation = await context.db.attachmentMutations.reserve({
       noteId: request.params.noteId,
       userId: session.userId,
       attachmentId: payload.id,
       size: payload.size,
       storageQuotaBytes: context.config.storageQuotaBytes,
-      ...("expectedKeyEpoch" in payload
-        ? { expectedKeyEpoch: payload.expectedKeyEpoch }
-        : {})
+      expectedKeyEpoch: payload.expectedKeyEpoch
     });
     if (reservation.kind !== "reserved") {
       sendAttachmentGateError(response, reservation.kind);
@@ -177,12 +159,9 @@ export function createAttachmentsRouter(context: AppContext): Router {
         storageKey: storageId,
         attachment: {
           id: payload.id,
-          filename: "filename" in payload ? payload.filename.trim() : "",
-          mimeType: "mimeType" in payload ? payload.mimeType : "",
-          metadataCipher: "metadataCipher" in payload ? payload.metadataCipher : null,
-          metadataNonce: "metadataNonce" in payload ? payload.metadataNonce : null,
-          metadataFormatVersion:
-            "metadataFormatVersion" in payload ? payload.metadataFormatVersion : null,
+          metadataCipher: payload.metadataCipher,
+          metadataNonce: payload.metadataNonce,
+          metadataFormatVersion: payload.metadataFormatVersion,
           size: payload.size,
           encryptedAttachmentKey: payload.encryptedAttachmentKey,
           attachmentKeyNonce: payload.attachmentKeyNonce,
@@ -237,13 +216,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
 
     const rows = await context.db.attachmentMetadata.list(access.noteId);
 
-    response.json({
-      attachments: rows.map((row) => ({
-        ...withCanonicalTimestamps(row),
-        filename: row.metadataFormatVersion === 2 ? undefined : row.filename,
-        mimeType: row.metadataFormatVersion === 2 ? undefined : row.mimeType
-      }))
-    });
+    response.json({ attachments: rows.map(withCanonicalTimestamps) });
   });
 
   router.get("/attachments/:id", async (request, response) => {

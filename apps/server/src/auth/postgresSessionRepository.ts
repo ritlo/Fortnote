@@ -39,8 +39,7 @@ export class PostgresSessionRepository implements SessionRepository {
         userId: schema.sessions.userId,
         username: schema.users.username,
         displayName: schema.users.displayName,
-        canonicalHandle: schema.users.canonicalHandle,
-        handleState: schema.users.handleState
+        canonicalHandle: schema.users.canonicalHandle
       })
       .from(schema.sessions)
       .innerJoin(schema.users, eq(schema.users.id, schema.sessions.userId))

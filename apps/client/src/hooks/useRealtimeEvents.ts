@@ -259,12 +259,7 @@ export function useRealtimeEvents() {
             setNotePresence(message.noteId, message.users);
             return;
           }
-          if (
-            message.type === "crdt-update" ||
-            message.type === "crdt-checkpoint" ||
-            message.type === "crdt-binary" ||
-            message.type === "crdt-manifest"
-          ) {
+          if (message.type === "crdt-binary" || message.type === "crdt-manifest") {
             void receiveCrdtUpdate(message).catch(() => {
               // A ciphertext that reaches the binding but cannot be opened is
               // a protection failure, not merely a transport warning. Surface
@@ -281,7 +276,6 @@ export function useRealtimeEvents() {
             void finishCrdtSync(
               message.noteId,
               message.keyEpoch,
-              message.nextSequence > 0,
               message.sectionId,
               message.nextSequence
             ).catch((error: unknown) => {
@@ -289,23 +283,13 @@ export function useRealtimeEvents() {
             });
             return;
           }
-          if (message.type === "crdt-sync") {
-            void finishCrdtSync(
-              message.noteId,
-              message.keyEpoch,
-              message.hasUpdates
-            ).catch((error: unknown) => {
-              reportCrdtSyncFailure(message.noteId, error);
-            });
-            return;
-          }
           if (message.type === "crdt-reject") {
-            const code = "code" in message ? message.code : message.reason;
+            const code = message.code;
             if (code === "storage-limit") {
               return;
             }
             setError(
-              code === "payload-too-large" || code === "frame-too-large"
+              code === "frame-too-large"
                 ? "Realtime update is too large to synchronize."
                 : code === "rotation-pending"
                   ? "Note-key rotation is pending; encrypted work remains queued."
@@ -316,7 +300,6 @@ export function useRealtimeEvents() {
       });
       connectionRef.current = connection;
       setCrdtTransport({
-        discard: connection.discardCrdtUpdates,
         downloadContent: connection.downloadCrdtContent,
         subscribe: connection.subscribeCrdt,
         unsubscribe: connection.unsubscribeCrdt,

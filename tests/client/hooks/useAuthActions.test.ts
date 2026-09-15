@@ -78,8 +78,7 @@ beforeEach(() => {
   mocks.createLoginAuthVerifier.mockResolvedValue("verifier");
   mocks.login.mockResolvedValue({
     id: "user-a",
-    username: "alice.example",
-    handleState: "active"
+    username: "alice.example"
   });
   mocks.getKeyMaterial.mockResolvedValue({
     encryptedRootKey: "cipher",
@@ -171,29 +170,10 @@ describe("useAuthActions identity lifecycle", () => {
     expect(useAppStore.getState().status).toBe("Signed in and decrypted");
   });
 
-  it("preserves a visible repair prompt for a legacy account", async () => {
-    mocks.login.mockResolvedValue({
-      id: "legacy",
-      username: " Legacy Name ",
-      canonicalHandle: null,
-      handleState: "repair-required"
-    });
-    useAppStore.setState({ username: " Legacy Name " });
-    const { result } = renderHook(() => useAuthActions());
-
-    await act(async () => {
-      await result.current.submitAuth();
-    });
-
-    expect(mocks.login).toHaveBeenCalledWith(" Legacy Name ", "verifier");
-    expect(useAppStore.getState().status).toContain("Handle repair required");
-  });
-
   it("asks an active session for fresh login renewal before decryption", async () => {
     mocks.getMe.mockResolvedValue({
       id: "user-a",
-      username: "alice.example",
-      handleState: "active"
+      username: "alice.example"
     });
     renderHook(() => {
       useSessionBootstrap();

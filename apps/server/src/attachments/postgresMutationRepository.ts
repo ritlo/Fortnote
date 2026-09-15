@@ -66,7 +66,7 @@ export class PostgresAttachmentMutationRepository implements AttachmentMutationR
       if (current.rotationFenced) {
         return { kind: "rotation-pending" as const };
       }
-      const expectedKeyEpoch = input.expectedKeyEpoch ?? current.keyEpoch;
+      const expectedKeyEpoch = input.expectedKeyEpoch;
       if (current.keyEpoch !== expectedKeyEpoch) {
         return { kind: "stale-epoch" as const };
       }
@@ -164,6 +164,8 @@ export class PostgresAttachmentMutationRepository implements AttachmentMutationR
 
       await transaction.insert(schema.attachments).values({
         ...input.attachment,
+        filename: "",
+        mimeType: "",
         noteId: current.noteId,
         userId: input.ownerUserId,
         keyEpoch: input.expectedKeyEpoch,

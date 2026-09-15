@@ -27,7 +27,7 @@ class MemoryStorage {
 describe("sharing key trust", () => {
   it("formats public key fingerprints stably", async () => {
     const alice = await createRegistrationCrypto("alice", "password");
-    const key = await createUserSharingKey(alice.rootKey);
+    const key = await createUserSharingKey(alice.rootKey, 1, "bob_id");
 
     const fingerprint = await fingerprintPublicSharingKey(key.opened.publicKey);
 
@@ -42,7 +42,7 @@ describe("sharing key trust", () => {
   it("requires first-use confirmation before trusting a collaborator key", async () => {
     const owner = await createRegistrationCrypto("alice", "password");
     const bob = await createRegistrationCrypto("bob", "password");
-    const bobKey = await createUserSharingKey(bob.rootKey);
+    const bobKey = await createUserSharingKey(bob.rootKey, 1, "bob_id");
     const storage = new MemoryStorage();
     const publicKey = publicSharingKey({
       userId: "bob_id",
@@ -81,8 +81,8 @@ describe("sharing key trust", () => {
   it("blocks a changed key for an already trusted user and version", async () => {
     const owner = await createRegistrationCrypto("alice", "password");
     const bob = await createRegistrationCrypto("bob", "password");
-    const firstKey = await createUserSharingKey(bob.rootKey);
-    const changedKey = await createUserSharingKey(bob.rootKey);
+    const firstKey = await createUserSharingKey(bob.rootKey, 1, "bob_id");
+    const changedKey = await createUserSharingKey(bob.rootKey, 1, "bob_id");
     const storage = new MemoryStorage();
 
     const trusted = publicSharingKey({
@@ -114,8 +114,8 @@ describe("sharing key trust", () => {
   it("requires confirmation for a new sharing key version", async () => {
     const owner = await createRegistrationCrypto("alice", "password");
     const bob = await createRegistrationCrypto("bob", "password");
-    const versionOne = await createUserSharingKey(bob.rootKey, 1);
-    const versionTwo = await createUserSharingKey(bob.rootKey, 2);
+    const versionOne = await createUserSharingKey(bob.rootKey, 1, "bob_id");
+    const versionTwo = await createUserSharingKey(bob.rootKey, 2, "bob_id");
     const storage = new MemoryStorage();
 
     await trustSharingKey({
@@ -148,7 +148,7 @@ describe("sharing key trust", () => {
   it("binds trust to the exact collaborator account and key version", async () => {
     const owner = await createRegistrationCrypto("alice", "password");
     const bob = await createRegistrationCrypto("bob", "password");
-    const key = await createUserSharingKey(bob.rootKey, 1);
+    const key = await createUserSharingKey(bob.rootKey, 1, "bob_id");
     const storage = new MemoryStorage();
     const trusted = publicSharingKey({
       userId: "bob_id",
@@ -186,7 +186,7 @@ describe("sharing key trust", () => {
     const alice = await createRegistrationCrypto("alice", "password");
     const charlie = await createRegistrationCrypto("charlie", "password");
     const bob = await createRegistrationCrypto("bob", "password");
-    const bobKey = await createUserSharingKey(bob.rootKey);
+    const bobKey = await createUserSharingKey(bob.rootKey, 1, "bob_id");
     const storage = new MemoryStorage();
     const publicKey = publicSharingKey({
       userId: "bob_id",

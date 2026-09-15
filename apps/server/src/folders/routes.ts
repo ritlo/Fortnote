@@ -6,41 +6,20 @@ import { withCanonicalTimestamps } from "../db/timestamps.js";
 import { requireSessionAsync } from "../auth/session.js";
 import { requestClientInstanceId } from "../notes/events.js";
 
-const legacyFolderPayloadSchema = z.object({
-  id: z.uuid().optional(),
-  name: z.string().min(1).max(120),
-  parentFolderId: z.uuid().nullable().optional()
-});
-const protectedFolderPayloadSchema = z.object({
+const folderPayloadSchema = z.object({
   id: z.uuid().optional(),
   nameCipher: z.string().min(1),
   nameNonce: z.string().min(16),
   nameFormatVersion: z.literal(2),
   parentFolderId: z.uuid().nullable().optional()
 });
-const folderPayloadSchema = z.union([
-  protectedFolderPayloadSchema,
-  legacyFolderPayloadSchema
-]);
 
-function protectedFolderValues(
-  payload:
-    | z.infer<typeof protectedFolderPayloadSchema>
-    | z.infer<typeof legacyFolderPayloadSchema>
-) {
-  return "nameCipher" in payload
-    ? {
-        name: "",
-        nameCipher: payload.nameCipher,
-        nameNonce: payload.nameNonce,
-        nameFormatVersion: payload.nameFormatVersion
-      }
-    : {
-        name: payload.name,
-        nameCipher: null,
-        nameNonce: null,
-        nameFormatVersion: null
-      };
+function folderNameValues(payload: z.infer<typeof folderPayloadSchema>) {
+  return {
+    nameCipher: payload.nameCipher,
+    nameNonce: payload.nameNonce,
+    nameFormatVersion: payload.nameFormatVersion
+  };
 }
 
 function publishEventCursor(context: AppContext, cursor: number): void {
@@ -75,7 +54,7 @@ export function createFoldersRouter(context: AppContext): Router {
 
     const parentFolderId = parsed.data.parentFolderId ?? null;
     const id = parsed.data.id ?? crypto.randomUUID();
-    const nameValues = protectedFolderValues(parsed.data);
+    const nameValues = folderNameValues(parsed.data);
     const clientInstanceId = requestClientInstanceId(request);
     const outcome = await context.db.folders.create({
       folderId: id,
@@ -107,19 +86,14 @@ export function createFoldersRouter(context: AppContext): Router {
       return;
     }
 
-    const parsed = z
-      .union([
-        protectedFolderPayloadSchema.omit({ id: true }),
-        legacyFolderPayloadSchema.omit({ id: true })
-      ])
-      .safeParse(request.body);
+    const parsed = folderPayloadSchema.omit({ id: true }).safeParse(request.body);
     if (!parsed.success) {
       sendApiError(response, "bad_request", "Invalid folder payload");
       return;
     }
 
     const parentFolderId = parsed.data.parentFolderId ?? null;
-    const nameValues = protectedFolderValues(parsed.data);
+    const nameValues = folderNameValues(parsed.data);
     const clientInstanceId = requestClientInstanceId(request);
     const outcome = await context.db.folders.update({
       folderId: request.params.id,

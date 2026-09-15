@@ -33,38 +33,6 @@ describe("sharing key routes", () => {
       .expect(409);
   });
 
-  it("upgrades a private-key envelope without replacing its public identity", async () => {
-    const app = await createTestApp();
-    const agent = await registerAgent(app, "sharing_migration");
-    const legacy = buildSharingKeyPayload(1);
-    const upgraded = {
-      ...legacy,
-      encryptedPrivateKey: "protected_private_key_v2_abcdefghijklmnopqrstuvwxyz",
-      privateKeyNonce: "protected_private_nonce_v2_abcdefghijklmnopqrstuvwxyz",
-      formatVersion: 2
-    };
-
-    await agent
-      .put("/api/sharing-keys/current")
-      .set(csrfHeaders())
-      .send(legacy)
-      .expect(201);
-    await agent
-      .put("/api/sharing-keys/current")
-      .set(csrfHeaders())
-      .send(upgraded)
-      .expect(200);
-
-    const current = await agent.get("/api/sharing-keys/current").expect(200);
-    expect(current.body).toMatchObject(upgraded);
-
-    await agent
-      .put("/api/sharing-keys/current")
-      .set(csrfHeaders())
-      .send({ ...upgraded, publicKey: `${upgraded.publicKey}_changed` })
-      .expect(409);
-  });
-
   it("looks up only another user's public sharing key", async () => {
     const app = await createTestApp();
     const alice = await registerAgent(app, "sharing_alice");
@@ -85,7 +53,7 @@ describe("sharing key routes", () => {
       username: "sharing_alice",
       sharingKeyVersion: 1,
       publicKey: sharingKeyPayload.publicKey,
-      formatVersion: 1
+      formatVersion: 2
     });
     expect(lookup.body.userId).toEqual(expect.any(String));
     expect(lookup.body.encryptedPrivateKey).toBeUndefined();
@@ -158,7 +126,7 @@ describe("sharing key routes", () => {
         role: "viewer",
         sharingKeyVersion: 1,
         encryptedNoteKey: "encrypted_share_for_cleanup_abcdefghijklmnopqrstuvwxyz",
-        formatVersion: 1
+        formatVersion: 2
       })
       .expect(201);
 
@@ -178,7 +146,7 @@ function buildSharingKeyPayload(version: number) {
     publicKey: `public_sharing_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
     encryptedPrivateKey: `encrypted_private_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
     privateKeyNonce: `private_key_nonce_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
-    formatVersion: 1
+    formatVersion: 2
   };
 }
 

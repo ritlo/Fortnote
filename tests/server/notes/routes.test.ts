@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   createTestApp,
   csrfHeaders,
+  folderPayload,
+  noteMetadataUpdate,
   notePayload,
   registerAgent
 } from "../support/http.js";
@@ -13,6 +15,21 @@ import {
 } from "./routes.fixtures.js";
 import { testSql } from "../support/database.js";
 import { canonicalTimestamp } from "@server/db/timestamps.js";
+
+async function seedRootCheckpoint(
+  app: Awaited<ReturnType<typeof createTestApp>>,
+  note: ReturnType<typeof protectedNotePayload>
+): Promise<string> {
+  const cryptoOwner = (await testSql(app.locals.db).get<{ cryptoOwnerId: string }>(
+    "SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?",
+    note.id
+  ))!;
+  return seedCheckpointManifest(app, {
+    noteId: note.id,
+    sectionId: note.rootSectionId,
+    cryptoOwnerId: cryptoOwner.cryptoOwnerId
+  });
+}
 
 describe("notes and folders routes", () => {
   it("persists encrypted display metadata and returns body-free lists", async () => {
@@ -36,7 +53,6 @@ describe("notes and folders routes", () => {
     expect(listed.body.notes).toHaveLength(1);
     expect(listed.body.notes[0]).toMatchObject({
       id: payload.id,
-      title: "",
       titleCipher: payload.titleCipher,
       titleNonce: payload.titleNonce,
       titleFormatVersion: 2,
@@ -49,7 +65,6 @@ describe("notes and folders routes", () => {
     const folders = await agent.get("/api/folders").expect(200);
     expect(folders.body.folders[0]).toMatchObject({
       id: folderId,
-      name: "",
       nameCipher: "encrypted_folder_name_abcdefghijklmnopqrstuvwxyz",
       nameFormatVersion: 2
     });
@@ -234,331 +249,74 @@ describe("notes and folders routes", () => {
     ]);
   });
 
-  it("reserves one recoverable migration section without exposing legacy content in metadata", async () => {
+  it("installs a section's first checkpoint exactly once", async () => {
     const app = await createTestApp();
-    const owner = await registerAgent(app, "legacy_section_owner");
-    const outsider = await registerAgent(app, "legacy_section_outsider");
-    const legacy = notePayload();
-    const firstSectionId = crypto.randomUUID();
-    const competingSectionId = crypto.randomUUID();
-    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
-
-    const listed = await owner.get("/api/notes").expect(200);
-    expect(listed.body.notes[0]).toMatchObject({
-      id: legacy.id,
-      legacyContentAvailable: true,
-      rootSectionId: null
-    });
-    expect(listed.body.notes[0]).not.toHaveProperty("contentCipher");
-    const content = await owner.get(`/api/notes/${legacy.id}/legacy-content`).expect(200);
-    expect(content.body).toMatchObject({
-      contentCipher: legacy.contentCipher,
-      contentNonce: legacy.contentNonce,
-      contentLength: legacy.contentLength,
-      rootVersion: 1,
-      keyEpoch: 1
-    });
-    await outsider.get(`/api/notes/${legacy.id}/legacy-content`).expect(404);
-
-    const reserved = await owner
-      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
-      .set(csrfHeaders())
-      .send({
-        sectionId: firstSectionId,
-        expectedKeyEpoch: 1,
-        expectedRootVersion: 1
-      })
-      .expect(201);
-    expect(reserved.body).toMatchObject({
-      status: "reserved",
-      sectionId: firstSectionId,
-      rootVersion: 2,
-      version: 2
-    });
-    await owner
-      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
-      .set(csrfHeaders())
-      .send({
-        sectionId: firstSectionId,
-        expectedKeyEpoch: 1,
-        expectedRootVersion: 1
-      })
-      .expect(200)
-      .expect(({ body }) => {
-        expect(body).toMatchObject({
-          status: "reserved",
-          sectionId: firstSectionId,
-          rootVersion: 2
-        });
-      });
-    await owner
-      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
-      .set(csrfHeaders())
-      .send({
-        sectionId: competingSectionId,
-        expectedKeyEpoch: 1,
-        expectedRootVersion: 2
-      })
-      .expect(200)
-      .expect(({ body }) => {
-        expect(body).toMatchObject({
-          status: "pending",
-          sectionId: firstSectionId,
-          rootVersion: 2
-        });
-      });
-    expect(
-      await testSql(app.locals.db).get(
-        `
-          SELECT n.root_section_id AS rootSectionId, s.is_deleted AS isDeleted
-          FROM notes n INNER JOIN note_sections s ON s.id = n.root_section_id
-          WHERE n.id = ?
-        `,
-        legacy.id
-      )
-    ).toEqual({ rootSectionId: firstSectionId, isDeleted: 0 });
-  });
-
-  it("replaces only a stale empty migration reservation", async () => {
-    const app = await createTestApp();
-    const owner = await registerAgent(app, "stale_legacy_section_owner");
-    const legacy = notePayload();
-    const staleSectionId = crypto.randomUUID();
-    const replacementSectionId = crypto.randomUUID();
-    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
-    await owner
-      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
-      .set(csrfHeaders())
-      .send({
-        sectionId: staleSectionId,
-        expectedKeyEpoch: 1,
-        expectedRootVersion: 1
-      })
-      .expect(201);
-    await testSql(app.locals.db).run(
-      "UPDATE note_sections SET updated_at = ? WHERE id = ?",
-      new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-      staleSectionId
-    );
+    const owner = await registerAgent(app, "section_initialization_owner");
+    const payload = protectedNotePayload();
+    await owner.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
+    const manifestId = await seedRootCheckpoint(app, payload);
+    const initializationPath = `/api/notes/${payload.id}/sections/${payload.rootSectionId}/initialization`;
+    const initialization = { manifestId, expectedKeyEpoch: 1, expectedRootVersion: 1 };
 
     await owner
-      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
+      .post(initializationPath)
       .set(csrfHeaders())
-      .send({
-        sectionId: replacementSectionId,
-        expectedKeyEpoch: 1,
-        expectedRootVersion: 2
-      })
-      .expect(201)
-      .expect(({ body }) => {
-        expect(body).toMatchObject({
-          status: "reserved",
-          sectionId: replacementSectionId,
-          rootVersion: 3
-        });
-      });
-    expect(
-      await testSql(app.locals.db).all(
-        "SELECT id, is_deleted AS isDeleted FROM note_sections WHERE note_id = ? ORDER BY id",
-        legacy.id
-      )
-    ).toEqual(
-      expect.arrayContaining([
-        { id: staleSectionId, isDeleted: 1 },
-        { id: replacementSectionId, isDeleted: 0 }
-      ])
-    );
-  });
-
-  it("clears legacy columns only after installing the committed initial checkpoint", async () => {
-    const app = await createTestApp();
-    const owner = await registerAgent(app, "legacy_initialization_owner");
-    const legacy = notePayload();
-    const sectionId = crypto.randomUUID();
-    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
-    await owner
-      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
-      .set(csrfHeaders())
-      .send({ sectionId, expectedKeyEpoch: 1, expectedRootVersion: 1 })
-      .expect(201);
-    const cryptoOwner = (await testSql(app.locals.db).get<{ cryptoOwnerId: string }>(
-      "SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?",
-      legacy.id
-    ))!;
-    const manifestId = await seedCheckpointManifest(app, {
-      noteId: legacy.id,
-      sectionId,
-      cryptoOwnerId: cryptoOwner.cryptoOwnerId
-    });
-
-    await owner
-      .post(`/api/notes/${legacy.id}/sections/${sectionId}/initialization`)
-      .set(csrfHeaders())
-      .send({ manifestId, expectedKeyEpoch: 1, expectedRootVersion: 2 })
+      .send(initialization)
       .expect(200)
       .expect(({ body }) => {
         expect(body).toMatchObject({
           status: "installed",
           manifestId,
-          rootVersion: 2,
-          version: 2
+          rootVersion: 1,
+          version: 1
         });
       });
-    await owner.get(`/api/notes/${legacy.id}/legacy-content`).expect(409);
     await owner
-      .get(`/api/notes/${legacy.id}`)
-      .expect(200)
-      .expect(({ body }) => {
-        expect(body).toMatchObject({ legacyContentAvailable: false });
-      });
-    expect(
-      await testSql(app.locals.db).get(
-        `
-          SELECT content_cipher AS contentCipher, content_nonce AS contentNonce,
-                 content_length AS contentLength
-          FROM notes WHERE id = ?
-        `,
-        legacy.id
-      )
-    ).toEqual({ contentCipher: "", contentNonce: "", contentLength: 0 });
-    await owner
-      .post(`/api/notes/${legacy.id}/sections/${sectionId}/initialization`)
+      .post(initializationPath)
       .set(csrfHeaders())
-      .send({ manifestId, expectedKeyEpoch: 1, expectedRootVersion: 2 })
+      .send(initialization)
       .expect(200)
       .expect(({ body }) => {
         expect(body).toMatchObject({ status: "already-initialized", manifestId });
       });
+    const listed = await owner.get(`/api/notes/${payload.id}/sections`).expect(200);
+    expect(listed.body.sections).toEqual([
+      expect.objectContaining({ id: payload.rootSectionId, initialized: true })
+    ]);
     expect(
       await testSql(app.locals.db).get(
         "SELECT COUNT(*) AS count FROM note_events WHERE note_id = ?",
-        legacy.id
+        payload.id
       )
-    ).toEqual({ count: 3 });
-  });
-
-  it("rolls back legacy section reservations when event writes fail", async () => {
-    const app = await createTestApp();
-    const owner = await registerAgent(app, "rollback_section_reservation_owner");
-    const legacy = notePayload();
-    const sectionId = crypto.randomUUID();
-    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
-
-    await failNoteEventWrites(app);
-    await owner
-      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
-      .set(csrfHeaders())
-      .send({ sectionId, expectedKeyEpoch: 1, expectedRootVersion: 1 })
-      .expect(500);
-
-    expect(
-      await testSql(app.locals.db).get(
-        `SELECT root_section_id AS rootSectionId, root_version AS rootVersion,
-                  version FROM notes WHERE id = ?`,
-        legacy.id
-      )
-    ).toEqual({ rootSectionId: null, rootVersion: 1, version: 1 });
-    expect(
-      await testSql(app.locals.db).get(
-        "SELECT id FROM note_sections WHERE id = ?",
-        sectionId
-      )
-    ).toBeUndefined();
+    ).toEqual({ count: 2 });
   });
 
   it("rolls back section initialization when event writes fail", async () => {
     const app = await createTestApp();
     const owner = await registerAgent(app, "rollback_section_initialization_owner");
-    const legacy = notePayload();
-    const sectionId = crypto.randomUUID();
-    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
-    await owner
-      .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
-      .set(csrfHeaders())
-      .send({ sectionId, expectedKeyEpoch: 1, expectedRootVersion: 1 })
-      .expect(201);
-    const cryptoOwner = (await testSql(app.locals.db).get<{ cryptoOwnerId: string }>(
-      "SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?",
-      legacy.id
-    ))!;
-    const manifestId = await seedCheckpointManifest(app, {
-      noteId: legacy.id,
-      sectionId,
-      cryptoOwnerId: cryptoOwner.cryptoOwnerId
-    });
+    const payload = protectedNotePayload();
+    await owner.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
+    const manifestId = await seedRootCheckpoint(app, payload);
 
     await failNoteEventWrites(app);
     await owner
-      .post(`/api/notes/${legacy.id}/sections/${sectionId}/initialization`)
+      .post(`/api/notes/${payload.id}/sections/${payload.rootSectionId}/initialization`)
       .set(csrfHeaders())
-      .send({ manifestId, expectedKeyEpoch: 1, expectedRootVersion: 2 })
+      .send({ manifestId, expectedKeyEpoch: 1, expectedRootVersion: 1 })
       .expect(500);
 
     expect(
       await testSql(app.locals.db).get(
-        `SELECT n.content_cipher AS contentCipher,
-                  s.initialization_manifest_id AS initializationManifestId
-           FROM notes n
-           INNER JOIN note_sections s ON s.id = n.root_section_id
-           WHERE n.id = ?`,
-        legacy.id
+        "SELECT initialization_manifest_id AS initializationManifestId FROM note_sections WHERE id = ?",
+        payload.rootSectionId
       )
-    ).toEqual({
-      contentCipher: legacy.contentCipher,
-      initializationManifestId: null
-    });
+    ).toEqual({ initializationManifestId: null });
     expect(
       await testSql(app.locals.db).get(
         "SELECT manifest_id AS manifestId FROM crdt_initializations WHERE note_id = ?",
-        legacy.id
+        payload.id
       )
     ).toBeUndefined();
-  });
-
-  it("atomically upgrades an owned legacy note to protected v2 metadata", async () => {
-    const app = await createTestApp();
-    const owner = await registerAgent(app, "metadata_migration_owner");
-    const legacy = notePayload();
-    const rootSectionId = crypto.randomUUID();
-    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
-
-    await owner
-      .put(`/api/notes/${legacy.id}`)
-      .set(csrfHeaders())
-      .send({
-        titleCipher: "migrated_title_cipher_abcdefghijklmnopqrstuvwxyz",
-        titleNonce: "migrated_title_nonce_abcdefghijklmnopqrstuvwxyz",
-        titleFormatVersion: 2,
-        encryptedNoteKey: "migrated_note_key_cipher_abcdefghijklmnopqrstuvwxyz",
-        noteKeyNonce: "migrated_note_key_nonce_abcdefghijklmnopqrstuvwxyz",
-        noteKeyFormatVersion: 2,
-        rootSectionId,
-        rootVersion: 1,
-        keyEpoch: 1
-      })
-      .expect(200);
-
-    expect(
-      await testSql(app.locals.db).get(
-        `SELECT title, title_format_version AS titleFormatVersion,
-	                  note_key_format_version AS noteKeyFormatVersion,
-	                  root_section_id AS rootSectionId
-	           FROM notes WHERE id = ?`,
-        legacy.id
-      )
-    ).toEqual({
-      title: "",
-      titleFormatVersion: 2,
-      noteKeyFormatVersion: 2,
-      rootSectionId
-    });
-    expect(
-      await testSql(app.locals.db).get(
-        "SELECT id FROM note_sections WHERE id = ? AND note_id = ?",
-        rootSectionId,
-        legacy.id
-      )
-    ).toEqual({ id: rootSectionId });
   });
 
   it("atomically revokes a member and activates an adjacent linked epoch", async () => {
@@ -800,7 +558,7 @@ describe("notes and folders routes", () => {
     const folder = await agent
       .post("/api/folders")
       .set(csrfHeaders())
-      .send({ name: "Work" })
+      .send(folderPayload())
       .expect(201);
 
     const note = await agent
@@ -812,13 +570,7 @@ describe("notes and folders routes", () => {
     const updated = await agent
       .put(`/api/notes/${String(note.body.id)}`)
       .set(csrfHeaders())
-      .send({
-        title: "Updated",
-        contentCipher: "updated_content_cipher_abcdefghijklmnopqrstuvwxyz",
-        contentNonce: "updated_content_nonce_abcdefghijklmnopqrstuvwxyz",
-        contentLength: 256,
-        version: 1
-      })
+      .send(noteMetadataUpdate(1))
       .expect(200);
 
     const storedUpdate = (await testSql(app.locals.db).get<{ updatedAt: string }>(
@@ -826,7 +578,7 @@ describe("notes and folders routes", () => {
       note.body.id
     ))!;
     expect(updated.body).toMatchObject({
-      version: 2,
+      rootVersion: 2,
       updatedAt: canonicalTimestamp(storedUpdate.updatedAt)
     });
     const membership = await testSql(app.locals.db).get(

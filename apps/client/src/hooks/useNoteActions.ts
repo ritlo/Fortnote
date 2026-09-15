@@ -82,8 +82,6 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         title: "Untitled note",
         noteKeyBase64: noteKeyToBase64(draft.noteKey),
         contentLength: 0,
-        legacyContentAvailable: false,
-        legacyBodyLoaded: false,
         version: created.version,
         keyEpoch: 1,
         isDeleted: false,
@@ -92,8 +90,7 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         cryptoOwnerId: user.id,
         role: "owner",
         rootVersion: created.rootVersion,
-        rootSectionId: created.rootSectionId,
-        metadataMigration: "current"
+        rootSectionId: created.rootSectionId
       };
       setNotes((current) => [
         note,

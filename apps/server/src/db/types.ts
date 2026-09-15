@@ -18,7 +18,6 @@ import type { NoteAccessRepository } from "../notes/noteAccessRepository.js";
 import type { NoteQueryRepository } from "../notes/queryRepository.js";
 import type { NoteRotationRepository } from "../notes/rotationRepository.js";
 import type { NoteSectionRepository } from "../notes/sectionRepository/contracts.js";
-import type { LegacyHistoryRepository } from "../realtime/legacyHistory.js";
 import type { SectionHistoryRepository } from "../realtime/history.js";
 import type { SharingKeyRepository } from "../sharingKeys/repository.js";
 import type * as schema from "./schema.js";
@@ -44,7 +43,6 @@ export interface ApplicationDatabase {
   readonly noteMutations: NoteMutationRepository;
   readonly noteSections: NoteSectionRepository;
   readonly sectionHistory: SectionHistoryRepository;
-  readonly legacyHistory: LegacyHistoryRepository;
   readonly contentStorage: ContentStorage;
   readonly contentUploads: ContentUploadRepository;
   readonly contentManifests: ContentManifestRepository;
