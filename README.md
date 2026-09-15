@@ -129,11 +129,16 @@ FORTNOTE_POSTGRES_TEST_URL=postgresql://fortnote:fortnote-local@127.0.0.1:5432/f
 ## Checks
 
 ```sh
+pnpm format:check
 pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+Run `pnpm format` to apply the Prettier formatting that `format:check` enforces. The CI
+workflow in `.github/workflows/ci.yml` runs these checks on every push and pull request, plus
+the server suite against PostgreSQL through `pnpm --filter @fortnote/server test:postgres`.
 
 ## License
 

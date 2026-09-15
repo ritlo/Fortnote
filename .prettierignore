@@ -1,0 +1,16 @@
+# Generated or vendored files
+pnpm-lock.yaml
+drizzle/
+**/dist/
+coverage/
+reports/
+.stryker-tmp/
+test-results/
+playwright-report/
+
+# Local runtime data and tooling state
+data/
+apps/server/data/
+.codegraph/
+.agents/
+docs/
