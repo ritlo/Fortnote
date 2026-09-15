@@ -5,7 +5,10 @@ import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ServerConfig } from "../config.js";
-import type { AttachmentStorage } from "../attachments/storage.js";
+import {
+  AttachmentCiphertextSizeError,
+  type AttachmentStorage
+} from "../attachments/storage.js";
 
 const STORAGE_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -88,12 +91,25 @@ export class AttachmentBackedContentStorage implements ContentStorage {
     const storageKey = crypto.randomUUID();
     const hash = createHash("sha256");
     const source = Readable.from(hashChunks(input.source, hash));
-    await this.objectStorage.write({
-      storageId: storageKey,
-      source,
-      expectedBytes: input.expectedLength,
-      maxBytes: input.maxBytes
-    });
+    try {
+      await this.objectStorage.write({
+        storageId: storageKey,
+        source,
+        expectedBytes: input.expectedLength,
+        maxBytes: input.maxBytes
+      });
+    } catch (error) {
+      // Match LocalContentStorage errors so routes classify both providers alike.
+      if (error instanceof AttachmentCiphertextSizeError) {
+        throw new Error(
+          error.kind === "too-large"
+            ? "Encrypted content chunk exceeds maximum bytes"
+            : "Encrypted content chunk length mismatch",
+          { cause: error }
+        );
+      }
+      throw error;
+    }
     const actualHash = hash.digest("hex");
     if (actualHash !== input.expectedHash) {
       await this.objectStorage.delete(storageKey);

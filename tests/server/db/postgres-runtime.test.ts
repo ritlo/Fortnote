@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { Readable } from "node:stream";
 import request from "supertest";
@@ -123,6 +124,31 @@ describe.each(runtimeProviders)("$name runtime contract", (runtime) => {
         expect(updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
         expect(new Date(updatedAt).toISOString()).toBe(updatedAt);
       }
+    } finally {
+      await harness.database.close();
+      await harness.cleanup();
+    }
+  });
+
+  it.skipIf(!runtime.enabled)("rejects mis-sized content chunks with provider-neutral errors", async () => {
+    const harness = await runtime.createHarness();
+    try {
+      const declared = Buffer.from("declared-content-chunk-ciphertext");
+      const write = (source: Buffer, maxBytes = 1024) =>
+        harness.database.contentStorage.write({
+          uploadId: crypto.randomUUID(),
+          chunkIndex: 0,
+          expectedLength: declared.byteLength,
+          expectedHash: createHash("sha256").update(declared).digest("hex"),
+          maxBytes,
+          source: Readable.from([source])
+        });
+      // The chunk route maps these messages to 400 responses.
+      await expect(write(declared.subarray(0, 8))).rejects.toThrow(
+        "Encrypted content chunk length mismatch"
+      );
+      await expect(write(Buffer.concat([declared, declared]), declared.byteLength))
+        .rejects.toThrow("Encrypted content chunk exceeds maximum bytes");
     } finally {
       await harness.database.close();
       await harness.cleanup();
