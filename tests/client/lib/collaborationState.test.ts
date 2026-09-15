@@ -13,9 +13,21 @@ describe("deriveCollaborationState", () => {
     [{ access: "removed" }, "You no longer have access", "alert"],
     [{ protection: "undecryptable" }, "This note cannot be decrypted", "alert"],
     [{ recovery: "conflict", draftRetained: true }, "Changes need review", "alert"],
-    [{ durability: "local-full", draftRetained: true }, "Local storage full — changes need attention", "alert"],
-    [{ durability: "server-full", draftRetained: true }, "Server storage full — changes kept on this device", "alert"],
-    [{ protection: "stale", draftRetained: true }, "Access changed — refreshing protection", "assertive"],
+    [
+      { durability: "local-full", draftRetained: true },
+      "Local storage full — changes need attention",
+      "alert"
+    ],
+    [
+      { durability: "server-full", draftRetained: true },
+      "Server storage full — changes kept on this device",
+      "alert"
+    ],
+    [
+      { protection: "stale", draftRetained: true },
+      "Access changed — refreshing protection",
+      "assertive"
+    ],
     [{ protection: "preparing" }, "Securing access — editing paused", "assertive"],
     [{ protection: "activated" }, "Access revoked and protection updated", "polite"],
     [{ protection: "aborted" }, "Access change not completed", "alert"],
@@ -23,7 +35,11 @@ describe("deriveCollaborationState", () => {
     [{ access: "trash" }, "In trash — view only", "polite"],
     [{ section: "opening" }, "Opening encrypted note…", "polite"],
     [{ section: "loading" }, "Loading encrypted note…", "polite"],
-    [{ connection: "offline", durability: "pending" }, "Offline — changes kept on this device", "assertive"],
+    [
+      { connection: "offline", durability: "pending" },
+      "Offline — changes kept on this device",
+      "assertive"
+    ],
     [{ connection: "reconnecting", durability: "pending" }, "Reconnecting…", "polite"],
     [{ durability: "memory" }, "Preserving changes…", "polite"],
     [{ durability: "pending" }, "Synchronizing…", "polite"],
@@ -37,9 +53,26 @@ describe("deriveCollaborationState", () => {
   });
 
   it("applies security and recovery precedence before connectivity and saving", () => {
-    expect(derive({ access: "removed", protection: "undecryptable", recovery: "conflict", connection: "offline", durability: "saving" }).id).toBe("removed");
-    expect(derive({ protection: "undecryptable", recovery: "conflict", connection: "offline", durability: "saving" }).id).toBe("undecryptable");
-    expect(derive({ recovery: "conflict", connection: "offline", durability: "saving" }).id).toBe("review");
+    expect(
+      derive({
+        access: "removed",
+        protection: "undecryptable",
+        recovery: "conflict",
+        connection: "offline",
+        durability: "saving"
+      }).id
+    ).toBe("removed");
+    expect(
+      derive({
+        protection: "undecryptable",
+        recovery: "conflict",
+        connection: "offline",
+        durability: "saving"
+      }).id
+    ).toBe("undecryptable");
+    expect(
+      derive({ recovery: "conflict", connection: "offline", durability: "saving" }).id
+    ).toBe("review");
     expect(derive({ connection: "offline", durability: "saving" }).id).toBe("offline");
   });
 
@@ -72,7 +105,13 @@ describe("deriveCollaborationState", () => {
   });
 
   it("never exposes internal section operations", () => {
-    for (const recovery of ["none", "divergent", "reviewing", "conflict", "error"] as const) {
+    for (const recovery of [
+      "none",
+      "divergent",
+      "reviewing",
+      "conflict",
+      "error"
+    ] as const) {
       for (const durability of ["clean", "local-full", "server-full"] as const) {
         expect(derive({ durability, recovery }).actions).not.toContain("split-section");
       }
@@ -80,9 +119,17 @@ describe("deriveCollaborationState", () => {
   });
 
   it("never claims saved from a socket alone or while visible work is retained", () => {
-    expect(derive({ connection: "connected", durability: "pending" })).toMatchObject({ saved: false, synchronized: false });
-    expect(derive({ recovery: "divergent", durability: "clean", draftRetained: true })).toMatchObject({ saved: false, synchronized: false });
-    expect(derive({ section: "ready", durability: "clean" })).toMatchObject({ saved: true, synchronized: true });
+    expect(derive({ connection: "connected", durability: "pending" })).toMatchObject({
+      saved: false,
+      synchronized: false
+    });
+    expect(
+      derive({ recovery: "divergent", durability: "clean", draftRetained: true })
+    ).toMatchObject({ saved: false, synchronized: false });
+    expect(derive({ section: "ready", durability: "clean" })).toMatchObject({
+      saved: true,
+      synchronized: true
+    });
   });
 
   it("disables writes for viewer, trash, removed, repair, and protection transitions", () => {

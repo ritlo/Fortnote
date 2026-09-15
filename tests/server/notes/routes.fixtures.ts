@@ -37,33 +37,37 @@ export async function seedCheckpointManifest(
   const uploadId = crypto.randomUUID();
   const updateId = crypto.randomUUID();
   const manifestId = crypto.randomUUID();
-  await sql.run(`
+  await sql.run(
+    `
     INSERT INTO content_uploads (
       id, update_id, note_id, section_id, crypto_owner_id, key_epoch,
       kind, format_version, total_cipher_bytes, chunk_count, manifest_hash,
       status, expires_at
     ) VALUES (?, ?, ?, ?, ?, 1, 'checkpoint', 2, 6, 1, ?, 'committed', ?)
   `,
-  uploadId,
-  updateId,
-  input.noteId,
-  input.sectionId,
-  input.cryptoOwnerId,
-  `hash-${manifestId}`,
-  "2099-01-01T00:00:00.000Z");
-  await sql.run(`
+    uploadId,
+    updateId,
+    input.noteId,
+    input.sectionId,
+    input.cryptoOwnerId,
+    `hash-${manifestId}`,
+    "2099-01-01T00:00:00.000Z"
+  );
+  await sql.run(
+    `
     INSERT INTO content_manifests (
       id, upload_id, update_id, note_id, section_id, key_epoch, kind,
       format_version, first_sequence, last_sequence, total_cipher_bytes,
       chunk_count, manifest_hash
     ) VALUES (?, ?, ?, ?, ?, 1, 'checkpoint', 2, 1, 1, 6, 1, ?)
   `,
-  manifestId,
-  uploadId,
-  updateId,
-  input.noteId,
-  input.sectionId,
-  `hash-${manifestId}`);
+    manifestId,
+    uploadId,
+    updateId,
+    input.noteId,
+    input.sectionId,
+    `hash-${manifestId}`
+  );
   return manifestId;
 }
 

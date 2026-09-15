@@ -107,16 +107,29 @@ describe("auth routes", () => {
       .set(csrfHeaders())
       .send(registerPayload("legacy_two"))
       .expect(201);
-    await testSql(app.locals.db).run("UPDATE users SET username = ?, display_name = ?, canonical_handle = NULL, handle_state = 'repair-required' WHERE username = ?", " Legacy Name ", "Legacy Name", "legacy_one");
-    await testSql(app.locals.db).run("UPDATE users SET username = ?, display_name = ?, canonical_handle = NULL, handle_state = 'repair-required' WHERE username = ?", "legacy name", "legacy name", "legacy_two");
+    await testSql(app.locals.db).run(
+      "UPDATE users SET username = ?, display_name = ?, canonical_handle = NULL, handle_state = 'repair-required' WHERE username = ?",
+      " Legacy Name ",
+      "Legacy Name",
+      "legacy_one"
+    );
+    await testSql(app.locals.db).run(
+      "UPDATE users SET username = ?, display_name = ?, canonical_handle = NULL, handle_state = 'repair-required' WHERE username = ?",
+      "legacy name",
+      "legacy name",
+      "legacy_two"
+    );
 
-    await first.get("/api/auth/me").expect(200).expect(({ body }) => {
-      expect(body).toMatchObject({
-        username: " Legacy Name ",
-        canonicalHandle: null,
-        handleState: "repair-required"
+    await first
+      .get("/api/auth/me")
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          username: " Legacy Name ",
+          canonicalHandle: null,
+          handleState: "repair-required"
+        });
       });
-    });
     await second
       .put("/api/auth/handle")
       .set(csrfHeaders())
@@ -140,7 +153,9 @@ describe("auth routes", () => {
       .send(registerPayload("short_session"))
       .expect(201);
 
-    const session = (await testSql(app.locals.db).get<{ absoluteExpiresAt: string }>("SELECT absolute_expires_at AS absoluteExpiresAt FROM sessions"))!;
+    const session = (await testSql(app.locals.db).get<{ absoluteExpiresAt: string }>(
+      "SELECT absolute_expires_at AS absoluteExpiresAt FROM sessions"
+    ))!;
     expect(Date.parse(session.absoluteExpiresAt)).toBeGreaterThanOrEqual(before + 1_900);
     expect(Date.parse(session.absoluteExpiresAt)).toBeLessThanOrEqual(Date.now() + 2_100);
   });
@@ -236,8 +251,7 @@ describe("auth routes", () => {
       .set(csrfHeaders())
       .send({
         username: "dina",
-        recoveryAuthVerifier:
-          "recovery_auth_verifier_dina_abcdefghijklmnopqrstuvwxyz",
+        recoveryAuthVerifier: "recovery_auth_verifier_dina_abcdefghijklmnopqrstuvwxyz",
         newAuthVerifier: "new_auth_verifier_abcdefghijklmnopqrstuvwxyz",
         authKdf: {
           salt: "new_auth_salt_abcdefghijklmnopqrstuvwxyz",

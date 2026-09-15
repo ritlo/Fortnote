@@ -44,9 +44,7 @@ export function uploadAttachment(
             "x-fortnote-expected-key-epoch": String(payload.expectedKeyEpoch),
             "x-fortnote-metadata-cipher": payload.metadataCipher,
             "x-fortnote-metadata-nonce": payload.metadataNonce,
-            "x-fortnote-metadata-format-version": String(
-              payload.metadataFormatVersion
-            ),
+            "x-fortnote-metadata-format-version": String(payload.metadataFormatVersion),
             "x-fortnote-encrypted-attachment-key": payload.encryptedAttachmentKey,
             "x-fortnote-attachment-key-nonce": payload.attachmentKeyNonce,
             "x-fortnote-file-nonce": payload.fileNonce
@@ -84,10 +82,14 @@ export function uploadAttachment(
       resolve(result as { id: string; keyEpoch: number });
     });
     xhr.addEventListener("error", () => {
-      reject(new ApiRequestError(0, "network_error", "Attachment upload failed", requestId));
+      reject(
+        new ApiRequestError(0, "network_error", "Attachment upload failed", requestId)
+      );
     });
     xhr.addEventListener("abort", () => {
-      reject(new ApiRequestError(0, "request_aborted", "Attachment upload canceled", requestId));
+      reject(
+        new ApiRequestError(0, "request_aborted", "Attachment upload canceled", requestId)
+      );
     });
     xhr.send(payload.encryptedBytes.slice().buffer);
   });
@@ -141,11 +143,18 @@ export function downloadAttachment(
       });
     });
     xhr.addEventListener("error", () => {
-      reject(new ApiRequestError(0, "network_error", "Attachment download failed", requestId));
+      reject(
+        new ApiRequestError(0, "network_error", "Attachment download failed", requestId)
+      );
     });
     xhr.addEventListener("abort", () => {
       reject(
-        new ApiRequestError(0, "request_aborted", "Attachment download canceled", requestId)
+        new ApiRequestError(
+          0,
+          "request_aborted",
+          "Attachment download canceled",
+          requestId
+        )
       );
     });
     xhr.send();

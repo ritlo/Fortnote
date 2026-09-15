@@ -18,9 +18,7 @@ export function getNote(noteId: string): Promise<NoteSummary> {
   return apiRequest<NoteSummary>(`/notes/${noteId}`);
 }
 
-export function createNote(
-  payload: CreateNotePayload
-): Promise<{
+export function createNote(payload: CreateNotePayload): Promise<{
   id: string;
   version: number;
   rootVersion: number;
@@ -59,7 +57,12 @@ export function rotateNoteKey(
   noteId: string,
   payload: RotateNoteKeyPayload
 ): Promise<{ id: string; version: number; rootVersion?: number; keyEpoch: number }> {
-  return apiRequest<{ id: string; version: number; rootVersion?: number; keyEpoch: number }>(`/notes/${noteId}/key-rotation`, {
+  return apiRequest<{
+    id: string;
+    version: number;
+    rootVersion?: number;
+    keyEpoch: number;
+  }>(`/notes/${noteId}/key-rotation`, {
     method: "POST",
     body: JSON.stringify(payload)
   });
@@ -90,13 +93,12 @@ export function updateNoteMemberRole(
   userId: string,
   role: "editor" | "viewer"
 ): Promise<Pick<NoteMembership, "userId" | "role" | "status"> & { noteId: string }> {
-  return apiRequest<Pick<NoteMembership, "userId" | "role" | "status"> & { noteId: string }>(
-    `/notes/${noteId}/memberships/${userId}`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({ role })
-    }
-  );
+  return apiRequest<
+    Pick<NoteMembership, "userId" | "role" | "status"> & { noteId: string }
+  >(`/notes/${noteId}/memberships/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role })
+  });
 }
 
 export function revokeNoteMember(noteId: string, userId: string): Promise<undefined> {

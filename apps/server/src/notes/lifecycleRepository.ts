@@ -35,9 +35,7 @@ export interface NoteLifecycleRepository {
 
 type SqliteDatabase = BetterSQLite3Database<typeof schema>;
 
-export class SqliteNoteLifecycleRepository
-  implements NoteLifecycleRepository
-{
+export class SqliteNoteLifecycleRepository implements NoteLifecycleRepository {
   constructor(private readonly orm: SqliteDatabase) {}
 
   setDeleted(input: SetNoteDeletedInput): Promise<number | null> {
@@ -70,10 +68,7 @@ export class SqliteNoteLifecycleRepository
           actorUserId: input.actorUserId,
           eventType: input.deleted ? "note.deleted" : "note.restored",
           noteVersion: input.noteVersion,
-          payloadMetadata: serializedEventMetadata(
-            undefined,
-            input.clientInstanceId
-          )
+          payloadMetadata: serializedEventMetadata(undefined, input.clientInstanceId)
         })
         .returning({ cursor: schema.noteEvents.cursor })
         .get().cursor;

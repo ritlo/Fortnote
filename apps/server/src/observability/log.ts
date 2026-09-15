@@ -1,8 +1,5 @@
 export type OperationalLogLevel = "error" | "info" | "warn";
-export type OperationalLogFields = Record<
-  string,
-  boolean | null | number | string
->;
+export type OperationalLogFields = Record<string, boolean | null | number | string>;
 
 export interface OperationalLogRecord extends OperationalLogFields {
   event: string;
@@ -24,10 +21,7 @@ export function createOperationalLogRecord(
   };
 }
 
-export function logInfo(
-  event: string,
-  fields: OperationalLogFields = {}
-): void {
+export function logInfo(event: string, fields: OperationalLogFields = {}): void {
   console.log(JSON.stringify(createOperationalLogRecord("info", event, fields)));
 }
 
@@ -50,11 +44,12 @@ function classifyError(error: unknown): OperationalLogFields {
   if (!(error instanceof Error)) {
     return { errorName: "UnknownError" };
   }
-  const code = "code" in error &&
+  const code =
+    "code" in error &&
     typeof error.code === "string" &&
     /^[A-Z0-9_]{1,64}$/u.test(error.code)
-    ? error.code
-    : null;
+      ? error.code
+      : null;
   return {
     errorName: error.name,
     ...(code ? { errorCode: code } : {})

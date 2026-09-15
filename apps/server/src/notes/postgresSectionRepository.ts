@@ -59,16 +59,8 @@ async function sectionAccess(
       status: schema.noteMemberships.status
     })
     .from(schema.notes)
-    .innerJoin(
-      schema.noteMemberships,
-      eq(schema.noteMemberships.noteId, schema.notes.id)
-    )
-    .where(
-      and(
-        eq(schema.notes.id, noteId),
-        eq(schema.noteMemberships.userId, userId)
-      )
-    )
+    .innerJoin(schema.noteMemberships, eq(schema.noteMemberships.noteId, schema.notes.id))
+    .where(and(eq(schema.notes.id, noteId), eq(schema.noteMemberships.userId, userId)))
     .limit(1)
     .for("update", { of: [schema.notes, schema.noteMemberships] });
   return rows[0] ?? null;
@@ -78,7 +70,7 @@ async function writableAccess(
   database: Pick<PostgresDatabase, "select">,
   input: SectionWriteInput
 ): Promise<WritableAccess | SectionRejectionCode> {
-  if (!await activeSession(database, input.sessionId)) {
+  if (!(await activeSession(database, input.sessionId))) {
     return "forbidden";
   }
   return validateWritableSectionAccess(
@@ -150,11 +142,9 @@ export class PostgresNoteSectionRepository implements NoteSectionRepository {
       .orderBy(schema.noteSections.createdAt, schema.noteSections.id);
   }
 
-  reserveLegacy(
-    input: SectionWriteInput
-  ): Promise<LegacySectionReservationOutcome> {
+  reserveLegacy(input: SectionWriteInput): Promise<LegacySectionReservationOutcome> {
     return this.orm.transaction(async (transaction) => {
-      if (!await activeSession(transaction, input.sessionId)) {
+      if (!(await activeSession(transaction, input.sessionId))) {
         return { status: "rejected", code: "forbidden" } as const;
       }
       const rows = await transaction
@@ -242,10 +232,7 @@ export class PostgresNoteSectionRepository implements NoteSectionRepository {
           changed: false,
           eventCursor: null
         };
-        if (
-          current.contentCipher === "" ||
-          rootSection?.initializationManifestId
-        ) {
+        if (current.contentCipher === "" || rootSection?.initializationManifestId) {
           return { status: "complete", ...base } as const;
         }
         if (current.rootSectionId === input.sectionId) {
@@ -314,9 +301,7 @@ export class PostgresNoteSectionRepository implements NoteSectionRepository {
         noteId: input.noteId,
         actorUserId: input.userId,
         noteVersion: version,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return {
         status: "reserved",
@@ -349,13 +334,13 @@ export class PostgresNoteSectionRepository implements NoteSectionRepository {
       const existing = existingRows[0];
       if (existing) {
         return existing.noteId === input.noteId && !existing.isDeleted
-          ? {
+          ? ({
               status: "already-created",
               rootVersion: access.rootVersion,
               version: access.version,
               eventCursor: null
-            } as const
-          : { status: "rejected", code: "forbidden" } as const;
+            } as const)
+          : ({ status: "rejected", code: "forbidden" } as const);
       }
       if (access.rootVersion !== input.expectedRootVersion) {
         return { status: "rejected", code: "stale-version" } as const;
@@ -392,9 +377,7 @@ export class PostgresNoteSectionRepository implements NoteSectionRepository {
         noteId: input.noteId,
         actorUserId: input.userId,
         noteVersion: version,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return {
         status: "created",
@@ -497,9 +480,7 @@ export class PostgresNoteSectionRepository implements NoteSectionRepository {
         noteId: input.noteId,
         actorUserId: input.userId,
         noteVersion: version,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return {
         status: "deleted",
@@ -510,11 +491,9 @@ export class PostgresNoteSectionRepository implements NoteSectionRepository {
     });
   }
 
-  initialize(
-    input: InitializeSectionInput
-  ): Promise<SectionInitializationOutcome> {
+  initialize(input: InitializeSectionInput): Promise<SectionInitializationOutcome> {
     return this.orm.transaction(async (transaction) => {
-      if (!await activeSession(transaction, input.sessionId)) {
+      if (!(await activeSession(transaction, input.sessionId))) {
         return { status: "rejected", code: "forbidden" } as const;
       }
       const access = await sectionAccess(transaction, input.noteId, input.userId);

@@ -23,7 +23,11 @@ export interface EventRetentionResult {
 }
 
 export interface EventReplayRepository {
-  listVisible(userId: string, after: number, limit: number): Promise<CollaborationEvent[]>;
+  listVisible(
+    userId: string,
+    after: number,
+    limit: number
+  ): Promise<CollaborationEvent[]>;
   acknowledge(userId: string, cursor: number): Promise<void>;
   acknowledgedCursor(userId: string): Promise<number>;
   prune(beforeCursor?: number): Promise<EventRetentionResult>;

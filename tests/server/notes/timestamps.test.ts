@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { createTestApp, csrfHeaders, notePayload, registerAgent } from "../support/http.js";
+import {
+  createTestApp,
+  csrfHeaders,
+  notePayload,
+  registerAgent
+} from "../support/http.js";
 import { protectedNotePayload } from "./routes.fixtures.js";
 
 describe.each(["legacy", "protected"] as const)("%s note save timestamps", (format) => {
@@ -15,22 +20,35 @@ describe.each(["legacy", "protected"] as const)("%s note save timestamps", (form
     const note = format === "legacy" ? notePayload() : protectedNotePayload();
     await agent.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
     const repository = app.locals.db.noteMutations;
-    const spy = format === "legacy"
-      ? vi.spyOn(repository, "updateLegacy").mockResolvedValue({
-          kind: "saved", version: 2, eventCursor: 1, updatedAt: stored
-        })
-      : vi.spyOn(repository, "updateProtected").mockResolvedValue({
-          kind: "saved", rootVersion: 2, keyEpoch: 1, eventCursor: 1, updatedAt: stored
-        });
+    const spy =
+      format === "legacy"
+        ? vi.spyOn(repository, "updateLegacy").mockResolvedValue({
+            kind: "saved",
+            version: 2,
+            eventCursor: 1,
+            updatedAt: stored
+          })
+        : vi.spyOn(repository, "updateProtected").mockResolvedValue({
+            kind: "saved",
+            rootVersion: 2,
+            keyEpoch: 1,
+            eventCursor: 1,
+            updatedAt: stored
+          });
     try {
-      const response = await agent.put(`/api/notes/${note.id}`)
+      const response = await agent
+        .put(`/api/notes/${note.id}`)
         .set(csrfHeaders())
-        .send(format === "legacy" ? {
-          version: 1,
-          contentCipher: "timestamp_content_cipher",
-          contentNonce: "timestamp_content_nonce",
-          contentLength: 24
-        } : { rootVersion: 1, keyEpoch: 1 })
+        .send(
+          format === "legacy"
+            ? {
+                version: 1,
+                contentCipher: "timestamp_content_cipher",
+                contentNonce: "timestamp_content_nonce",
+                contentLength: 24
+              }
+            : { rootVersion: 1, keyEpoch: 1 }
+        )
         .expect(200);
       expect(response.body.updatedAt).toBe(expected);
     } finally {

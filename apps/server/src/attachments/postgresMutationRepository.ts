@@ -32,16 +32,8 @@ async function attachmentMutationState(
       status: schema.noteMemberships.status
     })
     .from(schema.notes)
-    .innerJoin(
-      schema.noteMemberships,
-      eq(schema.noteMemberships.noteId, schema.notes.id)
-    )
-    .where(
-      and(
-        eq(schema.notes.id, noteId),
-        eq(schema.noteMemberships.userId, userId)
-      )
-    )
+    .innerJoin(schema.noteMemberships, eq(schema.noteMemberships.noteId, schema.notes.id))
+    .where(and(eq(schema.notes.id, noteId), eq(schema.noteMemberships.userId, userId)))
     .limit(1)
     .for("update", { of: [schema.notes, schema.noteMemberships] });
   return rows[0];
@@ -51,19 +43,14 @@ function canMutateAttachment(
   state: Awaited<ReturnType<typeof attachmentMutationState>>
 ): state is NonNullable<typeof state> {
   return (
-    state?.status === "active" &&
-    (state.role === "owner" || state.role === "editor")
+    state?.status === "active" && (state.role === "owner" || state.role === "editor")
   );
 }
 
-export class PostgresAttachmentMutationRepository
-  implements AttachmentMutationRepository
-{
+export class PostgresAttachmentMutationRepository implements AttachmentMutationRepository {
   constructor(private readonly orm: PostgresDatabase) {}
 
-  reserve(
-    input: ReserveAttachmentUploadInput
-  ): Promise<AttachmentReservationOutcome> {
+  reserve(input: ReserveAttachmentUploadInput): Promise<AttachmentReservationOutcome> {
     return this.orm.transaction(async (transaction) => {
       const current = await attachmentMutationState(
         transaction,
@@ -120,9 +107,7 @@ export class PostgresAttachmentMutationRepository
     });
   }
 
-  commit(
-    input: CommitAttachmentUploadInput
-  ): Promise<CommitAttachmentUploadOutcome> {
+  commit(input: CommitAttachmentUploadInput): Promise<CommitAttachmentUploadOutcome> {
     return this.orm.transaction(async (transaction) => {
       const now = new Date().toISOString();
       const activeSession = await transaction

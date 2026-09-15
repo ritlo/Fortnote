@@ -39,14 +39,14 @@ export function useNoteAutosave() {
   function showSaveIssues(): boolean {
     const coordinator = autosave.current;
     const selectedId = useAppStore.getState().selectedNoteId;
-    const selectedIssue = selectedId
-      ? coordinator.issues.get(selectedId)
-      : undefined;
+    const selectedIssue = selectedId ? coordinator.issues.get(selectedId) : undefined;
     const issue =
       (selectedId && selectedIssue
         ? ([selectedId, selectedIssue] as const)
         : undefined) ??
-      [...coordinator.issues.entries()].find(([, value]) => value.result === "conflict") ??
+      [...coordinator.issues.entries()].find(
+        ([, value]) => value.result === "conflict"
+      ) ??
       coordinator.issues.entries().next().value;
     if (!issue) {
       return false;
@@ -103,19 +103,10 @@ export function useNoteAutosave() {
   async function saveNote(noteId: string): Promise<SaveResult> {
     const state = useAppStore.getState();
     const noteToSave = state.notes.find((note) => note.id === noteId);
-    if (
-      !state.user ||
-      !state.rootKey ||
-      !noteToSave ||
-      noteToSave.role === "viewer"
-    ) {
+    if (!state.user || !state.rootKey || !noteToSave || noteToSave.role === "viewer") {
       return "skipped";
     }
-    const operation = createNoteOperationFence(
-      state.user.id,
-      state.rootKey,
-      noteToSave
-    );
+    const operation = createNoteOperationFence(state.user.id, state.rootKey, noteToSave);
 
     autosave.current.issues.delete(noteId);
     if (!showSaveIssues() && state.selectedNoteId === noteId) {
@@ -179,16 +170,16 @@ export function useNoteAutosave() {
             ? note.version > noteToSave.version
               ? note
               : {
-                ...note,
-                version: saved.version ?? note.version,
-                rootVersion: saved.rootVersion ?? note.rootVersion ?? note.version,
-                rootSectionId: rootSectionId ?? note.rootSectionId ?? null,
-                updatedAt: saved.updatedAt,
-                metadataMigration:
-                  note.metadataMigration === "current" || shouldMigrateOwnedKey
-                    ? "current"
-                    : "retry-required"
-              }
+                  ...note,
+                  version: saved.version ?? note.version,
+                  rootVersion: saved.rootVersion ?? note.rootVersion ?? note.version,
+                  rootSectionId: rootSectionId ?? note.rootSectionId ?? null,
+                  updatedAt: saved.updatedAt,
+                  metadataMigration:
+                    note.metadataMigration === "current" || shouldMigrateOwnedKey
+                      ? "current"
+                      : "retry-required"
+                }
             : note
         )
       );
@@ -242,7 +233,11 @@ export function useNoteAutosave() {
     try {
       result = await saveNote(noteId);
     } catch (saveError) {
-      if (session.user && session.rootKey && isCurrentSession(session.user.id, session.rootKey)) {
+      if (
+        session.user &&
+        session.rootKey &&
+        isCurrentSession(session.user.id, session.rootKey)
+      ) {
         recordSaveIssue(
           noteId,
           "failed",
@@ -305,9 +300,7 @@ export function useNoteAutosave() {
       return;
     }
 
-    const latestNote = useAppStore
-      .getState()
-      .notes.find((note) => note.id === noteId);
+    const latestNote = useAppStore.getState().notes.find((note) => note.id === noteId);
     if (!latestNote) {
       recordSaveIssue(
         noteId,
@@ -323,9 +316,7 @@ export function useNoteAutosave() {
           return mergeDraftAfterConflict(latestNote, draft);
         }
         const queuedDraft = queuedDrafts.get(note.id);
-        return queuedDraft
-          ? mergeDraftAfterConflict(note, queuedDraft)
-          : note;
+        return queuedDraft ? mergeDraftAfterConflict(note, queuedDraft) : note;
       })
     );
     setSelectedNoteId(noteId);
@@ -336,9 +327,7 @@ export function useNoteAutosave() {
     );
   }
 
-  function updateSelectedNote(
-    patch: Partial<Pick<DecryptedNote, "folderId" | "title">>
-  ) {
+  function updateSelectedNote(patch: Partial<Pick<DecryptedNote, "folderId" | "title">>) {
     if (!selectedNoteId) {
       return;
     }
@@ -351,7 +340,8 @@ export function useNoteAutosave() {
     ) {
       return;
     }
-    const canSave = note.role !== "viewer" && useAppStore.getState().notesView !== "trash";
+    const canSave =
+      note.role !== "viewer" && useAppStore.getState().notesView !== "trash";
     if (canSave && patch.title !== undefined) {
       editCrdtNote(note, { title: patch.title });
     }
@@ -366,7 +356,8 @@ export function useNoteAutosave() {
   async function moveNoteToFolder(noteId: string, folderId: string | null) {
     const state = useAppStore.getState();
     const note = state.notes.find((n) => n.id === noteId);
-    const validFolder = folderId === null || state.folders.some((folder) => folder.id === folderId);
+    const validFolder =
+      folderId === null || state.folders.some((folder) => folder.id === folderId);
     if (
       !note ||
       note.role === "viewer" ||
@@ -377,9 +368,7 @@ export function useNoteAutosave() {
       return;
     }
     const previousFolderId = note.folderId;
-    setNotes((current) =>
-      current.map((n) => (n.id === noteId ? { ...n, folderId } : n))
-    );
+    setNotes((current) => current.map((n) => (n.id === noteId ? { ...n, folderId } : n)));
     scheduleAutosave(noteId);
     const saveResult = await drainAutosave(noteId);
     if (saveResult === "failed" || saveResult === "conflict") {

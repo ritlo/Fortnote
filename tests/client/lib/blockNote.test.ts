@@ -12,10 +12,10 @@ describe("BlockNote section snapshots", () => {
   it("splits, replaces, and appends top-level blocks without plaintext serialization", () => {
     const doc = new Y.Doc();
     const fragment = doc.getXmlFragment("document-store");
-    replaceBlockNoteFragment(fragment, JSON.stringify([
-      block("one", "First"),
-      block("two", "Second")
-    ]));
+    replaceBlockNoteFragment(
+      fragment,
+      JSON.stringify([block("one", "First"), block("two", "Second")])
+    );
 
     const split = splitBlockNoteFragmentSnapshot(snapshotBlockNoteFragment(fragment));
 

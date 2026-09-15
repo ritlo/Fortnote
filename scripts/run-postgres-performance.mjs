@@ -6,17 +6,10 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-const repositoryRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  ".."
-);
-const containerEngine = selectContainerEngine(
-  process.env.FORTNOTE_CONTAINER_ENGINE
-);
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const containerEngine = selectContainerEngine(process.env.FORTNOTE_CONTAINER_ENGINE);
 const containerName = `fortnote-performance-postgres-${String(process.pid)}-${String(Date.now())}`;
-const postgresPort = performancePort(
-  process.env.FORTNOTE_PERFORMANCE_POSTGRES_PORT
-);
+const postgresPort = performancePort(process.env.FORTNOTE_PERFORMANCE_POSTGRES_PORT);
 const databasePassword = crypto.randomBytes(24).toString("hex");
 const databaseUrl =
   `postgresql://fortnote:${databasePassword}@127.0.0.1:` +
@@ -46,15 +39,16 @@ try {
   ]);
   containerStarted = true;
   await waitForPostgres();
-  await run(process.execPath, [
-    path.join(repositoryRoot, "scripts/create-performance-fixture.mjs")
-  ], {
-    ...process.env,
-    DATABASE_PROVIDER: "postgres",
-    FORTNOTE_PERFORMANCE_DATABASE_URL: databaseUrl,
-    FORTNOTE_PERFORMANCE_PROFILE:
-      process.env.FORTNOTE_PERFORMANCE_PROFILE ?? "full"
-  });
+  await run(
+    process.execPath,
+    [path.join(repositoryRoot, "scripts/create-performance-fixture.mjs")],
+    {
+      ...process.env,
+      DATABASE_PROVIDER: "postgres",
+      FORTNOTE_PERFORMANCE_DATABASE_URL: databaseUrl,
+      FORTNOTE_PERFORMANCE_PROFILE: process.env.FORTNOTE_PERFORMANCE_PROFILE ?? "full"
+    }
+  );
 } finally {
   await cleanup();
 }
@@ -62,13 +56,11 @@ try {
 async function waitForPostgres() {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
-    const result = spawnSync(containerEngine, [
-      "exec",
-      containerName,
-      "pg_isready",
-      "--username=fortnote",
-      "--dbname=fortnote"
-    ], { stdio: "ignore" });
+    const result = spawnSync(
+      containerEngine,
+      ["exec", containerName, "pg_isready", "--username=fortnote", "--dbname=fortnote"],
+      { stdio: "ignore" }
+    );
     if (result.status === 0) {
       return;
     }
@@ -81,10 +73,7 @@ async function cleanup() {
   if (!containerStarted) {
     return;
   }
-  cleanupPromise ??= run(
-    containerEngine,
-    ["stop", "--time=20", containerName]
-  );
+  cleanupPromise ??= run(containerEngine, ["stop", "--time=20", containerName]);
   await cleanupPromise;
 }
 
@@ -126,9 +115,7 @@ function run(command, arguments_, environment = process.env) {
 }
 
 function performancePort(value) {
-  const parsed = value === undefined
-    ? 42_000 + (process.pid % 20_000)
-    : Number(value);
+  const parsed = value === undefined ? 42_000 + (process.pid % 20_000) : Number(value);
   if (!Number.isInteger(parsed) || parsed < 1_024 || parsed > 65_535) {
     throw new Error(
       "FORTNOTE_PERFORMANCE_POSTGRES_PORT must be an integer from 1024 through 65535"

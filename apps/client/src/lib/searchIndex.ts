@@ -5,10 +5,7 @@ import {
   hkdfSha256,
   sha256
 } from "@fortnote/shared";
-import type {
-  FortnoteIndexedDb,
-  ProtectedSearchIndexRecord
-} from "./indexedDb";
+import type { FortnoteIndexedDb, ProtectedSearchIndexRecord } from "./indexedDb";
 
 const SEARCH_INDEX_FORMAT_VERSION = 1;
 const DEFAULT_MAX_SECTIONS_PER_BATCH = 2;
@@ -229,10 +226,11 @@ export function createProtectedSearchIndex({
         }
       }
     }
-    matches.sort((left, right) =>
-      left.noteId.localeCompare(right.noteId) ||
-      left.sectionId.localeCompare(right.sectionId) ||
-      left.blockId.localeCompare(right.blockId)
+    matches.sort(
+      (left, right) =>
+        left.noteId.localeCompare(right.noteId) ||
+        left.sectionId.localeCompare(right.sectionId) ||
+        left.blockId.localeCompare(right.blockId)
     );
     return {
       coverage: coverageFor(normalizedTargets, records),
@@ -240,18 +238,22 @@ export function createProtectedSearchIndex({
     };
   }
 
-  async function readableRecords(): Promise<{
-    payload: ProtectedSectionPayload;
-    record: ProtectedSearchIndexRecord;
-  }[]> {
+  async function readableRecords(): Promise<
+    {
+      payload: ProtectedSectionPayload;
+      record: ProtectedSearchIndexRecord;
+    }[]
+  > {
     const records = await database.listSearchIndex(userId);
-    const opened = await Promise.all(records.map(async (record) => {
-      try {
-        return { payload: await openRecord(record), record };
-      } catch {
-        return null;
-      }
-    }));
+    const opened = await Promise.all(
+      records.map(async (record) => {
+        try {
+          return { payload: await openRecord(record), record };
+        } catch {
+          return null;
+        }
+      })
+    );
     return opened.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
   }
 
@@ -289,18 +291,22 @@ function coverageFor(
   targets: SearchCoverageTarget[],
   records: { record: ProtectedSearchIndexRecord }[]
 ): SearchCoverage {
-  const indexed = new Map(records.map(({ record }) => [coverageIdentity(record), record]));
+  const indexed = new Map(
+    records.map(({ record }) => [coverageIdentity(record), record])
+  );
   const pending = targets.flatMap((target) => {
     const record = indexed.get(coverageIdentity(target));
     return record && record.indexedSequence >= target.serverSequence
       ? []
-      : [{
-          noteId: target.noteId,
-          sectionId: target.sectionId,
-          keyEpoch: target.keyEpoch,
-          indexedSequence: record?.indexedSequence ?? 0,
-          targetSequence: target.serverSequence
-        }];
+      : [
+          {
+            noteId: target.noteId,
+            sectionId: target.sectionId,
+            keyEpoch: target.keyEpoch,
+            indexedSequence: record?.indexedSequence ?? 0,
+            targetSequence: target.serverSequence
+          }
+        ];
   });
   return {
     complete: pending.length === 0,
@@ -320,23 +326,31 @@ function normalizeTargets(targets: SearchCoverageTarget[]): SearchCoverageTarget
       normalized.set(identity, { ...target });
     }
   }
-  return [...normalized.values()].sort((left, right) =>
-    left.noteId.localeCompare(right.noteId) ||
-    left.sectionId.localeCompare(right.sectionId) ||
-    left.keyEpoch - right.keyEpoch
+  return [...normalized.values()].sort(
+    (left, right) =>
+      left.noteId.localeCompare(right.noteId) ||
+      left.sectionId.localeCompare(right.sectionId) ||
+      left.keyEpoch - right.keyEpoch
   );
 }
 
 function normalizeTerms(terms: string[]): string[] {
-  return [...new Set(
-    terms
-      .map((term) => term.normalize("NFKC").toLocaleLowerCase().trim())
-      .filter(Boolean)
-  )].sort();
+  return [
+    ...new Set(
+      terms
+        .map((term) => term.normalize("NFKC").toLocaleLowerCase().trim())
+        .filter(Boolean)
+    )
+  ].sort();
 }
 
 function defaultTokenize(text: string): string[] {
-  return text.normalize("NFKC").toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  return (
+    text
+      .normalize("NFKC")
+      .toLocaleLowerCase()
+      .match(/[\p{L}\p{N}]+/gu) ?? []
+  );
 }
 
 function emptyPayload(): ProtectedSectionPayload {
@@ -369,9 +383,12 @@ function isProtectedBlockEntry(value: unknown): value is ProtectedBlockEntry {
 
 function assertSectionUpdate(update: SearchSectionUpdate): void {
   assertCoverageTarget(update);
-  if (!Array.isArray(update.blocks) || update.blocks.some(
-    (block) => typeof block.blockId !== "string" || typeof block.text !== "string"
-  )) {
+  if (
+    !Array.isArray(update.blocks) ||
+    update.blocks.some(
+      (block) => typeof block.blockId !== "string" || typeof block.text !== "string"
+    )
+  ) {
     throw new Error("Invalid protected search section");
   }
 }
@@ -402,7 +419,9 @@ function assertLoadedTarget(
   }
 }
 
-function sectionIdentity(target: Pick<SearchCoverageTarget, "noteId" | "sectionId" | "keyEpoch">) {
+function sectionIdentity(
+  target: Pick<SearchCoverageTarget, "noteId" | "sectionId" | "keyEpoch">
+) {
   return {
     noteId: target.noteId,
     sectionId: target.sectionId,
@@ -440,9 +459,7 @@ async function deriveSearchKey(rootKey: Uint8Array, userId: string): Promise<Uin
 
 async function sha256Hex(value: string): Promise<string> {
   const digest = await sha256(textEncoder.encode(value));
-  return [...digest]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function defaultYieldControl(): Promise<void> {

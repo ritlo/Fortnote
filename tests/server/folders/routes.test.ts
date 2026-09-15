@@ -62,7 +62,10 @@ describe("folders routes", () => {
       .send({ id: folderId, name: "Drafts" })
       .expect(500);
 
-    const storedFolder = await testSql(db).get("SELECT id FROM folders WHERE id = ?", folderId);
+    const storedFolder = await testSql(db).get(
+      "SELECT id FROM folders WHERE id = ?",
+      folderId
+    );
     expect(storedFolder).toBeUndefined();
   });
 
@@ -85,7 +88,10 @@ describe("folders routes", () => {
       .send({ name: "Renamed" })
       .expect(500);
 
-    const storedFolder = await testSql(db).get("SELECT name FROM folders WHERE id = ?", folderId);
+    const storedFolder = await testSql(db).get(
+      "SELECT name FROM folders WHERE id = ?",
+      folderId
+    );
     expect(storedFolder).toEqual({ name: "Inbox" });
   });
 
@@ -111,9 +117,15 @@ describe("folders routes", () => {
 
     await agent.delete(`/api/folders/${folderId}`).set(csrfHeaders()).expect(500);
 
-    const storedFolder = await testSql(db).get("SELECT id FROM folders WHERE id = ?", folderId);
+    const storedFolder = await testSql(db).get(
+      "SELECT id FROM folders WHERE id = ?",
+      folderId
+    );
     expect(storedFolder).toEqual({ id: folderId });
-    const storedNote = await testSql(db).get("SELECT folder_id AS folderId FROM notes WHERE id = ?", noteId);
+    const storedNote = await testSql(db).get(
+      "SELECT folder_id AS folderId FROM notes WHERE id = ?",
+      noteId
+    );
     expect(storedNote).toEqual({ folderId });
   });
 
@@ -143,7 +155,10 @@ describe("folders routes", () => {
 
     await agent.delete(`/api/folders/${nestedId}`).set(csrfHeaders()).expect(204);
 
-    const storedNote = await testSql(db).get("SELECT folder_id AS folderId FROM notes WHERE id = ?", noteId);
+    const storedNote = await testSql(db).get(
+      "SELECT folder_id AS folderId FROM notes WHERE id = ?",
+      noteId
+    );
     expect(storedNote).toEqual({ folderId: parentId });
   });
 });

@@ -27,10 +27,7 @@ import {
   utf8,
   validateEncryptedPayload
 } from "@shared/crypto.js";
-import {
-  crdtCheckpointAssociatedData,
-  crdtUpdateAssociatedData
-} from "@shared/crdt.js";
+import { crdtCheckpointAssociatedData, crdtUpdateAssociatedData } from "@shared/crdt.js";
 
 describe("crypto helpers", () => {
   beforeAll(async () => {
@@ -261,7 +258,9 @@ describe("crypto helpers", () => {
     expect(legacy.formatVersion).toBe(1);
     expect(current.formatVersion).toBe(2);
     expect(toBase64(await decryptBytes(legacy, key, aad))).toBe(toBase64(utf8("legacy")));
-    expect(toBase64(await decryptBytes(current, key, aad))).toBe(toBase64(utf8("current")));
+    expect(toBase64(await decryptBytes(current, key, aad))).toBe(
+      toBase64(utf8("current"))
+    );
   });
 
   it("rejects protected metadata moved to another context", async () => {
@@ -286,11 +285,7 @@ describe("crypto helpers", () => {
       )
     ).rejects.toThrow();
     await expect(
-      decryptBytes(
-        encrypted,
-        key,
-        associatedDataV2("attachment-metadata", context)
-      )
+      decryptBytes(encrypted, key, associatedDataV2("attachment-metadata", context))
     ).rejects.toThrow();
   });
 
@@ -377,6 +372,8 @@ describe("crypto helpers", () => {
         epochLinkAssociatedData({ ...input, sourceEpoch: 2, targetEpoch: 3 })
       )
     ).rejects.toThrow();
-    expect(() => epochLinkAssociatedData({ ...input, targetEpoch: 5 })).toThrow("adjacent");
+    expect(() => epochLinkAssociatedData({ ...input, targetEpoch: 5 })).toThrow(
+      "adjacent"
+    );
   });
 });

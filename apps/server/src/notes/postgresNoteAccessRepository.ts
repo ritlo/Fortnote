@@ -27,10 +27,7 @@ export class PostgresNoteAccessRepository implements NoteAccessRepository {
         schema.noteMemberships,
         eq(schema.noteMemberships.noteId, schema.notes.id)
       )
-      .where(and(
-        eq(schema.notes.id, noteId),
-        eq(schema.noteMemberships.userId, userId)
-      ))
+      .where(and(eq(schema.notes.id, noteId), eq(schema.noteMemberships.userId, userId)))
       .limit(1);
     return rows[0] as NoteAccess | undefined;
   }

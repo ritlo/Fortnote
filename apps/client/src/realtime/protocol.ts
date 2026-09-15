@@ -1,7 +1,4 @@
-import type {
-  CollaborationEvent,
-  PresenceUser
-} from "../api";
+import type { CollaborationEvent, PresenceUser } from "../api";
 import {
   decodeCrdtBinaryFrame,
   parseCrdtControlMessage,
@@ -125,8 +122,7 @@ export function isRealtimeMessage(value: unknown): value is RealtimeMessage {
       return typeof value.updateId === "string";
     case "crdt-reject":
       return typeof value.code === "string"
-        ? (
-            typeof value.updateId === "string" &&
+        ? typeof value.updateId === "string" &&
             typeof value.sectionId === "string" &&
             [
               "storage-limit",
@@ -135,14 +131,11 @@ export function isRealtimeMessage(value: unknown): value is RealtimeMessage {
               "rotation-pending",
               "forbidden"
             ].includes(value.code)
-          )
-        : (
-            typeof value.noteId === "string" &&
+        : typeof value.noteId === "string" &&
             typeof value.updateId === "string" &&
             (value.reason === "forbidden" ||
               value.reason === "payload-too-large" ||
-              value.reason === "storage-limit")
-          );
+              value.reason === "storage-limit");
     case "pong":
       return true;
     default:

@@ -47,9 +47,9 @@ describe("apiRequest", () => {
   });
 
   it("identifies the originating browser instance", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ ok: true }), { status: 200 })
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
     await apiRequest("/test", { method: "POST", body: "{}" });
@@ -79,7 +79,9 @@ describe("apiRequest", () => {
   it("uses binary bodies and responses without JSON/Base64 conversion", async () => {
     const uploadId = crypto.randomUUID();
     const bytes = Uint8Array.from([0, 1, 2, 253, 254, 255]);
-    const nonce = btoa(String.fromCharCode(...Uint8Array.from({ length: 24 }, (_, index) => index)));
+    const nonce = btoa(
+      String.fromCharCode(...Uint8Array.from({ length: 24 }, (_, index) => index))
+    );
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response(null, { status: 204 }))

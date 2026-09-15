@@ -225,12 +225,18 @@ describe("app data collaboration bootstrap", () => {
     let finishFirst!: (value: { notes: NoteSummary[] }) => void;
     let finishSecond!: (value: { notes: NoteSummary[] }) => void;
     vi.mocked(listNotes)
-      .mockImplementationOnce(() => new Promise((resolve) => {
-        finishFirst = resolve;
-      }))
-      .mockImplementationOnce(() => new Promise((resolve) => {
-        finishSecond = resolve;
-      }));
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishFirst = resolve;
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishSecond = resolve;
+          })
+      );
     useAppStore.setState({ rootKey, user });
 
     const firstLoad = loadDecryptedNotes(user, rootKey);
@@ -252,9 +258,10 @@ describe("app data collaboration bootstrap", () => {
     const rootKey = crypto.getRandomValues(new Uint8Array(32));
     let finishLoad!: (value: { notes: NoteSummary[] }) => void;
     vi.mocked(listNotes).mockImplementationOnce(
-      () => new Promise((resolve) => {
-        finishLoad = resolve;
-      })
+      () =>
+        new Promise((resolve) => {
+          finishLoad = resolve;
+        })
     );
     const created = decryptedNote({
       id: "created-during-load",
@@ -288,18 +295,22 @@ describe("app data collaboration bootstrap", () => {
       selectedNoteId: "target",
       attachmentsByNote: { target: [], untouched: [] }
     });
-    vi.mocked(getNote).mockResolvedValue(noteSummary({
-      id: "target",
-      title: "Encrypted title",
-      updatedAt: "2026-07-03T00:00:00.000Z",
-      version: 2
-    }));
-    mockedDecryptNoteSummary.mockResolvedValue(decryptedNote({
-      id: "target",
-      title: "Remote title",
-      updatedAt: "2026-07-03T00:00:00.000Z",
-      version: 2
-    }));
+    vi.mocked(getNote).mockResolvedValue(
+      noteSummary({
+        id: "target",
+        title: "Encrypted title",
+        updatedAt: "2026-07-03T00:00:00.000Z",
+        version: 2
+      })
+    );
+    mockedDecryptNoteSummary.mockResolvedValue(
+      decryptedNote({
+        id: "target",
+        title: "Remote title",
+        updatedAt: "2026-07-03T00:00:00.000Z",
+        version: 2
+      })
+    );
 
     await loadDecryptedNote(user, rootKey, "target");
 
@@ -364,10 +375,7 @@ describe("app data collaboration bootstrap", () => {
       "section-1",
       "legacy body"
     );
-    expect(migrationMocks.replaceOrder).toHaveBeenCalledWith(
-      legacy.id,
-      ["section-1"]
-    );
+    expect(migrationMocks.replaceOrder).toHaveBeenCalledWith(legacy.id, ["section-1"]);
     expect(migrationMocks.initializeSection).toHaveBeenCalledWith(
       legacy.id,
       "section-1",
@@ -462,9 +470,10 @@ describe("app data collaboration bootstrap", () => {
     const rootKey = crypto.getRandomValues(new Uint8Array(32));
     let finishLoad!: (value: { notes: NoteSummary[] }) => void;
     vi.mocked(listNotes).mockImplementationOnce(
-      () => new Promise((resolve) => {
-        finishLoad = resolve;
-      })
+      () =>
+        new Promise((resolve) => {
+          finishLoad = resolve;
+        })
     );
     useAppStore.setState({ rootKey, user });
 

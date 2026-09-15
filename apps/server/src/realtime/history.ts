@@ -2,10 +2,7 @@ import { fromCanonicalBase64, type CrdtBinaryHeader } from "@fortnote/shared";
 import { and, eq, gt, lte, ne, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "../db/schema.js";
-import {
-  ROOT_CRDT_SECTION_ID,
-  storageSectionId
-} from "../notes/sections.js";
+import { ROOT_CRDT_SECTION_ID, storageSectionId } from "../notes/sections.js";
 
 export type BinaryUpdateOutcome =
   | { status: "inserted" | "already-present"; serverSequence: number }
@@ -39,9 +36,7 @@ export interface ManifestSectionHistoryEntry extends SectionHistoryEntryBase {
   manifestHash: string;
 }
 
-export type SectionHistoryEntry =
-  | InlineSectionHistoryEntry
-  | ManifestSectionHistoryEntry;
+export type SectionHistoryEntry = InlineSectionHistoryEntry | ManifestSectionHistoryEntry;
 
 export interface SectionHistoryRow extends SectionHistoryEntryBase {
   inlineCipher: Buffer | null;
@@ -131,27 +126,24 @@ function historyAccess(
   noteId: string,
   userId: string
 ): HistoryAccess | null {
-  return database
-    .select({
-      cryptoOwnerId: schema.notes.cryptoOwnerId,
-      keyEpoch: schema.notes.keyEpoch,
-      rotationFenced: schema.notes.rotationFenced,
-      isDeleted: schema.notes.isDeleted,
-      role: schema.noteMemberships.role,
-      status: schema.noteMemberships.status
-    })
-    .from(schema.notes)
-    .innerJoin(
-      schema.noteMemberships,
-      eq(schema.noteMemberships.noteId, schema.notes.id)
-    )
-    .where(
-      and(
-        eq(schema.notes.id, noteId),
-        eq(schema.noteMemberships.userId, userId)
+  return (
+    database
+      .select({
+        cryptoOwnerId: schema.notes.cryptoOwnerId,
+        keyEpoch: schema.notes.keyEpoch,
+        rotationFenced: schema.notes.rotationFenced,
+        isDeleted: schema.notes.isDeleted,
+        role: schema.noteMemberships.role,
+        status: schema.noteMemberships.status
+      })
+      .from(schema.notes)
+      .innerJoin(
+        schema.noteMemberships,
+        eq(schema.noteMemberships.noteId, schema.notes.id)
       )
-    )
-    .get() ?? null;
+      .where(and(eq(schema.notes.id, noteId), eq(schema.noteMemberships.userId, userId)))
+      .get() ?? null
+  );
 }
 
 function ensureSection(
@@ -186,10 +178,7 @@ function ensureSection(
     })
     .from(schema.noteSections)
     .where(
-      and(
-        eq(schema.noteSections.id, storedId),
-        eq(schema.noteSections.noteId, noteId)
-      )
+      and(eq(schema.noteSections.id, storedId), eq(schema.noteSections.noteId, noteId))
     )
     .get();
   if (!section || section.isDeleted || section.createdEpoch > keyEpoch) {
@@ -198,9 +187,7 @@ function ensureSection(
   return section;
 }
 
-export class SqliteSectionHistoryRepository
-  implements SectionHistoryRepository
-{
+export class SqliteSectionHistoryRepository implements SectionHistoryRepository {
   constructor(private readonly orm: SqliteDatabase) {}
 
   persist(input: PersistBinaryUpdateInput): Promise<BinaryUpdateOutcome> {
@@ -208,11 +195,7 @@ export class SqliteSectionHistoryRepository
       if (!activeSession(transaction, input.sessionId)) {
         return { status: "rejected", code: "forbidden" } as const;
       }
-      const access = historyAccess(
-        transaction,
-        input.header.noteId,
-        input.userId
-      );
+      const access = historyAccess(transaction, input.header.noteId, input.userId);
       if (access?.status !== "active" || access.isDeleted) {
         return { status: "rejected", code: "forbidden" } as const;
       }
@@ -239,10 +222,8 @@ export class SqliteSectionHistoryRepository
       }
       const checkpointCutoff = input.header.checkpointSequenceCutoff;
       if (
-        (input.header.kind === "checkpoint") !==
-          (checkpointCutoff !== undefined) ||
-        (checkpointCutoff !== undefined &&
-          checkpointCutoff > section.currentSequence)
+        (input.header.kind === "checkpoint") !== (checkpointCutoff !== undefined) ||
+        (checkpointCutoff !== undefined && checkpointCutoff > section.currentSequence)
       ) {
         return { status: "rejected", code: "forbidden" } as const;
       }
@@ -279,8 +260,7 @@ export class SqliteSectionHistoryRepository
           kind: input.header.kind,
           inlineCipher: Buffer.from(input.cipher),
           nonce: Buffer.from(fromCanonicalBase64(input.header.nonce)),
-          checkpointSequenceCutoff:
-            input.header.checkpointSequenceCutoff ?? null
+          checkpointSequenceCutoff: input.header.checkpointSequenceCutoff ?? null
         })
         .run();
       transaction
@@ -303,10 +283,7 @@ export class SqliteSectionHistoryRepository
             and(
               eq(schema.sectionUpdates.noteId, input.header.noteId),
               eq(schema.sectionUpdates.sectionId, storedSectionId),
-              eq(
-                schema.sectionUpdates.keyEpoch,
-                input.header.expectedKeyEpoch
-              ),
+              eq(schema.sectionUpdates.keyEpoch, input.header.expectedKeyEpoch),
               lte(schema.sectionUpdates.serverSequence, checkpointCutoff),
               ne(schema.sectionUpdates.updateId, input.header.updateId)
             )
@@ -339,8 +316,7 @@ export class SqliteSectionHistoryRepository
           kind: schema.sectionUpdates.kind,
           inlineCipher: schema.sectionUpdates.inlineCipher,
           nonce: schema.sectionUpdates.nonce,
-          checkpointSequenceCutoff:
-            schema.sectionUpdates.checkpointSequenceCutoff,
+          checkpointSequenceCutoff: schema.sectionUpdates.checkpointSequenceCutoff,
           manifestId: schema.sectionUpdates.manifestId,
           uploadId: schema.contentManifests.uploadId,
           totalCipherBytes: schema.contentManifests.totalCipherBytes,
@@ -393,8 +369,7 @@ export function paginateHistory(
   const entries: SectionHistoryEntry[] = [];
   let bytes = 0;
   for (const row of candidates) {
-    const nextBytes =
-      bytes + (row.storage === "inline" ? row.inlineCipher.length : 0);
+    const nextBytes = bytes + (row.storage === "inline" ? row.inlineCipher.length : 0);
     if (entries.length > 0 && nextBytes > limits.maxBytes) {
       break;
     }
@@ -404,8 +379,7 @@ export function paginateHistory(
   return {
     entries,
     hasMore: hasMoreItems || entries.length < candidates.length,
-    nextSequence:
-      entries.at(-1)?.serverSequence ?? limits.afterSequence
+    nextSequence: entries.at(-1)?.serverSequence ?? limits.afterSequence
   };
 }
 

@@ -22,9 +22,7 @@ describe("realtime server", () => {
   it("rejects unauthenticated websocket connections", async () => {
     const server = await createRealtimeTestServer();
 
-    await expect(connectRejected(`${server.url}/api/realtime`)).resolves.toMatch(
-      /401/
-    );
+    await expect(connectRejected(`${server.url}/api/realtime`)).resolves.toMatch(/401/);
   });
 
   it("rejects authenticated websocket connections from other origins", async () => {
@@ -65,7 +63,10 @@ describe("realtime server", () => {
       await aliceSocket.next("alice replay");
 
       const closed = waitForClose(aliceSocket.socket);
-      await testSql(server.db).run(`UPDATE sessions SET ${expiryColumn} = ?`, new Date(0).toISOString());
+      await testSql(server.db).run(
+        `UPDATE sessions SET ${expiryColumn} = ?`,
+        new Date(0).toISOString()
+      );
 
       await expect(closed).resolves.toBe(1008);
     }
@@ -106,9 +107,9 @@ describe("realtime server", () => {
       .send(invitePayload("ws_carol", "viewer"))
       .expect(201);
 
-    const currentCursor = (
-      (await testSql(server.db).get<{ cursor: number }>("SELECT MAX(cursor) AS cursor FROM note_events"))!
-    ).cursor;
+    const currentCursor = (await testSql(server.db).get<{ cursor: number }>(
+      "SELECT MAX(cursor) AS cursor FROM note_events"
+    ))!.cursor;
 
     const bobSocket = await connect(server.url, bob.cookie, currentCursor);
     expect(await bobSocket.next("bob connected")).toMatchObject({ type: "connected" });
@@ -140,7 +141,9 @@ describe("realtime server", () => {
     });
 
     const carolSocket = await connect(server.url, carol.cookie, 0);
-    expect(await carolSocket.next("carol connected")).toMatchObject({ type: "connected" });
+    expect(await carolSocket.next("carol connected")).toMatchObject({
+      type: "connected"
+    });
     const carolReplay = await carolSocket.next("carol replay");
     expect(carolReplay).toMatchObject({ type: "replay" });
     expect(
@@ -202,12 +205,13 @@ describe("realtime server", () => {
       })
       .expect(201);
 
-    const currentCursor = (
-      (await testSql(server.db).get<{ cursor: number }>("SELECT MAX(cursor) AS cursor FROM note_events"))!
-    ).cursor;
-    const cryptoOwnerId = (
-      (await testSql(server.db).get<{ cryptoOwnerId: string }>("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?", noteId))!
-    ).cryptoOwnerId;
+    const currentCursor = (await testSql(server.db).get<{ cursor: number }>(
+      "SELECT MAX(cursor) AS cursor FROM note_events"
+    ))!.cursor;
+    const cryptoOwnerId = (await testSql(server.db).get<{ cryptoOwnerId: string }>(
+      "SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?",
+      noteId
+    ))!.cryptoOwnerId;
     const aliceSocket = await connect(server.url, alice.cookie, currentCursor);
     const bobSocket = await connect(server.url, bob.cookie, currentCursor);
     const bobSecondSocket = await connect(server.url, bob.cookie, currentCursor);
@@ -220,9 +224,7 @@ describe("realtime server", () => {
       await socket.next(`${label} replay`);
     }
 
-    bobSocket.socket.send(
-      JSON.stringify({ type: "presence", noteId, state: "editing" })
-    );
+    bobSocket.socket.send(JSON.stringify({ type: "presence", noteId, state: "editing" }));
     await aliceSocket.next("alice sees bob presence");
     await bobSocket.next("bob sees own presence");
     await bobSecondSocket.next("bob second sees presence");
@@ -356,9 +358,10 @@ describe("realtime server", () => {
       .send(invitePayload("crdt_bob", "editor"))
       .expect(201);
     const bobUserId = String(invited.body.userId);
-    const cryptoOwnerId = (
-      (await testSql(server.db).get("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?", noteId))!
-    ).cryptoOwnerId;
+    const cryptoOwnerId = (await testSql(server.db).get(
+      "SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?",
+      noteId
+    ))!.cryptoOwnerId;
     const aliceSocket = await connect(server.url, alice.cookie, 0);
     const bobSocket = await connect(server.url, bob.cookie, 0);
     const legacyBobSocket = await connect(server.url, bob.cookie, 0, false);
@@ -402,7 +405,10 @@ describe("realtime server", () => {
     expect(await bobSocket.next("bob CRDT update")).toEqual(update);
     await expectNoMessage(legacyBobSocket, "legacy client CRDT update");
     expect(
-      await testSql(server.db).get("SELECT cipher FROM note_updates WHERE update_id = ?", update.updateId)
+      await testSql(server.db).get(
+        "SELECT cipher FROM note_updates WHERE update_id = ?",
+        update.updateId
+      )
     ).toEqual({ cipher: update.cipher });
 
     const largeUpdate = {
@@ -446,7 +452,10 @@ describe("realtime server", () => {
     });
     expect(await bobSocket.next("bob CRDT checkpoint")).toEqual(checkpoint);
     expect(
-      await testSql(server.db).all("SELECT update_id AS updateId, kind FROM note_updates WHERE note_id = ?", noteId)
+      await testSql(server.db).all(
+        "SELECT update_id AS updateId, kind FROM note_updates WHERE note_id = ?",
+        noteId
+      )
     ).toEqual([{ updateId: checkpoint.updateId, kind: "checkpoint" }]);
     expect(
       await testSql(server.db).get("SELECT COUNT(*) AS count FROM note_events")
@@ -471,16 +480,23 @@ describe("realtime server", () => {
     });
     expect(await bobSocket.next("bob epoch checkpoint")).toEqual(epochCheckpoint);
 
-    const storedBytes = (
-      (await testSql(server.db).get<{ bytes: number }>("SELECT COALESCE(SUM(LENGTH(cipher)), 0) AS bytes FROM note_updates WHERE note_id = ?", noteId))!
-    ).bytes;
+    const storedBytes = (await testSql(server.db).get<{ bytes: number }>(
+      "SELECT COALESCE(SUM(LENGTH(cipher)), 0) AS bytes FROM note_updates WHERE note_id = ?",
+      noteId
+    ))!.bytes;
     const byteFillerId = crypto.randomUUID();
-    await testSql(server.db).run(`
+    await testSql(server.db).run(
+      `
       INSERT INTO note_updates (
         update_id, note_id, crypto_owner_id, key_epoch, format_version,
         cipher, nonce, kind
       ) VALUES (?, ?, ?, 1, 1, ?, 'nonce', 'update')
-    `, byteFillerId, noteId, cryptoOwnerId, "x".repeat(4 * 1024 * 1024 - storedBytes));
+    `,
+      byteFillerId,
+      noteId,
+      cryptoOwnerId,
+      "x".repeat(4 * 1024 * 1024 - storedBytes)
+    );
     const byteBlockedUpdate = { ...update, updateId: crypto.randomUUID() };
     aliceSocket.socket.send(JSON.stringify(byteBlockedUpdate));
     expect(await aliceSocket.next("byte-limit CRDT rejection")).toEqual({
@@ -489,16 +505,24 @@ describe("realtime server", () => {
       updateId: byteBlockedUpdate.updateId,
       reason: "storage-limit"
     });
-    await testSql(server.db).run("DELETE FROM note_updates WHERE update_id = ?", byteFillerId);
+    await testSql(server.db).run(
+      "DELETE FROM note_updates WHERE update_id = ?",
+      byteFillerId
+    );
 
     const fillerIds = Array.from({ length: 126 }, () => crypto.randomUUID());
     for (const fillerId of fillerIds) {
-      await testSql(server.db).run(`
+      await testSql(server.db).run(
+        `
         INSERT INTO note_updates (
           update_id, note_id, crypto_owner_id, key_epoch, format_version,
           cipher, nonce, kind
         ) VALUES (?, ?, ?, 1, 1, 'cipher', 'nonce', 'update')
-      `, fillerId, noteId, cryptoOwnerId);
+      `,
+        fillerId,
+        noteId,
+        cryptoOwnerId
+      );
     }
     const blockedUpdate = {
       ...update,
@@ -524,10 +548,14 @@ describe("realtime server", () => {
       type: "crdt-ack",
       updateId: boundedCheckpoint.updateId
     });
-    expect(await bobSocket.next("bounded checkpoint broadcast"))
-      .toEqual(boundedCheckpoint);
+    expect(await bobSocket.next("bounded checkpoint broadcast")).toEqual(
+      boundedCheckpoint
+    );
     expect(
-      await testSql(server.db).get("SELECT COUNT(*) AS count FROM note_updates WHERE note_id = ?", noteId)
+      await testSql(server.db).get(
+        "SELECT COUNT(*) AS count FROM note_updates WHERE note_id = ?",
+        noteId
+      )
     ).toEqual({ count: 128 });
 
     const bobClosed = waitForClose(bobSocket.socket);
@@ -558,7 +586,10 @@ describe("realtime server", () => {
       updateId: postRevokeCheckpoint.updateId
     });
     expect(
-      await testSql(server.db).all("SELECT key_epoch AS keyEpoch FROM note_updates WHERE note_id = ?", noteId)
+      await testSql(server.db).all(
+        "SELECT key_epoch AS keyEpoch FROM note_updates WHERE note_id = ?",
+        noteId
+      )
     ).toEqual([{ keyEpoch: 2 }]);
   });
 
@@ -569,7 +600,9 @@ describe("realtime server", () => {
 
     const aliceSocket = await connect(server.url, alice.cookie, 0);
     const bobSocket = await connect(server.url, bob.cookie, 0);
-    expect(await aliceSocket.next("alice connected")).toMatchObject({ type: "connected" });
+    expect(await aliceSocket.next("alice connected")).toMatchObject({
+      type: "connected"
+    });
     expect(await aliceSocket.next("alice replay")).toMatchObject({
       type: "replay",
       events: []
@@ -620,9 +653,9 @@ describe("realtime server", () => {
       .send(invitePayload("ws_delete_bob", "editor"))
       .expect(201);
 
-    const currentCursor = (
-      (await testSql(server.db).get<{ cursor: number }>("SELECT MAX(cursor) AS cursor FROM note_events"))!
-    ).cursor;
+    const currentCursor = (await testSql(server.db).get<{ cursor: number }>(
+      "SELECT MAX(cursor) AS cursor FROM note_events"
+    ))!.cursor;
     const bobSocket = await connect(server.url, bob.cookie, currentCursor);
     await bobSocket.next("bob connected");
     await bobSocket.next("bob replay");
@@ -675,9 +708,7 @@ describe("realtime server", () => {
     await mallorySocket.next("mallory connected");
     await mallorySocket.next("mallory replay");
 
-    bobSocket.socket.send(
-      JSON.stringify({ type: "presence", noteId, state: "editing" })
-    );
+    bobSocket.socket.send(JSON.stringify({ type: "presence", noteId, state: "editing" }));
 
     expect(await aliceSocket.next("alice presence")).toMatchObject({
       type: "presence",
@@ -739,9 +770,7 @@ describe("realtime server", () => {
     await bobSocket.next("bob connected");
     await bobSocket.next("bob replay");
 
-    bobSocket.socket.send(
-      JSON.stringify({ type: "presence", noteId, state: "idle" })
-    );
+    bobSocket.socket.send(JSON.stringify({ type: "presence", noteId, state: "idle" }));
 
     expect(await aliceSocket.next("alice presence")).toMatchObject({
       type: "presence",

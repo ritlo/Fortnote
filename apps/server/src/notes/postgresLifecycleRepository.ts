@@ -12,9 +12,7 @@ import type {
 
 type PostgresDatabase = NodePgDatabase<typeof schema>;
 
-export class PostgresNoteLifecycleRepository
-  implements NoteLifecycleRepository
-{
+export class PostgresNoteLifecycleRepository implements NoteLifecycleRepository {
   constructor(private readonly orm: PostgresDatabase) {}
 
   setDeleted(input: SetNoteDeletedInput): Promise<number | null> {
@@ -47,10 +45,7 @@ export class PostgresNoteLifecycleRepository
           actorUserId: input.actorUserId,
           eventType: input.deleted ? "note.deleted" : "note.restored",
           noteVersion: input.noteVersion,
-          payloadMetadata: serializedEventMetadata(
-            undefined,
-            input.clientInstanceId
-          )
+          payloadMetadata: serializedEventMetadata(undefined, input.clientInstanceId)
         })
         .returning({ cursor: schema.noteEvents.cursor });
       const event = events[0];

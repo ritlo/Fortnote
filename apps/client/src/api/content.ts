@@ -96,8 +96,12 @@ function canonicalNonce(value: string): boolean {
   }
 }
 
-export function listNoteSections(noteId: string): Promise<{ sections: LogicalNoteSectionSummary[] }> {
-  return apiRequest<{ sections: LogicalNoteSectionSummary[] }>(`/notes/${noteId}/sections`);
+export function listNoteSections(
+  noteId: string
+): Promise<{ sections: LogicalNoteSectionSummary[] }> {
+  return apiRequest<{ sections: LogicalNoteSectionSummary[] }>(
+    `/notes/${noteId}/sections`
+  );
 }
 
 export function getLegacyNoteContent(noteId: string): Promise<LegacyNoteContent> {

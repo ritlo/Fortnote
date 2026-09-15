@@ -31,14 +31,12 @@ export function AppShell() {
   const setSearch = useAppStore((state) => state.setSearch);
   const noteView = useNoteViewModel();
   const sectionData = useSectionData(noteView.selectedNote);
-  const recoveryCallbacks = useRecoveryActions(
-    noteView.selectedNote,
-    sectionData.retry
-  );
+  const recoveryCallbacks = useRecoveryActions(noteView.selectedNote, sectionData.retry);
   const authActions = useAuthActions();
   const noteActions = useNoteActions(noteView.selectedNote);
   const attachmentActions = useAttachmentActions(noteView.selectedNote);
-  const [attachmentDialogNote, setAttachmentDialogNote] = useState<typeof noteView.selectedNote>(null);
+  const [attachmentDialogNote, setAttachmentDialogNote] =
+    useState<typeof noteView.selectedNote>(null);
   const [attachmentDialogLoading, setAttachmentDialogLoading] = useState(false);
   const [attachmentDialogError, setAttachmentDialogError] = useState<string | null>(null);
   const attachmentDialogActions = useAttachmentActions(attachmentDialogNote);
@@ -51,13 +49,16 @@ export function AppShell() {
     }
     setAttachmentDialogLoading(true);
     setAttachmentDialogError(null);
-    void attachmentDialogActions.loadAttachments(attachmentDialogNote.id)
+    void attachmentDialogActions
+      .loadAttachments(attachmentDialogNote.id)
       .catch((loadError: unknown) => {
         setAttachmentDialogError(
           loadError instanceof Error ? loadError.message : "Unable to load attachments"
         );
       })
-      .finally(() => { setAttachmentDialogLoading(false); });
+      .finally(() => {
+        setAttachmentDialogLoading(false);
+      });
   }, [attachmentDialogActions.loadAttachments, attachmentDialogNote]);
 
   function openAttachmentDialog(note: typeof noteView.selectedNote) {
@@ -133,7 +134,9 @@ export function AppShell() {
         user={user}
       />
       <AttachmentDialog
-        attachments={attachmentDialogNote ? attachmentsByNote[attachmentDialogNote.id] : undefined}
+        attachments={
+          attachmentDialogNote ? attachmentsByNote[attachmentDialogNote.id] : undefined
+        }
         canDelete={
           attachmentDialogNote !== null &&
           attachmentDialogNote.role !== "viewer" &&
@@ -144,7 +147,9 @@ export function AppShell() {
         error={attachmentDialogError}
         loading={attachmentDialogLoading}
         noteTitle={attachmentDialogNote?.title ?? "Note"}
-        onClose={() => { setAttachmentDialogNote(null); }}
+        onClose={() => {
+          setAttachmentDialogNote(null);
+        }}
         open={attachmentDialogNote !== null}
         removeAttachment={attachmentDialogActions.removeSelectedAttachment}
         resolveAttachmentUrl={attachmentDialogActions.resolveAttachmentUrl}

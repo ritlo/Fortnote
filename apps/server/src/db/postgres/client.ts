@@ -56,11 +56,7 @@ export async function createPostgresResources(
   const orm = createPostgresOrm(pool);
 
   try {
-    await waitForPostgres(
-      pool,
-      config.startupRetryAttempts,
-      config.startupRetryDelayMs
-    );
+    await waitForPostgres(pool, config.startupRetryAttempts, config.startupRetryDelayMs);
     const migrationsStartedAt = performance.now();
     await migrate(orm, {
       migrationsFolder:

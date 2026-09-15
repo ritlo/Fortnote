@@ -92,7 +92,10 @@ describe("event replay routes", () => {
       })
       .expect(200);
 
-    const bobReplay = await bob.get("/api/events").query({ after: bobCursor }).expect(200);
+    const bobReplay = await bob
+      .get("/api/events")
+      .query({ after: bobCursor })
+      .expect(200);
     expect(bobReplay.body.events).toHaveLength(1);
     expect(bobReplay.body.events[0]).toMatchObject({
       type: "note.updated",
@@ -115,9 +118,9 @@ describe("event replay routes", () => {
       .expect(204);
 
     const carolRevoked = await carol.get("/api/events").query({ after: 0 }).expect(200);
-    expect(carolRevoked.body.events.map((event: { type: string }) => event.type)).toEqual([
-      "membership.revoked"
-    ]);
+    expect(carolRevoked.body.events.map((event: { type: string }) => event.type)).toEqual(
+      ["membership.revoked"]
+    );
     expect(carolRevoked.body.events[0].metadata).toMatchObject({
       membershipUserId: carolUserId
     });
@@ -186,7 +189,9 @@ describe("event replay routes", () => {
       .send(invitePayload("retention_bob", "editor"))
       .expect(201);
 
-    const latest = (await testSql(app.locals.db).get("SELECT MAX(cursor) AS cursor FROM note_events"))!;
+    const latest = (await testSql(app.locals.db).get(
+      "SELECT MAX(cursor) AS cursor FROM note_events"
+    ))!;
     expect(latest.cursor).toBeGreaterThan(0);
 
     await alice
@@ -194,7 +199,10 @@ describe("event replay routes", () => {
       .set(csrfHeaders())
       .send({ cursor: latest.cursor })
       .expect(204);
-    const remainingAfterAliceAck = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?", latest.cursor))!;
+    const remainingAfterAliceAck = (await testSql(app.locals.db).get(
+      "SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?",
+      latest.cursor
+    ))!;
     expect(remainingAfterAliceAck.count).toBeGreaterThan(0);
 
     await bob
@@ -203,7 +211,10 @@ describe("event replay routes", () => {
       .send({ cursor: latest.cursor })
       .expect(204);
 
-    const remaining = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?", latest.cursor))!;
+    const remaining = (await testSql(app.locals.db).get(
+      "SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?",
+      latest.cursor
+    ))!;
     expect(remaining.count).toBe(0);
   });
 
@@ -218,7 +229,9 @@ describe("event replay routes", () => {
       .send({ name: "Private folder" })
       .expect(201);
 
-    const latest = (await testSql(app.locals.db).get("SELECT MAX(cursor) AS cursor FROM note_events"))!;
+    const latest = (await testSql(app.locals.db).get(
+      "SELECT MAX(cursor) AS cursor FROM note_events"
+    ))!;
 
     await alice
       .post("/api/events/ack")
@@ -226,7 +239,10 @@ describe("event replay routes", () => {
       .send({ cursor: latest.cursor })
       .expect(204);
 
-    const remaining = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?", latest.cursor))!;
+    const remaining = (await testSql(app.locals.db).get(
+      "SELECT COUNT(*) AS count FROM note_events WHERE cursor <= ?",
+      latest.cursor
+    ))!;
     expect(remaining.count).toBe(0);
   });
 
@@ -270,9 +286,12 @@ describe("event replay routes", () => {
       .set(csrfHeaders())
       .expect(204);
 
-    const revoke = (await testSql(app.locals.db).get(`SELECT cursor
+    const revoke = (await testSql(app.locals.db).get(
+      `SELECT cursor
          FROM note_events
-         WHERE note_id = ? AND event_type = 'membership.revoked'`, noteId))!;
+         WHERE note_id = ? AND event_type = 'membership.revoked'`,
+      noteId
+    ))!;
 
     await alice
       .post("/api/events/ack")
@@ -285,7 +304,10 @@ describe("event replay routes", () => {
       .send({ cursor: revoke.cursor })
       .expect(204);
 
-    const remainingBeforeCarolAck = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?", revoke.cursor))!;
+    const remainingBeforeCarolAck = (await testSql(app.locals.db).get(
+      "SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?",
+      revoke.cursor
+    ))!;
     expect(remainingBeforeCarolAck.count).toBe(1);
 
     await carol
@@ -294,7 +316,10 @@ describe("event replay routes", () => {
       .send({ cursor: revoke.cursor })
       .expect(204);
 
-    const remainingAfterCarolAck = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?", revoke.cursor))!;
+    const remainingAfterCarolAck = (await testSql(app.locals.db).get(
+      "SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?",
+      revoke.cursor
+    ))!;
     expect(remainingAfterCarolAck.count).toBe(0);
   });
 
@@ -321,10 +346,7 @@ describe("event replay routes", () => {
       .send(invitePayload("delete_replay_bob", "editor"))
       .expect(201);
 
-    await alice
-      .delete(`/api/notes/${noteId}/permanent`)
-      .set(csrfHeaders())
-      .expect(204);
+    await alice.delete(`/api/notes/${noteId}/permanent`).set(csrfHeaders()).expect(204);
 
     const bobReplay = await bob.get("/api/events").query({ after: 0 }).expect(200);
     expect(bobReplay.body.events).toHaveLength(1);
@@ -339,7 +361,10 @@ describe("event replay routes", () => {
       .set(csrfHeaders())
       .send({ cursor: deleteCursor })
       .expect(204);
-    const retainedBeforeBobAck = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?", deleteCursor))!;
+    const retainedBeforeBobAck = (await testSql(app.locals.db).get(
+      "SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?",
+      deleteCursor
+    ))!;
     expect(retainedBeforeBobAck.count).toBe(1);
 
     await bob
@@ -350,7 +375,10 @@ describe("event replay routes", () => {
     const bobAfterAck = await bob.get("/api/events").query({ after: 0 }).expect(200);
     expect(bobAfterAck.body.events).toEqual([]);
 
-    const retainedAfterBobAck = (await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?", deleteCursor))!;
+    const retainedAfterBobAck = (await testSql(app.locals.db).get(
+      "SELECT COUNT(*) AS count FROM note_events WHERE cursor = ?",
+      deleteCursor
+    ))!;
     expect(retainedAfterBobAck.count).toBe(0);
   });
 

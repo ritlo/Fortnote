@@ -79,9 +79,9 @@ export async function cleanupRealtimeTests(): Promise<void> {
   );
   await Promise.all(openDatabases.splice(0).map((db) => db.close()));
   await Promise.all(
-    temporaryDirectories.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true })
-    )
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true }))
   );
 }
 
@@ -162,35 +162,44 @@ export async function seedCheckpointManifest(
   const uploadId = crypto.randomUUID();
   const updateId = crypto.randomUUID();
   const manifestId = crypto.randomUUID();
-  await testSql(db).run(`
+  await testSql(db).run(
+    `
       INSERT INTO content_uploads (
         id, update_id, note_id, section_id, crypto_owner_id, key_epoch,
         kind, format_version, total_cipher_bytes, chunk_count, manifest_hash,
         status, expires_at
       ) VALUES (?, ?, ?, ?, ?, 1, 'checkpoint', 2, 6, 1, ?, 'committed', ?)
-    `, uploadId,
-      updateId,
-      input.noteId,
-      input.sectionId,
-      input.cryptoOwnerId,
-      `hash-${manifestId}`,
-      "2099-01-01T00:00:00.000Z");
-  await testSql(db).run(`
+    `,
+    uploadId,
+    updateId,
+    input.noteId,
+    input.sectionId,
+    input.cryptoOwnerId,
+    `hash-${manifestId}`,
+    "2099-01-01T00:00:00.000Z"
+  );
+  await testSql(db).run(
+    `
       INSERT INTO content_manifests (
         id, upload_id, update_id, note_id, section_id, key_epoch, kind,
         format_version, first_sequence, last_sequence, total_cipher_bytes,
         chunk_count, manifest_hash
       ) VALUES (?, ?, ?, ?, ?, 1, 'checkpoint', 2, 1, 1, 6, 1, ?)
-    `, manifestId,
-      uploadId,
-      updateId,
-      input.noteId,
-      input.sectionId,
-      `hash-${manifestId}`);
+    `,
+    manifestId,
+    uploadId,
+    updateId,
+    input.noteId,
+    input.sectionId,
+    `hash-${manifestId}`
+  );
   return manifestId;
 }
 
-export async function register(baseUrl: string, username: string): Promise<{ cookie: string }> {
+export async function register(
+  baseUrl: string,
+  username: string
+): Promise<{ cookie: string }> {
   const response = await request(baseUrl)
     .post("/api/auth/register")
     .set(csrfHeaders())
@@ -263,7 +272,9 @@ export function binaryHeader(input: {
     expectedKeyEpoch: input.expectedKeyEpoch ?? 1,
     nonce: toBase64(crypto.getRandomValues(new Uint8Array(24))),
     cipherLength: 6,
-    ...(input.originClientId === undefined ? {} : { originClientId: input.originClientId })
+    ...(input.originClientId === undefined
+      ? {}
+      : { originClientId: input.originClientId })
   };
 }
 
@@ -272,7 +283,8 @@ export async function connectBinary(
   cookie: string,
   clientId?: string
 ): Promise<BinarySocketClient> {
-  const clientQuery = clientId === undefined ? "" : `&clientId=${encodeURIComponent(clientId)}`;
+  const clientQuery =
+    clientId === undefined ? "" : `&clientId=${encodeURIComponent(clientId)}`;
   const socket = new WebSocket(
     `${baseUrl.replace(/^http/, "ws")}/api/realtime?after=0&capabilities=crdt-binary-v2${clientQuery}`,
     { headers: { Cookie: cookie, Origin: TEST_ALLOWED_ORIGIN } }

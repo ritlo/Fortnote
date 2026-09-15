@@ -97,11 +97,7 @@ export class PostgresFolderRepository implements FolderRepository {
 
   create(input: FolderMutationInput): Promise<FolderMutationOutcome> {
     return this.orm.transaction(async (transaction) => {
-      if (!await validParent(
-        transaction,
-        input.userId,
-        input.parentFolderId
-      )) {
+      if (!(await validParent(transaction, input.userId, input.parentFolderId))) {
         return { kind: "invalid-parent" as const };
       }
       await transaction.insert(schema.folders).values({
@@ -117,9 +113,7 @@ export class PostgresFolderRepository implements FolderRepository {
         eventType: "folder.created",
         folderId: input.folderId,
         userId: input.userId,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return { kind: "saved" as const, cursor };
     });
@@ -127,12 +121,14 @@ export class PostgresFolderRepository implements FolderRepository {
 
   update(input: FolderMutationInput): Promise<FolderMutationOutcome> {
     return this.orm.transaction(async (transaction) => {
-      if (!await validParent(
-        transaction,
-        input.userId,
-        input.parentFolderId,
-        input.folderId
-      )) {
+      if (
+        !(await validParent(
+          transaction,
+          input.userId,
+          input.parentFolderId,
+          input.folderId
+        ))
+      ) {
         return { kind: "invalid-parent" as const };
       }
       const updated = await transaction
@@ -159,9 +155,7 @@ export class PostgresFolderRepository implements FolderRepository {
         eventType: "folder.updated",
         folderId: input.folderId,
         userId: input.userId,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return { kind: "saved" as const, cursor };
     });
@@ -176,12 +170,7 @@ export class PostgresFolderRepository implements FolderRepository {
       const folders = await transaction
         .select({ parentFolderId: schema.folders.parentFolderId })
         .from(schema.folders)
-        .where(
-          and(
-            eq(schema.folders.id, folderId),
-            eq(schema.folders.userId, userId)
-          )
-        )
+        .where(and(eq(schema.folders.id, folderId), eq(schema.folders.userId, userId)))
         .limit(1)
         .for("update");
       const folder = folders[0];
@@ -190,12 +179,7 @@ export class PostgresFolderRepository implements FolderRepository {
       }
       await transaction
         .delete(schema.folders)
-        .where(
-          and(
-            eq(schema.folders.id, folderId),
-            eq(schema.folders.userId, userId)
-          )
-        );
+        .where(and(eq(schema.folders.id, folderId), eq(schema.folders.userId, userId)));
       const cursor = await insertFolderEvent(transaction, {
         eventType: "folder.deleted",
         folderId,

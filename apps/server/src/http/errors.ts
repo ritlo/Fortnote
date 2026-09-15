@@ -94,9 +94,5 @@ export function createOperationalErrorRecord(
 }
 
 export function logOperationalError(input: OperationalErrorInput): void {
-  logError(
-    "request.failed",
-    { ...createOperationalErrorRecord(input) },
-    input.error
-  );
+  logError("request.failed", { ...createOperationalErrorRecord(input) }, input.error);
 }

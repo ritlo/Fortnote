@@ -3,20 +3,10 @@ import { notifyCrdtSectionChange } from "./changes";
 import { REMOTE_UPDATE } from "./document";
 import { clearCheckpointCoverage, trackUpdate } from "./outbound";
 import { getCrdtTransport } from "./runtime";
-import {
-  bindingKey,
-  bindings,
-  defaultSectionId,
-  isActiveBinding
-} from "./state";
-import {
-  decryptReceivedUpdate,
-  type IncomingCrdtMessage
-} from "./transport";
+import { bindingKey, bindings, defaultSectionId, isActiveBinding } from "./state";
+import { decryptReceivedUpdate, type IncomingCrdtMessage } from "./transport";
 
-export function receiveCrdtUpdate(
-  update: IncomingCrdtMessage
-): Promise<void> {
+export function receiveCrdtUpdate(update: IncomingCrdtMessage): Promise<void> {
   const sectionId = scopedSectionId(update) ?? defaultSectionId(update.noteId);
   const binding = bindings.get(bindingKey(update.noteId, sectionId));
   if (
@@ -38,7 +28,10 @@ export function receiveCrdtUpdate(
           binding.provider.emit("progress", progress);
         }
       });
-      if (!isActiveBinding(binding) || binding.note.keyEpoch !== messageKeyEpoch(update)) {
+      if (
+        !isActiveBinding(binding) ||
+        binding.note.keyEpoch !== messageKeyEpoch(update)
+      ) {
         return;
       }
       Y.applyUpdate(binding.doc, plaintext, REMOTE_UPDATE);

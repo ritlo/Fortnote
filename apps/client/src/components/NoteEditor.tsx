@@ -15,11 +15,7 @@ import "@blocknote/mantine/style.css";
 import type { BlockNoteEditor, BlockSchema } from "@blocknote/core";
 import type * as Y from "yjs";
 import type { AttachmentSummary } from "../api";
-import {
-  getCrdtFragment,
-  getCrdtProvider,
-  updateCrdtNote
-} from "../realtime/crdt";
+import { getCrdtFragment, getCrdtProvider, updateCrdtNote } from "../realtime/crdt";
 import {
   formatAttachmentReference,
   isAttachmentMimeCompatible
@@ -31,9 +27,7 @@ interface NoteEditorProps {
   notesView: NotesView;
   selectedNote: DecryptedNote | null;
   resolveAttachmentUrl: (url: string) => Promise<string>;
-  updateSelectedNote: (
-    patch: Partial<Pick<DecryptedNote, "folderId" | "title">>
-  ) => void;
+  updateSelectedNote: (patch: Partial<Pick<DecryptedNote, "folderId" | "title">>) => void;
   uploadSelectedAttachment: (file: File | undefined) => Promise<AttachmentSummary | null>;
 }
 
@@ -109,9 +103,9 @@ function CollaborativeBlockNoteField({
         return;
       }
       const updatedAt = new Date().toISOString();
-      setNotes((notes) => notes.map((note) =>
-        note.id === selectedNote.id ? { ...note, updatedAt } : note
-      ));
+      setNotes((notes) =>
+        notes.map((note) => (note.id === selectedNote.id ? { ...note, updatedAt } : note))
+      );
       setError(null);
       setStatus("Ready");
     };
@@ -175,9 +169,9 @@ function restoreDevelopmentUndoManager(editor: BlockNoteEditor<BlockSchema>): vo
     return;
   }
   const state = editor.prosemirrorState;
-  const undoState = state.plugins.find(
-    (plugin) => (plugin as unknown as { key: string }).key === "y-undo$"
-  )?.getState(state) as { undoManager: Y.UndoManager } | undefined;
+  const undoState = state.plugins
+    .find((plugin) => (plugin as unknown as { key: string }).key === "y-undo$")
+    ?.getState(state) as { undoManager: Y.UndoManager } | undefined;
   const undoManager = undoState?.undoManager;
   const scope = undoManager?.scope[0];
   const doc = scope && "doc" in scope ? scope.doc : scope;
@@ -201,7 +195,8 @@ export function FortnoteFilePanel({ blockId }: FilePanelProps) {
   const block = editor.getBlock(blockId)!;
   const acceptedMimeTypes =
     editor.schema.blockSpecs[block.type]?.implementation.meta?.fileBlockAccept ?? [];
-  const attachments = (selectedNoteId ? attachmentsByNote[selectedNoteId] : undefined) ?? [];
+  const attachments =
+    (selectedNoteId ? attachmentsByNote[selectedNoteId] : undefined) ?? [];
   const compatibleAttachments = attachments.filter(({ mimeType }) =>
     isAttachmentMimeCompatible(mimeType, acceptedMimeTypes)
   );
@@ -222,15 +217,12 @@ export function FortnoteFilePanel({ blockId }: FilePanelProps) {
                 key={attachment.id}
                 className="bn-button"
                 onClick={() => {
-                  editor.updateBlock(
-                    blockId,
-                    {
-                      props: {
-                        name: attachment.filename,
-                        url: formatAttachmentReference(attachment.id)
-                      }
-                    } as unknown as Parameters<typeof editor.updateBlock>[1]
-                  );
+                  editor.updateBlock(blockId, {
+                    props: {
+                      name: attachment.filename,
+                      url: formatAttachmentReference(attachment.id)
+                    }
+                  } as unknown as Parameters<typeof editor.updateBlock>[1]);
                 }}
               >
                 {attachment.filename}
@@ -282,20 +274,25 @@ export function NoteEditor({
   }
   const sectionId = selectedNote.rootSectionId ?? "root";
 
-  const saveLabel = status === "Save conflict"
-    ? "Changes need review"
-    : status === "Save failed"
-      ? "Save failed"
-      : realtimeStatus === "disconnected"
-        ? "Offline — changes kept on this device"
-        : status === "Ready" || status === "Note encrypted and saved" || status === "Note shared"
-          ? "Saved and synchronized"
-          : "Saving…";
+  const saveLabel =
+    status === "Save conflict"
+      ? "Changes need review"
+      : status === "Save failed"
+        ? "Save failed"
+        : realtimeStatus === "disconnected"
+          ? "Offline — changes kept on this device"
+          : status === "Ready" ||
+              status === "Note encrypted and saved" ||
+              status === "Note shared"
+            ? "Saved and synchronized"
+            : "Saving…";
 
   return (
     <div className="editor-column">
       <div className="editor-title-row">
-        <label className="visually-hidden" htmlFor="note-title-input">Title</label>
+        <label className="visually-hidden" htmlFor="note-title-input">
+          Title
+        </label>
         <input
           id="note-title-input"
           className="editor-title-input"
@@ -305,7 +302,9 @@ export function NoteEditor({
             updateSelectedNote({ title: event.target.value });
           }}
         />
-        <span className="editor-save-status" aria-live="polite">{saveLabel}</span>
+        <span className="editor-save-status" aria-live="polite">
+          {saveLabel}
+        </span>
       </div>
       <div className="block-editor">
         <CollaborativeBlockNoteField

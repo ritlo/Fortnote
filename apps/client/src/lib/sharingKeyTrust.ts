@@ -1,10 +1,4 @@
-import {
-  decryptBytes,
-  encryptBytes,
-  fromBase64,
-  sha256,
-  utf8
-} from "@fortnote/shared";
+import { decryptBytes, encryptBytes, fromBase64, sha256, utf8 } from "@fortnote/shared";
 import type { PublicSharingKey } from "../api";
 
 const TRUST_STORAGE_PREFIX = "fortnote:sharing-key-trust:v1";
@@ -136,7 +130,11 @@ async function loadSharingKeyTrustState(input: {
   }
 
   try {
-    const envelope = JSON.parse(raw) as { cipher: string; nonce: string; formatVersion: number };
+    const envelope = JSON.parse(raw) as {
+      cipher: string;
+      nonce: string;
+      formatVersion: number;
+    };
     const plaintext = await decryptBytes(
       envelope,
       input.rootKey,
@@ -161,7 +159,10 @@ async function saveSharingKeyTrustState(
     input.rootKey,
     utf8(`${TRUST_AAD_PREFIX}:${input.ownerUserId}`)
   );
-  getStorage(input.storage).setItem(storageKey(input.ownerUserId), JSON.stringify(encrypted));
+  getStorage(input.storage).setItem(
+    storageKey(input.ownerUserId),
+    JSON.stringify(encrypted)
+  );
 }
 
 function parseTrustState(value: string): SharingKeyTrustState {

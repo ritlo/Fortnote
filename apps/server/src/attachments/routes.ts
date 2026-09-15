@@ -5,15 +5,8 @@ import { requireSessionAsync } from "../auth/session.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { withCanonicalTimestamps } from "../db/timestamps.js";
-import {
-  AttachmentCiphertextSizeError,
-  safeDisplayFilename
-} from "./storage.js";
-import {
-  canEditNote,
-  canReadNote,
-  getNoteAccessAsync
-} from "../notes/access.js";
+import { AttachmentCiphertextSizeError, safeDisplayFilename } from "./storage.js";
+import { canEditNote, canReadNote, getNoteAccessAsync } from "../notes/access.js";
 import { requestClientInstanceId } from "../notes/events.js";
 import type { AttachmentGateError } from "./mutationRepository.js";
 
@@ -39,10 +32,7 @@ const uploadAttachmentSchema = z.union([
   legacyUploadAttachmentSchema
 ]);
 
-function getAttachment(
-  context: AppContext,
-  attachmentId: string
-) {
+function getAttachment(context: AppContext, attachmentId: string) {
   return context.db.attachmentMetadata.find(attachmentId);
 }
 
@@ -75,10 +65,7 @@ function uploadMetadata(request: Request) {
     metadataFormatVersion: Number(
       headerValue(request, "x-fortnote-metadata-format-version")
     ),
-    encryptedAttachmentKey: headerValue(
-      request,
-      "x-fortnote-encrypted-attachment-key"
-    ),
+    encryptedAttachmentKey: headerValue(request, "x-fortnote-encrypted-attachment-key"),
     attachmentKeyNonce: headerValue(request, "x-fortnote-attachment-key-nonce"),
     fileNonce: headerValue(request, "x-fortnote-file-nonce")
   };
@@ -270,11 +257,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
       sendApiError(response, "not_found", "Attachment not found");
       return;
     }
-    const access = await getNoteAccessAsync(
-      context,
-      attachment.noteId,
-      session.userId
-    );
+    const access = await getNoteAccessAsync(context, attachment.noteId, session.userId);
     if (!canReadNote(access)) {
       sendApiError(response, "not_found", "Attachment not found");
       return;
@@ -304,11 +287,7 @@ export function createAttachmentsRouter(context: AppContext): Router {
       sendApiError(response, "not_found", "Attachment not found");
       return;
     }
-    const access = await getNoteAccessAsync(
-      context,
-      attachment.noteId,
-      session.userId
-    );
+    const access = await getNoteAccessAsync(context, attachment.noteId, session.userId);
     if (!canEditNote(access)) {
       sendApiError(response, "not_found", "Attachment not found");
       return;

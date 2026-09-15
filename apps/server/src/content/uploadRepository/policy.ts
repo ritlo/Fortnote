@@ -31,23 +31,24 @@ export function beginUploadGate(
   if (access.rotationFenced) {
     return { kind: "rotation-pending" };
   }
-  return access.keyEpoch === input.expectedKeyEpoch
-    ? null
-    : { kind: "stale-epoch" };
+  return access.keyEpoch === input.expectedKeyEpoch ? null : { kind: "stale-epoch" };
 }
 
 export function canEditUpload(access: UploadAccess | null): access is UploadAccess {
-  return access?.status === "active" &&
-    (access.role === "owner" || access.role === "editor");
+  return (
+    access?.status === "active" && (access.role === "owner" || access.role === "editor")
+  );
 }
 
 export function isSameContentChunk(
   chunk: ContentChunkRecord,
   input: RegisterContentChunkInput
 ): boolean {
-  return chunk.cipherLength === input.cipherLength &&
+  return (
+    chunk.cipherLength === input.cipherLength &&
     chunk.cipherHash === input.cipherHash &&
-    chunk.nonce.equals(input.nonce);
+    chunk.nonce.equals(input.nonce)
+  );
 }
 
 export function isSameContentUpload(
@@ -55,7 +56,8 @@ export function isSameContentUpload(
   input: BeginContentUploadInput,
   sectionId: string
 ): boolean {
-  return upload.id === input.uploadId &&
+  return (
+    upload.id === input.uploadId &&
     upload.updateId === input.updateId &&
     upload.noteId === input.noteId &&
     upload.sectionId === sectionId &&
@@ -65,7 +67,8 @@ export function isSameContentUpload(
     upload.totalCipherBytes === input.totalCipherBytes &&
     upload.chunkCount === input.chunkCount &&
     upload.manifestHash === input.manifestHash &&
-    upload.checkpointSequenceCutoff === (input.checkpointSequenceCutoff ?? null);
+    upload.checkpointSequenceCutoff === (input.checkpointSequenceCutoff ?? null)
+  );
 }
 
 export function contentQuotaStatus(

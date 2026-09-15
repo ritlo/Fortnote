@@ -44,11 +44,13 @@ export class PostgresSessionRepository implements SessionRepository {
       })
       .from(schema.sessions)
       .innerJoin(schema.users, eq(schema.users.id, schema.sessions.userId))
-      .where(and(
-        eq(schema.sessions.sessionHash, hashToken(token)),
-        gt(schema.sessions.idleExpiresAt, now),
-        gt(schema.sessions.absoluteExpiresAt, now)
-      ))
+      .where(
+        and(
+          eq(schema.sessions.sessionHash, hashToken(token)),
+          gt(schema.sessions.idleExpiresAt, now),
+          gt(schema.sessions.absoluteExpiresAt, now)
+        )
+      )
       .limit(1);
     const row = rows[0];
     if (!row) {
@@ -74,11 +76,13 @@ export class PostgresSessionRepository implements SessionRepository {
     const rows = await this.orm
       .select({ id: schema.sessions.id })
       .from(schema.sessions)
-      .where(and(
-        eq(schema.sessions.id, sessionId),
-        gt(schema.sessions.idleExpiresAt, now),
-        gt(schema.sessions.absoluteExpiresAt, now)
-      ))
+      .where(
+        and(
+          eq(schema.sessions.id, sessionId),
+          gt(schema.sessions.idleExpiresAt, now),
+          gt(schema.sessions.absoluteExpiresAt, now)
+        )
+      )
       .limit(1);
     return Boolean(rows[0]);
   }
@@ -98,10 +102,12 @@ export class PostgresSessionRepository implements SessionRepository {
   async deleteExpired(now: string): Promise<number> {
     const rows = await this.orm
       .delete(schema.sessions)
-      .where(or(
-        lte(schema.sessions.idleExpiresAt, now),
-        lte(schema.sessions.absoluteExpiresAt, now)
-      ))
+      .where(
+        or(
+          lte(schema.sessions.idleExpiresAt, now),
+          lte(schema.sessions.absoluteExpiresAt, now)
+        )
+      )
       .returning({ id: schema.sessions.id });
     return rows.length;
   }

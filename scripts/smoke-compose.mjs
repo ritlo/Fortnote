@@ -4,14 +4,9 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-const repositoryRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  ".."
-);
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const composeFile = path.join(repositoryRoot, "compose.postgres.yaml");
-const containerEngine = selectContainerEngine(
-  process.env.FORTNOTE_CONTAINER_ENGINE
-);
+const containerEngine = selectContainerEngine(process.env.FORTNOTE_CONTAINER_ENGINE);
 const projectName = `fortnote-smoke-${String(process.pid)}-${String(Date.now())}`;
 const port = smokePort(
   process.env.FORTNOTE_SMOKE_PORT,
@@ -100,8 +95,7 @@ try {
       "x-fortnote-metadata-cipher": "compose_smoke_attachment_metadata_cipher",
       "x-fortnote-metadata-nonce": "compose_smoke_attachment_metadata_nonce",
       "x-fortnote-metadata-format-version": "2",
-      "x-fortnote-encrypted-attachment-key":
-        "compose_smoke_encrypted_attachment_key",
+      "x-fortnote-encrypted-attachment-key": "compose_smoke_encrypted_attachment_key",
       "x-fortnote-attachment-key-nonce": "compose_smoke_attachment_key_nonce",
       "x-fortnote-file-nonce": "compose_smoke_attachment_file_nonce"
     }
@@ -145,7 +139,6 @@ try {
     ciphertext
   );
   await verifyBackupRestore();
-
 } catch (error) {
   if (composeStarted) {
     const logs = await composeLogs().catch(() => "");
@@ -214,23 +207,17 @@ async function serviceContainerId(service) {
 async function verifyBackupRestore() {
   const postgresContainer = await serviceContainerId("postgres");
   console.log("Creating PostgreSQL backup archive");
-  const sourceFingerprint = await databaseFingerprint(
+  const sourceFingerprint = await databaseFingerprint(postgresContainer, "fortnote");
+  const backup = await runBinary(containerEngine, [
+    "exec",
     postgresContainer,
-    "fortnote"
-  );
-  const backup = await runBinary(
-    containerEngine,
-    [
-      "exec",
-      postgresContainer,
-      "pg_dump",
-      "--username=fortnote",
-      "--dbname=fortnote",
-      "--format=custom",
-      "--no-owner",
-      "--no-privileges"
-    ]
-  );
+    "pg_dump",
+    "--username=fortnote",
+    "--dbname=fortnote",
+    "--format=custom",
+    "--no-owner",
+    "--no-privileges"
+  ]);
   if (!backup.subarray(0, 5).equals(Buffer.from("PGDMP"))) {
     throw new Error("PostgreSQL backup is not a valid custom-format archive");
   }
@@ -239,13 +226,7 @@ async function verifyBackupRestore() {
   console.log("Restoring PostgreSQL backup archive");
   await run(
     containerEngine,
-    [
-      "exec",
-      postgresContainer,
-      "createdb",
-      "--username=fortnote",
-      restoredDatabase
-    ],
+    ["exec", postgresContainer, "createdb", "--username=fortnote", restoredDatabase],
     false
   );
   await runBinary(
@@ -268,9 +249,7 @@ async function verifyBackupRestore() {
     restoredDatabase
   );
   if (restoredFingerprint !== sourceFingerprint) {
-    throw new Error(
-      "PostgreSQL restore fingerprint differs from the source database"
-    );
+    throw new Error("PostgreSQL restore fingerprint differs from the source database");
   }
   console.log("PostgreSQL backup and attachment restore verified");
 }
@@ -427,15 +406,17 @@ async function waitUntilReady() {
   throw new Error(`Application readiness timed out: ${lastStatus}`);
 }
 
-async function jsonRequest(
-  pathname,
-  { method = "GET", body, cookie, expectedStatus }
-) {
+async function jsonRequest(pathname, { method = "GET", body, cookie, expectedStatus }) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     method,
-    headers: requestHeaders(cookie, body === undefined ? {} : {
-      "content-type": "application/json"
-    }),
+    headers: requestHeaders(
+      cookie,
+      body === undefined
+        ? {}
+        : {
+            "content-type": "application/json"
+          }
+    ),
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });
   await expectStatus(response, expectedStatus);
@@ -502,9 +483,7 @@ function requiredString(value, label) {
 function smokePort(value, variableName, fallback) {
   const parsed = value === undefined ? fallback : Number(value);
   if (!Number.isInteger(parsed) || parsed < 1_024 || parsed > 65_535) {
-    throw new Error(
-      `${variableName} must be an integer from 1024 through 65535`
-    );
+    throw new Error(`${variableName} must be an integer from 1024 through 65535`);
   }
   return parsed;
 }
@@ -545,18 +524,15 @@ function registrationPayload(username) {
     },
     encryptedRootKey: `smoke_encrypted_root_key_${username}_abcdefghijklmnopqrstuvwxyz`,
     rootKeyNonce: `smoke_root_key_nonce_${username}_abcdefghijklmnopqrstuvwxyz`,
-    recoveryAuthVerifier:
-      `smoke_recovery_auth_verifier_${username}_abcdefghijklmnopqrstuvwxyz`,
+    recoveryAuthVerifier: `smoke_recovery_auth_verifier_${username}_abcdefghijklmnopqrstuvwxyz`,
     recoveryKdf: {
       salt: `smoke_recovery_salt_${username}_abcdefghijklmnopqrstuvwxyz`,
       opsLimit: 4,
       memLimit: 67_108_864,
       version: 1
     },
-    recoveryEncryptedRootKey:
-      `smoke_recovery_root_key_${username}_abcdefghijklmnopqrstuvwxyz`,
-    recoveryRootKeyNonce:
-      `smoke_recovery_root_nonce_${username}_abcdefghijklmnopqrstuvwxyz`
+    recoveryEncryptedRootKey: `smoke_recovery_root_key_${username}_abcdefghijklmnopqrstuvwxyz`,
+    recoveryRootKeyNonce: `smoke_recovery_root_nonce_${username}_abcdefghijklmnopqrstuvwxyz`
   };
 }
 

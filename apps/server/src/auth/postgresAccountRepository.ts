@@ -74,22 +74,24 @@ export class PostgresAccountRepository implements AccountRepository {
         vaultKdfVersion: schema.userKeyMaterial.kdfVersion
       })
       .from(schema.users)
-      .innerJoin(schema.userKeyMaterial, eq(schema.userKeyMaterial.userId, schema.users.id))
+      .innerJoin(
+        schema.userKeyMaterial,
+        eq(schema.userKeyMaterial.userId, schema.users.id)
+      )
       .where(eq(schema.users.id, userId))
       .limit(1);
     return rows[0] ?? null;
   }
 
-  async recoveryParameters(
-    userId: string
-  ): Promise<RecoveryParametersRecord | null> {
+  async recoveryParameters(userId: string): Promise<RecoveryParametersRecord | null> {
     const rows = await this.orm
       .select({
         userId: schema.userKeyMaterial.userId,
         recoveryEncryptedRootKey: schema.userKeyMaterial.recoveryEncryptedRootKey,
         recoveryRootKeyNonce: schema.userKeyMaterial.recoveryRootKeyNonce,
         recoveryRootKeyFormatVersion: schema.userKeyMaterial.recoveryRootKeyFormatVersion,
-        recoveryRootKeyContextVersion: schema.userKeyMaterial.recoveryRootKeyContextVersion,
+        recoveryRootKeyContextVersion:
+          schema.userKeyMaterial.recoveryRootKeyContextVersion,
         recoveryKdfSalt: schema.userKeyMaterial.recoveryKdfSalt,
         recoveryKdfOpsLimit: schema.userKeyMaterial.recoveryKdfOpsLimit,
         recoveryKdfMemLimit: schema.userKeyMaterial.recoveryKdfMemLimit,
@@ -119,7 +121,10 @@ export class PostgresAccountRepository implements AccountRepository {
         keyMaterialVersion: schema.userKeyMaterial.keyMaterialVersion
       })
       .from(schema.users)
-      .innerJoin(schema.userKeyMaterial, eq(schema.userKeyMaterial.userId, schema.users.id))
+      .innerJoin(
+        schema.userKeyMaterial,
+        eq(schema.userKeyMaterial.userId, schema.users.id)
+      )
       .where(eq(schema.users.id, userId))
       .limit(1);
     return rows[0] ?? null;
@@ -204,9 +209,7 @@ export class PostgresAccountRepository implements AccountRepository {
         userId: input.userId,
         sessionHash: hashToken(token),
         idleExpiresAt: new Date(now + this.sessionIdleTimeoutMs).toISOString(),
-        absoluteExpiresAt: new Date(
-          now + this.sessionAbsoluteTimeoutMs
-        ).toISOString()
+        absoluteExpiresAt: new Date(now + this.sessionAbsoluteTimeoutMs).toISOString()
       });
       return {
         kind: "recovered" as const,
@@ -230,7 +233,8 @@ export class PostgresAccountRepository implements AccountRepository {
         recoveryEncryptedRootKey: schema.userKeyMaterial.recoveryEncryptedRootKey,
         recoveryRootKeyNonce: schema.userKeyMaterial.recoveryRootKeyNonce,
         recoveryRootKeyFormatVersion: schema.userKeyMaterial.recoveryRootKeyFormatVersion,
-        recoveryRootKeyContextVersion: schema.userKeyMaterial.recoveryRootKeyContextVersion,
+        recoveryRootKeyContextVersion:
+          schema.userKeyMaterial.recoveryRootKeyContextVersion,
         recoveryKdfSalt: schema.userKeyMaterial.recoveryKdfSalt,
         recoveryKdfOpsLimit: schema.userKeyMaterial.recoveryKdfOpsLimit,
         recoveryKdfMemLimit: schema.userKeyMaterial.recoveryKdfMemLimit,
@@ -243,9 +247,7 @@ export class PostgresAccountRepository implements AccountRepository {
     return rows[0] ?? null;
   }
 
-  rotateKeyMaterial(
-    input: RotateKeyMaterialInput
-  ): Promise<RotateKeyMaterialOutcome> {
+  rotateKeyMaterial(input: RotateKeyMaterialInput): Promise<RotateKeyMaterialOutcome> {
     return this.orm.transaction(async (transaction) => {
       const currentRows = await transaction
         .select({ keyMaterialVersion: schema.userKeyMaterial.keyMaterialVersion })
@@ -332,9 +334,7 @@ export class PostgresAccountRepository implements AccountRepository {
         userId: input.userId,
         sessionHash: hashToken(replacementToken),
         idleExpiresAt: new Date(now + this.sessionIdleTimeoutMs).toISOString(),
-        absoluteExpiresAt: new Date(
-          now + this.sessionAbsoluteTimeoutMs
-        ).toISOString()
+        absoluteExpiresAt: new Date(now + this.sessionAbsoluteTimeoutMs).toISOString()
       });
       return {
         kind: "rotated" as const,

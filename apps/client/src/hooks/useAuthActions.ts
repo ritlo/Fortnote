@@ -128,8 +128,7 @@ export function useAuthActions() {
           recoveryRootKeyNonce: recoveryParams.recoveryRootKeyNonce,
           ...(recoveryParams.recoveryRootKeyFormatVersion !== undefined
             ? {
-                recoveryRootKeyFormatVersion:
-                  recoveryParams.recoveryRootKeyFormatVersion
+                recoveryRootKeyFormatVersion: recoveryParams.recoveryRootKeyFormatVersion
               }
             : {}),
           ...(recoveryParams.recoveryRootKeyContextVersion !== undefined
@@ -283,7 +282,9 @@ export function useAuthActions() {
         : "Signed out";
     resetVaultState(nextStatus);
     if (logoutFailure) {
-      setError("The decrypted vault was cleared, but the server session may still be active");
+      setError(
+        "The decrypted vault was cleared, but the server session may still be active"
+      );
     } else if (cleanupFailure) {
       setError("Signed out, but some encrypted browser data could not be removed");
     }
@@ -300,7 +301,9 @@ export function useAuthActions() {
     } catch (repairError) {
       setStatus("Handle repair failed");
       setError(
-        repairError instanceof Error ? repairError.message : "Unable to repair account handle"
+        repairError instanceof Error
+          ? repairError.message
+          : "Unable to repair account handle"
       );
     }
   }
@@ -390,7 +393,9 @@ export function useAuthActions() {
     } catch (rotateError) {
       setStatus("Recovery rotation failed");
       setError(
-        rotateError instanceof Error ? rotateError.message : "Unable to rotate recovery key"
+        rotateError instanceof Error
+          ? rotateError.message
+          : "Unable to rotate recovery key"
       );
     }
   }
@@ -415,7 +420,9 @@ export function useAuthActions() {
     } catch (rotateError) {
       setStatus("Sharing key rotation failed");
       setError(
-        rotateError instanceof Error ? rotateError.message : "Unable to rotate sharing key"
+        rotateError instanceof Error
+          ? rotateError.message
+          : "Unable to rotate sharing key"
       );
     }
   }
@@ -433,7 +440,9 @@ export function useAuthActions() {
     } catch (cleanupError) {
       setStatus("Sharing key cleanup failed");
       setError(
-        cleanupError instanceof Error ? cleanupError.message : "Unable to clean up sharing keys"
+        cleanupError instanceof Error
+          ? cleanupError.message
+          : "Unable to clean up sharing keys"
       );
     }
   }

@@ -1,17 +1,18 @@
 import argon2 from "argon2";
 import { Router } from "express";
 import { z } from "zod";
-import {
-  requireSessionAsync,
-  setSessionCookie
-} from "../auth/session.js";
+import { requireSessionAsync, setSessionCookie } from "../auth/session.js";
 import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 
 const kdfParamsSchema = z.object({
   salt: z.string().min(16).max(128),
   opsLimit: z.number().int().positive().max(10),
-  memLimit: z.number().int().positive().max(1024 * 1024 * 1024),
+  memLimit: z
+    .number()
+    .int()
+    .positive()
+    .max(1024 * 1024 * 1024),
   version: z.number().int().positive().max(100)
 });
 
@@ -132,8 +133,7 @@ export function createKeyMaterialRouter(context: AppContext): Router {
               encryptedRootKey: recoveryEncryptedRootKey,
               rootKeyNonce: recoveryRootKeyNonce,
               rootKeyFormatVersion: recoveryRootKeyFormatVersion ?? 1,
-              rootKeyContextVersion:
-                recoveryRootKeyContextVersion ?? nextVersion,
+              rootKeyContextVersion: recoveryRootKeyContextVersion ?? nextVersion,
               verifierHash: recoveryAuthVerifierHash,
               kdf: recoveryKdf
             }
@@ -153,7 +153,11 @@ export function createKeyMaterialRouter(context: AppContext): Router {
       context.realtime?.closeSession(sessionId);
     }
     if (sessionRotation.replacementToken !== null) {
-      setSessionCookie(response, sessionRotation.replacementToken, context.config.cookieSecure);
+      setSessionCookie(
+        response,
+        sessionRotation.replacementToken,
+        context.config.cookieSecure
+      );
     }
 
     response.json({ keyMaterialVersion: sessionRotation.keyMaterialVersion });

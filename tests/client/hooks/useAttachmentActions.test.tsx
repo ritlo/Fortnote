@@ -59,7 +59,10 @@ beforeEach(() => {
   });
   mocks.createObjectUrl.mockReturnValue("blob:fortnote-media");
   mocks.decrypt.mockResolvedValue(new Uint8Array([1, 2, 3]));
-  mocks.decryptMetadata.mockResolvedValue({ filename: "image.png", mimeType: "image/png" });
+  mocks.decryptMetadata.mockResolvedValue({
+    filename: "image.png",
+    mimeType: "image/png"
+  });
   mocks.downloadAttachment.mockResolvedValue(download());
   mocks.listAttachments.mockResolvedValue({ attachments: [attachment()] });
   mocks.listNoteEpochLinks.mockResolvedValue({ links: [] });
@@ -117,14 +120,18 @@ describe("attachment upload", () => {
   });
 
   it("maps browser capacity failure without claiming the attachment was saved", async () => {
-    mocks.createDraft.mockRejectedValue(Object.assign(new Error("private detail"), {
-      name: "QuotaExceededError"
-    }));
+    mocks.createDraft.mockRejectedValue(
+      Object.assign(new Error("private detail"), {
+        name: "QuotaExceededError"
+      })
+    );
     const { result } = renderHook(() => useAttachmentActions(note()));
 
-    const uploaded = await act(async () => result.current.uploadSelectedAttachment(
-      new File(["image"], "image.png", { type: "image/png" })
-    ));
+    const uploaded = await act(async () =>
+      result.current.uploadSelectedAttachment(
+        new File(["image"], "image.png", { type: "image/png" })
+      )
+    );
 
     expect(uploaded).toBeNull();
     expect(useAppStore.getState()).toMatchObject({
@@ -196,9 +203,7 @@ describe("attachment metadata", () => {
     renderHook(() => useAttachmentActions(note({ noteKeyBase64: "AQIDBA==" })));
 
     await waitFor(() => {
-      expect(useAppStore.getState().attachmentsByNote["note-1"]).toEqual([
-        attachment()
-      ]);
+      expect(useAppStore.getState().attachmentsByNote["note-1"]).toEqual([attachment()]);
     });
     expect(mocks.decryptMetadata).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -268,9 +273,10 @@ describe("embedded attachment resolver", () => {
   it("reuses one concurrent download and resolved object URL", async () => {
     let finishDownload!: (value: AttachmentDownload) => void;
     mocks.downloadAttachment.mockImplementationOnce(
-      () => new Promise((resolve) => {
-        finishDownload = resolve;
-      })
+      () =>
+        new Promise((resolve) => {
+          finishDownload = resolve;
+        })
     );
     const { result } = renderHook(() => useAttachmentActions(note()));
 

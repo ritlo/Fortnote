@@ -143,7 +143,5 @@ function attachmentKeyAad(
   noteId: string,
   attachmentId: string
 ): Uint8Array {
-  return utf8(
-    `fortnote:attachment-key:v1:${userId}:${noteId}:${attachmentId}`
-  );
+  return utf8(`fortnote:attachment-key:v1:${userId}:${noteId}:${attachmentId}`);
 }

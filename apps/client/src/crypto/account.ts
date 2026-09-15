@@ -14,10 +14,7 @@ import {
   type KdfParams
 } from "@fortnote/shared";
 import type { RegisterPayload } from "../api/contracts";
-import {
-  decryptRootKeyEnvelopeV2,
-  encryptRootKeyEnvelopeV2
-} from "./protected";
+import { decryptRootKeyEnvelopeV2, encryptRootKeyEnvelopeV2 } from "./protected";
 
 const ROOT_KEY_AAD = utf8("fortnote:root-key:v1");
 
@@ -126,14 +123,15 @@ export async function openVault(
     nonce: rootKeyNonce,
     formatVersion: context?.formatVersion ?? 1
   };
-  const rootKey = context?.formatVersion === 2
-    ? await decryptRootKeyEnvelopeV2({
-        userId: context.userId,
-        keyMaterialVersion: context.contextVersion,
-        wrappingKey: vaultKey,
-        envelope
-      })
-    : await decryptBytes(envelope, vaultKey, ROOT_KEY_AAD);
+  const rootKey =
+    context?.formatVersion === 2
+      ? await decryptRootKeyEnvelopeV2({
+          userId: context.userId,
+          keyMaterialVersion: context.contextVersion,
+          wrappingKey: vaultKey,
+          envelope
+        })
+      : await decryptBytes(envelope, vaultKey, ROOT_KEY_AAD);
 
   return {
     authVerifier: toBase64(authVerifier),
@@ -238,16 +236,17 @@ export async function createAccountRecoveryCrypto(input: {
     nonce: input.recoveryRootKeyNonce,
     formatVersion: input.recoveryRootKeyFormatVersion ?? 1
   };
-  const rootKey = input.recoveryRootKeyFormatVersion === 2
-    ? await decryptRootKeyEnvelopeV2({
-        userId: requireEnvelopeUserId(input.userId),
-        keyMaterialVersion: requireKeyMaterialVersion(
-          input.recoveryRootKeyContextVersion
-        ),
-        wrappingKey: recoveryWrappingKey,
-        envelope: recoveryEnvelope
-      })
-    : await decryptBytes(recoveryEnvelope, recoveryWrappingKey, ROOT_KEY_AAD);
+  const rootKey =
+    input.recoveryRootKeyFormatVersion === 2
+      ? await decryptRootKeyEnvelopeV2({
+          userId: requireEnvelopeUserId(input.userId),
+          keyMaterialVersion: requireKeyMaterialVersion(
+            input.recoveryRootKeyContextVersion
+          ),
+          wrappingKey: recoveryWrappingKey,
+          envelope: recoveryEnvelope
+        })
+      : await decryptBytes(recoveryEnvelope, recoveryWrappingKey, ROOT_KEY_AAD);
 
   return {
     rootKey,

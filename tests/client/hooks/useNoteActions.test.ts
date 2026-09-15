@@ -3,7 +3,12 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useAppStore } from "@client/store/appStore";
-import { mocks, note, advanceAutosave, waitForAssertion } from "./useNoteActions.fixtures";
+import {
+  mocks,
+  note,
+  advanceAutosave,
+  waitForAssertion
+} from "./useNoteActions.fixtures";
 import { useNoteActions } from "@client/hooks/useNoteActions";
 
 describe("note lifecycle actions", () => {
@@ -83,7 +88,15 @@ describe("note lifecycle actions", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const current = note({ id: "note-in-folder", folderId: "folder-1" });
     useAppStore.setState({
-      folders: [{ id: "folder-1", name: "Work", parentFolderId: null, createdAt: "", updatedAt: "" }],
+      folders: [
+        {
+          id: "folder-1",
+          name: "Work",
+          parentFolderId: null,
+          createdAt: "",
+          updatedAt: ""
+        }
+      ],
       notes: [current],
       selectedFolderId: "folder-1"
     });
@@ -120,7 +133,9 @@ describe("note lifecycle actions", () => {
       notesView: "trash",
       selectedNoteId: "trash-note"
     });
-    const { result } = renderHook(() => useNoteActions(note({ id: "trash-note", isDeleted: true })));
+    const { result } = renderHook(() =>
+      useNoteActions(note({ id: "trash-note", isDeleted: true }))
+    );
     vi.spyOn(window, "confirm").mockReturnValue(false);
 
     await act(async () => result.current.deleteSelectedForever());
@@ -166,14 +181,20 @@ describe("moveNoteToFolder", () => {
   });
 
   it("persists folder changes for non-selected notes", async () => {
-    useAppStore.setState({ notes: [note(), note({ id: "note_2", title: "Second" })], selectedNoteId: "note_1" });
+    useAppStore.setState({
+      notes: [note(), note({ id: "note_2", title: "Second" })],
+      selectedNoteId: "note_1"
+    });
     const { result } = renderHook(() => useNoteActions(note()));
 
     await act(async () => {
       await result.current.moveNoteToFolder("note_2", "folder-2");
     });
     await waitForAssertion(() => {
-      expect(mocks.updateNote).toHaveBeenCalledWith("note_2", expect.objectContaining({ folderId: "folder-2" }));
+      expect(mocks.updateNote).toHaveBeenCalledWith(
+        "note_2",
+        expect.objectContaining({ folderId: "folder-2" })
+      );
     });
   });
 

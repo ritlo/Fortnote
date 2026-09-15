@@ -29,19 +29,34 @@ describe("assurance inventory CLI", () => {
     expect(first).toHaveLength(5);
     expect(new Set(first.map((item) => item.id))).toHaveLength(5);
     expect(first.filter((item) => item.kind === "scenario")).toHaveLength(3);
-    expect(first.filter((item) => item.kind === "scenario").every((item) =>
-      first.some((parent) => parent.id === item.parentId && parent.kind === "requirement")
-    )).toBe(true);
+    expect(
+      first
+        .filter((item) => item.kind === "scenario")
+        .every((item) =>
+          first.some(
+            (parent) => parent.id === item.parentId && parent.kind === "requirement"
+          )
+        )
+    ).toBe(true);
 
-    writeSpec(fixture, "alpha/spec.md", spec(
-      ["Inserted outcome", "First protected outcome", "Second protected outcome"],
-      [[], ["First succeeds"], ["Second succeeds", "Second recovers"]]
-    ));
+    writeSpec(
+      fixture,
+      "alpha/spec.md",
+      spec(
+        ["Inserted outcome", "First protected outcome", "Second protected outcome"],
+        [[], ["First succeeds"], ["Second succeeds", "Second recovers"]]
+      )
+    );
     writeInventory(fixture);
     const second = inventory(fixture);
-    for (const heading of ["First protected outcome", "Second protected outcome", "First succeeds"]) {
-      expect(second.find((item) => item.heading === heading)?.id)
-        .toBe(first.find((item) => item.heading === heading)?.id);
+    for (const heading of [
+      "First protected outcome",
+      "Second protected outcome",
+      "First succeeds"
+    ]) {
+      expect(second.find((item) => item.heading === heading)?.id).toBe(
+        first.find((item) => item.heading === heading)?.id
+      );
     }
   });
 
@@ -50,10 +65,11 @@ describe("assurance inventory CLI", () => {
       "alpha/spec.md": spec(["Durable outcome"], [["Original scenario"]])
     });
     writeInventory(fixture);
-    writeSpec(fixture, "alpha/spec.md", spec(
-      ["Durable outcome", "New outcome"],
-      [["Renamed scenario"], []]
-    ));
+    writeSpec(
+      fixture,
+      "alpha/spec.md",
+      spec(["Durable outcome", "New outcome"], [["Renamed scenario"], []])
+    );
 
     const result = checkInventory(fixture);
 
@@ -121,26 +137,39 @@ function writeSpec(root: string, relativePath: string, contents: string): void {
 }
 
 function writeInventory(root: string): void {
-  execFileSync(process.execPath, [
-    script,
-    "--spec-root", path.join(root, "openspec/specs"),
-    "--ledger", ledgerAt(root),
-    "--write"
-  ], { cwd: repositoryRoot, encoding: "utf8" });
+  execFileSync(
+    process.execPath,
+    [
+      script,
+      "--spec-root",
+      path.join(root, "openspec/specs"),
+      "--ledger",
+      ledgerAt(root),
+      "--write"
+    ],
+    { cwd: repositoryRoot, encoding: "utf8" }
+  );
 }
 
 function checkInventory(root: string): { output: string; status: number | null } {
-  const result = spawnSync(process.execPath, [
-    script,
-    "--spec-root", path.join(root, "openspec/specs"),
-    "--ledger", ledgerAt(root),
-    "--check"
-  ], { cwd: repositoryRoot, encoding: "utf8" });
+  const result = spawnSync(
+    process.execPath,
+    [
+      script,
+      "--spec-root",
+      path.join(root, "openspec/specs"),
+      "--ledger",
+      ledgerAt(root),
+      "--check"
+    ],
+    { cwd: repositoryRoot, encoding: "utf8" }
+  );
   return { output: `${result.stdout}${result.stderr}`, status: result.status };
 }
 
 function inventory(root: string): InventoryItem[] {
-  return (JSON.parse(readFileSync(ledgerAt(root), "utf8")) as InventoryDocument).sourceInventory;
+  return (JSON.parse(readFileSync(ledgerAt(root), "utf8")) as InventoryDocument)
+    .sourceInventory;
 }
 
 function ledgerAt(root: string): string {

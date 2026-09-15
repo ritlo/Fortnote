@@ -134,7 +134,10 @@ export async function resumeContentUpload(input: {
       updateId: input.record.updateId,
       expectedKeyEpoch: input.record.keyEpoch
     });
-    await input.database.deleteContentTransfer(input.record.userId, input.record.uploadId);
+    await input.database.deleteContentTransfer(
+      input.record.userId,
+      input.record.uploadId
+    );
     return { kind: "committed", manifest };
   } catch (error) {
     return capacityOutcome(error);
@@ -236,10 +239,12 @@ async function readVerifiedCache(
       totalBytes: input.manifest.totalCipherBytes
     });
     const plaintext = await decryptDownloadedChunks(input, chunks);
-    await input.cache.database.putSectionCache({
-      ...cached,
-      lastAccessedAt: Date.now()
-    }).catch(() => undefined);
+    await input.cache.database
+      .putSectionCache({
+        ...cached,
+        lastAccessedAt: Date.now()
+      })
+      .catch(() => undefined);
     return plaintext;
   } catch {
     await input.cache.database.deleteSectionCache(key).catch(() => undefined);
@@ -316,15 +321,17 @@ function sectionCacheKey(input: VerifiedContentDownloadInput) {
 }
 
 function encodeCachedChunks(chunks: EncryptedContentChunkV2[]): Uint8Array {
-  return textEncoder.encode(JSON.stringify({
-    version: CACHE_FORMAT_VERSION,
-    chunks: chunks.map((chunk) => ({
-      chunkIndex: chunk.chunkIndex,
-      cipherBytes: toBase64(chunk.cipherBytes),
-      cipherHash: chunk.cipherHash,
-      nonce: chunk.nonce
-    }))
-  }));
+  return textEncoder.encode(
+    JSON.stringify({
+      version: CACHE_FORMAT_VERSION,
+      chunks: chunks.map((chunk) => ({
+        chunkIndex: chunk.chunkIndex,
+        cipherBytes: toBase64(chunk.cipherBytes),
+        cipherHash: chunk.cipherHash,
+        nonce: chunk.nonce
+      }))
+    })
+  );
 }
 
 function decodeCachedChunks(bytes: Uint8Array): EncryptedContentChunkV2[] {

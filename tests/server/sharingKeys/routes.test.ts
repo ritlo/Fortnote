@@ -186,10 +186,13 @@ async function sharingKeyVersions(
   app: Awaited<ReturnType<typeof createTestApp>>,
   userId: string
 ): Promise<number[]> {
-  const rows = await testSql(app.locals.db).all<{ sharingKeyVersion: number }>(`SELECT sharing_key_version AS sharingKeyVersion
+  const rows = await testSql(app.locals.db).all<{ sharingKeyVersion: number }>(
+    `SELECT sharing_key_version AS sharingKeyVersion
        FROM user_sharing_keys
        WHERE user_id = ?
-       ORDER BY sharing_key_version`, userId);
+       ORDER BY sharing_key_version`,
+    userId
+  );
 
   return rows.map((row) => row.sharingKeyVersion);
 }

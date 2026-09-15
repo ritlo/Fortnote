@@ -28,10 +28,7 @@ export class SqliteNoteAccessRepository implements NoteAccessRepository {
         schema.noteMemberships,
         eq(schema.noteMemberships.noteId, schema.notes.id)
       )
-      .where(and(
-        eq(schema.notes.id, noteId),
-        eq(schema.noteMemberships.userId, userId)
-      ))
+      .where(and(eq(schema.notes.id, noteId), eq(schema.noteMemberships.userId, userId)))
       .get() as NoteAccess | undefined;
     return Promise.resolve(row);
   }

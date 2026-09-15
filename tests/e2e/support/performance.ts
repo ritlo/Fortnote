@@ -72,7 +72,9 @@ export async function newPerformancePage(
   return context.newPage();
 }
 
-export async function closePerformanceContexts(contexts: BrowserContext[]): Promise<void> {
+export async function closePerformanceContexts(
+  contexts: BrowserContext[]
+): Promise<void> {
   await Promise.all(contexts.splice(0).map(async (context) => context.close()));
 }
 
@@ -134,9 +136,11 @@ export async function createRepresentativeDocument(
       response.ok()
   );
   await page.getByRole("button", { name: "New note" }).click();
-  await page.getByRole("dialog", { name: "New note" })
-    .getByRole("button", { name: "Create" }).click();
-  const note = await (await created).json() as {
+  await page
+    .getByRole("dialog", { name: "New note" })
+    .getByRole("button", { name: "Create" })
+    .click();
+  const note = (await (await created).json()) as {
     id: string;
     rootSectionId: string | null;
   };
@@ -197,14 +201,19 @@ export async function openDocument(
   const card = page.getByRole("button", { name: titlePattern(title) });
   await expect(card).toBeVisible({ timeout: 30_000 });
   await card.click();
-  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(titlePattern(title));
+  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(
+    titlePattern(title)
+  );
   await expect(blockEditor(page)).toBeVisible({ timeout: 30_000 });
   if (marker) {
     await expect(blockEditor(page)).toContainText(marker, { timeout: 30_000 });
   }
 }
 
-export function captureDocumentTraffic(page: Page, noteId: string): DocumentTrafficCapture {
+export function captureDocumentTraffic(
+  page: Page,
+  noteId: string
+): DocumentTrafficCapture {
   const historyScopeIds: string[] = [];
   const chunkDownloads: string[] = [];
   const subscribedScopeIds: string[] = [];
@@ -261,14 +270,21 @@ export async function expectBoundedColdOpen(
 ): Promise<void> {
   await expect(blockEditor(page)).toContainText(dataset.marker, { timeout: 30_000 });
   const allowed = new Set(["root", dataset.contentScopeId]);
-  expect([...new Set(traffic.historyScopeIds)].every((scopeId) => allowed.has(scopeId))).toBe(true);
-  expect([...new Set(traffic.subscribedScopeIds)].every((scopeId) => allowed.has(scopeId))).toBe(true);
+  expect(
+    [...new Set(traffic.historyScopeIds)].every((scopeId) => allowed.has(scopeId))
+  ).toBe(true);
+  expect(
+    [...new Set(traffic.subscribedScopeIds)].every((scopeId) => allowed.has(scopeId))
+  ).toBe(true);
   expect(traffic.subscribedScopeIds).toContain(dataset.contentScopeId);
   const cachedScopeIds = await readCachedContentScopeIds(page, dataset.noteId);
   expect(cachedScopeIds.every((scopeId) => allowed.has(scopeId))).toBe(true);
 }
 
-export async function countCachedDocumentScopes(page: Page, noteId: string): Promise<number> {
+export async function countCachedDocumentScopes(
+  page: Page,
+  noteId: string
+): Promise<number> {
   return new Set(await readCachedContentScopeIds(page, noteId)).size;
 }
 
@@ -371,9 +387,12 @@ export async function exerciseIndependentOfflineEdits(input: {
   await expect(blockEditor(input.ownerPage)).not.toContainText(collaboratorMarker);
 
   await input.collaboratorPage.context().setOffline(false);
-  await expect(input.collaboratorPage.locator(".sync-pill")).toContainText("Sync connected", {
-    timeout: 30_000
-  });
+  await expect(input.collaboratorPage.locator(".sync-pill")).toContainText(
+    "Sync connected",
+    {
+      timeout: 30_000
+    }
+  );
   await expect(blockEditor(input.ownerPage)).toContainText(collaboratorMarker, {
     timeout: 60_000
   });
@@ -382,11 +401,14 @@ export async function exerciseIndependentOfflineEdits(input: {
   });
 }
 
-export async function expectStoredLogicalSize(page: Page, minimumBytes: number): Promise<void> {
+export async function expectStoredLogicalSize(
+  page: Page,
+  minimumBytes: number
+): Promise<void> {
   const quota = await page.evaluate(async () => {
     const response = await fetch("/api/content/quota", { credentials: "include" });
     if (!response.ok) throw new Error("Storage quota could not be inspected");
-    return await response.json() as { usedBytes: number };
+    return (await response.json()) as { usedBytes: number };
   });
   expect(quota.usedBytes).toBeGreaterThanOrEqual(minimumBytes);
 }
@@ -438,20 +460,23 @@ async function injectGeneratedEditorText(
   }
   await expect(blockEditor(page)).toBeVisible();
   await blockEditor(page).focus();
-  const inserted = await page.evaluate(({ byteLength, textPrefix, replaceExisting }) => {
-    const editor = document.querySelector<HTMLElement>(".block-editor .bn-editor");
-    const selection = window.getSelection();
-    if (!editor || !selection) return false;
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    if (!replaceExisting) range.collapse(false);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    const text = textPrefix + "x".repeat(byteLength - textPrefix.length);
-    // Chromium still exposes this command; it drives the real contenteditable input path.
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    return document.execCommand("insertText", false, text);
-  }, { byteLength: bytes, textPrefix: prefix, replaceExisting: replace });
+  const inserted = await page.evaluate(
+    ({ byteLength, textPrefix, replaceExisting }) => {
+      const editor = document.querySelector<HTMLElement>(".block-editor .bn-editor");
+      const selection = window.getSelection();
+      if (!editor || !selection) return false;
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      if (!replaceExisting) range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const text = textPrefix + "x".repeat(byteLength - textPrefix.length);
+      // Chromium still exposes this command; it drives the real contenteditable input path.
+      // eslint-disable-next-line @typescript-eslint/no-deprecated
+      return document.execCommand("insertText", false, text);
+    },
+    { byteLength: bytes, textPrefix: prefix, replaceExisting: replace }
+  );
   expect(inserted).toBe(true);
 }
 
@@ -464,41 +489,61 @@ async function appendSmallEditorText(page: Page, text: string): Promise<void> {
 }
 
 async function readCachedContentScopeIds(page: Page, noteId: string): Promise<string[]> {
-  return page.evaluate(async (id) => await new Promise<string[]>((resolve, reject) => {
-    const request = indexedDB.open("fortnote-protected");
-    request.onerror = () => {
-      reject(request.error ?? new Error("Protected cache could not be opened"));
-    };
-    request.onsuccess = () => {
-      const database = request.result;
-      const records = database.transaction("sectionCache", "readonly")
-        .objectStore("sectionCache").getAll();
-      records.onerror = () => {
-        database.close();
-        reject(records.error ?? new Error("Protected cache could not be read"));
-      };
-      records.onsuccess = () => {
-        const scopeIds = (records.result as { noteId: string; sectionId: string }[])
-          .filter((record) => record.noteId === id)
-          .map((record) => record.sectionId);
-        database.close();
-        resolve(scopeIds);
-      };
-    };
-  }), noteId);
+  return page.evaluate(
+    async (id) =>
+      await new Promise<string[]>((resolve, reject) => {
+        const request = indexedDB.open("fortnote-protected");
+        request.onerror = () => {
+          reject(request.error ?? new Error("Protected cache could not be opened"));
+        };
+        request.onsuccess = () => {
+          const database = request.result;
+          const records = database
+            .transaction("sectionCache", "readonly")
+            .objectStore("sectionCache")
+            .getAll();
+          records.onerror = () => {
+            database.close();
+            reject(records.error ?? new Error("Protected cache could not be read"));
+          };
+          records.onsuccess = () => {
+            const scopeIds = (records.result as { noteId: string; sectionId: string }[])
+              .filter((record) => record.noteId === id)
+              .map((record) => record.sectionId);
+            database.close();
+            resolve(scopeIds);
+          };
+        };
+      }),
+    noteId
+  );
 }
 
 async function waitForSharingKey(page: Page): Promise<void> {
-  await expect.poll(() => page.evaluate(async () => {
-    const response = await fetch("/api/sharing-keys/current", { credentials: "include" });
-    return response.ok;
-  }), { timeout: 30_000 }).toBe(true);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(async () => {
+          const response = await fetch("/api/sharing-keys/current", {
+            credentials: "include"
+          });
+          return response.ok;
+        }),
+      { timeout: 30_000 }
+    )
+    .toBe(true);
 }
 
-function isSuccessfulContentCommit(response: { request(): Request; url(): string; ok(): boolean }) {
-  return response.request().method() === "POST" &&
+function isSuccessfulContentCommit(response: {
+  request(): Request;
+  url(): string;
+  ok(): boolean;
+}) {
+  return (
+    response.request().method() === "POST" &&
     CONTENT_COMMIT.test(new URL(response.url()).pathname) &&
-    response.ok();
+    response.ok()
+  );
 }
 
 function blockEditor(page: Page) {

@@ -59,12 +59,15 @@ describe("note CRUD and collaboration routes", () => {
       })
       .expect(500);
 
-    const note = (await testSql(app.locals.db).get(`SELECT title,
+    const note = (await testSql(app.locals.db).get(
+      `SELECT title,
                 content_cipher AS contentCipher,
                 content_length AS contentLength,
                 version
          FROM notes
-         WHERE id = ?`, noteId))!;
+         WHERE id = ?`,
+      noteId
+    ))!;
     expect(note).toEqual({
       contentCipher: "content_cipher_abcdefghijklmnopqrstuvwxyz",
       contentLength: 128,
@@ -82,13 +85,19 @@ describe("note CRUD and collaboration routes", () => {
 
     await agent.post("/api/notes").set(csrfHeaders()).send(payload).expect(500);
 
-    const note = await testSql(app.locals.db).get("SELECT id FROM notes WHERE id = ?", payload.id);
+    const note = await testSql(app.locals.db).get(
+      "SELECT id FROM notes WHERE id = ?",
+      payload.id
+    );
     expect(note).toBeUndefined();
-    const membership = await testSql(app.locals.db).get("SELECT note_id AS noteId FROM note_memberships WHERE note_id = ?", payload.id);
+    const membership = await testSql(app.locals.db).get(
+      "SELECT note_id AS noteId FROM note_memberships WHERE note_id = ?",
+      payload.id
+    );
     expect(membership).toBeUndefined();
   });
 
-	  it("prevents cross-user note reads and folder assignment", async () => {
+  it("prevents cross-user note reads and folder assignment", async () => {
     const app = await createTestApp();
     const alice = await registerAgent(app, "alice_notes");
     const bob = await registerAgent(app, "bob_notes");
@@ -107,12 +116,12 @@ describe("note CRUD and collaboration routes", () => {
 
     await bob.get(`/api/notes/${String(created.body.id)}`).expect(404);
 
-	    await bob
-	      .post("/api/notes")
-	      .set(csrfHeaders())
-	      .send(notePayload(folder.body.id as string))
-	      .expect(400);
-	  });
+    await bob
+      .post("/api/notes")
+      .set(csrfHeaders())
+      .send(notePayload(folder.body.id as string))
+      .expect(400);
+  });
 
   it("rejects invalid and deleted folder targets for note metadata", async () => {
     const app = await createTestApp();
@@ -147,7 +156,7 @@ describe("note CRUD and collaboration routes", () => {
       .expect(400);
   });
 
-	  it("requires an active owner membership to read notes", async () => {
+  it("requires an active owner membership to read notes", async () => {
     const app = await createTestApp();
     const agent = await registerAgent(app, "membership_user");
     const created = await agent
@@ -157,9 +166,12 @@ describe("note CRUD and collaboration routes", () => {
       .expect(201);
 
     await agent.get(`/api/notes/${String(created.body.id)}`).expect(200);
-    await testSql(app.locals.db).run(`UPDATE note_memberships
+    await testSql(app.locals.db).run(
+      `UPDATE note_memberships
          SET status = 'revoked'
-         WHERE note_id = ?`, created.body.id);
+         WHERE note_id = ?`,
+      created.body.id
+    );
 
     await agent.get(`/api/notes/${String(created.body.id)}`).expect(404);
     const listed = await agent.get("/api/notes").expect(200);
@@ -301,12 +313,19 @@ describe("note CRUD and collaboration routes", () => {
     await bob.get(`/api/notes/${noteId}/key-share`).expect(404);
     await bob.get(`/api/notes/${noteId}/memberships`).expect(404);
 
-    const events = await testSql(app.locals.db).all<{ eventType: string; resourceType: string; payloadMetadata: string }>(`SELECT event_type AS eventType,
+    const events = await testSql(app.locals.db).all<{
+      eventType: string;
+      resourceType: string;
+      payloadMetadata: string;
+    }>(
+      `SELECT event_type AS eventType,
                 resource_type AS resourceType,
                 payload_metadata AS payloadMetadata
          FROM note_events
          WHERE note_id = ?
-         ORDER BY cursor`, noteId);
+         ORDER BY cursor`,
+      noteId
+    );
 
     expect(events.map((event) => event.eventType)).toEqual([
       "note.created",
@@ -318,9 +337,7 @@ describe("note CRUD and collaboration routes", () => {
     expect(events.slice(1).every((event) => event.resourceType === "membership")).toBe(
       false
     );
-    expect(events.filter((event) => event.resourceType === "membership")).toHaveLength(
-      3
-    );
+    expect(events.filter((event) => event.resourceType === "membership")).toHaveLength(3);
     expect(events.slice(3).every((event) => event.resourceType === "membership")).toBe(
       true
     );
@@ -405,13 +422,16 @@ describe("note CRUD and collaboration routes", () => {
       .expect(200);
     expect(rotated.body).toMatchObject({ id: noteId, version: 2 });
 
-    const note = (await testSql(app.locals.db).get(`SELECT encrypted_note_key AS encryptedNoteKey,
+    const note = (await testSql(app.locals.db).get(
+      `SELECT encrypted_note_key AS encryptedNoteKey,
                 note_key_nonce AS noteKeyNonce,
                 content_cipher AS contentCipher,
                 content_length AS contentLength,
                 version
          FROM notes
-         WHERE id = ?`, noteId))!;
+         WHERE id = ?`,
+      noteId
+    ))!;
     expect(note).toEqual({
       contentCipher: "rotated_content_cipher_abcdefghijklmnopqrstuvwxyz",
       contentLength: 777,
@@ -419,18 +439,25 @@ describe("note CRUD and collaboration routes", () => {
       noteKeyNonce: "rotated_owner_nonce_abcdefghijklmnopqrstuvwxyz",
       version: 2
     });
-    const share = (await testSql(app.locals.db).get(`SELECT encrypted_note_key AS encryptedNoteKey,
+    const share = (await testSql(app.locals.db).get(
+      `SELECT encrypted_note_key AS encryptedNoteKey,
                 sharing_key_version AS sharingKeyVersion
          FROM note_key_shares
-         WHERE note_id = ? AND recipient_user_id = ?`, noteId, bobUserId))!;
+         WHERE note_id = ? AND recipient_user_id = ?`,
+      noteId,
+      bobUserId
+    ))!;
     expect(share).toEqual({
       encryptedNoteKey: "rotated_share_for_bob_abcdefghijklmnopqrstuvwxyz",
       sharingKeyVersion: 2
     });
-    const attachment = (await testSql(app.locals.db).get(`SELECT encrypted_attachment_key AS encryptedAttachmentKey,
+    const attachment = (await testSql(app.locals.db).get(
+      `SELECT encrypted_attachment_key AS encryptedAttachmentKey,
                 attachment_key_nonce AS attachmentKeyNonce
          FROM attachments
-         WHERE id = ?`, "00000000-0000-4000-8000-000000000001"))!;
+         WHERE id = ?`,
+      "00000000-0000-4000-8000-000000000001"
+    ))!;
     expect(attachment).toEqual({
       attachmentKeyNonce: "rotated_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
       encryptedAttachmentKey: "rotated_attachment_key_abcdefghijklmnopqrstuvwxyz"
@@ -509,19 +536,23 @@ describe("note CRUD and collaboration routes", () => {
             attachmentId: "00000000-0000-4000-8000-000000000002",
             encryptedAttachmentKey:
               "failed_rotation_attachment_key_abcdefghijklmnopqrstuvwxyz",
-            attachmentKeyNonce: "failed_rotation_attachment_nonce_abcdefghijklmnopqrstuvwxyz"
+            attachmentKeyNonce:
+              "failed_rotation_attachment_nonce_abcdefghijklmnopqrstuvwxyz"
           }
         ]
       })
       .expect(500);
 
-    const note = await testSql(app.locals.db).get(`SELECT encrypted_note_key AS encryptedNoteKey,
+    const note = await testSql(app.locals.db).get(
+      `SELECT encrypted_note_key AS encryptedNoteKey,
                 note_key_nonce AS noteKeyNonce,
                 content_cipher AS contentCipher,
                 content_length AS contentLength,
                 version
          FROM notes
-         WHERE id = ?`, noteId);
+         WHERE id = ?`,
+      noteId
+    );
     expect(note).toEqual({
       contentCipher: "content_cipher_abcdefghijklmnopqrstuvwxyz",
       contentLength: 128,
@@ -529,18 +560,25 @@ describe("note CRUD and collaboration routes", () => {
       noteKeyNonce: "note_key_nonce_abcdefghijklmnopqrstuvwxyz",
       version: 1
     });
-    const share = await testSql(app.locals.db).get(`SELECT encrypted_note_key AS encryptedNoteKey,
+    const share = await testSql(app.locals.db).get(
+      `SELECT encrypted_note_key AS encryptedNoteKey,
                 sharing_key_version AS sharingKeyVersion
          FROM note_key_shares
-         WHERE note_id = ? AND recipient_user_id = ?`, noteId, bobUserId);
+         WHERE note_id = ? AND recipient_user_id = ?`,
+      noteId,
+      bobUserId
+    );
     expect(share).toEqual({
       encryptedNoteKey: "old_rotation_share_for_bob_abcdefghijklmnopqrstuvwxyz",
       sharingKeyVersion: 2
     });
-    const attachment = await testSql(app.locals.db).get(`SELECT encrypted_attachment_key AS encryptedAttachmentKey,
+    const attachment = await testSql(app.locals.db).get(
+      `SELECT encrypted_attachment_key AS encryptedAttachmentKey,
                 attachment_key_nonce AS attachmentKeyNonce
          FROM attachments
-         WHERE id = ?`, "00000000-0000-4000-8000-000000000002");
+         WHERE id = ?`,
+      "00000000-0000-4000-8000-000000000002"
+    );
     expect(attachment).toEqual({
       attachmentKeyNonce: "old_rotation_attachment_nonce_abcdefghijklmnopqrstuvwxyz",
       encryptedAttachmentKey: "old_rotation_attachment_key_abcdefghijklmnopqrstuvwxyz"
@@ -625,14 +663,22 @@ describe("note CRUD and collaboration routes", () => {
       })
       .expect(500);
 
-    const membership = await testSql(app.locals.db).get(`SELECT role
+    const membership = await testSql(app.locals.db).get(
+      `SELECT role
          FROM note_memberships
-         WHERE note_id = ? AND user_id = ?`, noteId, bobUserId);
+         WHERE note_id = ? AND user_id = ?`,
+      noteId,
+      bobUserId
+    );
     expect(membership).toBeUndefined();
 
-    const keyShare = await testSql(app.locals.db).get(`SELECT encrypted_note_key AS encryptedNoteKey
+    const keyShare = await testSql(app.locals.db).get(
+      `SELECT encrypted_note_key AS encryptedNoteKey
          FROM note_key_shares
-         WHERE note_id = ? AND recipient_user_id = ?`, noteId, bobUserId);
+         WHERE note_id = ? AND recipient_user_id = ?`,
+      noteId,
+      bobUserId
+    );
     expect(keyShare).toBeUndefined();
   });
 
@@ -676,9 +722,13 @@ describe("note CRUD and collaboration routes", () => {
       .send({ role: "viewer" })
       .expect(500);
 
-    const membership = await testSql(app.locals.db).get(`SELECT role, status
+    const membership = await testSql(app.locals.db).get(
+      `SELECT role, status
          FROM note_memberships
-         WHERE note_id = ? AND user_id = ?`, noteId, bobUserId);
+         WHERE note_id = ? AND user_id = ?`,
+      noteId,
+      bobUserId
+    );
     expect(membership).toEqual({ role: "editor", status: "active" });
   });
 
@@ -721,13 +771,21 @@ describe("note CRUD and collaboration routes", () => {
       .set(csrfHeaders())
       .expect(500);
 
-    const membership = await testSql(app.locals.db).get(`SELECT role, status
+    const membership = await testSql(app.locals.db).get(
+      `SELECT role, status
          FROM note_memberships
-         WHERE note_id = ? AND user_id = ?`, noteId, bobUserId);
+         WHERE note_id = ? AND user_id = ?`,
+      noteId,
+      bobUserId
+    );
     expect(membership).toEqual({ role: "editor", status: "active" });
-    const keyShare = await testSql(app.locals.db).get(`SELECT encrypted_note_key AS encryptedNoteKey
+    const keyShare = await testSql(app.locals.db).get(
+      `SELECT encrypted_note_key AS encryptedNoteKey
          FROM note_key_shares
-         WHERE note_id = ? AND recipient_user_id = ?`, noteId, bobUserId);
+         WHERE note_id = ? AND recipient_user_id = ?`,
+      noteId,
+      bobUserId
+    );
     expect(keyShare).toEqual({
       encryptedNoteKey: "rollback_revoke_share_for_bob_abcdefghijklmnopqrstuvwxyz"
     });
@@ -785,12 +843,19 @@ describe("note CRUD and collaboration routes", () => {
 
     await agent.get(`/api/notes/${String(created.body.id)}`).expect(404);
 
-    const events = await testSql(app.locals.db).all<{ eventType: string; noteVersion: number; payloadMetadata: string }>(`SELECT event_type AS eventType,
+    const events = await testSql(app.locals.db).all<{
+      eventType: string;
+      noteVersion: number;
+      payloadMetadata: string;
+    }>(
+      `SELECT event_type AS eventType,
                 note_version AS noteVersion,
                 payload_metadata AS payloadMetadata
          FROM note_events
          WHERE note_id = ?
-         ORDER BY cursor`, created.body.id);
+         ORDER BY cursor`,
+      created.body.id
+    );
     expect(events.map((event) => event.eventType)).toEqual([
       "note.created",
       "note.deleted",

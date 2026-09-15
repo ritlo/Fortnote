@@ -171,7 +171,10 @@ function createDatabaseApi(
           CONTENT_TRANSFER_STORE,
           SEARCH_INDEX_STORE
         ]) {
-          deleteIndexEntries(transaction.objectStore(storeName).index("byUserId"), userId);
+          deleteIndexEntries(
+            transaction.objectStore(storeName).index("byUserId"),
+            userId
+          );
         }
         await done;
       });
@@ -193,9 +196,11 @@ function createDatabaseApi(
         const records = await requestResult(
           store.getAll() as IDBRequest<EncryptedOutboxRecord[]>
         );
-        records.filter((record) => matchesOutboxFence(record, fence)).forEach((record) => {
-          store.delete(outboxKey(record));
-        });
+        records
+          .filter((record) => matchesOutboxFence(record, fence))
+          .forEach((record) => {
+            store.delete(outboxKey(record));
+          });
         await done;
       });
       notify({ store: "outbox", userId: fence.userId });
@@ -221,42 +226,44 @@ function createDatabaseApi(
         const transaction = database.transaction(SECTION_CACHE_STORE, "readwrite");
         const done = transactionDone(transaction);
         const store = transaction.objectStore(SECTION_CACHE_STORE);
-        const selectedRecords = await new Promise<SectionCacheRecord[]>((resolve, reject) => {
-          const request = store.index("byUserId").getAll(userId) as IDBRequest<
-            SectionCacheRecord[]
-          >;
-          request.onsuccess = () => {
-            try {
-              const records = request.result;
-              const removable = records
-                .filter((record) => !record.pending)
-                .sort(compareCacheRecords);
-              let remainingEntries = records.length;
-              let remainingBytes = records.reduce(
-                (total, record) => total + record.encryptedBytes.byteLength,
-                0
-              );
-              const selected: SectionCacheRecord[] = [];
-              for (const record of removable) {
-                if (remainingEntries <= maxEntries && remainingBytes <= maxBytes) {
-                  break;
+        const selectedRecords = await new Promise<SectionCacheRecord[]>(
+          (resolve, reject) => {
+            const request = store.index("byUserId").getAll(userId) as IDBRequest<
+              SectionCacheRecord[]
+            >;
+            request.onsuccess = () => {
+              try {
+                const records = request.result;
+                const removable = records
+                  .filter((record) => !record.pending)
+                  .sort(compareCacheRecords);
+                let remainingEntries = records.length;
+                let remainingBytes = records.reduce(
+                  (total, record) => total + record.encryptedBytes.byteLength,
+                  0
+                );
+                const selected: SectionCacheRecord[] = [];
+                for (const record of removable) {
+                  if (remainingEntries <= maxEntries && remainingBytes <= maxBytes) {
+                    break;
+                  }
+                  selected.push(record);
+                  remainingEntries -= 1;
+                  remainingBytes -= record.encryptedBytes.byteLength;
                 }
-                selected.push(record);
-                remainingEntries -= 1;
-                remainingBytes -= record.encryptedBytes.byteLength;
+                selected.forEach((record) => {
+                  store.delete(cacheKey(record));
+                });
+                resolve(selected);
+              } catch (error) {
+                reject(error instanceof Error ? error : new IndexedDbOperationError());
               }
-              selected.forEach((record) => {
-                store.delete(cacheKey(record));
-              });
-              resolve(selected);
-            } catch (error) {
-              reject(error instanceof Error ? error : new IndexedDbOperationError());
-            }
-          };
-          request.onerror = () => {
-            reject(idbError(request.error));
-          };
-        });
+            };
+            request.onerror = () => {
+              reject(idbError(request.error));
+            };
+          }
+        );
         await done;
         return selectedRecords;
       });
@@ -273,11 +280,10 @@ function createDatabaseApi(
       );
     },
     async getContentTransfer(userId, uploadId) {
-      return getRecord<EncryptedContentTransferRecord>(
-        database,
-        CONTENT_TRANSFER_STORE,
-        [userId, uploadId]
-      );
+      return getRecord<EncryptedContentTransferRecord>(database, CONTENT_TRANSFER_STORE, [
+        userId,
+        uploadId
+      ]);
     },
     async getOutbox(record) {
       return getRecord<EncryptedOutboxRecord>(database, OUTBOX_STORE, outboxKey(record));
@@ -290,10 +296,18 @@ function createDatabaseApi(
       );
     },
     async getSectionCache(record) {
-      return getRecord<SectionCacheRecord>(database, SECTION_CACHE_STORE, cacheKey(record));
+      return getRecord<SectionCacheRecord>(
+        database,
+        SECTION_CACHE_STORE,
+        cacheKey(record)
+      );
     },
     async listOutbox(userId) {
-      const records = await listByUser<EncryptedOutboxRecord>(database, OUTBOX_STORE, userId);
+      const records = await listByUser<EncryptedOutboxRecord>(
+        database,
+        OUTBOX_STORE,
+        userId
+      );
       return records.sort((left, right) => left.createdAt - right.createdAt);
     },
     async listContentTransfers(userId) {
@@ -310,10 +324,11 @@ function createDatabaseApi(
         SEARCH_INDEX_STORE,
         userId
       );
-      return records.sort((left, right) =>
-        left.noteId.localeCompare(right.noteId) ||
-        left.sectionId.localeCompare(right.sectionId) ||
-        left.keyEpoch - right.keyEpoch
+      return records.sort(
+        (left, right) =>
+          left.noteId.localeCompare(right.noteId) ||
+          left.sectionId.localeCompare(right.sectionId) ||
+          left.keyEpoch - right.keyEpoch
       );
     },
     async preserveOutboxFence(fence, reason, rejectedAt) {
@@ -408,7 +423,13 @@ function outboxIdentity(record: OutboxKey): OutboxKey {
 }
 
 function outboxKey(record: OutboxKey): IDBValidKey {
-  return [record.userId, record.noteId, record.sectionId, record.keyEpoch, record.updateId];
+  return [
+    record.userId,
+    record.noteId,
+    record.sectionId,
+    record.keyEpoch,
+    record.updateId
+  ];
 }
 
 function matchesOutboxFence(
@@ -424,16 +445,27 @@ function matchesOutboxFence(
 }
 
 function cacheKey(record: CacheKey): IDBValidKey {
-  return [record.userId, record.noteId, record.sectionId, record.keyEpoch, record.manifestId];
+  return [
+    record.userId,
+    record.noteId,
+    record.sectionId,
+    record.keyEpoch,
+    record.manifestId
+  ];
 }
 
 function searchIndexKey(record: SearchIndexKey): IDBValidKey {
   return [record.userId, record.noteId, record.sectionId, record.keyEpoch];
 }
 
-function compareCacheRecords(left: SectionCacheRecord, right: SectionCacheRecord): number {
-  return left.lastAccessedAt - right.lastAccessedAt ||
-    left.manifestId.localeCompare(right.manifestId);
+function compareCacheRecords(
+  left: SectionCacheRecord,
+  right: SectionCacheRecord
+): number {
+  return (
+    left.lastAccessedAt - right.lastAccessedAt ||
+    left.manifestId.localeCompare(right.manifestId)
+  );
 }
 
 function accountFromScope(scopeKey: string): string {

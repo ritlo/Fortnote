@@ -28,10 +28,9 @@ report.assuranceClassification = {
   rationale: "No mutants survived, so no equivalent-mutant classification was required.",
   reviewedAt: new Date().toISOString(),
   summary: Object.fromEntries(
-    ["Killed", "Survived", "NoCoverage", "Timeout", "RuntimeError", "Ignored"].map((status) => [
-      status,
-      mutants.filter((mutant) => mutant.status === status).length
-    ])
+    ["Killed", "Survived", "NoCoverage", "Timeout", "RuntimeError", "Ignored"].map(
+      (status) => [status, mutants.filter((mutant) => mutant.status === status).length]
+    )
   )
 };
 

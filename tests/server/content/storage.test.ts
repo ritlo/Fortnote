@@ -118,9 +118,9 @@ describe("encrypted content chunk storage", () => {
     });
     const read = await streamBytes(readEncryptedContentChunk(config, uploadId, 0));
     expect(read).toEqual(bytes);
-    expect(await fsPromises.readdir(path.dirname(contentChunkPath(config, uploadId, 0)))).toEqual([
-      "0.bin"
-    ]);
+    expect(
+      await fsPromises.readdir(path.dirname(contentChunkPath(config, uploadId, 0)))
+    ).toEqual(["0.bin"]);
   });
 
   it("removes temporary data when length, hash, or maximum checks fail", async () => {
@@ -129,7 +129,11 @@ describe("encrypted content chunk storage", () => {
     for (const input of [
       { expectedLength: bytes.length + 1, expectedHash: digest(bytes), maxBytes: 100 },
       { expectedLength: bytes.length, expectedHash: "0".repeat(64), maxBytes: 100 },
-      { expectedLength: bytes.length, expectedHash: digest(bytes), maxBytes: bytes.length - 1 }
+      {
+        expectedLength: bytes.length,
+        expectedHash: digest(bytes),
+        maxBytes: bytes.length - 1
+      }
     ]) {
       const uploadId = crypto.randomUUID();
       await expect(
@@ -140,7 +144,9 @@ describe("encrypted content chunk storage", () => {
           source: Readable.from(bytes)
         })
       ).rejects.toThrow();
-      await expect(fsPromises.stat(contentChunkPath(config, uploadId, 0))).rejects.toThrow();
+      await expect(
+        fsPromises.stat(contentChunkPath(config, uploadId, 0))
+      ).rejects.toThrow();
     }
   });
 
@@ -166,7 +172,9 @@ describe("encrypted content chunk storage", () => {
         source: interrupted
       })
     ).rejects.toThrow("connection interrupted");
-    await expect(fsPromises.stat(contentChunkPath(config, uploadId, 0))).rejects.toThrow();
+    await expect(
+      fsPromises.stat(contentChunkPath(config, uploadId, 0))
+    ).rejects.toThrow();
     const uploadDirectory = path.dirname(contentChunkPath(config, uploadId, 0));
     expect(await fsPromises.readdir(uploadDirectory)).toEqual([]);
   });
@@ -187,10 +195,12 @@ describe("encrypted content chunk storage", () => {
 
     const first = await write(original);
     expect(await write(original)).toEqual(first);
-    await expect(write(Buffer.from("conflicting encrypted chunk"))).rejects.toBeInstanceOf(
-      ContentChunkConflictError
+    await expect(
+      write(Buffer.from("conflicting encrypted chunk"))
+    ).rejects.toBeInstanceOf(ContentChunkConflictError);
+    expect(await streamBytes(readEncryptedContentChunk(config, uploadId, 3))).toEqual(
+      original
     );
-    expect(await streamBytes(readEncryptedContentChunk(config, uploadId, 3))).toEqual(original);
   });
 
   it("rejects traversal-like identifiers and unsafe indexes", () => {
@@ -199,7 +209,9 @@ describe("encrypted content chunk storage", () => {
       expect(() => contentChunkPath(config, uploadId, 0)).toThrow("storage identity");
     }
     for (const index of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
-      expect(() => contentChunkPath(config, crypto.randomUUID(), index)).toThrow("chunk index");
+      expect(() => contentChunkPath(config, crypto.randomUUID(), index)).toThrow(
+        "chunk index"
+      );
     }
   });
 
@@ -222,7 +234,9 @@ describe("encrypted content chunk storage", () => {
     await deleteUncommittedContentUpload(config, firstId);
 
     await expect(fsPromises.stat(contentChunkPath(config, firstId, 0))).rejects.toThrow();
-    expect(await streamBytes(readEncryptedContentChunk(config, secondId, 0))).toEqual(bytes);
+    expect(await streamBytes(readEncryptedContentChunk(config, secondId, 0))).toEqual(
+      bytes
+    );
   });
 
   it("expires uploads and cleans orphans in bounded pages without touching committed files", async () => {
@@ -245,9 +259,11 @@ describe("encrypted content chunk storage", () => {
     }
     const committed = await uploadRouteChunk(agent, noteId, "durable committed", true);
     db.sqlite
-      .prepare(`
+      .prepare(
+        `
         UPDATE content_uploads SET expires_at = '2000-01-01T00:00:00.000Z'
-      `)
+      `
+      )
       .run();
 
     const firstPage = await expireContentUploadsPage(context);
@@ -293,9 +309,7 @@ describe("encrypted content chunk storage", () => {
     }
     expect(fs.existsSync(contentChunkPath(config, committed.uploadId, 0))).toBe(true);
     expect(
-      db.sqlite
-        .prepare("SELECT reserved_bytes AS bytes FROM storage_accounts")
-        .get()
+      db.sqlite.prepare("SELECT reserved_bytes AS bytes FROM storage_accounts").get()
     ).toEqual({ bytes: 0 });
   });
 
@@ -307,17 +321,15 @@ describe("encrypted content chunk storage", () => {
     cleanupDbs.push(db);
     for (const username of ["quota-one", "quota-two", "quota-three"]) {
       const agent = await registerAgent(app, username);
-      await agent
-        .post("/api/notes")
-        .set(csrfHeaders())
-        .send(notePayload())
-        .expect(201);
+      await agent.post("/api/notes").set(csrfHeaders()).send(notePayload()).expect(201);
     }
     db.sqlite
-      .prepare(`
+      .prepare(
+        `
         INSERT INTO storage_accounts (user_id, used_bytes, reserved_bytes)
         SELECT id, 999, 999 FROM users
-      `)
+      `
+      )
       .run();
 
     const context = { config, db };
@@ -328,10 +340,12 @@ describe("encrypted content chunk storage", () => {
     expect(second).toMatchObject({ processed: 1, hasMore: false });
     expect(
       db.sqlite
-        .prepare(`
+        .prepare(
+          `
           SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes
           FROM storage_accounts ORDER BY user_id
-        `)
+        `
+        )
         .all()
     ).toEqual([
       { usedBytes: 0, reservedBytes: 0 },
@@ -342,7 +356,10 @@ describe("encrypted content chunk storage", () => {
 
   it("waits for active background maintenance before stopping", async () => {
     vi.useFakeTimers();
-    const app = await createTestApp({ contentUploadExpiryMs: 1_000, database: LOCAL_SQLITE });
+    const app = await createTestApp({
+      contentUploadExpiryMs: 1_000,
+      database: LOCAL_SQLITE
+    });
     const config = app.locals.config as ServerConfig;
     const db = app.locals.db as AppDb;
     const context = { config, db };

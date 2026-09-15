@@ -130,7 +130,9 @@ describe("AttachmentDialog", () => {
         open
         downloadAttachment={vi.fn()}
         removeAttachment={vi.fn()}
-        resolveAttachmentUrl={vi.fn().mockRejectedValue(new Error("Attachment is unavailable"))}
+        resolveAttachmentUrl={vi
+          .fn()
+          .mockRejectedValue(new Error("Attachment is unavailable"))}
       />
     );
 

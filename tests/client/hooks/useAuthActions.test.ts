@@ -128,7 +128,10 @@ describe("useAuthActions identity lifecycle", () => {
       vaultKdfVersion: number;
     }) => void;
     mocks.getAuthKdfParams.mockImplementationOnce(
-      () => new Promise((resolve) => { resolveKdf = resolve; })
+      () =>
+        new Promise((resolve) => {
+          resolveKdf = resolve;
+        })
     );
     const { result } = renderHook(() => useAuthActions());
 
@@ -251,9 +254,9 @@ describe("useAuthActions identity lifecycle", () => {
       clearAccount: vi.fn().mockResolvedValue(undefined),
       close: vi.fn(),
       listOutbox: vi.fn().mockResolvedValue([]),
-      listSectionCache: vi.fn().mockResolvedValue([
-        { manifestId: "pending-cache", pending: true }
-      ])
+      listSectionCache: vi
+        .fn()
+        .mockResolvedValue([{ manifestId: "pending-cache", pending: true }])
     };
     mocks.openFortnoteIndexedDb.mockResolvedValue(database);
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);

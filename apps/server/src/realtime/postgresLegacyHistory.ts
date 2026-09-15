@@ -20,9 +20,7 @@ interface LegacyWriteAccess {
   status: string;
 }
 
-export class PostgresLegacyHistoryRepository
-  implements LegacyHistoryRepository
-{
+export class PostgresLegacyHistoryRepository implements LegacyHistoryRepository {
   constructor(private readonly orm: PostgresDatabase) {}
 
   async list(noteId: string, keyEpoch: number) {
@@ -51,14 +49,10 @@ export class PostgresLegacyHistoryRepository
 
   persist(input: PersistLegacyHistoryInput): Promise<LegacyHistoryPersistOutcome> {
     return this.orm.transaction(async (transaction) => {
-      if (!await activeSession(transaction, input.sessionId)) {
+      if (!(await activeSession(transaction, input.sessionId))) {
         return "forbidden" as const;
       }
-      const access = await writeAccess(
-        transaction,
-        input.update.noteId,
-        input.userId
-      );
+      const access = await writeAccess(transaction, input.update.noteId, input.userId);
       if (
         access?.status !== "active" ||
         (access.role !== "owner" && access.role !== "editor") ||
@@ -108,10 +102,7 @@ export class PostgresLegacyHistoryRepository
               and(
                 eq(schema.noteUpdates.noteId, input.update.noteId),
                 eq(schema.noteUpdates.keyEpoch, input.update.keyEpoch),
-                inArray(
-                  schema.noteUpdates.updateId,
-                  input.update.compactedUpdateIds
-                )
+                inArray(schema.noteUpdates.updateId, input.update.compactedUpdateIds)
               )
             );
         }
@@ -162,16 +153,8 @@ async function writeAccess(
       status: schema.noteMemberships.status
     })
     .from(schema.notes)
-    .innerJoin(
-      schema.noteMemberships,
-      eq(schema.noteMemberships.noteId, schema.notes.id)
-    )
-    .where(
-      and(
-        eq(schema.notes.id, noteId),
-        eq(schema.noteMemberships.userId, userId)
-      )
-    )
+    .innerJoin(schema.noteMemberships, eq(schema.noteMemberships.noteId, schema.notes.id))
+    .where(and(eq(schema.notes.id, noteId), eq(schema.noteMemberships.userId, userId)))
     .limit(1)
     .for("update", { of: [schema.notes, schema.noteMemberships] });
   return rows[0] ?? null;

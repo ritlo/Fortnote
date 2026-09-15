@@ -1,7 +1,4 @@
-import type {
-  EncryptedOutboxRecord,
-  FortnoteIndexedDb
-} from "../lib/indexedDb";
+import type { EncryptedOutboxRecord, FortnoteIndexedDb } from "../lib/indexedDb";
 
 export interface OutboxFence {
   noteId: string;
@@ -30,7 +27,9 @@ export type EncryptedOutboxStore = Pick<
   | "subscribe"
 >;
 
-export type EncryptedOutboxTransport = (record: EncryptedOutboxRecord) => void | Promise<void>;
+export type EncryptedOutboxTransport = (
+  record: EncryptedOutboxRecord
+) => void | Promise<void>;
 
 interface CreateEncryptedOutboxOptions {
   database: EncryptedOutboxStore;
@@ -141,15 +140,17 @@ export function createEncryptedOutbox({
     assertAccount(record);
     const fence = fenceFor(record);
     const terminalReason = terminalFences.get(fenceKey(fence));
-    await database.putOutbox(terminalReason
-      ? {
-          ...record,
-          state: "terminal-rejected",
-          terminalReason,
-          terminalRejectedAt: now(),
-          updatedAt: now()
-        }
-      : record);
+    await database.putOutbox(
+      terminalReason
+        ? {
+            ...record,
+            state: "terminal-rejected",
+            terminalReason,
+            terminalRejectedAt: now(),
+            updatedAt: now()
+          }
+        : record
+    );
     if (terminalReason) {
       return;
     }

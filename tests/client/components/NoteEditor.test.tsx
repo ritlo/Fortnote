@@ -48,7 +48,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@blocknote/react", () => ({
   EmbedTab: () => <div data-testid="embed-tab" />,
-  FilePanelController: ({ filePanel: Panel }: {
+  FilePanelController: ({
+    filePanel: Panel
+  }: {
     filePanel: ComponentType<{ blockId: string }>;
   }) => (
     <div data-testid="file-panel-controller">
@@ -60,7 +62,9 @@ vi.mock("@blocknote/react", () => ({
   useComponentsContext: () => ({
     FilePanel: {
       Button: ({ children, onClick }: { children: ReactNode; onClick: () => void }) => (
-        <button type="button" onClick={onClick}>{children}</button>
+        <button type="button" onClick={onClick}>
+          {children}
+        </button>
       ),
       Root: ({ tabs }: { tabs: { name: string; tabPanel: ReactNode }[] }) => (
         <div data-testid="file-tabs">
@@ -88,7 +92,10 @@ vi.mock("@blocknote/react", () => ({
 }));
 
 vi.mock("@blocknote/mantine", () => ({
-  BlockNoteView: ({ children, editable }: {
+  BlockNoteView: ({
+    children,
+    editable
+  }: {
     children?: ReactNode;
     editable: boolean;
   }) => (
@@ -152,7 +159,9 @@ describe("NoteEditor simplified editor", () => {
   it("renders read-only for viewer role", () => {
     renderEditor(note({ role: "viewer" }));
     expect(screen.getByTestId("block-note").getAttribute("data-editable")).toBe("false");
-    expect((screen.getByRole<HTMLInputElement>("textbox", { name: "Title" })).disabled).toBe(true);
+    expect(
+      screen.getByRole<HTMLInputElement>("textbox", { name: "Title" }).disabled
+    ).toBe(true);
   });
 
   it("shows compact save/sync state", () => {
@@ -329,8 +338,16 @@ describe("NoteEditor inline attachment states", () => {
     useAppStore.setState({
       attachmentsByNote: {
         "note-1": [
-          attachment({ filename: "photo.png", mimeType: "image/png", id: "00000000-0000-4000-8000-000000000001" }),
-          attachment({ filename: "notes.txt", mimeType: "text/plain", id: "00000000-0000-4000-8000-000000000002" })
+          attachment({
+            filename: "photo.png",
+            mimeType: "image/png",
+            id: "00000000-0000-4000-8000-000000000001"
+          }),
+          attachment({
+            filename: "notes.txt",
+            mimeType: "text/plain",
+            id: "00000000-0000-4000-8000-000000000002"
+          })
         ]
       }
     });
@@ -381,8 +398,12 @@ describe("NoteEditor inline attachment states", () => {
         uploadSelectedAttachment={uploadFn}
       />
     );
-    const options = mocks.createOptions[0] as { uploadFile?: (file: File) => Promise<{ props: { name: string; url: string } }> };
-    const result = await options.uploadFile!(new File(["data"], "test.png", { type: "image/png" }));
+    const options = mocks.createOptions[0] as {
+      uploadFile?: (file: File) => Promise<{ props: { name: string; url: string } }>;
+    };
+    const result = await options.uploadFile!(
+      new File(["data"], "test.png", { type: "image/png" })
+    );
     expect(uploadFn).toHaveBeenCalledOnce();
     expect(result.props.name).toBe("image.png");
     expect(result.props.url).toContain("fortnote-attachment:");

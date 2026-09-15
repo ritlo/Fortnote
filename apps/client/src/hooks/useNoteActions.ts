@@ -43,7 +43,8 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
 
     const sessionUserId = user.id;
     const sessionRootKey = rootKey;
-    const targetFolderId = chosenFolderId === undefined ? selectedFolderId : chosenFolderId;
+    const targetFolderId =
+      chosenFolderId === undefined ? selectedFolderId : chosenFolderId;
     setError(null);
     setStatus("Encrypting note");
     try {
@@ -94,7 +95,10 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         rootSectionId: created.rootSectionId,
         metadataMigration: "current"
       };
-      setNotes((current) => [note, ...current.filter((candidate) => candidate.id !== note.id)]);
+      setNotes((current) => [
+        note,
+        ...current.filter((candidate) => candidate.id !== note.id)
+      ]);
       setSelectedNoteId(note.id);
       setStatus("Note encrypted and saved");
       return true;
@@ -140,7 +144,9 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       setStatus("Folder created");
     } catch (folderError) {
       setStatus("Folder failed");
-      setError(folderError instanceof Error ? folderError.message : "Unable to create folder");
+      setError(
+        folderError instanceof Error ? folderError.message : "Unable to create folder"
+      );
     }
   }
 
@@ -167,7 +173,9 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       setStatus("Folder deleted");
     } catch (folderError) {
       setStatus("Folder failed");
-      setError(folderError instanceof Error ? folderError.message : "Unable to delete folder");
+      setError(
+        folderError instanceof Error ? folderError.message : "Unable to delete folder"
+      );
     }
   }
 
@@ -184,7 +192,9 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
   function openNotes(folderId: string | null = selectedFolderId) {
     setNotesView("notes");
     setSelectedFolderId(folderId);
-    const nextNotes = folderId ? notes.filter((note) => note.folderId === folderId) : notes;
+    const nextNotes = folderId
+      ? notes.filter((note) => note.folderId === folderId)
+      : notes;
     setSelectedNoteId(nextNotes[0]?.id ?? null);
   }
 
@@ -209,16 +219,20 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       await deleteNote(selectedNote.id);
       setNotes((current) => current.filter((note) => note.id !== selectedNote.id));
       const activeFolderId = useAppStore.getState().selectedFolderId;
-      const nextVisibleNote = useAppStore.getState().notes.find(
-        (note) =>
-          note.id !== selectedNote.id &&
-          (activeFolderId === null || note.folderId === activeFolderId)
-      );
+      const nextVisibleNote = useAppStore
+        .getState()
+        .notes.find(
+          (note) =>
+            note.id !== selectedNote.id &&
+            (activeFolderId === null || note.folderId === activeFolderId)
+        );
       setSelectedNoteId(nextVisibleNote?.id ?? null);
       setStatus("Note moved to trash");
     } catch (deleteError) {
       setStatus("Delete failed");
-      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete note");
+      setError(
+        deleteError instanceof Error ? deleteError.message : "Unable to delete note"
+      );
     }
   }
 
@@ -235,7 +249,9 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       setStatus("Note restored");
     } catch (restoreError) {
       setStatus("Restore failed");
-      setError(restoreError instanceof Error ? restoreError.message : "Unable to restore note");
+      setError(
+        restoreError instanceof Error ? restoreError.message : "Unable to restore note"
+      );
     }
   }
 
@@ -260,7 +276,9 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       setStatus("Note permanently deleted");
     } catch (deleteError) {
       setStatus("Delete failed");
-      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete note");
+      setError(
+        deleteError instanceof Error ? deleteError.message : "Unable to delete note"
+      );
     }
   }
 

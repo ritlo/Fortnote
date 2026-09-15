@@ -53,8 +53,7 @@ export interface CommitAttachmentUploadInput {
 }
 
 export type CommitAttachmentUploadOutcome =
-  | { kind: "committed"; cursor: number }
-  | { kind: AttachmentGateError };
+  { kind: "committed"; cursor: number } | { kind: AttachmentGateError };
 
 export interface DeleteAttachmentInput {
   attachmentId: string;
@@ -67,16 +66,11 @@ export interface DeleteAttachmentInput {
 }
 
 export type DeleteAttachmentOutcome =
-  | { kind: "deleted"; cursor: number }
-  | { kind: "not-found" };
+  { kind: "deleted"; cursor: number } | { kind: "not-found" };
 
 export interface AttachmentMutationRepository {
-  reserve(
-    input: ReserveAttachmentUploadInput
-  ): Promise<AttachmentReservationOutcome>;
-  commit(
-    input: CommitAttachmentUploadInput
-  ): Promise<CommitAttachmentUploadOutcome>;
+  reserve(input: ReserveAttachmentUploadInput): Promise<AttachmentReservationOutcome>;
+  commit(input: CommitAttachmentUploadInput): Promise<CommitAttachmentUploadOutcome>;
   release(ownerUserId: string, size: number): Promise<void>;
   delete(input: DeleteAttachmentInput): Promise<DeleteAttachmentOutcome>;
 }
@@ -100,16 +94,8 @@ function attachmentMutationState(
       status: schema.noteMemberships.status
     })
     .from(schema.notes)
-    .innerJoin(
-      schema.noteMemberships,
-      eq(schema.noteMemberships.noteId, schema.notes.id)
-    )
-    .where(
-      and(
-        eq(schema.notes.id, noteId),
-        eq(schema.noteMemberships.userId, userId)
-      )
-    )
+    .innerJoin(schema.noteMemberships, eq(schema.noteMemberships.noteId, schema.notes.id))
+    .where(and(eq(schema.notes.id, noteId), eq(schema.noteMemberships.userId, userId)))
     .get();
 }
 
@@ -117,25 +103,16 @@ function canMutateAttachment(
   state: ReturnType<typeof attachmentMutationState>
 ): state is NonNullable<typeof state> {
   return (
-    state?.status === "active" &&
-    (state.role === "owner" || state.role === "editor")
+    state?.status === "active" && (state.role === "owner" || state.role === "editor")
   );
 }
 
-export class SqliteAttachmentMutationRepository
-  implements AttachmentMutationRepository
-{
+export class SqliteAttachmentMutationRepository implements AttachmentMutationRepository {
   constructor(private readonly orm: SqliteDatabase) {}
 
-  reserve(
-    input: ReserveAttachmentUploadInput
-  ): Promise<AttachmentReservationOutcome> {
+  reserve(input: ReserveAttachmentUploadInput): Promise<AttachmentReservationOutcome> {
     const outcome = this.orm.transaction((transaction) => {
-      const current = attachmentMutationState(
-        transaction,
-        input.noteId,
-        input.userId
-      );
+      const current = attachmentMutationState(transaction, input.noteId, input.userId);
       if (!canMutateAttachment(current)) {
         return { kind: "not-found" as const };
       }
@@ -188,9 +165,7 @@ export class SqliteAttachmentMutationRepository
     return Promise.resolve(outcome);
   }
 
-  commit(
-    input: CommitAttachmentUploadInput
-  ): Promise<CommitAttachmentUploadOutcome> {
+  commit(input: CommitAttachmentUploadInput): Promise<CommitAttachmentUploadOutcome> {
     const outcome = this.orm.transaction((transaction) => {
       const now = new Date().toISOString();
       const activeSession = transaction

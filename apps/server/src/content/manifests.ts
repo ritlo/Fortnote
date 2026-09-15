@@ -55,7 +55,9 @@ export interface ContentChunkDescriptor {
 
 export function contentManifestHash(chunks: ContentChunkDescriptor[]): string {
   const hash = createHash("sha256");
-  for (const chunk of [...chunks].sort((left, right) => left.chunkIndex - right.chunkIndex)) {
+  for (const chunk of [...chunks].sort(
+    (left, right) => left.chunkIndex - right.chunkIndex
+  )) {
     hash.update(
       `${String(chunk.chunkIndex)}:${String(chunk.cipherLength)}:${chunk.cipherHash}:${chunk.nonce.toString("base64")}\n`
     );

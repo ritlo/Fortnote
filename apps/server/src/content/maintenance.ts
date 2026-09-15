@@ -73,7 +73,7 @@ export class ContentStorageScanner {
       if (
         entry.isDirectory() &&
         STORAGE_ID_PATTERN.test(entry.name) &&
-        await this.context.db.contentMaintenance.canRemoveUpload(entry.name)
+        (await this.context.db.contentMaintenance.canRemoveUpload(entry.name))
       ) {
         await this.context.db.contentStorage.deleteUpload(entry.name);
         removed += 1;
@@ -158,7 +158,10 @@ export function startContentMaintenance(context: AppContext): ContentMaintenance
   let timer: NodeJS.Timeout | null = null;
   let activePage: Promise<void> | null = null;
   let stopped = false;
-  const intervalMs = Math.min(60_000, Math.max(1_000, context.config.contentUploadExpiryMs));
+  const intervalMs = Math.min(
+    60_000,
+    Math.max(1_000, context.config.contentUploadExpiryMs)
+  );
 
   const schedule = () => {
     if (stopped) {
@@ -185,9 +188,13 @@ export function startContentMaintenance(context: AppContext): ContentMaintenance
       }
       await removeOrphanContentObjectsPage(context);
     } catch (error) {
-      logError("maintenance.content.failed", {
-        provider: context.db.provider
-      }, error);
+      logError(
+        "maintenance.content.failed",
+        {
+          provider: context.db.provider
+        },
+        error
+      );
     } finally {
       schedule();
     }

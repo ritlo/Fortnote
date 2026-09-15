@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 
-import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import path from "node:path";
 
 const surfaceOptions = [
@@ -17,22 +25,31 @@ function parseArguments(argv) {
   for (let index = 0; index < argv.length; index += 2) {
     const option = argv[index];
     const value = argv[index + 1];
-    if (!option?.startsWith("--") || !value) throw new Error(`Invalid argument near ${option ?? "end"}`);
+    if (!option?.startsWith("--") || !value)
+      throw new Error(`Invalid argument near ${option ?? "end"}`);
     values.set(option, path.resolve(value));
   }
-  for (const option of ["--canary-file", "--report", ...surfaceOptions.map(([, flag]) => flag)]) {
+  for (const option of [
+    "--canary-file",
+    "--report",
+    ...surfaceOptions.map(([, flag]) => flag)
+  ]) {
     if (!values.has(option)) throw new Error(`Missing required option: ${option}`);
   }
   return values;
 }
 
 function filesAt(target, includeSqliteSidecars = false) {
-  const candidates = includeSqliteSidecars ? [target, `${target}-wal`, `${target}-shm`] : [target];
+  const candidates = includeSqliteSidecars
+    ? [target, `${target}-wal`, `${target}-shm`]
+    : [target];
   return candidates.flatMap((candidate) => {
     if (!existsSync(candidate)) return [];
     if (!statSync(candidate).isDirectory()) return [candidate];
     return readdirSync(candidate, { withFileTypes: true })
-      .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)
+      .sort((left, right) =>
+        left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+      )
       .flatMap((entry) => filesAt(path.join(candidate, entry.name)));
   });
 }

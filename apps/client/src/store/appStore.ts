@@ -38,12 +38,7 @@ export interface DecryptedNote {
 }
 
 export type SectionIndexStatus = "idle" | "loading" | "ready" | "error";
-export type SectionLoadStatus =
-  | "unloaded"
-  | "loading"
-  | "ready"
-  | "releasing"
-  | "error";
+export type SectionLoadStatus = "unloaded" | "loading" | "ready" | "releasing" | "error";
 
 export interface NoteSectionIndexState {
   noteId: string;
@@ -80,7 +75,8 @@ export interface StorageCapacityState {
 }
 
 export interface OperationFailureState {
-  kind: "conflict" | "generic" | "local-capacity" | "server-capacity" | "server-maintenance";
+  kind:
+    "conflict" | "generic" | "local-capacity" | "server-capacity" | "server-maintenance";
   message: string;
   status: string;
 }
@@ -95,11 +91,7 @@ export interface RevocationRotationFailure {
 }
 
 export type RecoverableDraftState =
-  | "retained"
-  | "reviewing"
-  | "reapplied"
-  | "exported"
-  | "discarded";
+  "retained" | "reviewing" | "reapplied" | "exported" | "discarded";
 
 export interface RecoverableSectionDraft {
   id: string;
@@ -435,10 +427,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set((state) => {
       const id = recoverableDraftId(draft);
       const current = state.recoverableDrafts[id];
-      const updateIds = [...new Set([
-        ...(current?.updateIds ?? []),
-        ...draft.updateIds
-      ])];
+      const updateIds = [...new Set([...(current?.updateIds ?? []), ...draft.updateIds])];
       return {
         recoverableDrafts: {
           ...state.recoverableDrafts,
@@ -447,9 +436,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
             id,
             updateIds,
             state:
-              current?.updateIds.length === updateIds.length
-                ? current.state
-                : "retained"
+              current?.updateIds.length === updateIds.length ? current.state : "retained"
           }
         }
       };
@@ -478,9 +465,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   setLoadedSection: (value, sectionId) => {
     set((state) => {
-      const key = value
-        ? sectionRuntimeKey(value.noteId, value.sectionId)
-        : sectionId;
+      const key = value ? sectionRuntimeKey(value.noteId, value.sectionId) : sectionId;
       if (!key) {
         return {};
       }
@@ -528,7 +513,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
             serverStorageCapacity: {
               ...state.serverStorageCapacity,
               ...(failure.kind === "server-capacity" ? { availableBytes: 0 } : {}),
-              status: failure.kind === "server-capacity" ? "full" as const : "error" as const
+              status:
+                failure.kind === "server-capacity"
+                  ? ("full" as const)
+                  : ("error" as const)
             }
           }
         : {})
@@ -541,9 +529,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return token;
   },
   finishRequest: (scope, token) => {
-    set((state) => state.requestTokens[scope] === token
-      ? { requestTokens: omitRecordKey(state.requestTokens, scope) }
-      : {}
+    set((state) =>
+      state.requestTokens[scope] === token
+        ? { requestTokens: omitRecordKey(state.requestTokens, scope) }
+        : {}
     );
   },
   isCurrentRequest: (scope, token) => get().requestTokens[scope] === token,
@@ -606,12 +595,7 @@ export function sectionRuntimeKey(noteId: string, sectionId: string): string {
 export function recoverableDraftId(
   draft: Pick<RecoverableSectionDraft, "userId" | "noteId" | "sectionId" | "keyEpoch">
 ): string {
-  return JSON.stringify([
-    draft.userId,
-    draft.noteId,
-    draft.sectionId,
-    draft.keyEpoch
-  ]);
+  return JSON.stringify([draft.userId, draft.noteId, draft.sectionId, draft.keyEpoch]);
 }
 
 function isRecoverableDraftTransition(
@@ -630,7 +614,10 @@ function isRecoverableDraftTransition(
   );
 }
 
-function omitRecordKey<T>(record: Record<string, T>, keyToRemove: string): Record<string, T> {
+function omitRecordKey<T>(
+  record: Record<string, T>,
+  keyToRemove: string
+): Record<string, T> {
   return Object.fromEntries(
     Object.entries(record).filter(([key]) => key !== keyToRemove)
   );
@@ -641,26 +628,39 @@ export function operationFailureState(
   fallback: string,
   fallbackStatus = "Operation failed"
 ): OperationFailureState {
-  if (["conflict", "version_conflict", "chunk_conflict", "manifest_mismatch", "forbidden"].includes(
-    errorCode(error) ?? ""
-  )) {
+  if (
+    [
+      "conflict",
+      "version_conflict",
+      "chunk_conflict",
+      "manifest_mismatch",
+      "forbidden"
+    ].includes(errorCode(error) ?? "")
+  ) {
     return {
       kind: "conflict",
       message: "Encrypted changes were retained because the server version changed.",
       status: "Changes need review"
     };
   }
-  if (["quota_exceeded", "storage_limit", "storage-limit"].includes(errorCode(error) ?? "")) {
+  if (
+    ["quota_exceeded", "storage_limit", "storage-limit"].includes(errorCode(error) ?? "")
+  ) {
     return {
       kind: "server-capacity",
-      message: "Encrypted changes remain on this device until server storage is available.",
+      message:
+        "Encrypted changes remain on this device until server storage is available.",
       status: "Server storage full — changes kept on this device"
     };
   }
-  if (errorName(error) === "IndexedDbCapacityError" || errorName(error) === "QuotaExceededError") {
+  if (
+    errorName(error) === "IndexedDbCapacityError" ||
+    errorName(error) === "QuotaExceededError"
+  ) {
     return {
       kind: "local-capacity",
-      message: "The visible draft is not crash-safe. Free browser storage, export, or split it.",
+      message:
+        "The visible draft is not crash-safe. Free browser storage, export, or split it.",
       status: "Local storage full — changes need attention"
     };
   }
@@ -675,18 +675,30 @@ export function operationFailureState(
 }
 
 function errorCode(error: unknown): string | null {
-  return typeof error === "object" && error !== null && "code" in error &&
-    typeof error.code === "string" ? error.code : null;
+  return typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string"
+    ? error.code
+    : null;
 }
 
 function errorName(error: unknown): string | null {
-  return typeof error === "object" && error !== null && "name" in error &&
-    typeof error.name === "string" ? error.name : null;
+  return typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    typeof error.name === "string"
+    ? error.name
+    : null;
 }
 
 function errorStatus(error: unknown): number {
-  return typeof error === "object" && error !== null && "status" in error &&
-    typeof error.status === "number" ? error.status : 0;
+  return typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    typeof error.status === "number"
+    ? error.status
+    : 0;
 }
 
 function emptyCapacityState(): StorageCapacityState {

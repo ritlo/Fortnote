@@ -79,7 +79,10 @@ export function useNoteViewModel() {
   const [searchIndexError, setSearchIndexError] = useState<string | null>(null);
   const [searchRevision, setSearchRevision] = useState(0);
   const [searchRetryVersion, setSearchRetryVersion] = useState(0);
-  const [queryMatches, setQueryMatches] = useState<QueryMatches>({ query: "", matches: [] });
+  const [queryMatches, setQueryMatches] = useState<QueryMatches>({
+    query: "",
+    matches: []
+  });
   const searchableNotesSignature = searchableNoteSignature(notes);
 
   const viewNotes = useMemo(
@@ -93,7 +96,7 @@ export function useNoteViewModel() {
   );
 
   const selectedAttachments = selectedNoteId
-    ? attachmentsByNote[selectedNoteId] ?? []
+    ? (attachmentsByNote[selectedNoteId] ?? [])
     : [];
   const retainedDraft = selectedNote
     ? Object.values(recoverableDrafts).find(
@@ -107,25 +110,27 @@ export function useNoteViewModel() {
   const selectedSectionId = selectedNote
     ? selectedSectionByNote[selectedNote.id]
     : undefined;
-  const selectedSection = selectedNote && selectedSectionId
-    ? loadedSections[sectionRuntimeKey(selectedNote.id, selectedSectionId)]
-    : undefined;
+  const selectedSection =
+    selectedNote && selectedSectionId
+      ? loadedSections[sectionRuntimeKey(selectedNote.id, selectedSectionId)]
+      : undefined;
   const collaborationState = deriveCollaborationState({
     ...defaultCollaborationDimensions,
     access: removedNoteId
       ? "removed"
       : notesView === "trash"
-      ? "trash"
-      : (selectedNote?.role ?? "owner"),
-    protection: selectedNote && noteProtectionFailures[selectedNote.id] === "undecryptable"
-      ? "undecryptable"
-      : selectedNote && noteProtectionFailures[selectedNote.id] === "stale"
-        ? "stale"
-      : selectedNote?.id === revocationRotationPendingNoteId
-      ? "preparing"
-      : selectedNote && revocationRotationFailures[selectedNote.id]
-        ? "aborted"
-        : "ready",
+        ? "trash"
+        : (selectedNote?.role ?? "owner"),
+    protection:
+      selectedNote && noteProtectionFailures[selectedNote.id] === "undecryptable"
+        ? "undecryptable"
+        : selectedNote && noteProtectionFailures[selectedNote.id] === "stale"
+          ? "stale"
+          : selectedNote?.id === revocationRotationPendingNoteId
+            ? "preparing"
+            : selectedNote && revocationRotationFailures[selectedNote.id]
+              ? "aborted"
+              : "ready",
     section: selectedNote
       ? selectedSection?.status === "ready"
         ? "ready"
@@ -133,40 +138,40 @@ export function useNoteViewModel() {
           ? "loading"
           : "opening"
       : "idle",
-    durability: localStorageCapacity.status === "full" || localStorageCapacity.status === "error"
-      ? "local-full"
-      : serverStorageCapacity.status === "full"
-        ? "server-full"
-        : serverStorageCapacity.status === "error"
-          ? "compacting"
-          : "clean",
-    connection: realtimeStatus === "connecting"
-      ? "reconnecting"
-      : realtimeStatus === "disconnected"
-        ? "offline"
-        : "connected",
-    recovery: retainedDraft?.state === "reviewing"
-      ? "reviewing"
-      : retainedDraft
-        ? "divergent"
-        : operationFailure
-          ? operationFailure.kind === "conflict"
-            ? "conflict"
-            : operationFailure.kind === "generic" ? "error" : "none"
-          : error
-            ? "error"
-            : "none",
-    vault: selectedNote
-      ? "ready"
-      : viewNotes.length === 0
-        ? "empty"
-        : "ready",
+    durability:
+      localStorageCapacity.status === "full" || localStorageCapacity.status === "error"
+        ? "local-full"
+        : serverStorageCapacity.status === "full"
+          ? "server-full"
+          : serverStorageCapacity.status === "error"
+            ? "compacting"
+            : "clean",
+    connection:
+      realtimeStatus === "connecting"
+        ? "reconnecting"
+        : realtimeStatus === "disconnected"
+          ? "offline"
+          : "connected",
+    recovery:
+      retainedDraft?.state === "reviewing"
+        ? "reviewing"
+        : retainedDraft
+          ? "divergent"
+          : operationFailure
+            ? operationFailure.kind === "conflict"
+              ? "conflict"
+              : operationFailure.kind === "generic"
+                ? "error"
+                : "none"
+            : error
+              ? "error"
+              : "none",
+    vault: selectedNote ? "ready" : viewNotes.length === 0 ? "empty" : "ready",
     draftRetained: Boolean(retainedDraft)
   });
   const normalizedSearch = normalizeSearch(search);
-  const searchMatches = queryMatches.query === normalizedSearch
-    ? queryMatches.matches
-    : [];
+  const searchMatches =
+    queryMatches.query === normalizedSearch ? queryMatches.matches : [];
 
   const filteredNotes = useMemo(() => {
     const matchingNoteIds = new Set(searchMatches.map((match) => match.noteId));
@@ -269,8 +274,12 @@ export function useNoteViewModel() {
       controller.abort();
       useAppStore.getState().finishRequest(requestScope, requestToken);
       void searchTask.then(
-        () => { database?.close(); },
-        () => { database?.close(); }
+        () => {
+          database?.close();
+        },
+        () => {
+          database?.close();
+        }
       );
     };
   }, [normalizedSearch, rootKey, searchRetryVersion, searchableNotesSignature, user]);
@@ -402,7 +411,9 @@ export function notesForView({
   }
 }
 
-export function searchBlocksFromSnapshot(snapshot: BlockNoteFragmentSnapshot): SearchIndexBlock[] {
+export function searchBlocksFromSnapshot(
+  snapshot: BlockNoteFragmentSnapshot
+): SearchIndexBlock[] {
   const blocks: SearchIndexBlock[] = [];
   visitSnapshotNodes(snapshot.content[0].content, blocks);
   return blocks;
@@ -445,20 +456,24 @@ async function loadSearchSection(
   signal: AbortSignal
 ) {
   const note = notes.find(
-    (candidate) => candidate.id === target.noteId && candidate.keyEpoch === target.keyEpoch
+    (candidate) =>
+      candidate.id === target.noteId && candidate.keyEpoch === target.keyEpoch
   );
   if (!note) {
     throw new Error("Search target note is unavailable.");
   }
-  const loaded = useAppStore.getState().loadedSections[
-    sectionRuntimeKey(target.noteId, target.sectionId)
-  ];
+  const loaded =
+    useAppStore.getState().loadedSections[
+      sectionRuntimeKey(target.noteId, target.sectionId)
+    ];
   const alreadyOpen =
     loaded?.keyEpoch === target.keyEpoch &&
     (loaded.status === "loading" || loaded.status === "ready");
   const lease = alreadyOpen ? null : openCrdtSection(note, target.sectionId);
   try {
-    await waitForCrdtSectionReady(target.noteId, target.keyEpoch, target.sectionId, { signal });
+    await waitForCrdtSectionReady(target.noteId, target.keyEpoch, target.sectionId, {
+      signal
+    });
     throwIfCanceled(signal);
     const snapshot = snapshotReadyCrdtSection(
       target.noteId,
@@ -492,7 +507,9 @@ function searchableNoteSignature(notes: DecryptedNote[]): string {
   return notes
     .filter(isSearchableNote)
     .map((note) =>
-      [note.id, note.keyEpoch, note.rootVersion ?? note.version, note.rootSectionId].join(":")
+      [note.id, note.keyEpoch, note.rootVersion ?? note.version, note.rootSectionId].join(
+        ":"
+      )
     )
     .sort()
     .join("|");
@@ -508,9 +525,8 @@ function visitSnapshotNodes(values: unknown[], blocks: SearchIndexBlock[]): void
       continue;
     }
     if (value.type === "blockContainer") {
-      const blockId = isRecord(value.attrs) && typeof value.attrs.id === "string"
-        ? value.attrs.id
-        : "";
+      const blockId =
+        isRecord(value.attrs) && typeof value.attrs.id === "string" ? value.attrs.id : "";
       if (blockId) {
         blocks.push({ blockId, text: textWithinBlock(value, value) });
       }
@@ -535,7 +551,9 @@ function textWithinBlock(value: unknown, root: Record<string, unknown>): string 
   return `${ownText} ${childText}`.replace(/\s+/g, " ").trim();
 }
 
-function searchTargetKey(target: Pick<SearchCoverageTarget, "keyEpoch" | "noteId" | "sectionId">): string {
+function searchTargetKey(
+  target: Pick<SearchCoverageTarget, "keyEpoch" | "noteId" | "sectionId">
+): string {
   return `${target.noteId}\u0000${target.sectionId}\u0000${String(target.keyEpoch)}`;
 }
 

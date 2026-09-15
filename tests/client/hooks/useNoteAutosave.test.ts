@@ -3,7 +3,12 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useAppStore } from "@client/store/appStore";
-import { mocks, note, advanceAutosave, waitForAssertion } from "./useNoteActions.fixtures";
+import {
+  mocks,
+  note,
+  advanceAutosave,
+  waitForAssertion
+} from "./useNoteActions.fixtures";
 import { mergeDraftAfterConflict, useNoteActions } from "@client/hooks/useNoteActions";
 
 describe("note autosave", () => {
@@ -54,10 +59,9 @@ describe("note autosave", () => {
   });
 
   it("does not autosave identical, viewer, or trash updates", async () => {
-    const { result, rerender } = renderHook(
-      ({ selected }) => useNoteActions(selected),
-      { initialProps: { selected: note() } }
-    );
+    const { result, rerender } = renderHook(({ selected }) => useNoteActions(selected), {
+      initialProps: { selected: note() }
+    });
 
     act(() => {
       result.current.updateSelectedNote({ title: "Title" });
@@ -90,9 +94,10 @@ describe("note autosave", () => {
     }) => void;
     mocks.updateNote
       .mockImplementationOnce(
-        () => new Promise((resolve) => {
-          finishFirst = resolve;
-        })
+        () =>
+          new Promise((resolve) => {
+            finishFirst = resolve;
+          })
       )
       .mockResolvedValueOnce({
         id: "note_1",
@@ -139,9 +144,10 @@ describe("note autosave", () => {
       updatedAt: string;
     }) => void;
     mocks.updateNote.mockImplementationOnce(
-      () => new Promise((resolve) => {
-        finishSave = resolve;
-      })
+      () =>
+        new Promise((resolve) => {
+          finishSave = resolve;
+        })
     );
     const { result } = renderHook(() => useNoteActions(note()));
 
@@ -151,7 +157,13 @@ describe("note autosave", () => {
     await advanceAutosave();
     act(() => {
       useAppStore.setState({
-        notes: [note({ title: "Converged draft", updatedAt: "2026-07-03T00:00:00.000Z", version: 3 })]
+        notes: [
+          note({
+            title: "Converged draft",
+            updatedAt: "2026-07-03T00:00:00.000Z",
+            version: 3
+          })
+        ]
       });
       finishSave({
         id: "note_1",
@@ -179,9 +191,10 @@ describe("note autosave", () => {
       updatedAt: string;
     }) => void;
     mocks.updateNote.mockImplementationOnce(
-      () => new Promise((resolve) => {
-        finishSave = resolve;
-      })
+      () =>
+        new Promise((resolve) => {
+          finishSave = resolve;
+        })
     );
     const { result } = renderHook(() => useNoteActions(note()));
 
@@ -191,13 +204,15 @@ describe("note autosave", () => {
     await advanceAutosave();
     act(() => {
       useAppStore.setState({
-        notes: [note({
-          keyEpoch: 2,
-          noteKeyBase64: "replacement-key",
-          rootVersion: 2,
-          title: "New epoch title",
-          version: 2
-        })]
+        notes: [
+          note({
+            keyEpoch: 2,
+            noteKeyBase64: "replacement-key",
+            rootVersion: 2,
+            title: "New epoch title",
+            version: 2
+          })
+        ]
       });
       finishSave({
         id: "note_1",
@@ -280,9 +295,10 @@ describe("note autosave", () => {
   it("preserves edits made while a conflicting save is in flight", async () => {
     let rejectSave!: (reason: unknown) => void;
     mocks.updateNote.mockImplementationOnce(
-      () => new Promise((_resolve, reject) => {
-        rejectSave = reject;
-      })
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSave = reject;
+        })
     );
     mocks.loadNotes.mockImplementationOnce(() => {
       useAppStore.setState({ notes: [note({ title: "Server title", version: 2 })] });
@@ -328,9 +344,10 @@ describe("note autosave", () => {
     let rejectSave!: (reason: unknown) => void;
     mocks.updateNote
       .mockImplementationOnce(
-        () => new Promise((_resolve, reject) => {
-          rejectSave = reject;
-        })
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectSave = reject;
+          })
       )
       .mockResolvedValueOnce({
         id: "note_2",
@@ -339,7 +356,10 @@ describe("note autosave", () => {
       });
     mocks.loadNotes.mockImplementationOnce(() => {
       useAppStore.setState({
-        notes: [note({ title: "Server first", version: 2 }), note({ id: "note_2", title: "Server second" })]
+        notes: [
+          note({ title: "Server first", version: 2 }),
+          note({ id: "note_2", title: "Server second" })
+        ]
       });
     });
     useAppStore.setState({ notes: [note(), note({ id: "note_2", title: "Second" })] });
@@ -371,9 +391,10 @@ describe("note autosave", () => {
   it("does not recover a conflict after the vault session is replaced", async () => {
     let rejectSave!: (reason: unknown) => void;
     mocks.updateNote.mockImplementationOnce(
-      () => new Promise((_resolve, reject) => {
-        rejectSave = reject;
-      })
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSave = reject;
+        })
     );
     const { result } = renderHook(() => useNoteActions(note()));
 

@@ -270,7 +270,9 @@ export function useRealtimeEvents() {
               // a protection failure, not merely a transport warning. Surface
               // the typed recovery state immediately; the sync terminator may
               // arrive later (or be lost during reconnect).
-              useAppStore.getState().setNoteProtectionFailure(message.noteId, "undecryptable");
+              useAppStore
+                .getState()
+                .setNoteProtectionFailure(message.noteId, "undecryptable");
               setError("A realtime update could not be decrypted; recovery is pending.");
             });
             return;
@@ -304,10 +306,10 @@ export function useRealtimeEvents() {
             }
             setError(
               code === "payload-too-large" || code === "frame-too-large"
-                  ? "Realtime update is too large to synchronize."
-                  : code === "rotation-pending"
-                    ? "Note-key rotation is pending; encrypted work remains queued."
-                    : "Realtime rejected an edit; protected recovery is being prepared."
+                ? "Realtime update is too large to synchronize."
+                : code === "rotation-pending"
+                  ? "Note-key rotation is pending; encrypted work remains queued."
+                  : "Realtime rejected an edit; protected recovery is being prepared."
             );
           }
         }
@@ -361,7 +363,10 @@ export function useRealtimeEvents() {
   ]);
 
   useEffect(() => {
-    if (previousSelectedNoteIdRef.current && previousSelectedNoteIdRef.current !== selectedNoteId) {
+    if (
+      previousSelectedNoteIdRef.current &&
+      previousSelectedNoteIdRef.current !== selectedNoteId
+    ) {
       connectionRef.current?.sendPresence(previousSelectedNoteIdRef.current, "left");
     }
     previousSelectedNoteIdRef.current = selectedNoteId;
@@ -374,7 +379,11 @@ export function useRealtimeEvents() {
 
   useEffect(() => {
     localPresenceStateRef.current = localPresenceState;
-    sendSelectedNotePresence(connectionRef.current, selectedNoteIdRef.current, localPresenceState);
+    sendSelectedNotePresence(
+      connectionRef.current,
+      selectedNoteIdRef.current,
+      localPresenceState
+    );
   }, [localPresenceState]);
 }
 
@@ -508,14 +517,11 @@ async function reloadAfterEvents(events: CollaborationEvent[]): Promise<void> {
 
 export function isOwnRevocation(event: CollaborationEvent, userId: string): boolean {
   return (
-    event.type === "membership.revoked" &&
-    event.metadata?.membershipUserId === userId
+    event.type === "membership.revoked" && event.metadata?.membershipUserId === userId
   );
 }
 
-export function eventsRequireNoteReload(
-  events: CollaborationEvent[]
-): boolean {
+export function eventsRequireNoteReload(events: CollaborationEvent[]): boolean {
   return events.some((event) => shouldReloadNotes(event));
 }
 
@@ -523,25 +529,26 @@ export function noteIdsRequiringReload(
   events: CollaborationEvent[],
   userId: string
 ): string[] {
-  return [...new Set(
-    events
-      .filter((event) =>
-        shouldReloadNotes(event) &&
-        event.type !== "note.permanently_deleted" &&
-        !isOwnRevocation(event, userId)
-      )
-      .map((event) => event.noteId)
-      .filter((noteId): noteId is string => noteId !== null)
-  )];
+  return [
+    ...new Set(
+      events
+        .filter(
+          (event) =>
+            shouldReloadNotes(event) &&
+            event.type !== "note.permanently_deleted" &&
+            !isOwnRevocation(event, userId)
+        )
+        .map((event) => event.noteId)
+        .filter((noteId): noteId is string => noteId !== null)
+    )
+  ];
 }
 
 export function eventsFromOtherClients(
   events: CollaborationEvent[],
   clientInstanceId: string
 ): CollaborationEvent[] {
-  return events.filter(
-    (event) => event.metadata?.clientInstanceId !== clientInstanceId
-  );
+  return events.filter((event) => event.metadata?.clientInstanceId !== clientInstanceId);
 }
 
 export function eventsForReload(
@@ -595,11 +602,13 @@ function invalidateAttachmentCaches(events: CollaborationEvent[]): void {
   if (noteIds.size === 0) {
     return;
   }
-  useAppStore.getState().setAttachmentsByNote((current) =>
-    Object.fromEntries(
-      Object.entries(current).filter(([noteId]) => !noteIds.has(noteId))
-    )
-  );
+  useAppStore
+    .getState()
+    .setAttachmentsByNote((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([noteId]) => !noteIds.has(noteId))
+      )
+    );
 }
 
 function applyFolderInvalidations(events: CollaborationEvent[]): void {

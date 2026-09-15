@@ -22,11 +22,7 @@ export function snapshotReadyCrdtSection(
   sectionId: string
 ): BlockNoteFragmentSnapshot | null {
   const binding = bindings.get(bindingKey(noteId, sectionId));
-  if (
-    binding?.keyEpoch !== keyEpoch ||
-    !binding.ready ||
-    !isActiveBinding(binding)
-  ) {
+  if (binding?.keyEpoch !== keyEpoch || !binding.ready || !isActiveBinding(binding)) {
     return null;
   }
   return snapshotSection(binding.fragment);

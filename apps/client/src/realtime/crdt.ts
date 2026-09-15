@@ -9,10 +9,7 @@ export {
   removeCrdtNote,
   updateCrdtNote
 } from "./crdt/lifecycle";
-export {
-  subscribeCrdtSectionChanges,
-  type CrdtSectionChange
-} from "./crdt/changes";
+export { subscribeCrdtSectionChanges, type CrdtSectionChange } from "./crdt/changes";
 export {
   appendCrdtSectionContent,
   getCrdtSectionOrder,

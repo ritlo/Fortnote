@@ -132,7 +132,8 @@ describe("CRDT collaboration", () => {
       finishDelivery = resolve;
     });
     const send = vi.fn().mockResolvedValue(undefined);
-    const sendDurably = vi.fn()
+    const sendDurably = vi
+      .fn()
       .mockReturnValueOnce({
         durable: Promise.resolve(),
         delivered: Promise.resolve()
@@ -171,12 +172,7 @@ describe("CRDT collaboration", () => {
     finishDelivery();
     await delivery;
     await expect(
-      releaseCrdtSection(
-        current.id,
-        sectionId,
-        current.keyEpoch,
-        reopened.generation
-      )
+      releaseCrdtSection(current.id, sectionId, current.keyEpoch, reopened.generation)
     ).resolves.toBe(true);
     expect(unsubscribe).toHaveBeenCalledWith(current.id, sectionId, current.keyEpoch);
   });
@@ -189,9 +185,10 @@ describe("CRDT collaboration", () => {
     });
     let finishDownload!: (bytes: Uint8Array) => void;
     const downloadContent = vi.fn(
-      () => new Promise<Uint8Array>((resolve) => {
-        finishDownload = resolve;
-      })
+      () =>
+        new Promise<Uint8Array>((resolve) => {
+          finishDownload = resolve;
+        })
     );
     setCrdtTransport({
       discard: vi.fn(),
@@ -290,9 +287,12 @@ describe("CRDT collaboration", () => {
     });
     await finishCrdtSync(current.id, current.keyEpoch, true, sectionId);
 
-    await expect(ensureCrdtHistoryReadable(current.id, sectionId)).resolves.toBeUndefined();
-    expect(fragmentText(getCrdtProvider(current.id, current.keyEpoch, sectionId).doc))
-      .toContain("Recovered checkpoint");
+    await expect(
+      ensureCrdtHistoryReadable(current.id, sectionId)
+    ).resolves.toBeUndefined();
+    expect(
+      fragmentText(getCrdtProvider(current.id, current.keyEpoch, sectionId).doc)
+    ).toContain("Recovered checkpoint");
   });
 
   it("keeps the encrypted root and BlockNote section in independent Y.Docs", async () => {
@@ -366,11 +366,13 @@ describe("CRDT collaboration", () => {
       );
     });
 
-    expect(changes).toEqual([expect.objectContaining({
-      noteId: current.id,
-      sectionId: current.rootSectionId,
-      serverSequence: 4
-    })]);
+    expect(changes).toEqual([
+      expect.objectContaining({
+        noteId: current.id,
+        sectionId: current.rootSectionId,
+        serverSequence: 4
+      })
+    ]);
     expect(
       snapshotReadyCrdtSection(
         current.id,
@@ -389,7 +391,8 @@ describe("CRDT collaboration", () => {
     const delivered = new Promise<void>((resolve) => {
       finishDelivery = resolve;
     });
-    const sendDurably = vi.fn()
+    const sendDurably = vi
+      .fn()
       .mockReturnValueOnce({
         durable: Promise.resolve(),
         delivered: Promise.resolve()
@@ -468,9 +471,10 @@ describe("CRDT collaboration", () => {
     await finishCrdtSync(current.id, 1, false);
     let finishDecrypt!: (update: Uint8Array) => void;
     vi.mocked(decryptCrdtMessage).mockImplementationOnce(
-      () => new Promise((resolve) => {
-        finishDecrypt = resolve;
-      })
+      () =>
+        new Promise((resolve) => {
+          finishDecrypt = resolve;
+        })
     );
     const receiving = receiveCrdtUpdate({
       type: "crdt-update",
@@ -642,5 +646,4 @@ describe("CRDT collaboration", () => {
       fragmentText(getCrdtProvider(bobId).doc)
     );
   });
-
 });

@@ -8,10 +8,7 @@ import {
   decodeCrdtBinaryFrame,
   parseCrdtControlMessage
 } from "@fortnote/shared";
-import {
-  readSessionToken,
-  type SessionRecord
-} from "../auth/session.js";
+import { readSessionToken, type SessionRecord } from "../auth/session.js";
 import { allowedOriginAliases } from "../http/csrf.js";
 import type { AppContext } from "../http/app.js";
 import { RealtimeHub, sendJson, type RealtimeClient } from "./hub.js";
@@ -45,18 +42,22 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     cipher: z.string().min(1),
     nonce: z.string().min(16).max(128)
   }),
-  z.object({
-    type: z.literal("crdt-checkpoint"),
-    formatVersion: z.literal(1),
-    updateId: z.uuid(),
-    noteId: z.uuid(),
-    cryptoOwnerId: z.uuid(),
-    keyEpoch: z.number().int().positive(),
-    cipher: z.string().min(1),
-    nonce: z.string().min(16).max(128),
-    compactedUpdateIds: z.array(z.uuid()).max(100)
-      .refine((ids) => new Set(ids).size === ids.length)
-  }).refine((message) => !message.compactedUpdateIds.includes(message.updateId))
+  z
+    .object({
+      type: z.literal("crdt-checkpoint"),
+      formatVersion: z.literal(1),
+      updateId: z.uuid(),
+      noteId: z.uuid(),
+      cryptoOwnerId: z.uuid(),
+      keyEpoch: z.number().int().positive(),
+      cipher: z.string().min(1),
+      nonce: z.string().min(16).max(128),
+      compactedUpdateIds: z
+        .array(z.uuid())
+        .max(100)
+        .refine((ids) => new Set(ids).size === ids.length)
+    })
+    .refine((message) => !message.compactedUpdateIds.includes(message.updateId))
 ]);
 
 export function attachRealtimeServer(
@@ -109,7 +110,8 @@ export function attachRealtimeServer(
     );
     const after = parsed.success ? parsed.data.after : 0;
     const crdtEnabled =
-      parsed.success && parsed.data.capabilities.split(",").includes(CRDT_REALTIME_CAPABILITY);
+      parsed.success &&
+      parsed.data.capabilities.split(",").includes(CRDT_REALTIME_CAPABILITY);
     const crdtV2Enabled =
       parsed.success &&
       parsed.data.capabilities.split(",").includes(CRDT_REALTIME_CAPABILITY_V2);
@@ -269,11 +271,7 @@ async function handleBinaryMessage(
     });
     return;
   }
-  const outcome = await hub.publishCrdtBinary(
-    client,
-    decoded.header,
-    decoded.cipher
-  );
+  const outcome = await hub.publishCrdtBinary(client, decoded.header, decoded.cipher);
   if (outcome.status === "rejected") {
     sendJson(socket, {
       type: "crdt-reject",

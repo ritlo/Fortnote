@@ -61,10 +61,7 @@ export class SqliteSharingKeyRepository implements SharingKeyRepository {
     return Promise.resolve(row ?? null);
   }
 
-  version(
-    userId: string,
-    sharingKeyVersion: number
-  ): Promise<SharingKeyRecord | null> {
+  version(userId: string, sharingKeyVersion: number): Promise<SharingKeyRecord | null> {
     const row = this.orm
       .select(sharingKeySelection)
       .from(schema.userSharingKeys)
@@ -89,10 +86,7 @@ export class SqliteSharingKeyRepository implements SharingKeyRepository {
         .where(
           and(
             eq(schema.userSharingKeys.userId, userId),
-            eq(
-              schema.userSharingKeys.sharingKeyVersion,
-              input.sharingKeyVersion
-            )
+            eq(schema.userSharingKeys.sharingKeyVersion, input.sharingKeyVersion)
           )
         )
         .get();
@@ -115,16 +109,13 @@ export class SqliteSharingKeyRepository implements SharingKeyRepository {
           .where(
             and(
               eq(schema.userSharingKeys.userId, userId),
-              eq(
-                schema.userSharingKeys.sharingKeyVersion,
-                input.sharingKeyVersion
-              ),
+              eq(schema.userSharingKeys.sharingKeyVersion, input.sharingKeyVersion),
               eq(schema.userSharingKeys.publicKey, input.publicKey),
               eq(schema.userSharingKeys.formatVersion, 1)
             )
           )
           .run();
-        return migrated.changes === 1 ? "upgraded" as const : "conflict" as const;
+        return migrated.changes === 1 ? ("upgraded" as const) : ("conflict" as const);
       }
 
       const inserted = transaction
@@ -133,7 +124,7 @@ export class SqliteSharingKeyRepository implements SharingKeyRepository {
         .onConflictDoNothing()
         .returning({ userId: schema.userSharingKeys.userId })
         .all();
-      return inserted.length === 1 ? "created" as const : "conflict" as const;
+      return inserted.length === 1 ? ("created" as const) : ("conflict" as const);
     });
     return Promise.resolve(outcome);
   }
@@ -170,7 +161,10 @@ export class SqliteSharingKeyRepository implements SharingKeyRepository {
         createdAt: schema.userSharingKeys.createdAt
       })
       .from(schema.users)
-      .innerJoin(schema.userSharingKeys, eq(schema.userSharingKeys.userId, schema.users.id))
+      .innerJoin(
+        schema.userSharingKeys,
+        eq(schema.userSharingKeys.userId, schema.users.id)
+      )
       .where(
         and(
           eq(schema.users.canonicalHandle, canonicalHandle),

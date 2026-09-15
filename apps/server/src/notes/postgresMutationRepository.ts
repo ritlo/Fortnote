@@ -26,9 +26,7 @@ async function validFolder(
   const folders = await database
     .select({ id: schema.folders.id })
     .from(schema.folders)
-    .where(
-      and(eq(schema.folders.id, folderId), eq(schema.folders.userId, userId))
-    )
+    .where(and(eq(schema.folders.id, folderId), eq(schema.folders.userId, userId)))
     .limit(1)
     .for("key share");
   return Boolean(folders[0]);
@@ -69,7 +67,7 @@ export class PostgresNoteMutationRepository implements NoteMutationRepository {
 
   create(input: CreateNoteInput): Promise<CreateNoteOutcome> {
     return this.orm.transaction(async (transaction) => {
-      if (!await validFolder(transaction, input.actorUserId, input.folderId)) {
+      if (!(await validFolder(transaction, input.actorUserId, input.folderId))) {
         return { kind: "invalid-folder" } as const;
       }
       await transaction.insert(schema.notes).values({
@@ -108,17 +106,13 @@ export class PostgresNoteMutationRepository implements NoteMutationRepository {
         actorUserId: input.actorUserId,
         eventType: "note.created",
         noteVersion: 1,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return { kind: "created", eventCursor } as const;
     });
   }
 
-  updateProtected(
-    input: ProtectedNoteUpdateInput
-  ): Promise<ProtectedNoteUpdateOutcome> {
+  updateProtected(input: ProtectedNoteUpdateInput): Promise<ProtectedNoteUpdateOutcome> {
     return this.orm.transaction(async (transaction) => {
       const currentRows = await transaction
         .select({
@@ -178,7 +172,7 @@ export class PostgresNoteMutationRepository implements NoteMutationRepository {
       }
       if (
         current.role === "owner" &&
-        !await validFolder(transaction, input.actorUserId, folderId)
+        !(await validFolder(transaction, input.actorUserId, folderId))
       ) {
         return { kind: "invalid-folder" } as const;
       }
@@ -228,9 +222,7 @@ export class PostgresNoteMutationRepository implements NoteMutationRepository {
         actorUserId: input.actorUserId,
         eventType: "note.updated",
         noteVersion: rootVersion,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return {
         kind: "saved",
@@ -289,7 +281,7 @@ export class PostgresNoteMutationRepository implements NoteMutationRepository {
       }
       if (
         current.role === "owner" &&
-        !await validFolder(transaction, input.actorUserId, folderId)
+        !(await validFolder(transaction, input.actorUserId, folderId))
       ) {
         return { kind: "invalid-folder" } as const;
       }
@@ -323,9 +315,7 @@ export class PostgresNoteMutationRepository implements NoteMutationRepository {
         actorUserId: input.actorUserId,
         eventType: "note.updated",
         noteVersion: version,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return {
         kind: "saved",

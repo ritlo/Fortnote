@@ -120,10 +120,10 @@ describe("client crypto workflows", () => {
     );
     expect(opened.rootKey).toEqual(registration.rootKey);
 
-    const recoveryRotation = await createRecoveryRotationCrypto(
-      registration.rootKey,
-      { userId: "user-a", keyMaterialVersion: 3 }
-    );
+    const recoveryRotation = await createRecoveryRotationCrypto(registration.rootKey, {
+      userId: "user-a",
+      keyMaterialVersion: 3
+    });
     const recovered = await createAccountRecoveryCrypto({
       recoverySecret: recoveryRotation.recoverySecret,
       recoveryKdf: recoveryRotation.recoveryKdf,
@@ -514,7 +514,9 @@ describe("client crypto workflows", () => {
 
     expect(prepared.chunkCount).toBe(3);
     expect(prepared.totalCipherBytes).toBe(plaintext.byteLength + 3 * 16);
-    expect(prepared.chunks.every((chunk) => chunk.cipherBytes.byteLength <= 32)).toBe(true);
+    expect(prepared.chunks.every((chunk) => chunk.cipherBytes.byteLength <= 32)).toBe(
+      true
+    );
     expect(new Set(prepared.chunks.map((chunk) => chunk.nonce)).size).toBe(3);
     await expect(
       decryptContentChunksV2({

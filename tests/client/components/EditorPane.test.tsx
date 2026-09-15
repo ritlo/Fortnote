@@ -20,7 +20,12 @@ const mocks = vi.hoisted(() => ({
     updateBlock: vi.fn()
   },
   getFragment: vi.fn(),
-  getProvider: vi.fn(() => ({ awareness: {}, isSynced: false, off: vi.fn(), on: vi.fn() })),
+  getProvider: vi.fn(() => ({
+    awareness: {},
+    isSynced: false,
+    off: vi.fn(),
+    on: vi.fn()
+  })),
   updateBinding: vi.fn()
 }));
 
@@ -30,12 +35,19 @@ vi.mock("@blocknote/react", () => ({
   UploadTab: () => <div />,
   useBlockNoteEditor: () => mocks.editor,
   useComponentsContext: () => null,
-  useCreateBlockNote: (options: unknown) => { mocks.createOptions.push(options); return mocks.editor; },
-  useDictionary: () => ({ file_panel: { embed: { title: "Embed" }, upload: { title: "Upload" } } })
+  useCreateBlockNote: (options: unknown) => {
+    mocks.createOptions.push(options);
+    return mocks.editor;
+  },
+  useDictionary: () => ({
+    file_panel: { embed: { title: "Embed" }, upload: { title: "Upload" } }
+  })
 }));
 
 vi.mock("@blocknote/mantine", () => ({
-  BlockNoteView: ({ children }: { children?: ReactNode }) => <div data-testid="block-note">{children}</div>
+  BlockNoteView: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="block-note">{children}</div>
+  )
 }));
 
 vi.mock("@client/realtime/crdt", () => ({
@@ -98,7 +110,16 @@ describe("EditorPane composition", () => {
     const view = render(
       <StrictMode>
         <EditorPane
-          collaborationState={{ actions: [], announcement: "none", draftRetained: false, editing: false, id: "idle", label: "Ready", saved: true, synchronized: true }}
+          collaborationState={{
+            actions: [],
+            announcement: "none",
+            draftRetained: false,
+            editing: false,
+            id: "idle",
+            label: "Ready",
+            saved: true,
+            synchronized: true
+          }}
           newPassword=""
           notesView="notes"
           recoverySecret={null}
@@ -117,9 +138,16 @@ describe("EditorPane composition", () => {
           updateSelectedNote={vi.fn()}
           uploadSelectedAttachment={vi.fn()}
           recoveryCallbacks={{
-            cleanup: vi.fn(), copy: vi.fn(), discard: vi.fn(), encryptedExport: vi.fn(),
-            reapply: vi.fn(), repairAccess: vi.fn(), retry: vi.fn(), reviewAccess: vi.fn(),
-            reviewDraft: vi.fn(), tryAgain: vi.fn()
+            cleanup: vi.fn(),
+            copy: vi.fn(),
+            discard: vi.fn(),
+            encryptedExport: vi.fn(),
+            reapply: vi.fn(),
+            repairAccess: vi.fn(),
+            retry: vi.fn(),
+            reviewAccess: vi.fn(),
+            reviewDraft: vi.fn(),
+            tryAgain: vi.fn()
           }}
         />
       </StrictMode>
@@ -133,7 +161,16 @@ describe("EditorPane composition", () => {
 function renderEditorPane(overrides: Partial<Parameters<typeof EditorPane>[0]> = {}) {
   return render(
     <EditorPane
-      collaborationState={{ actions: [], announcement: "none", draftRetained: false, editing: false, id: "idle", label: "Ready", saved: true, synchronized: true }}
+      collaborationState={{
+        actions: [],
+        announcement: "none",
+        draftRetained: false,
+        editing: false,
+        id: "idle",
+        label: "Ready",
+        saved: true,
+        synchronized: true
+      }}
       newPassword=""
       notesView="notes"
       recoverySecret={null}
@@ -152,9 +189,16 @@ function renderEditorPane(overrides: Partial<Parameters<typeof EditorPane>[0]> =
       updateSelectedNote={vi.fn()}
       uploadSelectedAttachment={vi.fn()}
       recoveryCallbacks={{
-        cleanup: vi.fn(), copy: vi.fn(), discard: vi.fn(), encryptedExport: vi.fn(),
-        reapply: vi.fn(), repairAccess: vi.fn(), retry: vi.fn(), reviewAccess: vi.fn(),
-        reviewDraft: vi.fn(), tryAgain: vi.fn()
+        cleanup: vi.fn(),
+        copy: vi.fn(),
+        discard: vi.fn(),
+        encryptedExport: vi.fn(),
+        reapply: vi.fn(),
+        repairAccess: vi.fn(),
+        retry: vi.fn(),
+        reviewAccess: vi.fn(),
+        reviewDraft: vi.fn(),
+        tryAgain: vi.fn()
       }}
       {...overrides}
     />
@@ -163,9 +207,18 @@ function renderEditorPane(overrides: Partial<Parameters<typeof EditorPane>[0]> =
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
-    contentLength: 0, cryptoOwnerId: "alice", folderId: null, id: "note-1",
-    isDeleted: false, keyEpoch: 1, noteKeyBase64: "key", ownerUserId: "alice",
-    role: "owner", title: "Title", updatedAt: "2026-07-15T00:00:00.000Z", version: 1,
+    contentLength: 0,
+    cryptoOwnerId: "alice",
+    folderId: null,
+    id: "note-1",
+    isDeleted: false,
+    keyEpoch: 1,
+    noteKeyBase64: "key",
+    ownerUserId: "alice",
+    role: "owner",
+    title: "Title",
+    updatedAt: "2026-07-15T00:00:00.000Z",
+    version: 1,
     ...overrides
   };
 }

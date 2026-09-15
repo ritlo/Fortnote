@@ -8,11 +8,7 @@ import { createApplicationDatabase } from "@server/db/application.js";
 import type { PostgresApplicationDatabase } from "@server/db/postgres/client.js";
 import type { ApplicationDatabase } from "@server/db/types.js";
 import { contentManifestHash } from "@server/content/manifests.js";
-import {
-  csrfHeaders,
-  notePayload,
-  registerPayload
-} from "../support/http.js";
+import { csrfHeaders, notePayload, registerPayload } from "../support/http.js";
 
 export const postgresUrl = process.env.FORTNOTE_POSTGRES_TEST_URL;
 
@@ -83,9 +79,7 @@ export async function createPostgresHarness(
   const database = await createApplicationDatabase(config);
   try {
     const postgres = database as PostgresApplicationDatabase;
-    await postgres.pool.query(
-      "TRUNCATE TABLE users, attachment_objects CASCADE"
-    );
+    await postgres.pool.query("TRUNCATE TABLE users, attachment_objects CASCADE");
     return { config, database, cleanup: () => Promise.resolve() };
   } catch (error) {
     await database.close();
@@ -121,17 +115,13 @@ export function sharingKeyPayload(version = 1) {
   return {
     sharingKeyVersion: version,
     publicKey: `contract_public_sharing_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
-    encryptedPrivateKey:
-      `contract_encrypted_private_sharing_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
-    privateKeyNonce:
-      `contract_private_key_nonce_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
+    encryptedPrivateKey: `contract_encrypted_private_sharing_key_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
+    privateKeyNonce: `contract_private_key_nonce_${String(version)}_abcdefghijklmnopqrstuvwxyz`,
     formatVersion: 1
   };
 }
 
-export function attachmentPayload(
-  ciphertext = Buffer.from([4, 8, 15, 16, 23, 42])
-) {
+export function attachmentPayload(ciphertext = Buffer.from([4, 8, 15, 16, 23, 42])) {
   return {
     id: crypto.randomUUID(),
     ciphertext
@@ -269,7 +259,8 @@ export async function attachmentObjectState(
     chunks: number;
     storedBytes: number;
     usedBytes: number;
-  }>(`
+  }>(
+    `
     SELECT
       object.byte_length::integer AS "byteLength",
       COUNT(chunk.chunk_index)::integer AS chunks,
@@ -284,7 +275,9 @@ export async function attachmentObjectState(
       ON chunk.storage_key = object.storage_key
     WHERE attachment.id = $1
     GROUP BY object.byte_length, account.used_bytes
-  `, [attachmentId]);
+  `,
+    [attachmentId]
+  );
   return requiredRow(result.rows[0], "attachment object state");
 }
 
@@ -298,7 +291,8 @@ export async function uploadLifecycleState(
     objects: number;
     reservedBytes: number;
     usedBytes: number;
-  }>(`
+  }>(
+    `
     SELECT
       (SELECT COUNT(*)::integer FROM content_uploads
         WHERE id = ANY($1::text[]) AND status = 'expired') AS expired,
@@ -307,7 +301,9 @@ export async function uploadLifecycleState(
       account.used_bytes::integer AS "usedBytes"
     FROM storage_accounts account
     WHERE account.user_id = $2
-  `, [uploadIds, userId]);
+  `,
+    [uploadIds, userId]
+  );
   return requiredRow(result.rows[0], "upload lifecycle state");
 }
 
@@ -319,14 +315,17 @@ export async function storageAccountStates(
     reservedBytes: number;
     usedBytes: number;
     userId: string;
-  }>(`
+  }>(
+    `
     SELECT
       user_id AS "userId",
       reserved_bytes::integer AS "reservedBytes",
       used_bytes::integer AS "usedBytes"
     FROM storage_accounts
     WHERE user_id = ANY($1::text[])
-  `, [userIds]);
+  `,
+    [userIds]
+  );
   return Object.fromEntries(
     result.rows.map(({ userId, reservedBytes, usedBytes }) => [
       userId,
@@ -346,7 +345,8 @@ export async function noteDeletionState(
     permanentDeleteEvents: number;
     reservedBytes: number;
     usedBytes: number;
-  }>(`
+  }>(
+    `
     SELECT
       (SELECT COUNT(*)::integer FROM notes WHERE id = $1) AS notes,
       (SELECT COUNT(*)::integer FROM attachments WHERE note_id = $1) AS attachments,
@@ -356,7 +356,9 @@ export async function noteDeletionState(
         AS "permanentDeleteEvents",
       (SELECT reserved_bytes::integer FROM storage_accounts LIMIT 1) AS "reservedBytes",
       (SELECT used_bytes::integer FROM storage_accounts LIMIT 1) AS "usedBytes"
-  `, [noteId]);
+  `,
+    [noteId]
+  );
   return requiredRow(result.rows[0], "note deletion state");
 }
 
@@ -369,7 +371,8 @@ export async function membershipRevocationState(
     keyShares: number;
     revokeEvents: number;
     status: string;
-  }>(`
+  }>(
+    `
     SELECT
       (SELECT status FROM note_memberships
         WHERE note_id = $1 AND user_id = $2) AS status,
@@ -377,7 +380,9 @@ export async function membershipRevocationState(
         WHERE note_id = $1 AND recipient_user_id = $2) AS "keyShares",
       (SELECT COUNT(*)::integer FROM note_events
         WHERE note_id = $1 AND event_type = 'membership.revoked') AS "revokeEvents"
-  `, [noteId, userId]);
+  `,
+    [noteId, userId]
+  );
   return requiredRow(result.rows[0], "membership revocation state");
 }
 
@@ -389,14 +394,17 @@ export async function rotationState(
     keyEpoch: number;
     rotationEvents: number;
     version: number;
-  }>(`
+  }>(
+    `
     SELECT
       (SELECT key_epoch FROM notes WHERE id = $1) AS "keyEpoch",
       (SELECT version FROM notes WHERE id = $1) AS version,
       (SELECT COUNT(*)::integer FROM note_events
         WHERE note_id = $1 AND event_type = 'note.updated'
           AND payload_metadata LIKE '%"keyRotated":true%') AS "rotationEvents"
-  `, [noteId]);
+  `,
+    [noteId]
+  );
   return requiredRow(result.rows[0], "rotation state");
 }
 
@@ -408,14 +416,17 @@ export async function eventPruningState(
     acknowledgements: number;
     events: number;
     minimumCursor: number;
-  }>(`
+  }>(
+    `
     SELECT
       (SELECT COUNT(*)::integer FROM event_cursors
         WHERE cursor >= $1) AS acknowledgements,
       (SELECT COUNT(*)::integer FROM note_events
         WHERE cursor <= $1) AS events,
       (SELECT MIN(cursor)::integer FROM event_cursors) AS "minimumCursor"
-  `, [cursor]);
+  `,
+    [cursor]
+  );
   return requiredRow(result.rows[0], "event pruning state");
 }
 
@@ -432,7 +443,8 @@ export async function contentCommitState(
     reservedBytes: number;
     sectionUpdates: number;
     usedBytes: number;
-  }>(`
+  }>(
+    `
     SELECT
       (SELECT COUNT(*)::integer FROM content_manifests
         WHERE upload_id = $1) AS manifests,
@@ -444,7 +456,9 @@ export async function contentCommitState(
       (SELECT COUNT(*)::integer FROM attachment_object_chunks) AS chunks,
       (SELECT reserved_bytes::integer FROM storage_accounts LIMIT 1) AS "reservedBytes",
       (SELECT used_bytes::integer FROM storage_accounts LIMIT 1) AS "usedBytes"
-  `, [uploadId, noteId]);
+  `,
+    [uploadId, noteId]
+  );
   return requiredRow(result.rows[0], "content commit state");
 }
 

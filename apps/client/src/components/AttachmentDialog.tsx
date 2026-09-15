@@ -60,7 +60,9 @@ export function AttachmentDialog({
       returnFocusRef.current = null;
     };
     dialog.addEventListener("close", handleClose);
-    return () => { dialog.removeEventListener("close", handleClose); };
+    return () => {
+      dialog.removeEventListener("close", handleClose);
+    };
   }, [onClose]);
 
   useEffect(() => {
@@ -91,7 +93,9 @@ export function AttachmentDialog({
           );
         }
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [resolveAttachmentUrl, selectedAttachment]);
 
   if (!open && !dialogRef.current?.open) return null;
@@ -118,7 +122,11 @@ export function AttachmentDialog({
   }
 
   return (
-    <dialog ref={dialogRef} className="attachment-dialog" aria-label={`Attachments for ${noteTitle}`}>
+    <dialog
+      ref={dialogRef}
+      className="attachment-dialog"
+      aria-label={`Attachments for ${noteTitle}`}
+    >
       <header className="attachment-dialog-header">
         <div className="attachment-dialog-heading">
           {inPreview ? (
@@ -126,7 +134,9 @@ export function AttachmentDialog({
               className="icon-button"
               type="button"
               aria-label="Back to attachments"
-              onClick={() => { setSelectedAttachmentId(null); }}
+              onClick={() => {
+                setSelectedAttachmentId(null);
+              }}
             >
               <ArrowLeft size={18} aria-hidden="true" />
             </button>
@@ -141,7 +151,9 @@ export function AttachmentDialog({
           className="icon-button"
           type="button"
           aria-label="Close attachments"
-          onClick={() => { dialogRef.current?.close(); }}
+          onClick={() => {
+            dialogRef.current?.close();
+          }}
         >
           <X size={18} aria-hidden="true" />
         </button>
@@ -156,7 +168,9 @@ export function AttachmentDialog({
             downloadAttachment={downloadAttachment}
             error={previewError}
             previewUrl={previewUrl}
-            onDelete={() => { void handleDelete(); }}
+            onDelete={() => {
+              void handleDelete();
+            }}
           />
         ) : (
           <AttachmentList
@@ -183,10 +197,18 @@ function AttachmentList({
   onSelect: (attachmentId: string) => void;
 }) {
   if (loading && attachments === undefined) {
-    return <p className="attachment-dialog-state" role="status">Loading attachments…</p>;
+    return (
+      <p className="attachment-dialog-state" role="status">
+        Loading attachments…
+      </p>
+    );
   }
   if (error && attachments === undefined) {
-    return <p className="attachment-dialog-state attachment-dialog-error" role="alert">{error}</p>;
+    return (
+      <p className="attachment-dialog-state attachment-dialog-error" role="alert">
+        {error}
+      </p>
+    );
   }
   if (!attachments || attachments.length === 0) {
     return <p className="attachment-dialog-state">No attachments in this note.</p>;
@@ -199,16 +221,26 @@ function AttachmentList({
           className="attachment-card"
           type="button"
           aria-label={attachment.filename}
-          onClick={() => { onSelect(attachment.id); }}
+          onClick={() => {
+            onSelect(attachment.id);
+          }}
         >
-          <span className={`attachment-thumb ${attachment.mimeType.startsWith("image/") ? "image" : ""}`}>
-            {attachment.mimeType.startsWith("image/") ? "IMG" : <File size={20} aria-hidden="true" />}
+          <span
+            className={`attachment-thumb ${attachment.mimeType.startsWith("image/") ? "image" : ""}`}
+          >
+            {attachment.mimeType.startsWith("image/") ? (
+              "IMG"
+            ) : (
+              <File size={20} aria-hidden="true" />
+            )}
           </span>
           <span className="attachment-card-copy">
             <strong>{attachment.filename}</strong>
             <small>{formatAttachmentMetadata(attachment)}</small>
           </span>
-          <span className="attachment-chevron" aria-hidden="true">›</span>
+          <span className="attachment-chevron" aria-hidden="true">
+            ›
+          </span>
         </button>
       ))}
     </div>
@@ -245,7 +277,9 @@ function AttachmentPreview({
             <button
               className="text-button"
               type="button"
-              onClick={() => { void downloadAttachment(attachment); }}
+              onClick={() => {
+                void downloadAttachment(attachment);
+              }}
             >
               <Download size={16} aria-hidden="true" />
               Download
@@ -282,7 +316,9 @@ function AttachmentPreview({
             </div>
           )
         ) : (
-          <p className="attachment-dialog-state" role="status">Preparing preview…</p>
+          <p className="attachment-dialog-state" role="status">
+            Preparing preview…
+          </p>
         )}
       </div>
     </div>

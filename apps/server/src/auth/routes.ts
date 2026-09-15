@@ -18,7 +18,11 @@ import type { AccountIdentity } from "./accountRepository.js";
 const kdfParamsSchema = z.object({
   salt: z.string().min(16).max(128),
   opsLimit: z.number().int().positive().max(10),
-  memLimit: z.number().int().positive().max(1024 * 1024 * 1024),
+  memLimit: z
+    .number()
+    .int()
+    .positive()
+    .max(1024 * 1024 * 1024),
   version: z.number().int().positive().max(100)
 });
 
@@ -209,11 +213,11 @@ export function createAuthRouter(context: AppContext): Router {
     }
 
     const identity = await findAccountIdentity(context, username.data);
-    const row = identity
-      ? await context.db.accounts.kdfParameters(identity.id)
-      : null;
+    const row = identity ? await context.db.accounts.kdfParameters(identity.id) : null;
 
-    response.json(row ?? unknownUserKdfResponse(canonicalizeHandle(username.data) ?? username.data));
+    response.json(
+      row ?? unknownUserKdfResponse(canonicalizeHandle(username.data) ?? username.data)
+    );
   });
 
   router.get("/recovery-params", ...preAuthRateLimits, async (request, response) => {
@@ -229,7 +233,8 @@ export function createAuthRouter(context: AppContext): Router {
       : null;
 
     response.json(
-      row ?? unknownUserRecoveryResponse(canonicalizeHandle(username.data) ?? username.data)
+      row ??
+        unknownUserRecoveryResponse(canonicalizeHandle(username.data) ?? username.data)
     );
   });
 
@@ -247,9 +252,7 @@ export function createAuthRouter(context: AppContext): Router {
     const displayName = accountDisplayName(parsed.data.username);
     const userId = crypto.randomUUID();
     const authVerifierHash = await argon2.hash(parsed.data.authVerifier);
-    const recoveryAuthVerifierHash = await argon2.hash(
-      parsed.data.recoveryAuthVerifier
-    );
+    const recoveryAuthVerifierHash = await argon2.hash(parsed.data.recoveryAuthVerifier);
 
     try {
       await context.db.accounts.register({
@@ -340,9 +343,7 @@ export function createAuthRouter(context: AppContext): Router {
     }
 
     const identity = await findAccountIdentity(context, parsed.data.username);
-    const row = identity
-      ? await context.db.accounts.recoveryVerifier(identity.id)
-      : null;
+    const row = identity ? await context.db.accounts.recoveryVerifier(identity.id) : null;
 
     const dummyVerifierHash = await DUMMY_AUTH_VERIFIER_HASH;
     const verifierMatches = await argon2.verify(
@@ -402,7 +403,9 @@ export function createAuthRouter(context: AppContext): Router {
       sendApiError(response, "unauthorized", "Not signed in");
       return;
     }
-    const parsed = z.object({ handle: z.string().min(1).max(128) }).safeParse(request.body);
+    const parsed = z
+      .object({ handle: z.string().min(1).max(128) })
+      .safeParse(request.body);
     const canonicalHandle = parsed.success
       ? canonicalizeHandle(parsed.data.handle)
       : null;

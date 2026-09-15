@@ -1,7 +1,4 @@
-import type {
-  SectionRejectionCode,
-  SectionWriteInput
-} from "./contracts.js";
+import type { SectionRejectionCode, SectionWriteInput } from "./contracts.js";
 
 export interface WritableSectionAccess {
   cryptoOwnerId: string;

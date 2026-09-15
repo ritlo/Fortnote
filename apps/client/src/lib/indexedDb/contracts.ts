@@ -124,7 +124,10 @@ export class IndexedDbOperationError extends Error {
 }
 
 export function normalizeIndexedDbError(error: unknown): Error {
-  if (error instanceof IndexedDbCapacityError || error instanceof IndexedDbOperationError) {
+  if (
+    error instanceof IndexedDbCapacityError ||
+    error instanceof IndexedDbOperationError
+  ) {
     return error;
   }
   if (isNamedError(error, "QuotaExceededError")) {
@@ -156,14 +159,20 @@ export interface FortnoteIndexedDb {
   ): Promise<void>;
   deleteSectionCache(record: CacheKey): Promise<void>;
   deleteDatabase(): Promise<void>;
-  evictSectionCache(userId: string, maxEntries: number, maxBytes?: number): Promise<string[]>;
+  evictSectionCache(
+    userId: string,
+    maxEntries: number,
+    maxBytes?: number
+  ): Promise<string[]>;
   getAcknowledgement(record: OutboxKey): Promise<AcknowledgementRecord | null>;
   getContentTransfer(
     userId: string,
     uploadId: string
   ): Promise<EncryptedContentTransferRecord | null>;
   getOutbox(record: OutboxKey): Promise<EncryptedOutboxRecord | null>;
-  getSearchIndexSection(record: SearchIndexKey): Promise<ProtectedSearchIndexRecord | null>;
+  getSearchIndexSection(
+    record: SearchIndexKey
+  ): Promise<ProtectedSearchIndexRecord | null>;
   getSectionCache(record: CacheKey): Promise<SectionCacheRecord | null>;
   listOutbox(userId: string): Promise<EncryptedOutboxRecord[]>;
   listContentTransfers(userId: string): Promise<EncryptedContentTransferRecord[]>;
@@ -183,5 +192,7 @@ export interface FortnoteIndexedDb {
 }
 
 function isNamedError(error: unknown, name: string): boolean {
-  return typeof error === "object" && error !== null && "name" in error && error.name === name;
+  return (
+    typeof error === "object" && error !== null && "name" in error && error.name === name
+  );
 }

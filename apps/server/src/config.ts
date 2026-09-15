@@ -142,69 +142,70 @@ export function getConfig(
     throw new Error("Invalid DATABASE_PROVIDER: expected sqlite or postgres");
   }
 
-  const database = databaseProvider === "sqlite"
-    ? {
-        provider: "sqlite" as const,
-        path: resolveConfiguredPath(
-          baseDirectory,
-          env.DATABASE_PATH ??
-            (fileConfig.database.provider === "sqlite"
-              ? fileConfig.database.path
-              : DEFAULT_SQLITE_PATH),
-          true
-        )
-      }
-    : {
-        provider: "postgres" as const,
-        url: postgresUrl(
-          env.DATABASE_URL ??
-            (fileConfig.database.provider === "postgres"
-              ? fileConfig.database.url
-              : undefined)
-        ),
-        maxConnections: environmentPositiveInteger(
-          env,
-          "DATABASE_MAX_CONNECTIONS",
-          fileConfig.database.provider === "postgres"
-            ? fileConfig.database.maxConnections
-            : DEFAULT_POSTGRES_MAX_CONNECTIONS
-        ),
-        connectionTimeoutMs: environmentPositiveInteger(
-          env,
-          "DATABASE_CONNECTION_TIMEOUT_MS",
-          fileConfig.database.provider === "postgres"
-            ? fileConfig.database.connectionTimeoutMs
-            : DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS
-        ),
-        statementTimeoutMs: environmentPositiveInteger(
-          env,
-          "DATABASE_STATEMENT_TIMEOUT_MS",
-          fileConfig.database.provider === "postgres"
-            ? fileConfig.database.statementTimeoutMs
-            : DEFAULT_POSTGRES_STATEMENT_TIMEOUT_MS
-        ),
-        lockTimeoutMs: environmentPositiveInteger(
-          env,
-          "DATABASE_LOCK_TIMEOUT_MS",
-          fileConfig.database.provider === "postgres"
-            ? fileConfig.database.lockTimeoutMs
-            : DEFAULT_POSTGRES_LOCK_TIMEOUT_MS
-        ),
-        startupRetryAttempts: environmentPositiveInteger(
-          env,
-          "DATABASE_STARTUP_RETRY_ATTEMPTS",
-          fileConfig.database.provider === "postgres"
-            ? fileConfig.database.startupRetryAttempts
-            : DEFAULT_POSTGRES_STARTUP_RETRY_ATTEMPTS
-        ),
-        startupRetryDelayMs: environmentPositiveInteger(
-          env,
-          "DATABASE_STARTUP_RETRY_DELAY_MS",
-          fileConfig.database.provider === "postgres"
-            ? fileConfig.database.startupRetryDelayMs
-            : DEFAULT_POSTGRES_STARTUP_RETRY_DELAY_MS
-        )
-      };
+  const database =
+    databaseProvider === "sqlite"
+      ? {
+          provider: "sqlite" as const,
+          path: resolveConfiguredPath(
+            baseDirectory,
+            env.DATABASE_PATH ??
+              (fileConfig.database.provider === "sqlite"
+                ? fileConfig.database.path
+                : DEFAULT_SQLITE_PATH),
+            true
+          )
+        }
+      : {
+          provider: "postgres" as const,
+          url: postgresUrl(
+            env.DATABASE_URL ??
+              (fileConfig.database.provider === "postgres"
+                ? fileConfig.database.url
+                : undefined)
+          ),
+          maxConnections: environmentPositiveInteger(
+            env,
+            "DATABASE_MAX_CONNECTIONS",
+            fileConfig.database.provider === "postgres"
+              ? fileConfig.database.maxConnections
+              : DEFAULT_POSTGRES_MAX_CONNECTIONS
+          ),
+          connectionTimeoutMs: environmentPositiveInteger(
+            env,
+            "DATABASE_CONNECTION_TIMEOUT_MS",
+            fileConfig.database.provider === "postgres"
+              ? fileConfig.database.connectionTimeoutMs
+              : DEFAULT_POSTGRES_CONNECTION_TIMEOUT_MS
+          ),
+          statementTimeoutMs: environmentPositiveInteger(
+            env,
+            "DATABASE_STATEMENT_TIMEOUT_MS",
+            fileConfig.database.provider === "postgres"
+              ? fileConfig.database.statementTimeoutMs
+              : DEFAULT_POSTGRES_STATEMENT_TIMEOUT_MS
+          ),
+          lockTimeoutMs: environmentPositiveInteger(
+            env,
+            "DATABASE_LOCK_TIMEOUT_MS",
+            fileConfig.database.provider === "postgres"
+              ? fileConfig.database.lockTimeoutMs
+              : DEFAULT_POSTGRES_LOCK_TIMEOUT_MS
+          ),
+          startupRetryAttempts: environmentPositiveInteger(
+            env,
+            "DATABASE_STARTUP_RETRY_ATTEMPTS",
+            fileConfig.database.provider === "postgres"
+              ? fileConfig.database.startupRetryAttempts
+              : DEFAULT_POSTGRES_STARTUP_RETRY_ATTEMPTS
+          ),
+          startupRetryDelayMs: environmentPositiveInteger(
+            env,
+            "DATABASE_STARTUP_RETRY_DELAY_MS",
+            fileConfig.database.provider === "postgres"
+              ? fileConfig.database.startupRetryDelayMs
+              : DEFAULT_POSTGRES_STARTUP_RETRY_DELAY_MS
+          )
+        };
 
   return {
     port: environmentPositiveInteger(env, "PORT", fileConfig.server.port),
@@ -220,9 +221,10 @@ export function getConfig(
       fileConfig.server.cookieSecure
     ),
     allowedOrigin: env.ALLOWED_ORIGIN ?? fileConfig.server.allowedOrigin,
-    webRoot: configuredWebRoot === null
-      ? null
-      : resolveConfiguredPath(baseDirectory, configuredWebRoot),
+    webRoot:
+      configuredWebRoot === null
+        ? null
+        : resolveConfiguredPath(baseDirectory, configuredWebRoot),
     jsonControlMaxBytes: environmentPositiveInteger(
       env,
       "JSON_CONTROL_MAX_BYTES",
@@ -305,7 +307,9 @@ function findConfigFile(startDirectory: string): string | undefined {
   }
 }
 
-function parseConfigFile(configPath: string | undefined): z.infer<typeof configFileSchema> {
+function parseConfigFile(
+  configPath: string | undefined
+): z.infer<typeof configFileSchema> {
   let input: unknown = {};
   if (configPath) {
     const document = parseDocument(fs.readFileSync(configPath, "utf8"));
@@ -322,7 +326,9 @@ function parseConfigFile(configPath: string | undefined): z.infer<typeof configF
     const detail = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "configuration"}: ${issue.message}`)
       .join("; ");
-    throw new Error(`Invalid configuration${configPath ? ` in ${configPath}` : ""}: ${detail}`);
+    throw new Error(
+      `Invalid configuration${configPath ? ` in ${configPath}` : ""}: ${detail}`
+    );
   }
   return parsed.data;
 }

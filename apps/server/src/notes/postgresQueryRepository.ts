@@ -19,9 +19,15 @@ const noteSelection = {
   titleCipher: schema.notes.titleCipher,
   titleNonce: schema.notes.titleNonce,
   titleFormatVersion: schema.notes.titleFormatVersion,
-  encryptedNoteKey: sql<string | null>`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.encryptedNoteKey} ELSE NULL END`,
-  noteKeyNonce: sql<string | null>`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyNonce} ELSE NULL END`,
-  noteKeyFormatVersion: sql<number | null>`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyFormatVersion} ELSE NULL END`,
+  encryptedNoteKey: sql<
+    string | null
+  >`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.encryptedNoteKey} ELSE NULL END`,
+  noteKeyNonce: sql<
+    string | null
+  >`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyNonce} ELSE NULL END`,
+  noteKeyFormatVersion: sql<
+    number | null
+  >`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyFormatVersion} ELSE NULL END`,
   contentLength: schema.notes.contentLength,
   legacyContentAvailable: sql<boolean>`${schema.notes.contentCipher} <> ''`,
   version: schema.notes.version,
@@ -44,7 +50,10 @@ export class PostgresNoteQueryRepository implements NoteQueryRepository {
     return this.orm
       .select(noteSelection)
       .from(schema.notes)
-      .innerJoin(schema.noteMemberships, eq(schema.noteMemberships.noteId, schema.notes.id))
+      .innerJoin(
+        schema.noteMemberships,
+        eq(schema.noteMemberships.noteId, schema.notes.id)
+      )
       .where(
         and(
           eq(schema.noteMemberships.userId, userId),
@@ -59,7 +68,10 @@ export class PostgresNoteQueryRepository implements NoteQueryRepository {
     const rows = await this.orm
       .select(noteSelection)
       .from(schema.notes)
-      .innerJoin(schema.noteMemberships, eq(schema.noteMemberships.noteId, schema.notes.id))
+      .innerJoin(
+        schema.noteMemberships,
+        eq(schema.noteMemberships.noteId, schema.notes.id)
+      )
       .where(
         and(
           eq(schema.notes.id, noteId),

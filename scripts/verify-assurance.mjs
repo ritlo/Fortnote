@@ -18,7 +18,11 @@ const performanceBudgets = {
 };
 
 export function nearestRankP95(values) {
-  if (!Array.isArray(values) || values.length === 0 || values.some((value) => !Number.isFinite(value))) {
+  if (
+    !Array.isArray(values) ||
+    values.length === 0 ||
+    values.some((value) => !Number.isFinite(value))
+  ) {
     throw new TypeError("nearestRankP95 requires finite samples");
   }
   const sorted = [...values].sort((left, right) => left - right);
@@ -45,20 +49,24 @@ export function summarizePerformanceMetric(name, budgetMs, samples) {
 export function verifyPerformanceMetrics(metrics, baselineP95Ms) {
   const errors = [];
   const byName = new Map(metrics.map((metric) => [metric.name, metric]));
-  if (metrics.length !== 6 || byName.size !== 6) errors.push("Performance requires exactly six metrics.");
+  if (metrics.length !== 6 || byName.size !== 6)
+    errors.push("Performance requires exactly six metrics.");
   for (const [name, budgetMs] of Object.entries(performanceBudgets)) {
     const metric = byName.get(name);
     if (!metric) {
       errors.push(`Performance metric ${name} is missing.`);
       continue;
     }
-    if (metric.budgetMs !== budgetMs) errors.push(`Performance metric ${name} has the wrong budget.`);
-    if (metric.sampleCount < 20) errors.push(`Performance metric ${name} requires at least 20 samples.`);
+    if (metric.budgetMs !== budgetMs)
+      errors.push(`Performance metric ${name} has the wrong budget.`);
+    if (metric.sampleCount < 20)
+      errors.push(`Performance metric ${name} requires at least 20 samples.`);
     if (metric.successRatePassed === false || (metric.successRate ?? 1) < 0.95) {
       errors.push(`Performance success rate failed for ${name}.`);
     }
     const baseline = baselineP95Ms[name];
-    if (!Number.isFinite(baseline)) errors.push(`Performance baseline is missing for ${name}.`);
+    if (!Number.isFinite(baseline))
+      errors.push(`Performance baseline is missing for ${name}.`);
     else if (((metric.p95Ms - baseline) / baseline) * 100 > 10) {
       errors.push(`Performance regression exceeded 10 percent for ${name}.`);
     }
@@ -67,9 +75,14 @@ export function verifyPerformanceMetrics(metrics, baselineP95Ms) {
 }
 
 export function fingerprintPerformanceEnvironment(environment) {
-  const normalized = Object.fromEntries(Object.entries(environment)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => [key, ["browser", "node"].includes(key) ? majorVersion(value) : value]));
+  const normalized = Object.fromEntries(
+    Object.entries(environment)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => [
+        key,
+        ["browser", "node"].includes(key) ? majorVersion(value) : value
+      ])
+  );
   return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
 }
 
@@ -112,7 +125,8 @@ export function verifyAssuranceArtifacts(root) {
 
 export function findMutationSurvivor(value) {
   if (!value || typeof value !== "object") return undefined;
-  if (String(value.status).toLowerCase() === "survived" && value.equivalent !== true) return value;
+  if (String(value.status).toLowerCase() === "survived" && value.equivalent !== true)
+    return value;
   for (const child of Array.isArray(value) ? value : Object.values(value)) {
     const survivor = findMutationSurvivor(child);
     if (survivor) return survivor;
@@ -120,7 +134,9 @@ export function findMutationSurvivor(value) {
   return undefined;
 }
 
-const isMain = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+const isMain =
+  process.argv[1] &&
+  pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
 if (isMain) {
   try {
     const options = parseArguments(process.argv.slice(2));

@@ -386,7 +386,9 @@ async function decryptProtectedJsonV2(
   kind: string,
   context: Record<string, string | number | boolean>
 ): Promise<unknown> {
-  return JSON.parse(await decryptProtectedTextV2(envelope, key, kind, context)) as unknown;
+  return JSON.parse(
+    await decryptProtectedTextV2(envelope, key, kind, context)
+  ) as unknown;
 }
 
 async function encryptProtectedBytesV2(

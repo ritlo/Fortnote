@@ -8,10 +8,7 @@ import {
   toBase64,
   utf8
 } from "@fortnote/shared";
-import type {
-  SharingKeyEnvelope,
-  StoreSharingKeyPayload
-} from "../api/contracts";
+import type { SharingKeyEnvelope, StoreSharingKeyPayload } from "../api/contracts";
 import {
   decryptSharingPrivateKeyEnvelopeV2,
   encryptSharingPrivateKeyEnvelopeV2
@@ -76,19 +73,16 @@ export async function openUserSharingKey(input: {
     nonce: input.envelope.privateKeyNonce,
     formatVersion: input.envelope.formatVersion
   };
-  const privateKey = input.envelope.formatVersion === 2
-    ? await decryptSharingPrivateKeyEnvelopeV2({
-        userId: requireEnvelopeUserId(input.userId),
-        sharingKeyVersion: input.envelope.sharingKeyVersion,
-        publicKey: input.envelope.publicKey,
-        rootKey: input.rootKey,
-        envelope: encryptedPrivateKey
-      })
-    : await decryptBytes(
-        encryptedPrivateKey,
-        input.rootKey,
-        SHARING_PRIVATE_KEY_AAD
-      );
+  const privateKey =
+    input.envelope.formatVersion === 2
+      ? await decryptSharingPrivateKeyEnvelopeV2({
+          userId: requireEnvelopeUserId(input.userId),
+          sharingKeyVersion: input.envelope.sharingKeyVersion,
+          publicKey: input.envelope.publicKey,
+          rootKey: input.rootKey,
+          envelope: encryptedPrivateKey
+        })
+      : await decryptBytes(encryptedPrivateKey, input.rootKey, SHARING_PRIVATE_KEY_AAD);
 
   return {
     publicKey: input.envelope.publicKey,

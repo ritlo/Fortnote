@@ -3,10 +3,7 @@ import { notifyCrdtSectionChange } from "./changes";
 import { ROOT_SECTION_ID } from "./document";
 import { broadcastUpdate } from "./outbound";
 import { CrdtProvider } from "./provider";
-import {
-  getCrdtTransport,
-  rejectCrdtTransportWaiters
-} from "./runtime";
+import { getCrdtTransport, rejectCrdtTransportWaiters } from "./runtime";
 import {
   bindingKey,
   bindings,
@@ -160,7 +157,10 @@ export function removeCrdtNote(noteId: string, expectedProvider?: CrdtProvider):
   if (noteBindings.length === 0 && !expectedProvider) {
     return;
   }
-  if (expectedProvider && !noteBindings.some(({ provider }) => provider === expectedProvider)) {
+  if (
+    expectedProvider &&
+    !noteBindings.some(({ provider }) => provider === expectedProvider)
+  ) {
     expectedProvider.awareness.destroy();
     expectedProvider.doc.destroy();
     return;
@@ -181,17 +181,11 @@ export function clearCrdtNotes(): void {
   rejectCrdtTransportWaiters(new Error("Vault locked"));
 }
 
-export function noteBindings(
-  note: DecryptedNote,
-  includeRoot: boolean
-): Binding[] {
+export function noteBindings(note: DecryptedNote, includeRoot: boolean): Binding[] {
   const sectionId = note.rootSectionId ?? ROOT_SECTION_ID;
   const section = getOrCreateBinding(note.id, sectionId, note.keyEpoch);
   if (!includeRoot || sectionId === ROOT_SECTION_ID) {
     return [section];
   }
-  return [
-    getOrCreateBinding(note.id, ROOT_SECTION_ID, note.keyEpoch),
-    section
-  ];
+  return [getOrCreateBinding(note.id, ROOT_SECTION_ID, note.keyEpoch), section];
 }

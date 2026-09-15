@@ -14,9 +14,7 @@ const REMOVABLE_UPLOAD_STATUSES = new Set(["aborted", "expired", "invalid"]);
 
 type PostgresDatabase = NodePgDatabase<typeof schema>;
 
-export class PostgresContentMaintenanceRepository
-  implements ContentMaintenanceRepository
-{
+export class PostgresContentMaintenanceRepository implements ContentMaintenanceRepository {
   constructor(private readonly orm: PostgresDatabase) {}
 
   expireUploads(cutoff: string, limit: number): Promise<ExpiredContentUploadPage> {
@@ -29,10 +27,12 @@ export class PostgresContentMaintenanceRepository
         })
         .from(schema.contentUploads)
         .innerJoin(schema.notes, eq(schema.notes.id, schema.contentUploads.noteId))
-        .where(and(
-          inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES),
-          lte(schema.contentUploads.expiresAt, cutoff)
-        ))
+        .where(
+          and(
+            inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES),
+            lte(schema.contentUploads.expiresAt, cutoff)
+          )
+        )
         .orderBy(schema.contentUploads.expiresAt, schema.contentUploads.id)
         .limit(limit)
         .for("update", { of: schema.contentUploads, skipLocked: true });
@@ -42,11 +42,13 @@ export class PostgresContentMaintenanceRepository
         const claimed = await transaction
           .update(schema.contentUploads)
           .set({ status: "expired", updatedAt: sql`CURRENT_TIMESTAMP` })
-          .where(and(
-            eq(schema.contentUploads.id, candidate.uploadId),
-            inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES),
-            lte(schema.contentUploads.expiresAt, cutoff)
-          ))
+          .where(
+            and(
+              eq(schema.contentUploads.id, candidate.uploadId),
+              inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES),
+              lte(schema.contentUploads.expiresAt, cutoff)
+            )
+          )
           .returning({ id: schema.contentUploads.id });
         if (claimed.length !== 1) {
           continue;
@@ -74,10 +76,12 @@ export class PostgresContentMaintenanceRepository
       const remaining = await transaction
         .select({ id: schema.contentUploads.id })
         .from(schema.contentUploads)
-        .where(and(
-          inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES),
-          lte(schema.contentUploads.expiresAt, cutoff)
-        ))
+        .where(
+          and(
+            inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES),
+            lte(schema.contentUploads.expiresAt, cutoff)
+          )
+        )
         .limit(1);
       return { uploads, hasMore: remaining.length > 0 };
     });
@@ -104,31 +108,32 @@ export class PostgresContentMaintenanceRepository
     return manifests.length === 0 && REMOVABLE_UPLOAD_STATUSES.has(upload.status);
   }
 
-  removeOrphanObjects(
-    cutoff: string,
-    limit: number
-  ): Promise<StorageObjectCleanupPage> {
+  removeOrphanObjects(cutoff: string, limit: number): Promise<StorageObjectCleanupPage> {
     return this.orm.transaction(async (transaction) => {
       const candidates = await transaction
         .select({ storageKey: schema.attachmentObjects.storageKey })
         .from(schema.attachmentObjects)
-        .where(and(
-          lt(schema.attachmentObjects.createdAt, cutoff),
-          notExists(
-            transaction
-              .select({ one: sql`1` })
-              .from(schema.attachments)
-              .where(eq(schema.attachments.storageKey, schema.attachmentObjects.storageKey))
-          ),
-          notExists(
-            transaction
-              .select({ one: sql`1` })
-              .from(schema.contentChunks)
-              .where(
-                sql`${schema.contentChunks.storageKey} = ${schema.attachmentObjects.storageKey}::text`
-              )
+        .where(
+          and(
+            lt(schema.attachmentObjects.createdAt, cutoff),
+            notExists(
+              transaction
+                .select({ one: sql`1` })
+                .from(schema.attachments)
+                .where(
+                  eq(schema.attachments.storageKey, schema.attachmentObjects.storageKey)
+                )
+            ),
+            notExists(
+              transaction
+                .select({ one: sql`1` })
+                .from(schema.contentChunks)
+                .where(
+                  sql`${schema.contentChunks.storageKey} = ${schema.attachmentObjects.storageKey}::text`
+                )
+            )
           )
-        ))
+        )
         .orderBy(schema.attachmentObjects.createdAt, schema.attachmentObjects.storageKey)
         .limit(limit)
         .for("update", { skipLocked: true });
@@ -137,10 +142,12 @@ export class PostgresContentMaintenanceRepository
       }
       const removed = await transaction
         .delete(schema.attachmentObjects)
-        .where(inArray(
-          schema.attachmentObjects.storageKey,
-          candidates.map(({ storageKey }) => storageKey)
-        ))
+        .where(
+          inArray(
+            schema.attachmentObjects.storageKey,
+            candidates.map(({ storageKey }) => storageKey)
+          )
+        )
         .returning({ storageKey: schema.attachmentObjects.storageKey });
       return {
         scanned: candidates.length,
@@ -211,7 +218,9 @@ async function reconcileStorageAccount(
   userId: string
 ): Promise<void> {
   const contentRows = await database
-    .select({ bytes: sql<number>`COALESCE(SUM(${schema.contentManifests.totalCipherBytes}), 0)` })
+    .select({
+      bytes: sql<number>`COALESCE(SUM(${schema.contentManifests.totalCipherBytes}), 0)`
+    })
     .from(schema.contentManifests)
     .innerJoin(schema.notes, eq(schema.notes.id, schema.contentManifests.noteId))
     .where(eq(schema.notes.userId, userId));
@@ -221,13 +230,17 @@ async function reconcileStorageAccount(
     .innerJoin(schema.notes, eq(schema.notes.id, schema.attachments.noteId))
     .where(eq(schema.notes.userId, userId));
   const reservedRows = await database
-    .select({ bytes: sql<number>`COALESCE(SUM(${schema.contentUploads.totalCipherBytes}), 0)` })
+    .select({
+      bytes: sql<number>`COALESCE(SUM(${schema.contentUploads.totalCipherBytes}), 0)`
+    })
     .from(schema.contentUploads)
     .innerJoin(schema.notes, eq(schema.notes.id, schema.contentUploads.noteId))
-    .where(and(
-      eq(schema.notes.userId, userId),
-      inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES)
-    ));
+    .where(
+      and(
+        eq(schema.notes.userId, userId),
+        inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES)
+      )
+    );
   const usedBytes = storageBytes(
     storageBytes(contentRows[0]!.bytes) + storageBytes(attachmentRows[0]!.bytes)
   );

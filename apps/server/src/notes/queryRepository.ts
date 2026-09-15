@@ -82,9 +82,15 @@ const noteSelection = {
   titleCipher: schema.notes.titleCipher,
   titleNonce: schema.notes.titleNonce,
   titleFormatVersion: schema.notes.titleFormatVersion,
-  encryptedNoteKey: sql<string | null>`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.encryptedNoteKey} ELSE NULL END`,
-  noteKeyNonce: sql<string | null>`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyNonce} ELSE NULL END`,
-  noteKeyFormatVersion: sql<number | null>`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyFormatVersion} ELSE NULL END`,
+  encryptedNoteKey: sql<
+    string | null
+  >`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.encryptedNoteKey} ELSE NULL END`,
+  noteKeyNonce: sql<
+    string | null
+  >`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyNonce} ELSE NULL END`,
+  noteKeyFormatVersion: sql<
+    number | null
+  >`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyFormatVersion} ELSE NULL END`,
   contentLength: schema.notes.contentLength,
   legacyContentAvailable: sql<number>`CASE WHEN ${schema.notes.contentCipher} <> '' THEN 1 ELSE 0 END`,
   version: schema.notes.version,
@@ -115,7 +121,10 @@ export class SqliteNoteQueryRepository implements NoteQueryRepository {
     const rows = this.orm
       .select(noteSelection)
       .from(schema.notes)
-      .innerJoin(schema.noteMemberships, eq(schema.noteMemberships.noteId, schema.notes.id))
+      .innerJoin(
+        schema.noteMemberships,
+        eq(schema.noteMemberships.noteId, schema.notes.id)
+      )
       .where(
         and(
           eq(schema.noteMemberships.userId, userId),
@@ -132,7 +141,10 @@ export class SqliteNoteQueryRepository implements NoteQueryRepository {
     const row = this.orm
       .select(noteSelection)
       .from(schema.notes)
-      .innerJoin(schema.noteMemberships, eq(schema.noteMemberships.noteId, schema.notes.id))
+      .innerJoin(
+        schema.noteMemberships,
+        eq(schema.noteMemberships.noteId, schema.notes.id)
+      )
       .where(
         and(
           eq(schema.notes.id, noteId),
@@ -178,10 +190,7 @@ export class SqliteNoteQueryRepository implements NoteQueryRepository {
     return Promise.resolve(rows);
   }
 
-  keyShare(
-    noteId: string,
-    recipientUserId: string
-  ): Promise<NoteKeyShareRecord | null> {
+  keyShare(noteId: string, recipientUserId: string): Promise<NoteKeyShareRecord | null> {
     const row = this.orm
       .select()
       .from(schema.noteKeyShares)

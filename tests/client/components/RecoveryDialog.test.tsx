@@ -2,7 +2,10 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deriveCollaborationState, defaultCollaborationDimensions } from "@client/lib/collaborationState";
+import {
+  deriveCollaborationState,
+  defaultCollaborationDimensions
+} from "@client/lib/collaborationState";
 import { RecoveryDialog } from "@client/components/RecoveryDialog";
 import type { RecoveryCallbacks } from "@client/components/RecoveryPanel";
 

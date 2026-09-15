@@ -60,31 +60,40 @@ describe("CRDT lifecycle and recovery", () => {
   it.each(["owner", "editor"] as const)(
     "checkpoints a %s open document after a key epoch advances",
     async (role) => {
-    const send = vi.fn().mockResolvedValue(undefined);
-    const discard = vi.fn();
-    setCrdtTransport({ discard, send, subscribe: vi.fn() });
-    openCrdtSection(note(), "root");
-    await finishCrdtSync(note().id, 1, false, "root");
-    expect(send).toHaveBeenCalledOnce();
-    send.mockClear();
-    setFragmentBody(getCrdtProvider(note().id, 1, "root").doc, "Live body before rotation");
-    await vi.waitFor(() => {
+      const send = vi.fn().mockResolvedValue(undefined);
+      const discard = vi.fn();
+      setCrdtTransport({ discard, send, subscribe: vi.fn() });
+      openCrdtSection(note(), "root");
+      await finishCrdtSync(note().id, 1, false, "root");
       expect(send).toHaveBeenCalledOnce();
-    });
-    send.mockClear();
+      send.mockClear();
+      setFragmentBody(
+        getCrdtProvider(note().id, 1, "root").doc,
+        "Live body before rotation"
+      );
+      await vi.waitFor(() => {
+        expect(send).toHaveBeenCalledOnce();
+      });
+      send.mockClear();
 
-    openCrdtSection(note({ keyEpoch: 2, noteKeyBase64: "rotated-key", role }), "root");
-    expect(fragmentText(getCrdtProvider(note().id, 2, "root").doc)).toBe("Live body before rotation");
-    expect(getCrdtProvider(note().id, 2, "root").isSynced).toBe(false);
-    await finishCrdtSync(note().id, 2, false, "root");
+      openCrdtSection(note({ keyEpoch: 2, noteKeyBase64: "rotated-key", role }), "root");
+      expect(fragmentText(getCrdtProvider(note().id, 2, "root").doc)).toBe(
+        "Live body before rotation"
+      );
+      expect(getCrdtProvider(note().id, 2, "root").isSynced).toBe(false);
+      await finishCrdtSync(note().id, 2, false, "root");
 
-    await vi.waitFor(() => {
-      expect(send).toHaveBeenCalledOnce();
-    });
-    expect(send).toHaveBeenCalledWith(
-      expect.objectContaining({ compactedUpdateIds: [], keyEpoch: 2, type: "crdt-checkpoint" })
-    );
-    expect(discard).toHaveBeenCalledWith(note().id, 2);
+      await vi.waitFor(() => {
+        expect(send).toHaveBeenCalledOnce();
+      });
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          compactedUpdateIds: [],
+          keyEpoch: 2,
+          type: "crdt-checkpoint"
+        })
+      );
+      expect(discard).toHaveBeenCalledWith(note().id, 2);
     }
   );
 
@@ -225,10 +234,16 @@ describe("CRDT lifecycle and recovery", () => {
     }
 
     await vi.waitFor(() => {
-      expect(send.mock.calls.some(([message]) => message.type === "crdt-checkpoint")).toBe(true);
+      expect(
+        send.mock.calls.some(([message]) => message.type === "crdt-checkpoint")
+      ).toBe(true);
     });
-    const checkpoint = send.mock.calls.find(([message]) => message.type === "crdt-checkpoint")?.[0];
-    expect(checkpoint?.type === "crdt-checkpoint" ? checkpoint.compactedUpdateIds : []).toHaveLength(64);
+    const checkpoint = send.mock.calls.find(
+      ([message]) => message.type === "crdt-checkpoint"
+    )?.[0];
+    expect(
+      checkpoint?.type === "crdt-checkpoint" ? checkpoint.compactedUpdateIds : []
+    ).toHaveLength(64);
   });
 
   it("retains checkpoint eligibility until acknowledgement without losing later edits", async () => {
@@ -267,12 +282,13 @@ describe("CRDT lifecycle and recovery", () => {
 
     editCrdtNote(current.id, { title: "Concurrent later edit" });
     await vi.waitFor(() => {
-      expect(send.mock.calls.filter(([message]) => message.type === "crdt-update"))
-        .toHaveLength(64);
+      expect(
+        send.mock.calls.filter(([message]) => message.type === "crdt-update")
+      ).toHaveLength(64);
     });
-    const concurrentUpdate = send.mock.calls.filter(
-      ([message]) => message.type === "crdt-update"
-    ).at(-1)?.[0];
+    const concurrentUpdate = send.mock.calls
+      .filter(([message]) => message.type === "crdt-update")
+      .at(-1)?.[0];
     rejectCheckpoint!(new Error("acknowledgement lost"));
     await expect(pendingCheckpoint).rejects.toThrow("acknowledgement lost");
 
@@ -311,11 +327,13 @@ describe("CRDT lifecycle and recovery", () => {
     editCrdtNote(current, { title: "Live CRDT title" });
 
     expect(
-      preserveCrdtContent(note({
-        title: "Stale snapshot",
-        updatedAt: "2026-07-14T00:00:00.000Z",
-        version: 2
-      }))
+      preserveCrdtContent(
+        note({
+          title: "Stale snapshot",
+          updatedAt: "2026-07-14T00:00:00.000Z",
+          version: 2
+        })
+      )
     ).toMatchObject({
       title: "Live CRDT title",
       updatedAt: "2026-07-14T00:00:00.000Z",
@@ -334,7 +352,9 @@ describe("CRDT lifecycle and recovery", () => {
     await finishCrdtSync(current.id, 1, false);
     editCrdtNote(current.id, { title: "Untitled note" });
 
-    expect(preserveCrdtContent(note({ title: "Delayed note", version: 2 }))).toMatchObject({
+    expect(
+      preserveCrdtContent(note({ title: "Delayed note", version: 2 }))
+    ).toMatchObject({
       title: "Delayed note",
       version: 2
     });
@@ -354,7 +374,9 @@ describe("CRDT lifecycle and recovery", () => {
     );
     expect(send).not.toHaveBeenCalled();
 
-    vi.mocked(decryptCrdtMessage).mockResolvedValueOnce(Y.encodeStateAsUpdate(new Y.Doc()));
+    vi.mocked(decryptCrdtMessage).mockResolvedValueOnce(
+      Y.encodeStateAsUpdate(new Y.Doc())
+    );
     await receiveCrdtUpdate(corrupt);
     await expect(finishCrdtSync(current.id, 1, true)).resolves.toBeUndefined();
   });
@@ -400,7 +422,9 @@ describe("CRDT lifecycle and recovery", () => {
     openCrdtNote(current, vi.fn());
     vi.mocked(decryptCrdtMessage).mockRejectedValueOnce(new Error("bad cipher"));
 
-    await expect(receiveCrdtUpdate(encryptedUpdate(current))).rejects.toThrow("bad cipher");
+    await expect(receiveCrdtUpdate(encryptedUpdate(current))).rejects.toThrow(
+      "bad cipher"
+    );
     await expect(
       checkpointCrdtNote(note({ keyEpoch: 2, noteKeyBase64: "rotated-key" }))
     ).rejects.toThrow("Realtime history could not be decrypted");
@@ -506,16 +530,20 @@ describe("CRDT lifecycle and recovery", () => {
   it("converges a fresh session on the checkpoint after a save/reload", async () => {
     const ownerId = "00000000-0000-4000-8000-0000000000c1";
     const freshId = "00000000-0000-4000-8000-0000000000c2";
-    setCrdtTransport({ discard: vi.fn(), send: vi.fn().mockResolvedValue(undefined), subscribe: vi.fn() });
+    setCrdtTransport({
+      discard: vi.fn(),
+      send: vi.fn().mockResolvedValue(undefined),
+      subscribe: vi.fn()
+    });
     openCrdtNote(note({ id: ownerId }), vi.fn());
     await finishCrdtSync(ownerId, 1, false);
     setFragmentBody(getCrdtProvider(ownerId).doc, "Persisted content");
     vi.mocked(encryptCrdtMessage).mockClear();
     await checkpointCrdtNote(note({ id: ownerId, keyEpoch: 1 }));
 
-    const checkpointInput = vi.mocked(encryptCrdtMessage).mock.calls.find(
-      ([input]) => input.type === "crdt-checkpoint"
-    )?.[0];
+    const checkpointInput = vi
+      .mocked(encryptCrdtMessage)
+      .mock.calls.find(([input]) => input.type === "crdt-checkpoint")?.[0];
     vi.mocked(decryptCrdtMessage).mockResolvedValueOnce(checkpointInput!.update);
 
     openCrdtNote(note({ id: freshId }), vi.fn());

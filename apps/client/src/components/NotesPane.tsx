@@ -58,7 +58,9 @@ export function NotesPane({
       <NewNoteDialog
         folders={folders}
         open={newNoteDialogOpen}
-        onClose={() => { setNewNoteDialogOpen(false); }}
+        onClose={() => {
+          setNewNoteDialogOpen(false);
+        }}
         onCreate={async (folderId) => {
           const created = await addNote(folderId);
           if (created !== false) {
@@ -236,7 +238,8 @@ function NoteListItem({
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const canManageNote = notesView === "notes" && note.role !== "viewer";
   const canOpenNoteMenu = notesView === "notes" || notesView === "shared";
-  const folderName = folders.find((folder) => folder.id === note.folderId)?.name ?? "All notes";
+  const folderName =
+    folders.find((folder) => folder.id === note.folderId)?.name ?? "All notes";
 
   useEffect(() => {
     if (!contextMenuOpen) {
@@ -312,7 +315,9 @@ function NoteListItem({
             <small className="role-badge">{roleLabel(note.role)}</small>
           ) : null}
         </span>
-        <span className="note-meta">{formatNoteMetadata(note.updatedAt, folderName)}</span>
+        <span className="note-meta">
+          {formatNoteMetadata(note.updatedAt, folderName)}
+        </span>
       </button>
       {canOpenNoteMenu ? (
         <div className="note-actions">
@@ -350,19 +355,22 @@ function NoteListItem({
                     "button[role='menuitem']:not(:disabled)"
                   )
                 );
-                const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+                const currentIndex = items.indexOf(
+                  document.activeElement as HTMLButtonElement
+                );
                 if (items.length === 0 || currentIndex < 0) {
                   return;
                 }
-                const nextIndex = event.key === "ArrowDown"
-                  ? (currentIndex + 1) % items.length
-                  : event.key === "ArrowUp"
-                    ? (currentIndex - 1 + items.length) % items.length
-                    : event.key === "Home"
-                      ? 0
-                      : event.key === "End"
-                        ? items.length - 1
-                        : -1;
+                const nextIndex =
+                  event.key === "ArrowDown"
+                    ? (currentIndex + 1) % items.length
+                    : event.key === "ArrowUp"
+                      ? (currentIndex - 1 + items.length) % items.length
+                      : event.key === "Home"
+                        ? 0
+                        : event.key === "End"
+                          ? items.length - 1
+                          : -1;
                 if (nextIndex >= 0) {
                   event.preventDefault();
                   items[nextIndex]?.focus();
@@ -393,7 +401,9 @@ function NoteListItem({
                 <button
                   type="button"
                   role="menuitem"
-                  onClick={() => { setShowMove(true); }}
+                  onClick={() => {
+                    setShowMove(true);
+                  }}
                 >
                   Move to folder
                 </button>
@@ -403,7 +413,9 @@ function NoteListItem({
                   <button
                     type="button"
                     role="menuitem"
-                    onClick={() => { handleMoveSelect(null); }}
+                    onClick={() => {
+                      handleMoveSelect(null);
+                    }}
                   >
                     All notes
                   </button>
@@ -412,7 +424,9 @@ function NoteListItem({
                       key={f.id}
                       type="button"
                       role="menuitem"
-                      onClick={() => { handleMoveSelect(f.id); }}
+                      onClick={() => {
+                        handleMoveSelect(f.id);
+                      }}
                     >
                       {f.name}
                     </button>
@@ -464,9 +478,10 @@ function formatNoteMetadata(updatedAt: string, folderName: string): string {
     return `Updated recently · ${folderName}`;
   }
   const days = Math.floor(Math.max(0, Date.now() - timestamp) / 86_400_000);
-  const updatedLabel = days === 0
-    ? "Updated today"
-    : `Updated ${String(days)} ${days === 1 ? "day" : "days"} ago`;
+  const updatedLabel =
+    days === 0
+      ? "Updated today"
+      : `Updated ${String(days)} ${days === 1 ? "day" : "days"} ago`;
   return `${updatedLabel} · ${folderName}`;
 }
 

@@ -74,7 +74,9 @@ describe("SettingsPanel password change", () => {
     });
 
     expect(screen.getByText("Passwords do not match")).not.toBeNull();
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Change password" }).disabled).toBe(true);
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "Change password" }).disabled
+    ).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Change password" }));
     expect(changePassword).not.toHaveBeenCalled();
   });

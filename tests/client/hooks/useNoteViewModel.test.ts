@@ -133,24 +133,28 @@ describe("note ordering", () => {
 describe("protected note search", () => {
   it("discovers coverage without downloading section bodies before a search", async () => {
     mocks.listNoteSections.mockResolvedValue({
-      sections: [{
-        id: "section-a",
-        initialized: true,
-        isDeleted: false,
-        currentSequence: 3
-      }]
+      sections: [
+        {
+          id: "section-a",
+          initialized: true,
+          isDeleted: false,
+          currentSequence: 3
+        }
+      ]
     });
     mocks.coverage.mockResolvedValue({
       complete: false,
       indexedSections: 0,
       totalSections: 1,
-      pending: [{
-        keyEpoch: 1,
-        noteId: "note_1",
-        sectionId: "section-a",
-        indexedSequence: 0,
-        targetSequence: 3
-      }]
+      pending: [
+        {
+          keyEpoch: 1,
+          noteId: "note_1",
+          sectionId: "section-a",
+          indexedSequence: 0,
+          targetSequence: 3
+        }
+      ]
     });
     useAppStore.setState({
       notes: [note({ rootSectionId: "section-a" })],
@@ -181,22 +185,26 @@ describe("protected note search", () => {
       serverSequence: 3
     };
     mocks.listNoteSections.mockResolvedValue({
-      sections: [{
-        id: "section-a",
-        initialized: true,
-        isDeleted: false,
-        currentSequence: 3
-      }]
+      sections: [
+        {
+          id: "section-a",
+          initialized: true,
+          isDeleted: false,
+          currentSequence: 3
+        }
+      ]
     });
     mocks.coverage.mockResolvedValue({
       complete: false,
       indexedSections: 0,
       totalSections: 1,
-      pending: [{
-        ...target,
-        indexedSequence: 0,
-        targetSequence: 3
-      }]
+      pending: [
+        {
+          ...target,
+          indexedSequence: 0,
+          targetSequence: 3
+        }
+      ]
     });
     mocks.buildNextBatch.mockImplementation(async (targets, loadSection) => {
       await loadSection(targets[0]);
@@ -237,14 +245,11 @@ describe("protected note search", () => {
       expect.objectContaining({ id: "note_1" }),
       "section-a"
     );
-    expect(mocks.releaseCrdtSection).toHaveBeenCalledWith(
-      "note_1",
-      "section-a",
-      1,
-      7
-    );
+    expect(mocks.releaseCrdtSection).toHaveBeenCalledWith("note_1", "section-a", 1, 7);
     expect(mocks.query).toHaveBeenCalledWith("needle", [target]);
-    expect(result.current.filteredNotes.map((candidate) => candidate.id)).toEqual(["note_1"]);
+    expect(result.current.filteredNotes.map((candidate) => candidate.id)).toEqual([
+      "note_1"
+    ]);
 
     const sectionChange = mocks.subscribeCrdtSectionChanges.mock.calls[0]![0];
     act(() => {
@@ -277,9 +282,12 @@ describe("protected note search", () => {
 
   it("closes the search database after in-flight discovery settles", async () => {
     let resolveSections!: (value: { sections: never[] }) => void;
-    mocks.listNoteSections.mockImplementation(() => new Promise((resolve) => {
-      resolveSections = resolve;
-    }));
+    mocks.listNoteSections.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSections = resolve;
+        })
+    );
     useAppStore.setState({
       notes: [note({ rootSectionId: "section-a" })],
       notesView: "notes",
@@ -447,11 +455,13 @@ describe("ordered content regression fixtures", () => {
 
   it("keeps legacy content flag visible in the view model", () => {
     useAppStore.setState({
-      notes: [note({
-        legacyContentAvailable: true,
-        legacyBodyLoaded: true,
-        rootSectionId: null
-      })],
+      notes: [
+        note({
+          legacyContentAvailable: true,
+          legacyBodyLoaded: true,
+          rootSectionId: null
+        })
+      ],
       notesView: "notes",
       selectedNoteId: "note_1"
     });
@@ -482,26 +492,34 @@ function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
 function sectionSnapshot(): BlockNoteFragmentSnapshot {
   return {
     type: "doc" as const,
-    content: [{
-      type: "blockGroup" as const,
-      content: [{
-        type: "blockContainer",
-        attrs: { id: "block-a" },
+    content: [
+      {
+        type: "blockGroup" as const,
         content: [
-          { type: "paragraph", content: [{ type: "text", text: "Needle body" }] },
           {
-            type: "blockGroup",
-            content: [{
-              type: "blockContainer",
-              attrs: { id: "block-b" },
-              content: [{
-                type: "paragraph",
-                content: [{ type: "text", text: "Nested text" }]
-              }]
-            }]
+            type: "blockContainer",
+            attrs: { id: "block-a" },
+            content: [
+              { type: "paragraph", content: [{ type: "text", text: "Needle body" }] },
+              {
+                type: "blockGroup",
+                content: [
+                  {
+                    type: "blockContainer",
+                    attrs: { id: "block-b" },
+                    content: [
+                      {
+                        type: "paragraph",
+                        content: [{ type: "text", text: "Nested text" }]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
           }
         ]
-      }]
-    }]
+      }
+    ]
   };
 }

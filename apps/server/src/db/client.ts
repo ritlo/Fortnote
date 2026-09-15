@@ -24,10 +24,7 @@ import { SqliteNoteMutationRepository } from "../notes/mutationRepository.js";
 import { SqliteNoteSectionRepository } from "../notes/sectionRepository.js";
 import { SqliteSectionHistoryRepository } from "../realtime/history.js";
 import { SqliteLegacyHistoryRepository } from "../realtime/legacyHistory.js";
-import {
-  LocalContentStorage,
-  type ContentStorage
-} from "../content/storage.js";
+import { LocalContentStorage, type ContentStorage } from "../content/storage.js";
 import { SqliteContentUploadRepository } from "../content/uploadRepository.js";
 import { SqliteContentManifestRepository } from "../content/manifestRepository.js";
 import { SqliteContentMaintenanceRepository } from "../content/maintenanceRepository.js";

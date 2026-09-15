@@ -94,9 +94,10 @@ export function EditorHeader({
       ?.focus();
   }, [overflowOpen]);
 
-  const lastSaved = selectedNote && presence.length === 0 && notesView !== "settings"
-    ? formatLastSaved(selectedNote.updatedAt, now)
-    : "";
+  const lastSaved =
+    selectedNote && presence.length === 0 && notesView !== "settings"
+      ? formatLastSaved(selectedNote.updatedAt, now)
+      : "";
 
   return (
     <header className="pane-header editor-header">
@@ -112,7 +113,9 @@ export function EditorHeader({
             ref={shareButtonRef}
             className="text-button"
             type="button"
-            onClick={() => { onShare?.(); }}
+            onClick={() => {
+              onShare?.();
+            }}
             aria-label="Share note"
           >
             <Share2 size={16} /> Share
@@ -157,19 +160,22 @@ export function EditorHeader({
                       "button[role='menuitem']:not(:disabled)"
                     )
                   );
-                  const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+                  const currentIndex = items.indexOf(
+                    document.activeElement as HTMLButtonElement
+                  );
                   if (items.length === 0 || currentIndex < 0) {
                     return;
                   }
-                  const nextIndex = event.key === "ArrowDown"
-                    ? (currentIndex + 1) % items.length
-                    : event.key === "ArrowUp"
-                      ? (currentIndex - 1 + items.length) % items.length
-                      : event.key === "Home"
-                        ? 0
-                        : event.key === "End"
-                          ? items.length - 1
-                          : -1;
+                  const nextIndex =
+                    event.key === "ArrowDown"
+                      ? (currentIndex + 1) % items.length
+                      : event.key === "ArrowUp"
+                        ? (currentIndex - 1 + items.length) % items.length
+                        : event.key === "Home"
+                          ? 0
+                          : event.key === "End"
+                            ? items.length - 1
+                            : -1;
                   if (nextIndex >= 0) {
                     event.preventDefault();
                     items[nextIndex]?.focus();

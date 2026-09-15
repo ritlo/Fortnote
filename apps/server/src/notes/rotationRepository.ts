@@ -174,10 +174,7 @@ export class SqliteNoteRotationRepository implements NoteRotationRepository {
           .where(
             and(
               eq(schema.userSharingKeys.userId, share.recipientUserId),
-              eq(
-                schema.userSharingKeys.sharingKeyVersion,
-                share.sharingKeyVersion
-              )
+              eq(schema.userSharingKeys.sharingKeyVersion, share.sharingKeyVersion)
             )
           )
           .get();
@@ -237,10 +234,7 @@ export class SqliteNoteRotationRepository implements NoteRotationRepository {
             formatVersion: share.formatVersion
           })
           .onConflictDoUpdate({
-            target: [
-              schema.noteKeyShares.noteId,
-              schema.noteKeyShares.recipientUserId
-            ],
+            target: [schema.noteKeyShares.noteId, schema.noteKeyShares.recipientUserId],
             set: {
               senderUserId: input.actorUserId,
               sharingKeyVersion: share.sharingKeyVersion,
@@ -278,10 +272,7 @@ export class SqliteNoteRotationRepository implements NoteRotationRepository {
           updatedAt: sql`CURRENT_TIMESTAMP`
         })
         .where(
-          and(
-            eq(schema.notes.id, current.noteId),
-            eq(schema.notes.rotationFenced, true)
-          )
+          and(eq(schema.notes.id, current.noteId), eq(schema.notes.rotationFenced, true))
         )
         .run();
       if (rotated.changes !== 1) {
@@ -377,10 +368,7 @@ export class SqliteNoteRotationRepository implements NoteRotationRepository {
           .where(
             and(
               eq(schema.userSharingKeys.userId, share.recipientUserId),
-              eq(
-                schema.userSharingKeys.sharingKeyVersion,
-                share.sharingKeyVersion
-              )
+              eq(schema.userSharingKeys.sharingKeyVersion, share.sharingKeyVersion)
             )
           )
           .get();
@@ -438,10 +426,7 @@ export class SqliteNoteRotationRepository implements NoteRotationRepository {
             formatVersion: share.formatVersion
           })
           .onConflictDoUpdate({
-            target: [
-              schema.noteKeyShares.noteId,
-              schema.noteKeyShares.recipientUserId
-            ],
+            target: [schema.noteKeyShares.noteId, schema.noteKeyShares.recipientUserId],
             set: {
               senderUserId: input.actorUserId,
               sharingKeyVersion: share.sharingKeyVersion,

@@ -7,7 +7,11 @@ import type { PresenceUser } from "@client/api";
 import type { DecryptedNote } from "@client/store/appStore";
 import { useAppStore } from "@client/store/appStore";
 import type { CollaborationAction } from "@client/lib/collaborationState";
-import { EditorHeader, formatLastSaved, formatPresenceSummary } from "@client/components/EditorHeader";
+import {
+  EditorHeader,
+  formatLastSaved,
+  formatPresenceSummary
+} from "@client/components/EditorHeader";
 
 afterEach(() => {
   cleanup();
@@ -78,16 +82,25 @@ describe("EditorHeader role affordances", () => {
     renderHeader({ selectedNote: { ...note(), role: "viewer" } });
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "More note actions" }));
-    expect(screen.getByRole<HTMLButtonElement>("menuitem", { name: "Move to trash" }).disabled).toBe(true);
+    expect(
+      screen.getByRole<HTMLButtonElement>("menuitem", { name: "Move to trash" }).disabled
+    ).toBe(true);
   });
 
   it("allows only owners to restore or permanently delete trash notes", () => {
-    renderHeader({ notesView: "trash", selectedNote: { ...note(), role: "viewer", isDeleted: true } });
+    renderHeader({
+      notesView: "trash",
+      selectedNote: { ...note(), role: "viewer", isDeleted: true }
+    });
     expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete forever" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "More note actions" }));
-    expect(screen.getByRole<HTMLButtonElement>("menuitem", { name: "Restore" }).disabled).toBe(true);
-    expect(screen.getByRole<HTMLButtonElement>("menuitem", { name: "Delete forever" }).disabled).toBe(true);
+    expect(
+      screen.getByRole<HTMLButtonElement>("menuitem", { name: "Restore" }).disabled
+    ).toBe(true);
+    expect(
+      screen.getByRole<HTMLButtonElement>("menuitem", { name: "Delete forever" }).disabled
+    ).toBe(true);
   });
 });
 

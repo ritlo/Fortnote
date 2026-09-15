@@ -324,51 +324,56 @@ export function runMigrations(sqlite: Database.Database): void {
 	      ON event_cursors (cursor);
 	  `);
 
-	addColumnIfMissing(sqlite, "users", "display_name", "TEXT");
-	addColumnIfMissing(sqlite, "users", "canonical_handle", "TEXT");
-	addColumnIfMissing(sqlite, "users", "handle_state", "TEXT NOT NULL DEFAULT 'legacy'");
-	addColumnIfMissing(
-	  sqlite,
-	  "user_key_material",
-	  "root_key_format_version",
-	  "INTEGER NOT NULL DEFAULT 1"
-	);
-	addColumnIfMissing(
-	  sqlite,
-	  "user_key_material",
-	  "root_key_context_version",
-	  "INTEGER NOT NULL DEFAULT 1"
-	);
-	addColumnIfMissing(
-	  sqlite,
-	  "user_key_material",
-	  "recovery_root_key_format_version",
-	  "INTEGER NOT NULL DEFAULT 1"
-	);
-	addColumnIfMissing(
-	  sqlite,
-	  "user_key_material",
-	  "recovery_root_key_context_version",
-	  "INTEGER NOT NULL DEFAULT 1"
-	);
-	addColumnIfMissing(sqlite, "folders", "name_cipher", "TEXT");
-	addColumnIfMissing(sqlite, "folders", "name_nonce", "TEXT");
-	addColumnIfMissing(sqlite, "folders", "name_format_version", "INTEGER");
-	addColumnIfMissing(sqlite, "notes", "crypto_owner_id", "TEXT");
-	addColumnIfMissing(sqlite, "notes", "title_cipher", "TEXT");
-	addColumnIfMissing(sqlite, "notes", "title_nonce", "TEXT");
-	addColumnIfMissing(sqlite, "notes", "title_format_version", "INTEGER");
-	addColumnIfMissing(sqlite, "notes", "note_key_format_version", "INTEGER NOT NULL DEFAULT 1");
-	addColumnIfMissing(sqlite, "notes", "root_version", "INTEGER NOT NULL DEFAULT 1");
-	addColumnIfMissing(sqlite, "notes", "root_section_id", "TEXT");
-	addColumnIfMissing(sqlite, "notes", "key_epoch", "INTEGER NOT NULL DEFAULT 1");
-	addColumnIfMissing(sqlite, "notes", "rotation_fenced", "INTEGER NOT NULL DEFAULT 0");
-	addColumnIfMissing(sqlite, "attachments", "metadata_cipher", "TEXT");
-	addColumnIfMissing(sqlite, "attachments", "metadata_nonce", "TEXT");
-	addColumnIfMissing(sqlite, "attachments", "metadata_format_version", "INTEGER");
-	addColumnIfMissing(sqlite, "attachments", "key_epoch", "INTEGER NOT NULL DEFAULT 1");
-	addColumnIfMissing(sqlite, "section_updates", "checkpoint_sequence_cutoff", "INTEGER");
-		sqlite.exec(`
+  addColumnIfMissing(sqlite, "users", "display_name", "TEXT");
+  addColumnIfMissing(sqlite, "users", "canonical_handle", "TEXT");
+  addColumnIfMissing(sqlite, "users", "handle_state", "TEXT NOT NULL DEFAULT 'legacy'");
+  addColumnIfMissing(
+    sqlite,
+    "user_key_material",
+    "root_key_format_version",
+    "INTEGER NOT NULL DEFAULT 1"
+  );
+  addColumnIfMissing(
+    sqlite,
+    "user_key_material",
+    "root_key_context_version",
+    "INTEGER NOT NULL DEFAULT 1"
+  );
+  addColumnIfMissing(
+    sqlite,
+    "user_key_material",
+    "recovery_root_key_format_version",
+    "INTEGER NOT NULL DEFAULT 1"
+  );
+  addColumnIfMissing(
+    sqlite,
+    "user_key_material",
+    "recovery_root_key_context_version",
+    "INTEGER NOT NULL DEFAULT 1"
+  );
+  addColumnIfMissing(sqlite, "folders", "name_cipher", "TEXT");
+  addColumnIfMissing(sqlite, "folders", "name_nonce", "TEXT");
+  addColumnIfMissing(sqlite, "folders", "name_format_version", "INTEGER");
+  addColumnIfMissing(sqlite, "notes", "crypto_owner_id", "TEXT");
+  addColumnIfMissing(sqlite, "notes", "title_cipher", "TEXT");
+  addColumnIfMissing(sqlite, "notes", "title_nonce", "TEXT");
+  addColumnIfMissing(sqlite, "notes", "title_format_version", "INTEGER");
+  addColumnIfMissing(
+    sqlite,
+    "notes",
+    "note_key_format_version",
+    "INTEGER NOT NULL DEFAULT 1"
+  );
+  addColumnIfMissing(sqlite, "notes", "root_version", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing(sqlite, "notes", "root_section_id", "TEXT");
+  addColumnIfMissing(sqlite, "notes", "key_epoch", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing(sqlite, "notes", "rotation_fenced", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(sqlite, "attachments", "metadata_cipher", "TEXT");
+  addColumnIfMissing(sqlite, "attachments", "metadata_nonce", "TEXT");
+  addColumnIfMissing(sqlite, "attachments", "metadata_format_version", "INTEGER");
+  addColumnIfMissing(sqlite, "attachments", "key_epoch", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing(sqlite, "section_updates", "checkpoint_sequence_cutoff", "INTEGER");
+  sqlite.exec(`
 		  UPDATE users SET display_name = username WHERE display_name IS NULL;
 		  UPDATE notes SET crypto_owner_id = user_id WHERE crypto_owner_id IS NULL;
 	  CREATE UNIQUE INDEX IF NOT EXISTS idx_users_canonical_handle
@@ -382,9 +387,7 @@ export function runMigrations(sqlite: Database.Database): void {
 
 function backfillCanonicalHandles(sqlite: Database.Database): void {
   const rows = sqlite
-    .prepare(
-      "SELECT id, username, canonical_handle AS canonicalHandle FROM users"
-    )
+    .prepare("SELECT id, username, canonical_handle AS canonicalHandle FROM users")
     .all() as { id: string; username: string; canonicalHandle: string | null }[];
   const claimed = new Map<string, string[]>();
   for (const row of rows) {
@@ -507,8 +510,8 @@ function backfillOwnerMemberships(sqlite: Database.Database): void {
       )
       SELECT id, user_id, 'owner', 'active', created_at, updated_at
       FROM notes`
-	    )
-	    .run();
+    )
+    .run();
 }
 
 function removeNoteEventsNoteCascade(sqlite: Database.Database): void {

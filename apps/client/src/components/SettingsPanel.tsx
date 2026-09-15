@@ -96,7 +96,11 @@ export function SettingsPanel({
             aria-invalid={passwordsMismatch}
           />
         </label>
-        {passwordsMismatch ? <p className="error" role="alert">Passwords do not match</p> : null}
+        {passwordsMismatch ? (
+          <p className="error" role="alert">
+            Passwords do not match
+          </p>
+        ) : null}
         <button
           className="primary"
           type="button"

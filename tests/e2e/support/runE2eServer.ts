@@ -29,15 +29,11 @@ process.on("SIGTERM", () => {
 });
 
 function startServer(): void {
-  child = spawn(
-    "pnpm",
-    ["--filter", "@fortnote/server", "exec", "tsx", "src/index.ts"],
-    {
-      detached: process.platform !== "win32",
-      env: serverEnvironment,
-      stdio: "inherit"
-    }
-  );
+  child = spawn("pnpm", ["--filter", "@fortnote/server", "exec", "tsx", "src/index.ts"], {
+    detached: process.platform !== "win32",
+    env: serverEnvironment,
+    stdio: "inherit"
+  });
   child.once("exit", (code, signal) => {
     child = null;
     if (!stopping && !restarting) {

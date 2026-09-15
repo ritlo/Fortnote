@@ -134,7 +134,9 @@ describe("realtime client", () => {
         JSON.stringify({
           type: "presence",
           noteId: "note_1",
-          users: [{ userId: "user_1", username: "alice", state: "unknown", updatedAt: "now" }]
+          users: [
+            { userId: "user_1", username: "alice", state: "unknown", updatedAt: "now" }
+          ]
         })
       )
     ).toBeNull();
@@ -164,8 +166,9 @@ describe("realtime client", () => {
       hasUpdates: true
     };
     expect(parseRealtimeMessage(JSON.stringify(sync))).toEqual(sync);
-    expect(parseRealtimeMessage(JSON.stringify({ ...sync, keyEpoch: undefined })))
-      .toBeNull();
+    expect(
+      parseRealtimeMessage(JSON.stringify({ ...sync, keyEpoch: undefined }))
+    ).toBeNull();
   });
 
   it("parses replay events with expected shape", () => {
@@ -182,7 +185,9 @@ describe("realtime client", () => {
       version: 2
     };
 
-    expect(parseRealtimeMessage(JSON.stringify({ type: "replay", events: [event] }))).toEqual({
+    expect(
+      parseRealtimeMessage(JSON.stringify({ type: "replay", events: [event] }))
+    ).toEqual({
       type: "replay",
       events: [event]
     });
@@ -356,10 +361,12 @@ describe("realtime client", () => {
     connection.unsubscribeCrdt(noteId, sectionId, 1);
     expect(
       sockets[0]!.sent.map((message) => JSON.parse(message) as { type: string })
-    ).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "crdt-subscribe", noteId, sectionId }),
-      expect.objectContaining({ type: "crdt-unsubscribe", noteId, sectionId })
-    ]));
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "crdt-subscribe", noteId, sectionId }),
+        expect.objectContaining({ type: "crdt-unsubscribe", noteId, sectionId })
+      ])
+    );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
     connection.close();
@@ -584,7 +591,9 @@ describe("realtime client", () => {
     const userId = crypto.randomUUID();
     const firstUpdate = scopedUpdate();
     const secondUpdate = { ...firstUpdate, updateId: crypto.randomUUID() };
-    let recordsAtCallback: Promise<Awaited<ReturnType<typeof database.listOutbox>>> | null = null;
+    let recordsAtCallback: Promise<
+      Awaited<ReturnType<typeof database.listOutbox>>
+    > | null = null;
     const onRecoverableCrdtDraft = vi.fn(() => {
       recordsAtCallback = database.listOutbox(userId);
     });
@@ -622,10 +631,7 @@ describe("realtime client", () => {
         expect.objectContaining({
           source: "rejected",
           reason: "stale-epoch",
-          updateIds: expect.arrayContaining([
-            firstUpdate.updateId,
-            secondUpdate.updateId
-          ])
+          updateIds: expect.arrayContaining([firstUpdate.updateId, secondUpdate.updateId])
         })
       );
     });
@@ -697,8 +703,9 @@ describe("realtime client", () => {
       "Realtime storage is full; encrypted work remains queued.",
       rejection
     );
-    expect(JSON.parse(localStorage.getItem(outboxKey("user_1")) ?? "[]"))
-      .toEqual([update]);
+    expect(JSON.parse(localStorage.getItem(outboxKey("user_1")) ?? "[]")).toEqual([
+      update
+    ]);
 
     const second = connectRealtime({ after: 0, userId: "user_1", onMessage: vi.fn() });
     sockets[1]!.open();
@@ -709,14 +716,12 @@ describe("realtime client", () => {
 
     sockets[0]!.receive({ type: "crdt-ack", updateId: update.updateId });
     await expect(firstDelivery).resolves.toBeUndefined();
-    expect(JSON.parse(localStorage.getItem(outboxKey("user_1")) ?? "[]"))
-      .toEqual([]);
+    expect(JSON.parse(localStorage.getItem(outboxKey("user_1")) ?? "[]")).toEqual([]);
 
     const discarded = second.sendCrdtUpdate(update);
     second.discardCrdtUpdates(update.noteId, 2);
     await expect(discarded).rejects.toThrow("Superseded");
-    expect(JSON.parse(localStorage.getItem(outboxKey("user_1")) ?? "[]"))
-      .toEqual([]);
+    expect(JSON.parse(localStorage.getItem(outboxKey("user_1")) ?? "[]")).toEqual([]);
   });
 
   it("does not flush one user's outbox through another user's session", () => {
@@ -766,8 +771,7 @@ describe("realtime client", () => {
     });
 
     await expect(delivery).rejects.toThrow("revoked");
-    expect(JSON.parse(localStorage.getItem(outboxKey("viewer")) ?? "[]"))
-      .toEqual([]);
+    expect(JSON.parse(localStorage.getItem(outboxKey("viewer")) ?? "[]")).toEqual([]);
   });
 
   it("drops terminally oversized updates", async () => {
@@ -787,8 +791,7 @@ describe("realtime client", () => {
       reason: "payload-too-large"
     });
 
-    expect(JSON.parse(localStorage.getItem(outboxKey("oversized")) ?? "[]"))
-      .toEqual([]);
+    expect(JSON.parse(localStorage.getItem(outboxKey("oversized")) ?? "[]")).toEqual([]);
     await expect(delivery).rejects.toThrow("too large");
   });
 
@@ -805,10 +808,7 @@ describe("realtime client", () => {
       nonce: "nonce",
       compactedUpdateIds: [] as string[]
     };
-    localStorage.setItem(
-      outboxKey("retry_user"),
-      JSON.stringify([update, checkpoint])
-    );
+    localStorage.setItem(outboxKey("retry_user"), JSON.stringify([update, checkpoint]));
 
     connectRealtime({ after: 0, userId: "retry_user", onMessage: vi.fn() });
     sockets[0]!.open();
@@ -824,7 +824,10 @@ describe("realtime client", () => {
 
     const sentUpdates = sockets[0]!.sent
       .map((message) => JSON.parse(message) as { type: string; updateId?: string })
-      .filter((message) => message.type === "crdt-update" && message.updateId === update.updateId);
+      .filter(
+        (message) =>
+          message.type === "crdt-update" && message.updateId === update.updateId
+      );
     expect(sentUpdates).toHaveLength(2);
   });
 
@@ -844,8 +847,9 @@ describe("realtime client", () => {
     connectRealtime({ after: 0, userId, onMessage: vi.fn() });
     sockets[1]!.open();
     sockets[1]!.receive(connectedMessage(userId));
-    expect(sockets[1]!.sent.map((message) => JSON.parse(message) as unknown))
-      .not.toContainEqual(update);
+    expect(
+      sockets[1]!.sent.map((message) => JSON.parse(message) as unknown)
+    ).not.toContainEqual(update);
   });
 });
 
@@ -940,11 +944,13 @@ function preparedContent(): PreparedEncryptedContentV2 {
     totalCipherBytes: 1,
     chunkCount: 1,
     manifestHash: "a".repeat(64),
-    chunks: [{
-      chunkIndex: 0,
-      cipherBytes: Uint8Array.of(1),
-      cipherHash: "b".repeat(64),
-      nonce: toBase64(new Uint8Array(24))
-    }]
+    chunks: [
+      {
+        chunkIndex: 0,
+        cipherBytes: Uint8Array.of(1),
+        cipherHash: "b".repeat(64),
+        nonce: toBase64(new Uint8Array(24))
+      }
+    ]
   };
 }

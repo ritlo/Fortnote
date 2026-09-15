@@ -30,10 +30,7 @@ export interface StorageAccountReconciliationPage {
 export interface ContentMaintenanceRepository {
   expireUploads(cutoff: string, limit: number): Promise<ExpiredContentUploadPage>;
   canRemoveUpload(uploadId: string): Promise<boolean>;
-  removeOrphanObjects(
-    cutoff: string,
-    limit: number
-  ): Promise<StorageObjectCleanupPage>;
+  removeOrphanObjects(cutoff: string, limit: number): Promise<StorageObjectCleanupPage>;
   reconcileStorageAccounts(
     afterUserId: string | null,
     limit: number
@@ -42,9 +39,7 @@ export interface ContentMaintenanceRepository {
 
 type SqliteDatabase = BetterSQLite3Database<typeof schema>;
 
-export class SqliteContentMaintenanceRepository
-  implements ContentMaintenanceRepository
-{
+export class SqliteContentMaintenanceRepository implements ContentMaintenanceRepository {
   constructor(private readonly orm: SqliteDatabase) {}
 
   expireUploads(cutoff: string, limit: number): Promise<ExpiredContentUploadPage> {
@@ -57,10 +52,12 @@ export class SqliteContentMaintenanceRepository
         })
         .from(schema.contentUploads)
         .innerJoin(schema.notes, eq(schema.notes.id, schema.contentUploads.noteId))
-        .where(and(
-          inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES),
-          lte(schema.contentUploads.expiresAt, cutoff)
-        ))
+        .where(
+          and(
+            inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES),
+            lte(schema.contentUploads.expiresAt, cutoff)
+          )
+        )
         .orderBy(schema.contentUploads.expiresAt, schema.contentUploads.id)
         .limit(limit)
         .all();
@@ -70,11 +67,13 @@ export class SqliteContentMaintenanceRepository
         const claimed = transaction
           .update(schema.contentUploads)
           .set({ status: "expired", updatedAt: sql`CURRENT_TIMESTAMP` })
-          .where(and(
-            eq(schema.contentUploads.id, candidate.uploadId),
-            inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES),
-            lte(schema.contentUploads.expiresAt, cutoff)
-          ))
+          .where(
+            and(
+              eq(schema.contentUploads.id, candidate.uploadId),
+              inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES),
+              lte(schema.contentUploads.expiresAt, cutoff)
+            )
+          )
           .run();
         if (claimed.changes !== 1) {
           continue;
@@ -103,10 +102,12 @@ export class SqliteContentMaintenanceRepository
       const remaining = transaction
         .select({ id: schema.contentUploads.id })
         .from(schema.contentUploads)
-        .where(and(
-          inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES),
-          lte(schema.contentUploads.expiresAt, cutoff)
-        ))
+        .where(
+          and(
+            inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES),
+            lte(schema.contentUploads.expiresAt, cutoff)
+          )
+        )
         .limit(1)
         .get();
       return { uploads, hasMore: Boolean(remaining) };
@@ -135,10 +136,7 @@ export class SqliteContentMaintenanceRepository
     return Promise.resolve(!manifest && REMOVABLE_UPLOAD_STATUSES.has(upload.status));
   }
 
-  removeOrphanObjects(
-    cutoff: string,
-    limit: number
-  ): Promise<StorageObjectCleanupPage> {
+  removeOrphanObjects(cutoff: string, limit: number): Promise<StorageObjectCleanupPage> {
     void cutoff;
     void limit;
     return Promise.resolve({ scanned: 0, removed: 0, done: true });
@@ -192,7 +190,9 @@ function listUserIds(
 
 function reconcileStorageAccount(database: SqliteDatabase, userId: string): void {
   const contentBytes = database
-    .select({ bytes: sql<number>`COALESCE(SUM(${schema.contentManifests.totalCipherBytes}), 0)` })
+    .select({
+      bytes: sql<number>`COALESCE(SUM(${schema.contentManifests.totalCipherBytes}), 0)`
+    })
     .from(schema.contentManifests)
     .innerJoin(schema.notes, eq(schema.notes.id, schema.contentManifests.noteId))
     .where(eq(schema.notes.userId, userId))
@@ -204,13 +204,17 @@ function reconcileStorageAccount(database: SqliteDatabase, userId: string): void
     .where(eq(schema.notes.userId, userId))
     .get()!.bytes;
   const reservedBytes = database
-    .select({ bytes: sql<number>`COALESCE(SUM(${schema.contentUploads.totalCipherBytes}), 0)` })
+    .select({
+      bytes: sql<number>`COALESCE(SUM(${schema.contentUploads.totalCipherBytes}), 0)`
+    })
     .from(schema.contentUploads)
     .innerJoin(schema.notes, eq(schema.notes.id, schema.contentUploads.noteId))
-    .where(and(
-      eq(schema.notes.userId, userId),
-      inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES)
-    ))
+    .where(
+      and(
+        eq(schema.notes.userId, userId),
+        inArray(schema.contentUploads.status, RESERVED_UPLOAD_STATUSES)
+      )
+    )
     .get()!.bytes;
   const usedBytes = contentBytes + attachmentBytes;
 

@@ -33,11 +33,7 @@ import {
   type VerifiedContentDownloadInput
 } from "./contentTransfer";
 import type { ScopedEncryptedCrdtMessage } from "./crdt";
-import {
-  flushCrdtOutbox,
-  persistCrdtOutbox,
-  readCrdtOutbox
-} from "./legacyOutbox";
+import { flushCrdtOutbox, persistCrdtOutbox, readCrdtOutbox } from "./legacyOutbox";
 import {
   CLIENT_REALTIME_FRAME_MAX_BYTES,
   parseRealtimeBinaryMessage,
@@ -117,7 +113,10 @@ export function connectRealtime({
   const socket = new WebSocket(realtimeUrl(after, transportClientId));
   socket.binaryType = "arraybuffer";
   const pendingSubscriptions = new Set<string>();
-  const pendingSectionSubscriptions = new Map<string, OutboxFence & { afterSequence: number }>();
+  const pendingSectionSubscriptions = new Map<
+    string,
+    OutboxFence & { afterSequence: number }
+  >();
   const pendingCrdtAcks = new Map<
     string,
     { reject: (error: Error) => void; resolve: () => void }
@@ -134,7 +133,8 @@ export function connectRealtime({
     onOpen?.();
   });
   socket.addEventListener("message", (event) => {
-    const message = parseRealtimeBinaryMessage(event.data) ?? parseRealtimeMessage(event.data);
+    const message =
+      parseRealtimeBinaryMessage(event.data) ?? parseRealtimeMessage(event.data);
     if (message) {
       if (message.type === "connected") {
         if (message.userId !== userId) {
@@ -156,9 +156,7 @@ export function connectRealtime({
         }
         if (crdtV2Enabled) {
           void resumeDurableOutbox().catch(() => {
-            onCrdtError?.(
-              "Encrypted offline work could not resume; it remains queued."
-            );
+            onCrdtError?.("Encrypted offline work could not resume; it remains queued.");
           });
           for (const subscription of pendingSectionSubscriptions.values()) {
             sendSectionSubscription(subscription);
@@ -229,7 +227,7 @@ export function connectRealtime({
       durableOutboxPromise = null;
     }
     durableOutboxPromise ??= (async () => {
-      const database = outboxStore ?? await getOwnedDatabase();
+      const database = outboxStore ?? (await getOwnedDatabase());
       durableOutbox = createEncryptedOutbox({
         database,
         ownerId,
@@ -293,7 +291,10 @@ export function connectRealtime({
           outcome.error
         );
       } else if (outcome.kind === "server-capacity") {
-        onCrdtError?.("Server storage is full; encrypted work remains queued.", outcome.error);
+        onCrdtError?.(
+          "Server storage is full; encrypted work remains queued.",
+          outcome.error
+        );
       }
     }
   }
@@ -311,10 +312,7 @@ export function connectRealtime({
   }
 
   function sendOutboxRecord(record: EncryptedOutboxRecord): void {
-    if (
-      socket.readyState !== WebSocket.OPEN ||
-      !crdtV2Enabled
-    ) {
+    if (socket.readyState !== WebSocket.OPEN || !crdtV2Enabled) {
       throw new Error("Realtime binary transport is unavailable");
     }
     if (record.kind === "chunk") {
@@ -323,28 +321,30 @@ export function connectRealtime({
     const cipher = Uint8Array.from(record.inlineCipher);
     const nonce = Uint8Array.from(record.nonce);
     socket.send(
-      exactArrayBuffer(encodeCrdtBinaryFrame(
-        {
-          type: "crdt-binary",
-          kind: record.kind,
-          formatVersion: CRDT_BINARY_FORMAT_VERSION,
-          updateId: record.updateId,
-          noteId: record.noteId,
-          sectionId: record.sectionId,
-          cryptoOwnerId: record.cryptoOwnerId,
-          expectedKeyEpoch: record.keyEpoch,
-          nonce: toBase64(nonce),
-          cipherLength: cipher.length,
-          ...(record.originClientId === undefined
-            ? {}
-            : { originClientId: record.originClientId }),
-          ...(record.checkpointSequenceCutoff === undefined
-            ? {}
-            : { checkpointSequenceCutoff: record.checkpointSequenceCutoff })
-        },
-        cipher,
-        CLIENT_REALTIME_FRAME_MAX_BYTES
-      ))
+      exactArrayBuffer(
+        encodeCrdtBinaryFrame(
+          {
+            type: "crdt-binary",
+            kind: record.kind,
+            formatVersion: CRDT_BINARY_FORMAT_VERSION,
+            updateId: record.updateId,
+            noteId: record.noteId,
+            sectionId: record.sectionId,
+            cryptoOwnerId: record.cryptoOwnerId,
+            expectedKeyEpoch: record.keyEpoch,
+            nonce: toBase64(nonce),
+            cipherLength: cipher.length,
+            ...(record.originClientId === undefined
+              ? {}
+              : { originClientId: record.originClientId }),
+            ...(record.checkpointSequenceCutoff === undefined
+              ? {}
+              : { checkpointSequenceCutoff: record.checkpointSequenceCutoff })
+          },
+          cipher,
+          CLIENT_REALTIME_FRAME_MAX_BYTES
+        )
+      )
     );
   }
 
@@ -382,9 +382,10 @@ export function connectRealtime({
 
   async function preserveRejectedDraft(message: CrdtRejectV2): Promise<void> {
     const reason = message.code === "forbidden" ? "forbidden" : "stale-epoch";
-    const rejectionMessage = message.code === "forbidden"
-      ? "Realtime write access was revoked."
-      : "Superseded by note-key rotation.";
+    const rejectionMessage =
+      message.code === "forbidden"
+        ? "Realtime write access was revoked."
+        : "Superseded by note-key rotation.";
     try {
       const outbox = await getDurableOutbox();
       const draft = await outbox.preserveTerminalRejection(
@@ -417,14 +418,16 @@ export function connectRealtime({
     if (socket.readyState !== WebSocket.OPEN || !crdtV2Enabled) {
       return;
     }
-    socket.send(JSON.stringify({
-      type: "crdt-subscribe",
-      requestId: randomUuid(),
-      noteId: subscription.noteId,
-      sectionId: subscription.sectionId,
-      expectedKeyEpoch: subscription.keyEpoch,
-      afterSequence: subscription.afterSequence
-    }));
+    socket.send(
+      JSON.stringify({
+        type: "crdt-subscribe",
+        requestId: randomUuid(),
+        noteId: subscription.noteId,
+        sectionId: subscription.sectionId,
+        expectedKeyEpoch: subscription.keyEpoch,
+        afterSequence: subscription.afterSequence
+      })
+    );
   }
 
   function discardCrdtUpdates(noteId: string, beforeKeyEpoch: number): void {
@@ -447,13 +450,16 @@ export function connectRealtime({
     discardCrdtUpdates: (noteId, beforeKeyEpoch) => {
       discardCrdtUpdates(noteId, beforeKeyEpoch);
     },
-    downloadCrdtContent: (input) => trackContentTransfer((async () => {
-      const database = await getContentDatabase();
-      return downloadVerifiedContent({
-        ...input,
-        cache: { database, userId }
-      });
-    })()),
+    downloadCrdtContent: (input) =>
+      trackContentTransfer(
+        (async () => {
+          const database = await getContentDatabase();
+          return downloadVerifiedContent({
+            ...input,
+            cache: { database, userId }
+          });
+        })()
+      ),
     sendPresence: (noteId, state) => {
       if (socket.readyState !== WebSocket.OPEN) {
         return;
@@ -483,12 +489,14 @@ export function connectRealtime({
         sectionSubscriptionKey(noteId, sectionId, keyEpoch)
       );
       if (socket.readyState === WebSocket.OPEN && crdtV2Enabled) {
-        socket.send(JSON.stringify({
-          type: "crdt-unsubscribe",
-          noteId,
-          sectionId,
-          expectedKeyEpoch: keyEpoch
-        }));
+        socket.send(
+          JSON.stringify({
+            type: "crdt-unsubscribe",
+            noteId,
+            sectionId,
+            expectedKeyEpoch: keyEpoch
+          })
+        );
       }
     },
     sendCrdtUpdate: (update) => {
@@ -563,17 +571,19 @@ export function connectRealtime({
       resolveDurable = resolve;
       rejectDurable = reject;
     });
-    const outcome = trackContentTransfer((async () => {
-      try {
-        const database = await getContentDatabase();
-        const record = await persistPreparedTransfer(database, userId, prepared);
-        resolveDurable();
-        return await resumeContentUpload({ database, record });
-      } catch (error) {
-        rejectDurable(error);
-        throw error;
-      }
-    })());
+    const outcome = trackContentTransfer(
+      (async () => {
+        try {
+          const database = await getContentDatabase();
+          const record = await persistPreparedTransfer(database, userId, prepared);
+          resolveDurable();
+          return await resumeContentUpload({ database, record });
+        } catch (error) {
+          rejectDurable(error);
+          throw error;
+        }
+      })()
+    );
     const delivered = outcome.then(
       (result) => {
         if (result.kind === "local-capacity") {
@@ -584,7 +594,10 @@ export function connectRealtime({
           throw new Error("Protected browser storage is full");
         }
         if (result.kind === "server-capacity") {
-          onCrdtError?.("Server storage is full; encrypted work remains queued.", result.error);
+          onCrdtError?.(
+            "Server storage is full; encrypted work remains queued.",
+            result.error
+          );
           throw new Error("Server storage is full");
         }
         return result.manifest;

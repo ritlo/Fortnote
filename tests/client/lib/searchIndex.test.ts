@@ -9,7 +9,9 @@ import {
 const databases: Awaited<ReturnType<typeof openFortnoteIndexedDb>>[] = [];
 
 afterEach(async () => {
-  await Promise.all(databases.splice(0).map(async (database) => database.deleteDatabase()));
+  await Promise.all(
+    databases.splice(0).map(async (database) => database.deleteDatabase())
+  );
 });
 
 describe("protected incremental search index", () => {
@@ -23,26 +25,31 @@ describe("protected incremental search index", () => {
       userId: "user-a"
     });
 
-    await index.applySection(sectionUpdate(1, [
-      { blockId: "block-a", text: "Alpha stable" },
-      { blockId: "block-b", text: "Beta changes" }
-    ]));
-    const changed = await index.applySection(sectionUpdate(2, [
-      { blockId: "block-a", text: "Alpha stable" },
-      { blockId: "block-b", text: "Gamma changed" }
-    ]));
+    await index.applySection(
+      sectionUpdate(1, [
+        { blockId: "block-a", text: "Alpha stable" },
+        { blockId: "block-b", text: "Beta changes" }
+      ])
+    );
+    const changed = await index.applySection(
+      sectionUpdate(2, [
+        { blockId: "block-a", text: "Alpha stable" },
+        { blockId: "block-b", text: "Gamma changed" }
+      ])
+    );
 
     expect(tokenize).toHaveBeenCalledTimes(3);
     expect(changed.changedBlockIds).toEqual(["block-b"]);
-    await expect(index.query("gamma", [target("section-a", 2)]))
-      .resolves.toMatchObject({
-        coverage: { complete: true, indexedSections: 1, totalSections: 1 },
-        matches: [{ blockId: "block-b", noteId: "note-a", sectionId: "section-a" }]
-      });
-    await expect(index.query("beta", [target("section-a", 2)]))
-      .resolves.toMatchObject({ matches: [] });
-    expect(JSON.stringify(await database.listSearchIndex("user-a")))
-      .not.toMatch(/alpha|beta|gamma|stable|changed/iu);
+    await expect(index.query("gamma", [target("section-a", 2)])).resolves.toMatchObject({
+      coverage: { complete: true, indexedSections: 1, totalSections: 1 },
+      matches: [{ blockId: "block-b", noteId: "note-a", sectionId: "section-a" }]
+    });
+    await expect(index.query("beta", [target("section-a", 2)])).resolves.toMatchObject({
+      matches: []
+    });
+    expect(JSON.stringify(await database.listSearchIndex("user-a"))).not.toMatch(
+      /alpha|beta|gamma|stable|changed/iu
+    );
   });
 
   it("isolates encrypted records by account and root key", async () => {
@@ -62,24 +69,28 @@ describe("protected incremental search index", () => {
       rootKey: key(9),
       userId: "user-a"
     });
-    await first.applySection(sectionUpdate(1, [
-      { blockId: "block-a", text: "private apricot" }
-    ]));
-    await second.applySection(sectionUpdate(1, [
-      { blockId: "block-b", text: "private blueberry" }
-    ]));
+    await first.applySection(
+      sectionUpdate(1, [{ blockId: "block-a", text: "private apricot" }])
+    );
+    await second.applySection(
+      sectionUpdate(1, [{ blockId: "block-b", text: "private blueberry" }])
+    );
 
-    await expect(first.query("apricot", [target("section-a", 1)]))
-      .resolves.toMatchObject({ matches: [{ blockId: "block-a" }] });
-    await expect(first.query("blueberry", [target("section-a", 1)]))
-      .resolves.toMatchObject({ matches: [] });
-    await expect(second.query("blueberry", [target("section-a", 1)]))
-      .resolves.toMatchObject({ matches: [{ blockId: "block-b" }] });
-    await expect(wrongKey.query("apricot", [target("section-a", 1)]))
-      .resolves.toMatchObject({
-        coverage: { complete: false, indexedSections: 0 },
-        matches: []
-      });
+    await expect(first.query("apricot", [target("section-a", 1)])).resolves.toMatchObject(
+      { matches: [{ blockId: "block-a" }] }
+    );
+    await expect(
+      first.query("blueberry", [target("section-a", 1)])
+    ).resolves.toMatchObject({ matches: [] });
+    await expect(
+      second.query("blueberry", [target("section-a", 1)])
+    ).resolves.toMatchObject({ matches: [{ blockId: "block-b" }] });
+    await expect(
+      wrongKey.query("apricot", [target("section-a", 1)])
+    ).resolves.toMatchObject({
+      coverage: { complete: false, indexedSections: 0 },
+      matches: []
+    });
     expect(await database.listSearchIndex("user-a")).toHaveLength(1);
     expect(await database.listSearchIndex("user-b")).toHaveLength(1);
   });
@@ -92,9 +103,9 @@ describe("protected incremental search index", () => {
       userId: "user-a"
     });
     const targets = [target("section-a", 5), target("section-b", 3)];
-    await index.applySection(sectionUpdate(5, [
-      { blockId: "block-a", text: "covered result" }
-    ]));
+    await index.applySection(
+      sectionUpdate(5, [{ blockId: "block-a", text: "covered result" }])
+    );
     await index.applySection({
       ...sectionUpdate(2, [{ blockId: "block-b", text: "stale result" }]),
       sectionId: "section-b"
@@ -126,25 +137,28 @@ describe("protected incremental search index", () => {
       rootKey: key(6),
       userId: "user-a"
     });
-    await index.applySection(sectionUpdate(1, [
-      { blockId: "included", text: "scoped result" }
-    ]));
+    await index.applySection(
+      sectionUpdate(1, [{ blockId: "included", text: "scoped result" }])
+    );
     await index.applySection({
       ...sectionUpdate(1, [{ blockId: "excluded", text: "scoped result" }]),
       sectionId: "section-b"
     });
 
-    await expect(index.query("scoped", [target("section-a", 1)]))
-      .resolves.toMatchObject({ matches: [{ blockId: "included" }] });
+    await expect(index.query("scoped", [target("section-a", 1)])).resolves.toMatchObject({
+      matches: [{ blockId: "included" }]
+    });
   });
 
   it("builds bounded coverage while repeat queries transfer no sections", async () => {
     const database = await openDatabase();
     const yieldControl = vi.fn().mockResolvedValue(undefined);
-    const loadSection = vi.fn((coverage: SearchCoverageTarget) => Promise.resolve({
-      ...coverage,
-      blocks: [{ blockId: `block-${coverage.sectionId}`, text: "findable content" }]
-    }));
+    const loadSection = vi.fn((coverage: SearchCoverageTarget) =>
+      Promise.resolve({
+        ...coverage,
+        blocks: [{ blockId: `block-${coverage.sectionId}`, text: "findable content" }]
+      })
+    );
     const index = createProtectedSearchIndex({
       database,
       maxSectionsPerBatch: 2,
@@ -194,7 +208,10 @@ function key(seed: number): Uint8Array {
   return Uint8Array.from({ length: 32 }, (_, index) => (seed + index) % 256);
 }
 
-function sectionUpdate(serverSequence: number, blocks: { blockId: string; text: string }[]) {
+function sectionUpdate(
+  serverSequence: number,
+  blocks: { blockId: string; text: string }[]
+) {
   return {
     blocks,
     keyEpoch: 1,

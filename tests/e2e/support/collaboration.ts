@@ -27,7 +27,10 @@ export async function newUserPage(
   return context.newPage();
 }
 
-export async function closePageContext(page: Page, contexts: BrowserContext[]): Promise<void> {
+export async function closePageContext(
+  page: Page,
+  contexts: BrowserContext[]
+): Promise<void> {
   const context = page.context();
   await context.close();
   const index = contexts.indexOf(context);
@@ -67,10 +70,8 @@ export async function dropFirstDurableAck(
       }
       if (state.targetUpdateId && typeof message !== "string") {
         try {
-          const updateId = decodeCrdtBinaryFrame(
-            Uint8Array.from(message),
-            256 * 1024
-          ).header.updateId;
+          const updateId = decodeCrdtBinaryFrame(Uint8Array.from(message), 256 * 1024)
+            .header.updateId;
           if (updateId === state.targetUpdateId) {
             state.targetSends += 1;
           }
@@ -81,11 +82,12 @@ export async function dropFirstDurableAck(
       serverSocket.send(message);
     });
     serverSocket.onMessage((message) => {
-      const controlMessage = typeof message === "string"
-        ? message
-        : message[0] === 0x7b
-          ? message.toString("utf8")
-          : null;
+      const controlMessage =
+        typeof message === "string"
+          ? message
+          : message[0] === 0x7b
+            ? message.toString("utf8")
+            : null;
       if (controlMessage) {
         try {
           const controlText: string = controlMessage;
@@ -130,18 +132,27 @@ export async function restartManagedE2eServer(): Promise<boolean> {
   }
   const token = crypto.randomUUID();
   await writeFile(restartPath, token, "utf8");
-  await expect.poll(async () => {
-    try {
-      const state: string = await readFile(statePath, "utf8");
-      return state.trim();
-    } catch {
-      return "";
-    }
-  }, { timeout: 45_000 }).toBe(`ready:${token}:${String(supervisorPid)}`);
+  await expect
+    .poll(
+      async () => {
+        try {
+          const state: string = await readFile(statePath, "utf8");
+          return state.trim();
+        } catch {
+          return "";
+        }
+      },
+      { timeout: 45_000 }
+    )
+    .toBe(`ready:${token}:${String(supervisorPid)}`);
   return true;
 }
 
-export async function register(page: Page, username: string, password: string): Promise<void> {
+export async function register(
+  page: Page,
+  username: string,
+  password: string
+): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: "Create an account" }).click();
   await page.getByLabel("Account handle").fill(username);
@@ -151,7 +162,11 @@ export async function register(page: Page, username: string, password: string): 
   await expect(page.getByText("Signed in and decrypted")).toBeVisible();
 }
 
-export async function signIn(page: Page, username: string, password: string): Promise<void> {
+export async function signIn(
+  page: Page,
+  username: string,
+  password: string
+): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByLabel("Account handle").fill(username);
@@ -201,7 +216,9 @@ export async function createNote(page: Page, title: string, body: string): Promi
   await expect(titleInput).toHaveValue(title);
   await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
   await expect(page.getByText(/^Last saved \d+ seconds ago$/)).toBeVisible();
-  await expect(page.getByRole("button", { name: noteTitlePattern(title) }).first()).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: noteTitlePattern(title) }).first()
+  ).toBeVisible();
 }
 
 export async function shareNote(
@@ -229,7 +246,9 @@ export async function shareNote(
   await closeShareDialog(page);
 }
 
-export async function openShareDialog(page: Page): Promise<import("@playwright/test").Locator> {
+export async function openShareDialog(
+  page: Page
+): Promise<import("@playwright/test").Locator> {
   const dialog = page.getByRole("dialog", { name: "Share note" });
   if (!(await dialog.isVisible())) {
     await page.getByRole("button", { name: "Share note" }).click();
@@ -276,8 +295,7 @@ export async function revokeMember(
   await openShareDialog(page);
   const revoked = page.waitForResponse(
     (response) =>
-      response.request().method() === "POST" &&
-      response.url().includes("/key-rotation")
+      response.request().method() === "POST" && response.url().includes("/key-rotation")
   );
   page.once("dialog", (dialog) => {
     void dialog.accept();
@@ -364,10 +382,10 @@ export interface ApiTraffic {
 
 export function captureApiTraffic(page: Page, existing?: ApiTraffic): ApiTraffic {
   const traffic: ApiTraffic = existing ?? {
-      attachmentUploads: 0,
-      requestBodies: [],
-      responseBodies: []
-    };
+    attachmentUploads: 0,
+    requestBodies: [],
+    responseBodies: []
+  };
   page.on("request", (request) => {
     if (!isMediaApiUrl(request.url())) {
       return;
@@ -443,7 +461,10 @@ export async function waitForNoteSave(page: Page) {
   return response;
 }
 
-export async function lookupPublicSharingKey(page: Page, username: string): Promise<PublicSharingKey> {
+export async function lookupPublicSharingKey(
+  page: Page,
+  username: string
+): Promise<PublicSharingKey> {
   return page.evaluate(async (targetUsername) => {
     const response = await fetch(
       `/api/sharing-keys/lookup?username=${encodeURIComponent(targetUsername)}`,

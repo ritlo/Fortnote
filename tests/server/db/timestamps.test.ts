@@ -19,14 +19,16 @@ describe("canonical timestamps", () => {
   });
 
   it("normalizes timestamp fields only and keeps nulls", () => {
-    expect(withCanonicalTimestamps({
-      id: "note",
-      title: "2026-09-14 17:01:53",
-      createdAt: "2026-09-14 17:01:53",
-      updatedAt: "2026-09-14 19:01:53.5+02",
-      deletedAt: null,
-      expiresAt: new Date("2026-09-15T00:00:00.000Z")
-    })).toEqual({
+    expect(
+      withCanonicalTimestamps({
+        id: "note",
+        title: "2026-09-14 17:01:53",
+        createdAt: "2026-09-14 17:01:53",
+        updatedAt: "2026-09-14 19:01:53.5+02",
+        deletedAt: null,
+        expiresAt: new Date("2026-09-15T00:00:00.000Z")
+      })
+    ).toEqual({
       id: "note",
       title: "2026-09-14 17:01:53",
       createdAt: "2026-09-14T17:01:53.000Z",

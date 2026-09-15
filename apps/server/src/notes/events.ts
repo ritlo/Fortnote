@@ -4,9 +4,7 @@ import { z } from "zod";
 const clientInstanceIdSchema = z.uuid();
 
 export function requestClientInstanceId(request: Request): string | undefined {
-  const parsed = clientInstanceIdSchema.safeParse(
-    request.get("x-fortnote-client-id")
-  );
+  const parsed = clientInstanceIdSchema.safeParse(request.get("x-fortnote-client-id"));
   return parsed.success ? parsed.data : undefined;
 }
 

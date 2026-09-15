@@ -77,8 +77,7 @@ export async function ensureLegacyNoteMigrated(
     return;
   }
 
-  const requestedSectionId =
-    legacyMigrationSectionIds.get(note.id) ?? randomUuid();
+  const requestedSectionId = legacyMigrationSectionIds.get(note.id) ?? randomUuid();
   legacyMigrationSectionIds.set(note.id, requestedSectionId);
   let expectedRootVersion = legacy.rootVersion;
   for (;;) {
@@ -129,21 +128,20 @@ export async function ensureLegacyNoteMigrated(
     if (!replaceCrdtSectionOrder(note.id, [reservation.sectionId])) {
       throw new Error("Encrypted section order was not ready for migration");
     }
-    const latestTitle = useAppStore.getState().notes.find(
-      (candidate) => candidate.id === note.id && candidate.keyEpoch === note.keyEpoch
-    )?.title;
+    const latestTitle = useAppStore
+      .getState()
+      .notes.find(
+        (candidate) => candidate.id === note.id && candidate.keyEpoch === note.keyEpoch
+      )?.title;
     if (latestTitle !== undefined) {
       editCrdtNote(note, { title: latestTitle });
     }
     await waitForCrdtSectionDurable(note.id, note.keyEpoch, "root");
     seedLegacyCrdtSection(migratingNote, reservation.sectionId, body);
     openCrdtSection(migratingNote, reservation.sectionId);
-    await waitForCrdtSectionReady(
-      note.id,
-      note.keyEpoch,
-      reservation.sectionId,
-      { ...(signal ? { signal } : {}) }
-    );
+    await waitForCrdtSectionReady(note.id, note.keyEpoch, reservation.sectionId, {
+      ...(signal ? { signal } : {})
+    });
     const manifest = await createCrdtSectionInitializationManifest(
       note.id,
       note.keyEpoch,
@@ -192,10 +190,7 @@ function finishLegacyMigration(
   });
 }
 
-function updateMigratingNote(
-  note: DecryptedNote,
-  patch: Partial<DecryptedNote>
-): void {
+function updateMigratingNote(note: DecryptedNote, patch: Partial<DecryptedNote>): void {
   const state = useAppStore.getState();
   if (
     state.user === null ||
@@ -222,7 +217,10 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   }
 }
 
-function abortableDelay(milliseconds: number, signal: AbortSignal | undefined): Promise<void> {
+function abortableDelay(
+  milliseconds: number,
+  signal: AbortSignal | undefined
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
@@ -269,10 +267,11 @@ export async function loadDecryptedNotes(
     const loadedNotes = deleted ? decrypted : decrypted.map(preserveCrdtContent);
     const state = useAppStore.getState();
     const locallyAddedNotes = (deleted ? state.trashNotes : state.notes).filter(
-      (note) => !initialNoteIds.has(note.id) && !loadedNotes.some(({ id }) => id === note.id)
+      (note) =>
+        !initialNoteIds.has(note.id) && !loadedNotes.some(({ id }) => id === note.id)
     );
-    const nextNotes = [...loadedNotes, ...locallyAddedNotes].sort(
-      (left, right) => right.updatedAt.localeCompare(left.updatedAt)
+    const nextNotes = [...loadedNotes, ...locallyAddedNotes].sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt)
     );
 
     if (
@@ -462,7 +461,10 @@ export async function ensureSharingKey(
   return created.opened;
 }
 
-function upsertSortedNote(notes: DecryptedNote[], nextNote: DecryptedNote): DecryptedNote[] {
+function upsertSortedNote(
+  notes: DecryptedNote[],
+  nextNote: DecryptedNote
+): DecryptedNote[] {
   return [nextNote, ...notes.filter((note) => note.id !== nextNote.id)].sort(
     (left, right) => right.updatedAt.localeCompare(left.updatedAt)
   );

@@ -15,77 +15,80 @@ import { testSql } from "../support/database.js";
 import { canonicalTimestamp } from "@server/db/timestamps.js";
 
 describe("notes and folders routes", () => {
-	  it("persists encrypted display metadata and returns body-free lists", async () => {
-	    const app = await createTestApp();
-	    const agent = await registerAgent(app, "protected_metadata_user");
-	    const folderId = crypto.randomUUID();
-	    await agent
-	      .post("/api/folders")
-	      .set(csrfHeaders())
-	      .send({
-	        id: folderId,
-	        nameCipher: "encrypted_folder_name_abcdefghijklmnopqrstuvwxyz",
-	        nameNonce: "encrypted_folder_nonce_abcdefghijklmnopqrstuvwxyz",
-	        nameFormatVersion: 2
-	      })
-	      .expect(201);
-	    const payload = { ...protectedNotePayload(), folderId };
-	    await agent.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
+  it("persists encrypted display metadata and returns body-free lists", async () => {
+    const app = await createTestApp();
+    const agent = await registerAgent(app, "protected_metadata_user");
+    const folderId = crypto.randomUUID();
+    await agent
+      .post("/api/folders")
+      .set(csrfHeaders())
+      .send({
+        id: folderId,
+        nameCipher: "encrypted_folder_name_abcdefghijklmnopqrstuvwxyz",
+        nameNonce: "encrypted_folder_nonce_abcdefghijklmnopqrstuvwxyz",
+        nameFormatVersion: 2
+      })
+      .expect(201);
+    const payload = { ...protectedNotePayload(), folderId };
+    await agent.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
 
-	    const listed = await agent.get("/api/notes").expect(200);
-	    expect(listed.body.notes).toHaveLength(1);
-	    expect(listed.body.notes[0]).toMatchObject({
-	      id: payload.id,
-	      title: "",
-	      titleCipher: payload.titleCipher,
-	      titleNonce: payload.titleNonce,
-	      titleFormatVersion: 2,
-	      rootSectionId: payload.rootSectionId,
-	      rootVersion: 1,
-	      keyEpoch: 1
-	    });
-	    expect(listed.body.notes[0]).not.toHaveProperty("contentCipher");
-	    expect(listed.body.notes[0]).not.toHaveProperty("contentNonce");
-	    const folders = await agent.get("/api/folders").expect(200);
-	    expect(folders.body.folders[0]).toMatchObject({
-	      id: folderId,
-	      name: "",
-	      nameCipher: "encrypted_folder_name_abcdefghijklmnopqrstuvwxyz",
-	      nameFormatVersion: 2
-	    });
+    const listed = await agent.get("/api/notes").expect(200);
+    expect(listed.body.notes).toHaveLength(1);
+    expect(listed.body.notes[0]).toMatchObject({
+      id: payload.id,
+      title: "",
+      titleCipher: payload.titleCipher,
+      titleNonce: payload.titleNonce,
+      titleFormatVersion: 2,
+      rootSectionId: payload.rootSectionId,
+      rootVersion: 1,
+      keyEpoch: 1
+    });
+    expect(listed.body.notes[0]).not.toHaveProperty("contentCipher");
+    expect(listed.body.notes[0]).not.toHaveProperty("contentNonce");
+    const folders = await agent.get("/api/folders").expect(200);
+    expect(folders.body.folders[0]).toMatchObject({
+      id: folderId,
+      name: "",
+      nameCipher: "encrypted_folder_name_abcdefghijklmnopqrstuvwxyz",
+      nameFormatVersion: 2
+    });
 
-	    const stored = await testSql(app.locals.db).get(`SELECT title, title_cipher AS titleCipher,
+    const stored = await testSql(app.locals.db).get(
+      `SELECT title, title_cipher AS titleCipher,
 	                content_cipher AS contentCipher, content_length AS contentLength
-	         FROM notes WHERE id = ?`, payload.id);
-	    expect(stored).toEqual({
-	      title: "",
-	      titleCipher: payload.titleCipher,
-	      contentCipher: "",
-	      contentLength: 0
-	    });
-	  });
+	         FROM notes WHERE id = ?`,
+      payload.id
+    );
+    expect(stored).toEqual({
+      title: "",
+      titleCipher: payload.titleCipher,
+      contentCipher: "",
+      contentLength: 0
+    });
+  });
 
-	  it("revalidates metadata role, root version, and epoch with concealed denial", async () => {
-	    const app = await createTestApp();
-	    const owner = await registerAgent(app, "metadata_owner");
-	    const outsider = await registerAgent(app, "metadata_outsider");
-	    const payload = protectedNotePayload();
-	    await owner.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
+  it("revalidates metadata role, root version, and epoch with concealed denial", async () => {
+    const app = await createTestApp();
+    const owner = await registerAgent(app, "metadata_owner");
+    const outsider = await registerAgent(app, "metadata_outsider");
+    const payload = protectedNotePayload();
+    await owner.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
 
-	    await owner
-	      .put(`/api/notes/${payload.id}`)
-	      .set(csrfHeaders())
-	      .send({
-	        titleCipher: "updated_title_cipher_abcdefghijklmnopqrstuvwxyz",
-	        titleNonce: "updated_title_nonce_abcdefghijklmnopqrstuvwxyz",
-	        titleFormatVersion: 2,
-	        rootVersion: 1,
-	        keyEpoch: 1
-	      })
-	      .expect(200)
-	      .expect(({ body }) => {
-	        expect(body).toMatchObject({ rootVersion: 2, keyEpoch: 1 });
-	      });
+    await owner
+      .put(`/api/notes/${payload.id}`)
+      .set(csrfHeaders())
+      .send({
+        titleCipher: "updated_title_cipher_abcdefghijklmnopqrstuvwxyz",
+        titleNonce: "updated_title_nonce_abcdefghijklmnopqrstuvwxyz",
+        titleFormatVersion: 2,
+        rootVersion: 1,
+        keyEpoch: 1
+      })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({ rootVersion: 2, keyEpoch: 1 });
+      });
     await owner
       .put(`/api/notes/${payload.id}`)
       .set(csrfHeaders())
@@ -97,13 +100,13 @@ describe("notes and folders routes", () => {
       .send({ rootVersion: 2, keyEpoch: 2 })
       .expect(409);
 
-	    const denied = await outsider.get(`/api/notes/${payload.id}`).expect(404);
-	    const absent = await outsider.get(`/api/notes/${crypto.randomUUID()}`).expect(404);
-	    expect(denied.body.error).toMatchObject({
-	      code: absent.body.error.code,
-	      message: absent.body.error.message
-	    });
-	  });
+    const denied = await outsider.get(`/api/notes/${payload.id}`).expect(404);
+    const absent = await outsider.get(`/api/notes/${crypto.randomUUID()}`).expect(404);
+    expect(denied.body.error).toMatchObject({
+      code: absent.body.error.code,
+      message: absent.body.error.message
+    });
+  });
 
   it("lists only opaque section metadata for authorized readers", async () => {
     const app = await createTestApp();
@@ -126,9 +129,7 @@ describe("notes and folders routes", () => {
     expect(JSON.stringify(listed.body)).not.toContain("cipher");
     expect(JSON.stringify(listed.body)).not.toContain("nonce");
 
-    const denied = await outsider
-      .get(`/api/notes/${payload.id}/sections`)
-      .expect(404);
+    const denied = await outsider.get(`/api/notes/${payload.id}/sections`).expect(404);
     const absent = await outsider
       .get(`/api/notes/${crypto.randomUUID()}/sections`)
       .expect(404);
@@ -249,9 +250,7 @@ describe("notes and folders routes", () => {
       rootSectionId: null
     });
     expect(listed.body.notes[0]).not.toHaveProperty("contentCipher");
-    const content = await owner
-      .get(`/api/notes/${legacy.id}/legacy-content`)
-      .expect(200);
+    const content = await owner.get(`/api/notes/${legacy.id}/legacy-content`).expect(200);
     expect(content.body).toMatchObject({
       contentCipher: legacy.contentCipher,
       contentNonce: legacy.contentNonce,
@@ -309,11 +308,14 @@ describe("notes and folders routes", () => {
         });
       });
     expect(
-      await testSql(app.locals.db).get(`
+      await testSql(app.locals.db).get(
+        `
           SELECT n.root_section_id AS rootSectionId, s.is_deleted AS isDeleted
           FROM notes n INNER JOIN note_sections s ON s.id = n.root_section_id
           WHERE n.id = ?
-        `, legacy.id)
+        `,
+        legacy.id
+      )
     ).toEqual({ rootSectionId: firstSectionId, isDeleted: 0 });
   });
 
@@ -333,7 +335,11 @@ describe("notes and folders routes", () => {
         expectedRootVersion: 1
       })
       .expect(201);
-    await testSql(app.locals.db).run("UPDATE note_sections SET updated_at = ? WHERE id = ?", new Date(Date.now() - 60 * 60 * 1000).toISOString(), staleSectionId);
+    await testSql(app.locals.db).run(
+      "UPDATE note_sections SET updated_at = ? WHERE id = ?",
+      new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      staleSectionId
+    );
 
     await owner
       .post(`/api/notes/${legacy.id}/sections/legacy-reservation`)
@@ -352,11 +358,16 @@ describe("notes and folders routes", () => {
         });
       });
     expect(
-      await testSql(app.locals.db).all("SELECT id, is_deleted AS isDeleted FROM note_sections WHERE note_id = ? ORDER BY id", legacy.id)
-    ).toEqual(expect.arrayContaining([
-      { id: staleSectionId, isDeleted: 1 },
-      { id: replacementSectionId, isDeleted: 0 }
-    ]));
+      await testSql(app.locals.db).all(
+        "SELECT id, is_deleted AS isDeleted FROM note_sections WHERE note_id = ? ORDER BY id",
+        legacy.id
+      )
+    ).toEqual(
+      expect.arrayContaining([
+        { id: staleSectionId, isDeleted: 1 },
+        { id: replacementSectionId, isDeleted: 0 }
+      ])
+    );
   });
 
   it("clears legacy columns only after installing the committed initial checkpoint", async () => {
@@ -370,7 +381,10 @@ describe("notes and folders routes", () => {
       .set(csrfHeaders())
       .send({ sectionId, expectedKeyEpoch: 1, expectedRootVersion: 1 })
       .expect(201);
-    const cryptoOwner = (await testSql(app.locals.db).get<{ cryptoOwnerId: string }>("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?", legacy.id))!;
+    const cryptoOwner = (await testSql(app.locals.db).get<{ cryptoOwnerId: string }>(
+      "SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?",
+      legacy.id
+    ))!;
     const manifestId = await seedCheckpointManifest(app, {
       noteId: legacy.id,
       sectionId,
@@ -391,15 +405,21 @@ describe("notes and folders routes", () => {
         });
       });
     await owner.get(`/api/notes/${legacy.id}/legacy-content`).expect(409);
-    await owner.get(`/api/notes/${legacy.id}`).expect(200).expect(({ body }) => {
-      expect(body).toMatchObject({ legacyContentAvailable: false });
-    });
+    await owner
+      .get(`/api/notes/${legacy.id}`)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({ legacyContentAvailable: false });
+      });
     expect(
-      await testSql(app.locals.db).get(`
+      await testSql(app.locals.db).get(
+        `
           SELECT content_cipher AS contentCipher, content_nonce AS contentNonce,
                  content_length AS contentLength
           FROM notes WHERE id = ?
-        `, legacy.id)
+        `,
+        legacy.id
+      )
     ).toEqual({ contentCipher: "", contentNonce: "", contentLength: 0 });
     await owner
       .post(`/api/notes/${legacy.id}/sections/${sectionId}/initialization`)
@@ -410,7 +430,10 @@ describe("notes and folders routes", () => {
         expect(body).toMatchObject({ status: "already-initialized", manifestId });
       });
     expect(
-      await testSql(app.locals.db).get("SELECT COUNT(*) AS count FROM note_events WHERE note_id = ?", legacy.id)
+      await testSql(app.locals.db).get(
+        "SELECT COUNT(*) AS count FROM note_events WHERE note_id = ?",
+        legacy.id
+      )
     ).toEqual({ count: 3 });
   });
 
@@ -429,11 +452,17 @@ describe("notes and folders routes", () => {
       .expect(500);
 
     expect(
-      await testSql(app.locals.db).get(`SELECT root_section_id AS rootSectionId, root_version AS rootVersion,
-                  version FROM notes WHERE id = ?`, legacy.id)
+      await testSql(app.locals.db).get(
+        `SELECT root_section_id AS rootSectionId, root_version AS rootVersion,
+                  version FROM notes WHERE id = ?`,
+        legacy.id
+      )
     ).toEqual({ rootSectionId: null, rootVersion: 1, version: 1 });
     expect(
-      await testSql(app.locals.db).get("SELECT id FROM note_sections WHERE id = ?", sectionId)
+      await testSql(app.locals.db).get(
+        "SELECT id FROM note_sections WHERE id = ?",
+        sectionId
+      )
     ).toBeUndefined();
   });
 
@@ -448,7 +477,10 @@ describe("notes and folders routes", () => {
       .set(csrfHeaders())
       .send({ sectionId, expectedKeyEpoch: 1, expectedRootVersion: 1 })
       .expect(201);
-    const cryptoOwner = (await testSql(app.locals.db).get<{ cryptoOwnerId: string }>("SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?", legacy.id))!;
+    const cryptoOwner = (await testSql(app.locals.db).get<{ cryptoOwnerId: string }>(
+      "SELECT crypto_owner_id AS cryptoOwnerId FROM notes WHERE id = ?",
+      legacy.id
+    ))!;
     const manifestId = await seedCheckpointManifest(app, {
       noteId: legacy.id,
       sectionId,
@@ -463,265 +495,307 @@ describe("notes and folders routes", () => {
       .expect(500);
 
     expect(
-      await testSql(app.locals.db).get(`SELECT n.content_cipher AS contentCipher,
+      await testSql(app.locals.db).get(
+        `SELECT n.content_cipher AS contentCipher,
                   s.initialization_manifest_id AS initializationManifestId
            FROM notes n
            INNER JOIN note_sections s ON s.id = n.root_section_id
-           WHERE n.id = ?`, legacy.id)
+           WHERE n.id = ?`,
+        legacy.id
+      )
     ).toEqual({
       contentCipher: legacy.contentCipher,
       initializationManifestId: null
     });
     expect(
-      await testSql(app.locals.db).get("SELECT manifest_id AS manifestId FROM crdt_initializations WHERE note_id = ?", legacy.id)
+      await testSql(app.locals.db).get(
+        "SELECT manifest_id AS manifestId FROM crdt_initializations WHERE note_id = ?",
+        legacy.id
+      )
     ).toBeUndefined();
   });
 
-	  it("atomically upgrades an owned legacy note to protected v2 metadata", async () => {
-	    const app = await createTestApp();
-	    const owner = await registerAgent(app, "metadata_migration_owner");
-	    const legacy = notePayload();
-	    const rootSectionId = crypto.randomUUID();
-	    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
+  it("atomically upgrades an owned legacy note to protected v2 metadata", async () => {
+    const app = await createTestApp();
+    const owner = await registerAgent(app, "metadata_migration_owner");
+    const legacy = notePayload();
+    const rootSectionId = crypto.randomUUID();
+    await owner.post("/api/notes").set(csrfHeaders()).send(legacy).expect(201);
 
-	    await owner
-	      .put(`/api/notes/${legacy.id}`)
-	      .set(csrfHeaders())
-	      .send({
-	        titleCipher: "migrated_title_cipher_abcdefghijklmnopqrstuvwxyz",
-	        titleNonce: "migrated_title_nonce_abcdefghijklmnopqrstuvwxyz",
-	        titleFormatVersion: 2,
-	        encryptedNoteKey: "migrated_note_key_cipher_abcdefghijklmnopqrstuvwxyz",
-	        noteKeyNonce: "migrated_note_key_nonce_abcdefghijklmnopqrstuvwxyz",
-	        noteKeyFormatVersion: 2,
-	        rootSectionId,
-	        rootVersion: 1,
-	        keyEpoch: 1
-	      })
-	      .expect(200);
+    await owner
+      .put(`/api/notes/${legacy.id}`)
+      .set(csrfHeaders())
+      .send({
+        titleCipher: "migrated_title_cipher_abcdefghijklmnopqrstuvwxyz",
+        titleNonce: "migrated_title_nonce_abcdefghijklmnopqrstuvwxyz",
+        titleFormatVersion: 2,
+        encryptedNoteKey: "migrated_note_key_cipher_abcdefghijklmnopqrstuvwxyz",
+        noteKeyNonce: "migrated_note_key_nonce_abcdefghijklmnopqrstuvwxyz",
+        noteKeyFormatVersion: 2,
+        rootSectionId,
+        rootVersion: 1,
+        keyEpoch: 1
+      })
+      .expect(200);
 
-	    expect(
-	      await testSql(app.locals.db).get(`SELECT title, title_format_version AS titleFormatVersion,
+    expect(
+      await testSql(app.locals.db).get(
+        `SELECT title, title_format_version AS titleFormatVersion,
 	                  note_key_format_version AS noteKeyFormatVersion,
 	                  root_section_id AS rootSectionId
-	           FROM notes WHERE id = ?`, legacy.id)
-	    ).toEqual({
+	           FROM notes WHERE id = ?`,
+        legacy.id
+      )
+    ).toEqual({
       title: "",
-	      titleFormatVersion: 2,
-	      noteKeyFormatVersion: 2,
-	      rootSectionId
-	    });
-	    expect(
-	      await testSql(app.locals.db).get("SELECT id FROM note_sections WHERE id = ? AND note_id = ?", rootSectionId, legacy.id)
-	    ).toEqual({ id: rootSectionId });
-	  });
+      titleFormatVersion: 2,
+      noteKeyFormatVersion: 2,
+      rootSectionId
+    });
+    expect(
+      await testSql(app.locals.db).get(
+        "SELECT id FROM note_sections WHERE id = ? AND note_id = ?",
+        rootSectionId,
+        legacy.id
+      )
+    ).toEqual({ id: rootSectionId });
+  });
 
-	  it("atomically revokes a member and activates an adjacent linked epoch", async () => {
-	    const app = await createTestApp();
-	    const owner = await registerAgent(app, "linked_owner");
-	    const revoked = await registerAgent(app, "linked_revoked");
-	    const remaining = await registerAgent(app, "linked_remaining");
-	    const revokedUser = await revoked.get("/api/auth/me").expect(200);
-	    const remainingUser = await remaining.get("/api/auth/me").expect(200);
-	    await revoked
-	      .put("/api/sharing-keys/current")
-	      .set(csrfHeaders())
-	      .send({ ...sharingKeyPayload(2), formatVersion: 2 })
-	      .expect(201);
-	    await remaining
-	      .put("/api/sharing-keys/current")
-	      .set(csrfHeaders())
-	      .send({ ...sharingKeyPayload(2), formatVersion: 2 })
-	      .expect(201);
-	    const payload = protectedNotePayload();
-	    await owner.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
-	    for (const username of ["linked_revoked", "linked_remaining"]) {
-	      await owner
-	        .post(`/api/notes/${payload.id}/memberships`)
-	        .set(csrfHeaders())
-	        .send({
-	          username,
-	          role: "editor",
-	          sharingKeyVersion: 2,
-	          encryptedNoteKey: `initial_share_${username}_abcdefghijklmnopqrstuvwxyz`,
-	          formatVersion: 2
-	        })
-	        .expect(201);
-	    }
+  it("atomically revokes a member and activates an adjacent linked epoch", async () => {
+    const app = await createTestApp();
+    const owner = await registerAgent(app, "linked_owner");
+    const revoked = await registerAgent(app, "linked_revoked");
+    const remaining = await registerAgent(app, "linked_remaining");
+    const revokedUser = await revoked.get("/api/auth/me").expect(200);
+    const remainingUser = await remaining.get("/api/auth/me").expect(200);
+    await revoked
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send({ ...sharingKeyPayload(2), formatVersion: 2 })
+      .expect(201);
+    await remaining
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send({ ...sharingKeyPayload(2), formatVersion: 2 })
+      .expect(201);
+    const payload = protectedNotePayload();
+    await owner.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
+    for (const username of ["linked_revoked", "linked_remaining"]) {
+      await owner
+        .post(`/api/notes/${payload.id}/memberships`)
+        .set(csrfHeaders())
+        .send({
+          username,
+          role: "editor",
+          sharingKeyVersion: 2,
+          encryptedNoteKey: `initial_share_${username}_abcdefghijklmnopqrstuvwxyz`,
+          formatVersion: 2
+        })
+        .expect(201);
+    }
 
-	    const rotationPayload = {
-	      mode: "linked",
-	      revokedUserId: revokedUser.body.id,
-	      rootVersion: 1,
-	      sourceEpoch: 1,
-	      targetEpoch: 2,
-	      encryptedNoteKey: "new_owner_note_key_abcdefghijklmnopqrstuvwxyz",
-	      noteKeyNonce: "new_owner_note_nonce_abcdefghijklmnopqrstuvwxyz",
-	      noteKeyFormatVersion: 2,
-	      titleCipher: "new_title_cipher_abcdefghijklmnopqrstuvwxyz",
-	      titleNonce: "new_title_nonce_abcdefghijklmnopqrstuvwxyz",
-	      titleFormatVersion: 2,
-	      previousKeyCipher: "linked_previous_key_cipher_abcdefghijklmnopqrstuvwxyz",
-	      previousKeyNonce: "linked_previous_key_nonce_abcdefghijklmnopqrstuvwxyz",
-	      linkFormatVersion: 2,
-	      shares: [
-	        {
-	          recipientUserId: remainingUser.body.id,
-	          sharingKeyVersion: 2,
-	          encryptedNoteKey: "new_remaining_share_abcdefghijklmnopqrstuvwxyz",
-	          formatVersion: 2
-	        }
-	      ]
-	    };
+    const rotationPayload = {
+      mode: "linked",
+      revokedUserId: revokedUser.body.id,
+      rootVersion: 1,
+      sourceEpoch: 1,
+      targetEpoch: 2,
+      encryptedNoteKey: "new_owner_note_key_abcdefghijklmnopqrstuvwxyz",
+      noteKeyNonce: "new_owner_note_nonce_abcdefghijklmnopqrstuvwxyz",
+      noteKeyFormatVersion: 2,
+      titleCipher: "new_title_cipher_abcdefghijklmnopqrstuvwxyz",
+      titleNonce: "new_title_nonce_abcdefghijklmnopqrstuvwxyz",
+      titleFormatVersion: 2,
+      previousKeyCipher: "linked_previous_key_cipher_abcdefghijklmnopqrstuvwxyz",
+      previousKeyNonce: "linked_previous_key_nonce_abcdefghijklmnopqrstuvwxyz",
+      linkFormatVersion: 2,
+      shares: [
+        {
+          recipientUserId: remainingUser.body.id,
+          sharingKeyVersion: 2,
+          encryptedNoteKey: "new_remaining_share_abcdefghijklmnopqrstuvwxyz",
+          formatVersion: 2
+        }
+      ]
+    };
 
-	    await owner
-	      .post(`/api/notes/${payload.id}/key-rotation`)
-	      .set(csrfHeaders())
-	      .send({ ...rotationPayload, shares: [] })
-	      .expect(400);
-	    expect(
-	      await testSql(app.locals.db).get("SELECT key_epoch AS keyEpoch, root_version AS rootVersion, rotation_fenced AS rotationFenced FROM notes WHERE id = ?", payload.id)
-	    ).toEqual({ keyEpoch: 1, rootVersion: 1, rotationFenced: 0 });
-	    expect(
-	      await testSql(app.locals.db).get("SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?", payload.id, revokedUser.body.id)
-	    ).toEqual({ status: "active" });
+    await owner
+      .post(`/api/notes/${payload.id}/key-rotation`)
+      .set(csrfHeaders())
+      .send({ ...rotationPayload, shares: [] })
+      .expect(400);
+    expect(
+      await testSql(app.locals.db).get(
+        "SELECT key_epoch AS keyEpoch, root_version AS rootVersion, rotation_fenced AS rotationFenced FROM notes WHERE id = ?",
+        payload.id
+      )
+    ).toEqual({ keyEpoch: 1, rootVersion: 1, rotationFenced: 0 });
+    expect(
+      await testSql(app.locals.db).get(
+        "SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?",
+        payload.id,
+        revokedUser.body.id
+      )
+    ).toEqual({ status: "active" });
 
-	    await owner
-	      .post(`/api/notes/${payload.id}/key-rotation`)
-	      .set(csrfHeaders())
-	      .send(rotationPayload)
-	      .expect(200)
-	      .expect(({ body }) => {
-	        expect(body).toMatchObject({ rootVersion: 2, keyEpoch: 2 });
-	      });
+    await owner
+      .post(`/api/notes/${payload.id}/key-rotation`)
+      .set(csrfHeaders())
+      .send(rotationPayload)
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({ rootVersion: 2, keyEpoch: 2 });
+      });
 
-	    const note = await testSql(app.locals.db).get(`SELECT key_epoch AS keyEpoch, root_version AS rootVersion,
+    const note = await testSql(app.locals.db).get(
+      `SELECT key_epoch AS keyEpoch, root_version AS rootVersion,
 	                rotation_fenced AS rotationFenced, title_cipher AS titleCipher
-	         FROM notes WHERE id = ?`, payload.id);
-	    expect(note).toEqual({
-	      keyEpoch: 2,
-	      rootVersion: 2,
-	      rotationFenced: 0,
-	      titleCipher: rotationPayload.titleCipher
-	    });
-	    expect(
-	      await testSql(app.locals.db).get("SELECT source_epoch AS sourceEpoch, target_epoch AS targetEpoch FROM note_epoch_links WHERE note_id = ?", payload.id)
-	    ).toEqual({ sourceEpoch: 1, targetEpoch: 2 });
-	    const links = await owner
-	      .get(`/api/notes/${payload.id}/epoch-links`)
-	      .expect(200);
-	    expect(links.body.links).toEqual([
-	      expect.objectContaining({
-	        sourceEpoch: 1,
-	        targetEpoch: 2,
-	        previousKeyCipher: rotationPayload.previousKeyCipher,
-	        formatVersion: 2
-	      })
-	    ]);
-	    await remaining
-	      .get(`/api/notes/${payload.id}/epoch-links`)
-	      .expect(200);
-	    await revoked
-	      .get(`/api/notes/${payload.id}/epoch-links`)
-	      .expect(404);
-	    expect(
-	      await testSql(app.locals.db).get("SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?", payload.id, revokedUser.body.id)
-	    ).toEqual({ status: "revoked" });
-	    expect(
-	      await testSql(app.locals.db).get("SELECT encrypted_note_key AS encryptedNoteKey FROM note_key_shares WHERE note_id = ? AND recipient_user_id = ?", payload.id, remainingUser.body.id)
-	    ).toEqual({ encryptedNoteKey: "new_remaining_share_abcdefghijklmnopqrstuvwxyz" });
-	  });
+	         FROM notes WHERE id = ?`,
+      payload.id
+    );
+    expect(note).toEqual({
+      keyEpoch: 2,
+      rootVersion: 2,
+      rotationFenced: 0,
+      titleCipher: rotationPayload.titleCipher
+    });
+    expect(
+      await testSql(app.locals.db).get(
+        "SELECT source_epoch AS sourceEpoch, target_epoch AS targetEpoch FROM note_epoch_links WHERE note_id = ?",
+        payload.id
+      )
+    ).toEqual({ sourceEpoch: 1, targetEpoch: 2 });
+    const links = await owner.get(`/api/notes/${payload.id}/epoch-links`).expect(200);
+    expect(links.body.links).toEqual([
+      expect.objectContaining({
+        sourceEpoch: 1,
+        targetEpoch: 2,
+        previousKeyCipher: rotationPayload.previousKeyCipher,
+        formatVersion: 2
+      })
+    ]);
+    await remaining.get(`/api/notes/${payload.id}/epoch-links`).expect(200);
+    await revoked.get(`/api/notes/${payload.id}/epoch-links`).expect(404);
+    expect(
+      await testSql(app.locals.db).get(
+        "SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?",
+        payload.id,
+        revokedUser.body.id
+      )
+    ).toEqual({ status: "revoked" });
+    expect(
+      await testSql(app.locals.db).get(
+        "SELECT encrypted_note_key AS encryptedNoteKey FROM note_key_shares WHERE note_id = ? AND recipient_user_id = ?",
+        payload.id,
+        remainingUser.body.id
+      )
+    ).toEqual({ encryptedNoteKey: "new_remaining_share_abcdefghijklmnopqrstuvwxyz" });
+  });
 
-	  it("rolls back linked rotations when event writes fail", async () => {
-	    const app = await createTestApp();
-	    const owner = await registerAgent(app, "linked_rollback_owner");
-	    const revoked = await registerAgent(app, "linked_rollback_revoked");
-	    const remaining = await registerAgent(app, "linked_rollback_remaining");
-	    const revokedUser = await revoked.get("/api/auth/me").expect(200);
-	    const remainingUser = await remaining.get("/api/auth/me").expect(200);
-	    await revoked
-	      .put("/api/sharing-keys/current")
-	      .set(csrfHeaders())
-	      .send({ ...sharingKeyPayload(2), formatVersion: 2 })
-	      .expect(201);
-	    await remaining
-	      .put("/api/sharing-keys/current")
-	      .set(csrfHeaders())
-	      .send({ ...sharingKeyPayload(2), formatVersion: 2 })
-	      .expect(201);
-	    const payload = protectedNotePayload();
-	    await owner.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
-	    for (const username of ["linked_rollback_revoked", "linked_rollback_remaining"]) {
-	      await owner
-	        .post(`/api/notes/${payload.id}/memberships`)
-	        .set(csrfHeaders())
-	        .send({
-	          username,
-	          role: "editor",
-	          sharingKeyVersion: 2,
-	          encryptedNoteKey: `initial_share_${username}_abcdefghijklmnopqrstuvwxyz`,
-	          formatVersion: 2
-	        })
-	        .expect(201);
-	    }
+  it("rolls back linked rotations when event writes fail", async () => {
+    const app = await createTestApp();
+    const owner = await registerAgent(app, "linked_rollback_owner");
+    const revoked = await registerAgent(app, "linked_rollback_revoked");
+    const remaining = await registerAgent(app, "linked_rollback_remaining");
+    const revokedUser = await revoked.get("/api/auth/me").expect(200);
+    const remainingUser = await remaining.get("/api/auth/me").expect(200);
+    await revoked
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send({ ...sharingKeyPayload(2), formatVersion: 2 })
+      .expect(201);
+    await remaining
+      .put("/api/sharing-keys/current")
+      .set(csrfHeaders())
+      .send({ ...sharingKeyPayload(2), formatVersion: 2 })
+      .expect(201);
+    const payload = protectedNotePayload();
+    await owner.post("/api/notes").set(csrfHeaders()).send(payload).expect(201);
+    for (const username of ["linked_rollback_revoked", "linked_rollback_remaining"]) {
+      await owner
+        .post(`/api/notes/${payload.id}/memberships`)
+        .set(csrfHeaders())
+        .send({
+          username,
+          role: "editor",
+          sharingKeyVersion: 2,
+          encryptedNoteKey: `initial_share_${username}_abcdefghijklmnopqrstuvwxyz`,
+          formatVersion: 2
+        })
+        .expect(201);
+    }
 
-	    await failNoteEventWrites(app);
-	    await owner
-	      .post(`/api/notes/${payload.id}/key-rotation`)
-	      .set(csrfHeaders())
-	      .send({
-	        mode: "linked",
-	        revokedUserId: revokedUser.body.id,
-	        rootVersion: 1,
-	        sourceEpoch: 1,
-	        targetEpoch: 2,
-	        encryptedNoteKey: "failed_linked_note_key_abcdefghijklmnopqrstuvwxyz",
-	        noteKeyNonce: "failed_linked_note_nonce_abcdefghijklmnopqrstuvwxyz",
-	        noteKeyFormatVersion: 2,
-	        titleCipher: "failed_linked_title_cipher_abcdefghijklmnopqrstuvwxyz",
-	        titleNonce: "failed_linked_title_nonce_abcdefghijklmnopqrstuvwxyz",
-	        titleFormatVersion: 2,
-	        previousKeyCipher: "failed_linked_previous_key_abcdefghijklmnopqrstuvwxyz",
-	        previousKeyNonce: "failed_linked_previous_nonce_abcdefghijklmnopqrstuvwxyz",
-	        linkFormatVersion: 2,
-	        shares: [
-	          {
-	            recipientUserId: remainingUser.body.id,
-	            sharingKeyVersion: 2,
-	            encryptedNoteKey: "failed_linked_remaining_share_abcdefghijklmnopqrstuvwxyz",
-	            formatVersion: 2
-	          }
-	        ]
-	      })
-	      .expect(500);
+    await failNoteEventWrites(app);
+    await owner
+      .post(`/api/notes/${payload.id}/key-rotation`)
+      .set(csrfHeaders())
+      .send({
+        mode: "linked",
+        revokedUserId: revokedUser.body.id,
+        rootVersion: 1,
+        sourceEpoch: 1,
+        targetEpoch: 2,
+        encryptedNoteKey: "failed_linked_note_key_abcdefghijklmnopqrstuvwxyz",
+        noteKeyNonce: "failed_linked_note_nonce_abcdefghijklmnopqrstuvwxyz",
+        noteKeyFormatVersion: 2,
+        titleCipher: "failed_linked_title_cipher_abcdefghijklmnopqrstuvwxyz",
+        titleNonce: "failed_linked_title_nonce_abcdefghijklmnopqrstuvwxyz",
+        titleFormatVersion: 2,
+        previousKeyCipher: "failed_linked_previous_key_abcdefghijklmnopqrstuvwxyz",
+        previousKeyNonce: "failed_linked_previous_nonce_abcdefghijklmnopqrstuvwxyz",
+        linkFormatVersion: 2,
+        shares: [
+          {
+            recipientUserId: remainingUser.body.id,
+            sharingKeyVersion: 2,
+            encryptedNoteKey: "failed_linked_remaining_share_abcdefghijklmnopqrstuvwxyz",
+            formatVersion: 2
+          }
+        ]
+      })
+      .expect(500);
 
-	    expect(
-	      await testSql(app.locals.db).get(`SELECT key_epoch AS keyEpoch, root_version AS rootVersion,
+    expect(
+      await testSql(app.locals.db).get(
+        `SELECT key_epoch AS keyEpoch, root_version AS rootVersion,
 	                  rotation_fenced AS rotationFenced, title_cipher AS titleCipher
-	           FROM notes WHERE id = ?`, payload.id)
-	    ).toEqual({
-	      keyEpoch: 1,
-	      rootVersion: 1,
-	      rotationFenced: 0,
-	      titleCipher: payload.titleCipher
-	    });
-	    expect(
-	      await testSql(app.locals.db).get("SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?", payload.id, revokedUser.body.id)
-	    ).toEqual({ status: "active" });
-	    expect(
-	      await testSql(app.locals.db).get("SELECT target_epoch AS targetEpoch FROM note_epoch_links WHERE note_id = ?", payload.id)
-	    ).toBeUndefined();
-	    expect(
-	      await testSql(app.locals.db).get("SELECT encrypted_note_key AS encryptedNoteKey FROM note_key_shares WHERE note_id = ? AND recipient_user_id = ?", payload.id, remainingUser.body.id)
-	    ).toEqual({
-	      encryptedNoteKey:
-	        "initial_share_linked_rollback_remaining_abcdefghijklmnopqrstuvwxyz"
-	    });
-	  });
+	           FROM notes WHERE id = ?`,
+        payload.id
+      )
+    ).toEqual({
+      keyEpoch: 1,
+      rootVersion: 1,
+      rotationFenced: 0,
+      titleCipher: payload.titleCipher
+    });
+    expect(
+      await testSql(app.locals.db).get(
+        "SELECT status FROM note_memberships WHERE note_id = ? AND user_id = ?",
+        payload.id,
+        revokedUser.body.id
+      )
+    ).toEqual({ status: "active" });
+    expect(
+      await testSql(app.locals.db).get(
+        "SELECT target_epoch AS targetEpoch FROM note_epoch_links WHERE note_id = ?",
+        payload.id
+      )
+    ).toBeUndefined();
+    expect(
+      await testSql(app.locals.db).get(
+        "SELECT encrypted_note_key AS encryptedNoteKey FROM note_key_shares WHERE note_id = ? AND recipient_user_id = ?",
+        payload.id,
+        remainingUser.body.id
+      )
+    ).toEqual({
+      encryptedNoteKey:
+        "initial_share_linked_rollback_remaining_abcdefghijklmnopqrstuvwxyz"
+    });
+  });
 
-	  it("creates folder and note, then updates with optimistic version", async () => {
-	    const app = await createTestApp();
-	    const agent = await registerAgent(app, "notes_user");
+  it("creates folder and note, then updates with optimistic version", async () => {
+    const app = await createTestApp();
+    const agent = await registerAgent(app, "notes_user");
 
     const folder = await agent
       .post("/api/folders")
@@ -735,7 +809,7 @@ describe("notes and folders routes", () => {
       .send(notePayload(folder.body.id as string))
       .expect(201);
 
-	    const updated = await agent
+    const updated = await agent
       .put(`/api/notes/${String(note.body.id)}`)
       .set(csrfHeaders())
       .send({
@@ -747,24 +821,32 @@ describe("notes and folders routes", () => {
       })
       .expect(200);
 
-    const storedUpdate = (await testSql(app.locals.db).get<{ updatedAt: string }>("SELECT updated_at AS updatedAt FROM notes WHERE id = ?", note.body.id))!;
+    const storedUpdate = (await testSql(app.locals.db).get<{ updatedAt: string }>(
+      "SELECT updated_at AS updatedAt FROM notes WHERE id = ?",
+      note.body.id
+    ))!;
     expect(updated.body).toMatchObject({
       version: 2,
       updatedAt: canonicalTimestamp(storedUpdate.updatedAt)
     });
-    const membership = await testSql(app.locals.db).get(`SELECT role, status
+    const membership = await testSql(app.locals.db).get(
+      `SELECT role, status
          FROM note_memberships
-	         WHERE note_id = ?`, note.body.id);
+	         WHERE note_id = ?`,
+      note.body.id
+    );
     expect(membership).toEqual({ role: "owner", status: "active" });
 
-    const events = await testSql(app.locals.db).all(`SELECT event_type AS eventType, note_version AS noteVersion
+    const events = await testSql(app.locals.db).all(
+      `SELECT event_type AS eventType, note_version AS noteVersion
          FROM note_events
          WHERE note_id = ?
-         ORDER BY cursor`, note.body.id);
+         ORDER BY cursor`,
+      note.body.id
+    );
     expect(events).toEqual([
       { eventType: "note.created", noteVersion: 1 },
       { eventType: "note.updated", noteVersion: 2 }
     ]);
   });
-
 });

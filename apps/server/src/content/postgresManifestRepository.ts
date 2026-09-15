@@ -18,9 +18,7 @@ class CommitRejected extends Error {
   }
 }
 
-export class PostgresContentManifestRepository
-  implements ContentManifestRepository
-{
+export class PostgresContentManifestRepository implements ContentManifestRepository {
   constructor(private readonly orm: PostgresDatabase) {}
 
   async commit(input: CommitContentManifestInput): Promise<ManifestCommitOutcome> {
@@ -30,11 +28,13 @@ export class PostgresContentManifestRepository
         const sessions = await transaction
           .select({ id: schema.sessions.id })
           .from(schema.sessions)
-          .where(and(
-            eq(schema.sessions.id, input.sessionId),
-            gt(schema.sessions.idleExpiresAt, now),
-            gt(schema.sessions.absoluteExpiresAt, now)
-          ))
+          .where(
+            and(
+              eq(schema.sessions.id, input.sessionId),
+              gt(schema.sessions.idleExpiresAt, now),
+              gt(schema.sessions.absoluteExpiresAt, now)
+            )
+          )
           .limit(1)
           .for("key share");
         if (!sessions[0]) reject({ kind: "unauthorized" });
@@ -73,23 +73,32 @@ export class PostgresContentManifestRepository
             membershipStatus: schema.noteMemberships.status
           })
           .from(schema.notes)
-          .innerJoin(schema.noteMemberships, eq(schema.noteMemberships.noteId, schema.notes.id))
-          .where(and(
-            eq(schema.notes.id, upload.noteId),
-            eq(schema.noteMemberships.userId, input.userId)
-          ))
+          .innerJoin(
+            schema.noteMemberships,
+            eq(schema.noteMemberships.noteId, schema.notes.id)
+          )
+          .where(
+            and(
+              eq(schema.notes.id, upload.noteId),
+              eq(schema.noteMemberships.userId, input.userId)
+            )
+          )
           .limit(1)
           .for("update", { of: [schema.notes, schema.noteMemberships] });
         const access = accessRows[0];
-        if (access?.membershipStatus !== "active" ||
-          (access.role !== "owner" && access.role !== "editor")) {
+        if (
+          access?.membershipStatus !== "active" ||
+          (access.role !== "owner" && access.role !== "editor")
+        ) {
           reject({ kind: "not-found" });
         }
         if (access.isDeleted) reject({ kind: "conflict" });
         if (access.rotationFenced) reject({ kind: "rotation-pending" });
-        if (upload.updateId !== input.updateId ||
+        if (
+          upload.updateId !== input.updateId ||
           upload.keyEpoch !== input.expectedKeyEpoch ||
-          access.keyEpoch !== input.expectedKeyEpoch) {
+          access.keyEpoch !== input.expectedKeyEpoch
+        ) {
           reject({ kind: "stale-epoch" });
         }
 
@@ -108,9 +117,12 @@ export class PostgresContentManifestRepository
           .where(eq(schema.contentChunks.uploadId, upload.id))
           .orderBy(schema.contentChunks.chunkIndex)
           .for("key share");
-        if (chunks.length !== upload.chunkCount ||
+        if (
+          chunks.length !== upload.chunkCount ||
           chunks.some((chunk, index) => chunk.chunkIndex !== index) ||
-          chunks.reduce((total, chunk) => total + chunk.cipherLength, 0) !== upload.totalCipherBytes) {
+          chunks.reduce((total, chunk) => total + chunk.cipherLength, 0) !==
+            upload.totalCipherBytes
+        ) {
           reject({ kind: "chunk-missing" });
         }
         if (contentManifestHash(chunks) !== upload.manifestHash) {
@@ -120,18 +132,22 @@ export class PostgresContentManifestRepository
         const sections = await transaction
           .select({ currentSequence: schema.noteSections.currentSequence })
           .from(schema.noteSections)
-          .where(and(
-            eq(schema.noteSections.id, upload.sectionId),
-            eq(schema.noteSections.noteId, upload.noteId),
-            eq(schema.noteSections.isDeleted, false)
-          ))
+          .where(
+            and(
+              eq(schema.noteSections.id, upload.sectionId),
+              eq(schema.noteSections.noteId, upload.noteId),
+              eq(schema.noteSections.isDeleted, false)
+            )
+          )
           .limit(1)
           .for("update");
         const section = sections[0];
         if (!section) reject({ kind: "not-found" });
-        if (upload.kind === "checkpoint" &&
+        if (
+          upload.kind === "checkpoint" &&
           (upload.checkpointSequenceCutoff === null ||
-            upload.checkpointSequenceCutoff > section.currentSequence)) {
+            upload.checkpointSequenceCutoff > section.currentSequence)
+        ) {
           reject({ kind: "conflict" });
         }
         const sequence = section.currentSequence + 1;
@@ -163,37 +179,60 @@ export class PostgresContentManifestRepository
           checkpointSequenceCutoff: upload.checkpointSequenceCutoff,
           manifestId: input.requestId
         });
-        const advanced = await transaction.update(schema.noteSections).set({
-          currentSequence: sequence,
-          updatedAt: sql`CURRENT_TIMESTAMP`
-        }).where(and(
-          eq(schema.noteSections.id, upload.sectionId),
-          eq(schema.noteSections.noteId, upload.noteId),
-          eq(schema.noteSections.currentSequence, section.currentSequence)
-        )).returning({ id: schema.noteSections.id });
-        if (advanced.length !== 1) throw new Error("Section sequence changed while locked");
+        const advanced = await transaction
+          .update(schema.noteSections)
+          .set({
+            currentSequence: sequence,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(
+            and(
+              eq(schema.noteSections.id, upload.sectionId),
+              eq(schema.noteSections.noteId, upload.noteId),
+              eq(schema.noteSections.currentSequence, section.currentSequence)
+            )
+          )
+          .returning({ id: schema.noteSections.id });
+        if (advanced.length !== 1)
+          throw new Error("Section sequence changed while locked");
         if (upload.kind === "checkpoint" && upload.checkpointSequenceCutoff !== null) {
-          await transaction.delete(schema.sectionUpdates).where(and(
-            eq(schema.sectionUpdates.noteId, upload.noteId),
-            eq(schema.sectionUpdates.sectionId, upload.sectionId),
-            eq(schema.sectionUpdates.keyEpoch, upload.keyEpoch),
-            lte(schema.sectionUpdates.serverSequence, upload.checkpointSequenceCutoff),
-            ne(schema.sectionUpdates.updateId, upload.updateId)
-          ));
+          await transaction
+            .delete(schema.sectionUpdates)
+            .where(
+              and(
+                eq(schema.sectionUpdates.noteId, upload.noteId),
+                eq(schema.sectionUpdates.sectionId, upload.sectionId),
+                eq(schema.sectionUpdates.keyEpoch, upload.keyEpoch),
+                lte(
+                  schema.sectionUpdates.serverSequence,
+                  upload.checkpointSequenceCutoff
+                ),
+                ne(schema.sectionUpdates.updateId, upload.updateId)
+              )
+            );
         }
-        const committed = await transaction.update(schema.storageAccounts).set({
-          usedBytes: sql`${schema.storageAccounts.usedBytes} + ${upload.totalCipherBytes}`,
-          reservedBytes: sql`${schema.storageAccounts.reservedBytes} - ${upload.totalCipherBytes}`,
-          updatedAt: sql`CURRENT_TIMESTAMP`
-        }).where(and(
-          eq(schema.storageAccounts.userId, access.ownerUserId),
-          sql`${schema.storageAccounts.reservedBytes} >= ${upload.totalCipherBytes}`
-        )).returning({ userId: schema.storageAccounts.userId });
+        const committed = await transaction
+          .update(schema.storageAccounts)
+          .set({
+            usedBytes: sql`${schema.storageAccounts.usedBytes} + ${upload.totalCipherBytes}`,
+            reservedBytes: sql`${schema.storageAccounts.reservedBytes} - ${upload.totalCipherBytes}`,
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(
+            and(
+              eq(schema.storageAccounts.userId, access.ownerUserId),
+              sql`${schema.storageAccounts.reservedBytes} >= ${upload.totalCipherBytes}`
+            )
+          )
+          .returning({ userId: schema.storageAccounts.userId });
         if (committed.length !== 1) reject({ kind: "storage-limit" });
-        await transaction.update(schema.contentUploads).set({
-          status: "committed",
-          updatedAt: sql`CURRENT_TIMESTAMP`
-        }).where(eq(schema.contentUploads.id, upload.id));
+        await transaction
+          .update(schema.contentUploads)
+          .set({
+            status: "committed",
+            updatedAt: sql`CURRENT_TIMESTAMP`
+          })
+          .where(eq(schema.contentUploads.id, upload.id));
         const manifest = await readManifest(transaction, upload.id);
         if (!manifest) throw new Error("Committed content manifest was not readable");
         return { kind: "committed", manifest } as const;
@@ -215,25 +254,30 @@ async function readManifest(
   database: Pick<PostgresDatabase, "select">,
   uploadId: string
 ): Promise<ContentManifestSummary | null> {
-  const rows = await database.select({
-    manifestId: schema.contentManifests.id,
-    uploadId: schema.contentManifests.uploadId,
-    updateId: schema.contentManifests.updateId,
-    noteId: schema.contentManifests.noteId,
-    sectionId: schema.contentManifests.sectionId,
-    cryptoOwnerId: schema.contentUploads.cryptoOwnerId,
-    keyEpoch: schema.contentManifests.keyEpoch,
-    kind: schema.contentManifests.kind,
-    firstSequence: schema.contentManifests.firstSequence,
-    lastSequence: schema.contentManifests.lastSequence,
-    totalCipherBytes: schema.contentManifests.totalCipherBytes,
-    chunkCount: schema.contentManifests.chunkCount,
-    manifestHash: schema.contentManifests.manifestHash,
-    checkpointSequenceCutoff: schema.contentManifests.checkpointSequenceCutoff
-  }).from(schema.contentManifests).innerJoin(
-    schema.contentUploads,
-    eq(schema.contentUploads.id, schema.contentManifests.uploadId)
-  ).where(eq(schema.contentManifests.uploadId, uploadId)).limit(1);
+  const rows = await database
+    .select({
+      manifestId: schema.contentManifests.id,
+      uploadId: schema.contentManifests.uploadId,
+      updateId: schema.contentManifests.updateId,
+      noteId: schema.contentManifests.noteId,
+      sectionId: schema.contentManifests.sectionId,
+      cryptoOwnerId: schema.contentUploads.cryptoOwnerId,
+      keyEpoch: schema.contentManifests.keyEpoch,
+      kind: schema.contentManifests.kind,
+      firstSequence: schema.contentManifests.firstSequence,
+      lastSequence: schema.contentManifests.lastSequence,
+      totalCipherBytes: schema.contentManifests.totalCipherBytes,
+      chunkCount: schema.contentManifests.chunkCount,
+      manifestHash: schema.contentManifests.manifestHash,
+      checkpointSequenceCutoff: schema.contentManifests.checkpointSequenceCutoff
+    })
+    .from(schema.contentManifests)
+    .innerJoin(
+      schema.contentUploads,
+      eq(schema.contentUploads.id, schema.contentManifests.uploadId)
+    )
+    .where(eq(schema.contentManifests.uploadId, uploadId))
+    .limit(1);
   const row = rows[0];
   if (!row) return null;
   const { checkpointSequenceCutoff, ...manifest } = row;

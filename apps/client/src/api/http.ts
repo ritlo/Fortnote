@@ -25,10 +25,7 @@ export function isApiRequestError(error: unknown): error is ApiRequestError {
   return error instanceof ApiRequestError;
 }
 
-export async function apiRequest<T>(
-  path: string,
-  init: RequestInit = {}
-): Promise<T> {
+export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const requestId = randomUuid();
   const headers = requestHeaders(init, requestId, true);
   assertBoundedJsonControl(init.body, headers, requestId);
@@ -78,7 +75,11 @@ export async function apiBinaryRequest(
   };
 }
 
-export function requestHeaders(init: RequestInit, requestId: string, defaultJson: boolean): Headers {
+export function requestHeaders(
+  init: RequestInit,
+  requestId: string,
+  defaultJson: boolean
+): Headers {
   const headers = new Headers(init.headers);
   if (defaultJson && !headers.has("content-type")) {
     headers.set("content-type", "application/json");

@@ -61,7 +61,10 @@ describe("local attachment storage", () => {
     const referencedId = crypto.randomUUID();
     const orphanId = crypto.randomUUID();
     for (const storageId of [recentId, referencedId, orphanId]) {
-      await fsPromises.writeFile(path.join(directory, storageId), Buffer.from("encrypted bytes"));
+      await fsPromises.writeFile(
+        path.join(directory, storageId),
+        Buffer.from("encrypted bytes")
+      );
     }
     const stale = new Date(Date.now() - 2 * 60 * 60 * 1000);
     await fsPromises.utimes(path.join(directory, referencedId), stale, stale);
@@ -76,7 +79,9 @@ describe("local attachment storage", () => {
 });
 
 async function temporaryDirectory(): Promise<string> {
-  const directory = await fsPromises.mkdtemp(path.join(os.tmpdir(), "fortnote-attachments-"));
+  const directory = await fsPromises.mkdtemp(
+    path.join(os.tmpdir(), "fortnote-attachments-")
+  );
   temporaryDirectories.push(directory);
   return directory;
 }

@@ -30,9 +30,7 @@ export interface AttachmentMetadataRepository {
   list(noteId: string): Promise<AttachmentListRecord[]>;
 }
 
-export class SqliteAttachmentMetadataRepository
-  implements AttachmentMetadataRepository
-{
+export class SqliteAttachmentMetadataRepository implements AttachmentMetadataRepository {
   constructor(private readonly orm: BetterSQLite3Database<typeof schema>) {}
 
   find(attachmentId: string): Promise<AttachmentRecord | undefined> {

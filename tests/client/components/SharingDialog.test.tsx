@@ -72,9 +72,18 @@ describe("SharingDialog", () => {
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
-    contentLength: 0, cryptoOwnerId: "alice", folderId: null, id: "note-1",
-    isDeleted: false, keyEpoch: 1, noteKeyBase64: "key", ownerUserId: "alice",
-    role: "owner", title: "Title", updatedAt: "2026-07-15T00:00:00.000Z", version: 1,
+    contentLength: 0,
+    cryptoOwnerId: "alice",
+    folderId: null,
+    id: "note-1",
+    isDeleted: false,
+    keyEpoch: 1,
+    noteKeyBase64: "key",
+    ownerUserId: "alice",
+    role: "owner",
+    title: "Title",
+    updatedAt: "2026-07-15T00:00:00.000Z",
+    version: 1,
     ...overrides
   };
 }

@@ -28,11 +28,12 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
   await expectEditorToFillPane(page);
 
   await page.getByPlaceholder("Search decrypted notes").fill("First encrypted body");
-  await expect(page.locator(".search-coverage")).toContainText(
-    "Search is ready.",
-    { timeout: 20_000 }
-  );
-  await expect(page.locator(".search-match-list").first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator(".search-coverage")).toContainText("Search is ready.", {
+    timeout: 20_000
+  });
+  await expect(page.locator(".search-match-list").first()).toBeVisible({
+    timeout: 10_000
+  });
   await page.getByPlaceholder("Search decrypted notes").fill("");
 
   await insertFileBlock(page);
@@ -47,7 +48,9 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
 
   await noteCard.click({ button: "right" });
   await page.getByRole("menuitem", { name: "Attachments" }).click();
-  const attachmentDialog = page.getByRole("dialog", { name: `Attachments for ${noteTitle}` });
+  const attachmentDialog = page.getByRole("dialog", {
+    name: `Attachments for ${noteTitle}`
+  });
   await expect(attachmentDialog).toBeVisible();
   await attachmentDialog.getByRole("button", { name: "plan.txt", exact: true }).click();
   await expect(attachmentDialog.getByText("Preview is ready to download.")).toBeVisible();
@@ -162,14 +165,18 @@ test("recovers a vault with the saved recovery key", async ({ page }) => {
   await page.getByRole("button", { name: "Recover and decrypt" }).click();
 
   await expect(page.getByText("Recovered and decrypted")).toBeVisible();
-  await expect(page.locator(".note-card", { hasText: new RegExp(noteTitle) })).toBeVisible();
+  await expect(
+    page.locator(".note-card", { hasText: new RegExp(noteTitle) })
+  ).toBeVisible();
 });
 
-test("renders potentially malicious editor text without executing it", async ({ page }) => {
+test("renders potentially malicious editor text without executing it", async ({
+  page
+}) => {
   const account = uniqueAccount("markdown");
   const noteTitle = `Markdown note ${account.suffix}`;
   const maliciousBody =
-    "# Safe heading\n\n<script>window.__markdownExecuted = true</script>\n<img src=x onerror=\"window.__markdownExecuted = true\">";
+    '# Safe heading\n\n<script>window.__markdownExecuted = true</script>\n<img src=x onerror="window.__markdownExecuted = true">';
 
   await register(page, account.username, account.password);
   await createNote(page, noteTitle, maliciousBody);
@@ -181,9 +188,11 @@ test("renders potentially malicious editor text without executing it", async ({ 
     "<script>window.__markdownExecuted = true</script>"
   );
   await expect
-    .poll(() => page.evaluate(() =>
-      Boolean((window as Window & { __markdownExecuted?: boolean }).__markdownExecuted)
-    ))
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean((window as Window & { __markdownExecuted?: boolean }).__markdownExecuted)
+      )
+    )
     .toBe(false);
 });
 
@@ -216,7 +225,9 @@ test("lock and logout clear decrypted note content from the UI", async ({ page }
   await expect(page.getByRole("button", { name: new RegExp(noteTitle) })).toHaveCount(0);
 });
 
-test("creates a note with a folder, moves it, and reloads the assignment", async ({ page }) => {
+test("creates a note with a folder, moves it, and reloads the assignment", async ({
+  page
+}) => {
   const account = uniqueAccount("folder");
   const noteTitle = `Folder note ${account.suffix}`;
 
@@ -260,7 +271,9 @@ test("reloads and retains the encrypted editor content", async ({ page }) => {
   });
 });
 
-test("opens Share dialog from editor header, invites collaborator, and closes", async ({ page }) => {
+test("opens Share dialog from editor header, invites collaborator, and closes", async ({
+  page
+}) => {
   const account = uniqueAccount("share-dialog");
   const noteTitle = `Share dialog note ${account.suffix}`;
 
@@ -274,11 +287,7 @@ test("opens Share dialog from editor header, invites collaborator, and closes", 
   await expect(page.getByRole("button", { name: "Share note" })).toBeFocused();
 });
 
-async function register(
-  page: Page,
-  username: string,
-  password: string
-): Promise<string> {
+async function register(page: Page, username: string, password: string): Promise<string> {
   await page.goto("/");
   await page.getByRole("button", { name: "Create an account" }).click();
   await page.getByLabel("Account handle").fill(username);
@@ -319,15 +328,15 @@ async function expectEditorToFillPane(page: Page): Promise<void> {
 }
 
 async function expectPanesToMatchEditorContent(page: Page): Promise<void> {
-  const editorBottom = await page.locator(".editor-column").evaluate((element) =>
-    element.getBoundingClientRect().bottom
-  );
+  const editorBottom = await page
+    .locator(".editor-column")
+    .evaluate((element) => element.getBoundingClientRect().bottom);
   expect(editorBottom).toBeGreaterThan(page.viewportSize()!.height);
 
   for (const selector of [".sidebar", ".notes-pane", ".editor-pane"]) {
-    const paneBottom = await page.locator(selector).evaluate((element) =>
-      element.getBoundingClientRect().bottom
-    );
+    const paneBottom = await page
+      .locator(selector)
+      .evaluate((element) => element.getBoundingClientRect().bottom);
     expect(paneBottom).toBeGreaterThanOrEqual(editorBottom - 1);
   }
 }

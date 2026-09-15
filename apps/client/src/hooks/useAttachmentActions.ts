@@ -130,15 +130,14 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
       return;
     }
 
-    void loadAttachments(selectedNoteId)
-      .catch((attachmentError: unknown) => {
-        setStatus("Attachment load failed");
-        setError(
-          attachmentError instanceof Error
-            ? attachmentError.message
-            : "Unable to load attachments"
-        );
-      });
+    void loadAttachments(selectedNoteId).catch((attachmentError: unknown) => {
+      setStatus("Attachment load failed");
+      setError(
+        attachmentError instanceof Error
+          ? attachmentError.message
+          : "Unable to load attachments"
+      );
+    });
   }, [attachmentsByNote, loadAttachments, selectedNoteId, setError, setStatus]);
 
   const attachmentIds = selectedNote
@@ -190,10 +189,7 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
     }
     const attachments = await Promise.all(
       payload.attachments.map(async (attachment) =>
-        decryptAttachmentSummary(
-          await noteAtEpoch(note, attachment.keyEpoch),
-          attachment
-        )
+        decryptAttachmentSummary(await noteAtEpoch(note, attachment.keyEpoch), attachment)
       )
     );
     storeAttachments(noteId, attachments);
@@ -220,13 +216,9 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
       if (!canWriteSelectedAttachment(selectedNote)) {
         return null;
       }
-      const uploaded = await uploadAttachment(
-        selectedNote.id,
-        encrypted,
-        (progress) => {
-          setStatus(transferStatus("Uploading attachment", progress));
-        }
-      );
+      const uploaded = await uploadAttachment(selectedNote.id, encrypted, (progress) => {
+        setStatus(transferStatus("Uploading attachment", progress));
+      });
       if (uploaded.keyEpoch !== selectedNote.keyEpoch) {
         throw new Error("Attachment protection changed during upload");
       }
@@ -240,7 +232,9 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
     } catch (uploadError) {
       reportOperationFailure(
         uploadError,
-        uploadError instanceof Error ? uploadError.message : "Unable to upload attachment",
+        uploadError instanceof Error
+          ? uploadError.message
+          : "Unable to upload attachment",
         "Attachment failed"
       );
       return null;
@@ -286,10 +280,7 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
         throw new Error("Attachment is unavailable");
       }
       const attachments = await loadAttachments(note.id);
-      if (
-        noteRef.current?.id !== note.id ||
-        noteRef.current.keyEpoch !== note.keyEpoch
-      ) {
+      if (noteRef.current?.id !== note.id || noteRef.current.keyEpoch !== note.keyEpoch) {
         throw new Error("Attachment is no longer available");
       }
       const attachment = attachments.find(({ id }) => id === attachmentId);

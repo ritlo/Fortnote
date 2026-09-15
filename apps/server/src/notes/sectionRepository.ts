@@ -49,29 +49,26 @@ function sectionAccess(
   noteId: string,
   userId: string
 ): WritableAccess | null {
-  return database
-    .select({
-      cryptoOwnerId: schema.notes.cryptoOwnerId,
-      keyEpoch: schema.notes.keyEpoch,
-      version: schema.notes.version,
-      rootVersion: schema.notes.rootVersion,
-      rotationFenced: schema.notes.rotationFenced,
-      isDeleted: schema.notes.isDeleted,
-      role: schema.noteMemberships.role,
-      status: schema.noteMemberships.status
-    })
-    .from(schema.notes)
-    .innerJoin(
-      schema.noteMemberships,
-      eq(schema.noteMemberships.noteId, schema.notes.id)
-    )
-    .where(
-      and(
-        eq(schema.notes.id, noteId),
-        eq(schema.noteMemberships.userId, userId)
+  return (
+    database
+      .select({
+        cryptoOwnerId: schema.notes.cryptoOwnerId,
+        keyEpoch: schema.notes.keyEpoch,
+        version: schema.notes.version,
+        rootVersion: schema.notes.rootVersion,
+        rotationFenced: schema.notes.rotationFenced,
+        isDeleted: schema.notes.isDeleted,
+        role: schema.noteMemberships.role,
+        status: schema.noteMemberships.status
+      })
+      .from(schema.notes)
+      .innerJoin(
+        schema.noteMemberships,
+        eq(schema.noteMemberships.noteId, schema.notes.id)
       )
-    )
-    .get() ?? null;
+      .where(and(eq(schema.notes.id, noteId), eq(schema.noteMemberships.userId, userId)))
+      .get() ?? null
+  );
 }
 
 function writableAccess(
@@ -151,9 +148,7 @@ export class SqliteNoteSectionRepository implements NoteSectionRepository {
     return Promise.resolve(rows);
   }
 
-  reserveLegacy(
-    input: SectionWriteInput
-  ): Promise<LegacySectionReservationOutcome> {
+  reserveLegacy(input: SectionWriteInput): Promise<LegacySectionReservationOutcome> {
     const outcome = this.orm.transaction((transaction) => {
       if (!activeSession(transaction, input.sessionId)) {
         return { status: "rejected", code: "forbidden" } as const;
@@ -297,9 +292,7 @@ export class SqliteNoteSectionRepository implements NoteSectionRepository {
         noteId: input.noteId,
         actorUserId: input.userId,
         noteVersion: version,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return {
         status: "reserved",
@@ -331,13 +324,13 @@ export class SqliteNoteSectionRepository implements NoteSectionRepository {
         .get();
       if (existing) {
         return existing.noteId === input.noteId && !existing.isDeleted
-          ? {
+          ? ({
               status: "already-created",
               rootVersion: access.rootVersion,
               version: access.version,
               eventCursor: null
-            } as const
-          : { status: "rejected", code: "forbidden" } as const;
+            } as const)
+          : ({ status: "rejected", code: "forbidden" } as const);
       }
       if (access.rootVersion !== input.expectedRootVersion) {
         return { status: "rejected", code: "stale-version" } as const;
@@ -377,9 +370,7 @@ export class SqliteNoteSectionRepository implements NoteSectionRepository {
         noteId: input.noteId,
         actorUserId: input.userId,
         noteVersion: version,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return {
         status: "created",
@@ -482,9 +473,7 @@ export class SqliteNoteSectionRepository implements NoteSectionRepository {
         noteId: input.noteId,
         actorUserId: input.userId,
         noteVersion: version,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return {
         status: "deleted",
@@ -496,9 +485,7 @@ export class SqliteNoteSectionRepository implements NoteSectionRepository {
     return Promise.resolve(outcome);
   }
 
-  initialize(
-    input: InitializeSectionInput
-  ): Promise<SectionInitializationOutcome> {
+  initialize(input: InitializeSectionInput): Promise<SectionInitializationOutcome> {
     const outcome = this.orm.transaction((transaction) => {
       if (!activeSession(transaction, input.sessionId)) {
         return { status: "rejected", code: "forbidden" } as const;

@@ -18,11 +18,7 @@ export interface SectionWriteInput {
 }
 
 export type SectionRejectionCode =
-  | "forbidden"
-  | "last-section"
-  | "rotation-pending"
-  | "stale-epoch"
-  | "stale-version";
+  "forbidden" | "last-section" | "rotation-pending" | "stale-epoch" | "stale-version";
 
 type SectionFenceRejectionCode = Exclude<SectionRejectionCode, "last-section">;
 
@@ -64,12 +60,8 @@ export type SectionInitializationOutcome =
 
 export interface NoteSectionRepository {
   list(noteId: string): Promise<SectionRecord[]>;
-  reserveLegacy(
-    input: SectionWriteInput
-  ): Promise<LegacySectionReservationOutcome>;
+  reserveLegacy(input: SectionWriteInput): Promise<LegacySectionReservationOutcome>;
   create(input: SectionWriteInput): Promise<SectionMutationOutcome>;
   tombstone(input: SectionWriteInput): Promise<SectionMutationOutcome>;
-  initialize(
-    input: InitializeSectionInput
-  ): Promise<SectionInitializationOutcome>;
+  initialize(input: InitializeSectionInput): Promise<SectionInitializationOutcome>;
 }

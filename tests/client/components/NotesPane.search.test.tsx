@@ -49,17 +49,23 @@ describe("NotesPane protected search", () => {
     );
 
     expect(screen.getByLabelText("Search notes")).toBeTruthy();
-    expect(screen.getByLabelText("Search notes").getAttribute("aria-describedby"))
-      .toBe("search-coverage-status");
-    expect(screen.getByText("Searching more note content — more results may appear.")).toBeTruthy();
-    expect(screen.getByRole("progressbar", { name: "Search indexing progress" }))
-      .toHaveProperty("value", 1);
+    expect(screen.getByLabelText("Search notes").getAttribute("aria-describedby")).toBe(
+      "search-coverage-status"
+    );
+    expect(
+      screen.getByText("Searching more note content — more results may appear.")
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("progressbar", { name: "Search indexing progress" })
+    ).toHaveProperty("value", 1);
     expect(screen.getByText("Background indexing paused.")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Retry indexing" }));
-    fireEvent.click(screen.getByRole("button", {
-      name: /Search result 1 of 1.*Needle in encrypted section/u
-    }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Search result 1 of 1.*Needle in encrypted section/u
+      })
+    );
     expect(retrySearchIndex).toHaveBeenCalledOnce();
     expect(selectSearchMatch).toHaveBeenCalledWith(match);
   });

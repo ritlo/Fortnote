@@ -13,7 +13,9 @@ import {
 const databases: Awaited<ReturnType<typeof openFortnoteIndexedDb>>[] = [];
 
 afterEach(async () => {
-  await Promise.all(databases.splice(0).map(async (database) => database.deleteDatabase()));
+  await Promise.all(
+    databases.splice(0).map(async (database) => database.deleteDatabase())
+  );
 });
 
 describe("protected IndexedDB storage", () => {
@@ -58,7 +60,9 @@ describe("protected IndexedDB storage", () => {
 
     const remaining = await database.listOutbox("user-a");
     expect(remaining).toHaveLength(2);
-    expect(remaining).toEqual(expect.arrayContaining([sameSectionNewEpoch, otherSection]));
+    expect(remaining).toEqual(
+      expect.arrayContaining([sameSectionNewEpoch, otherSection])
+    );
   });
 
   it("serializes multi-tab lease compare-and-set decisions", async () => {
@@ -92,7 +96,11 @@ describe("protected IndexedDB storage", () => {
 
   it("evicts least-recently-used cache entries but never pending work", async () => {
     const database = await openDatabase();
-    const pending = cacheRecord({ manifestId: "pending", lastAccessedAt: 1, pending: true });
+    const pending = cacheRecord({
+      manifestId: "pending",
+      lastAccessedAt: 1,
+      pending: true
+    });
     const oldest = cacheRecord({ manifestId: "oldest", lastAccessedAt: 2 });
     const newest = cacheRecord({ manifestId: "newest", lastAccessedAt: 3 });
     await database.putSectionCache(pending);
@@ -118,14 +126,20 @@ describe("protected IndexedDB storage", () => {
 
   it("bounds cache bytes while retaining pending ciphertext", async () => {
     const database = await openDatabase();
-    const pending = cacheRecord({ manifestId: "pending", lastAccessedAt: 1, pending: true });
+    const pending = cacheRecord({
+      manifestId: "pending",
+      lastAccessedAt: 1,
+      pending: true
+    });
     const oldest = cacheRecord({ manifestId: "oldest", lastAccessedAt: 2 });
     const newest = cacheRecord({ manifestId: "newest", lastAccessedAt: 3 });
     await database.putSectionCache(pending);
     await database.putSectionCache(oldest);
     await database.putSectionCache(newest);
 
-    await expect(database.evictSectionCache("user-a", 10, 6)).resolves.toEqual(["oldest"]);
+    await expect(database.evictSectionCache("user-a", 10, 6)).resolves.toEqual([
+      "oldest"
+    ]);
     await expect(database.listSectionCache("user-a")).resolves.toEqual([pending, newest]);
   });
 
@@ -172,7 +186,9 @@ describe("protected IndexedDB storage", () => {
     await expect(database.listContentTransfers("user-b")).resolves.toEqual([second]);
     await database.deleteContentTransfer("user-a", uploadId);
     await expect(database.getContentTransfer("user-a", uploadId)).resolves.toBeNull();
-    await expect(database.getContentTransfer("user-b", uploadId)).resolves.toEqual(second);
+    await expect(database.getContentTransfer("user-b", uploadId)).resolves.toEqual(
+      second
+    );
   });
 });
 

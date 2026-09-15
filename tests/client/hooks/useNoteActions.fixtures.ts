@@ -91,8 +91,20 @@ beforeEach(() => {
   useAppStore.setState({
     error: null,
     folders: [
-      { id: "folder-1", name: "Work", parentFolderId: null, createdAt: "", updatedAt: "" },
-      { id: "folder-2", name: "Personal", parentFolderId: null, createdAt: "", updatedAt: "" }
+      {
+        id: "folder-1",
+        name: "Work",
+        parentFolderId: null,
+        createdAt: "",
+        updatedAt: ""
+      },
+      {
+        id: "folder-2",
+        name: "Personal",
+        parentFolderId: null,
+        createdAt: "",
+        updatedAt: ""
+      }
     ],
     notes: [note()],
     notesView: "notes",

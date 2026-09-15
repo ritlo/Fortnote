@@ -26,9 +26,7 @@ async function lockNote(
   return Boolean(notes[0]);
 }
 
-export class PostgresNoteMembershipRepository
-  implements NoteMembershipRepository
-{
+export class PostgresNoteMembershipRepository implements NoteMembershipRepository {
   constructor(private readonly orm: PostgresDatabase) {}
 
   invite(input: InviteNoteMemberInput): Promise<InviteNoteMemberOutcome> {
@@ -46,10 +44,7 @@ export class PostgresNoteMembershipRepository
         .where(
           and(
             eq(schema.users.username, input.username),
-            eq(
-              schema.userSharingKeys.sharingKeyVersion,
-              input.sharingKeyVersion
-            )
+            eq(schema.userSharingKeys.sharingKeyVersion, input.sharingKeyVersion)
           )
         )
         .limit(1)
@@ -104,10 +99,7 @@ export class PostgresNoteMembershipRepository
           formatVersion: input.formatVersion
         })
         .onConflictDoUpdate({
-          target: [
-            schema.noteKeyShares.noteId,
-            schema.noteKeyShares.recipientUserId
-          ],
+          target: [schema.noteKeyShares.noteId, schema.noteKeyShares.recipientUserId],
           set: {
             senderUserId: input.actorUserId,
             sharingKeyVersion: input.sharingKeyVersion,

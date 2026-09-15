@@ -19,8 +19,12 @@ export interface PerformanceFixtureDefinition {
   warmupRuns: number;
 }
 
-export const PERFORMANCE_FIXTURE: Readonly<Omit<PerformanceFixtureDefinition, "accounts" | "seed" | "title">>;
-export const PERFORMANCE_SMOKE_FIXTURE: Readonly<Omit<PerformanceFixtureDefinition, "accounts" | "seed" | "title">>;
+export const PERFORMANCE_FIXTURE: Readonly<
+  Omit<PerformanceFixtureDefinition, "accounts" | "seed" | "title">
+>;
+export const PERFORMANCE_SMOKE_FIXTURE: Readonly<
+  Omit<PerformanceFixtureDefinition, "accounts" | "seed" | "title">
+>;
 export function performanceFixtureDefinition(
   seed?: string,
   profile?: "smoke" | "full"

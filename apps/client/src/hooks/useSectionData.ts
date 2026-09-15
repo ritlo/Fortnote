@@ -29,7 +29,7 @@ const ADJACENT_PREFETCH_COUNT = 1;
 
 export function useSectionData(selectedNote: DecryptedNote | null) {
   const selectedSectionId = useAppStore((state) =>
-    selectedNote ? state.selectedSectionByNote[selectedNote.id] ?? null : null
+    selectedNote ? (state.selectedSectionByNote[selectedNote.id] ?? null) : null
   );
   const selectedSectionIndex = useAppStore((state) =>
     selectedNote ? state.sectionIndexes[selectedNote.id] : undefined
@@ -38,12 +38,8 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
   const setLoadedSection = useAppStore((state) => state.setLoadedSection);
   const setSelectedSection = useAppStore((state) => state.setSelectedSection);
   const setNoteProtectionFailure = useAppStore((state) => state.setNoteProtectionFailure);
-  const setLocalStorageCapacity = useAppStore(
-    (state) => state.setLocalStorageCapacity
-  );
-  const setServerStorageCapacity = useAppStore(
-    (state) => state.setServerStorageCapacity
-  );
+  const setLocalStorageCapacity = useAppStore((state) => state.setLocalStorageCapacity);
+  const setServerStorageCapacity = useAppStore((state) => state.setServerStorageCapacity);
   const loadedTargetsRef = useRef(new Map<string, LoadedTarget>());
   const [retryVersion, setRetryVersion] = useState(0);
 
@@ -116,13 +112,15 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
       if (patch.title === undefined) {
         return;
       }
-      useAppStore.getState().setNotes((notes) =>
-        notes.map((candidate) =>
-          candidate.id === note.id
-            ? { ...candidate, title: patch.title ?? candidate.title }
-            : candidate
-        )
-      );
+      useAppStore
+        .getState()
+        .setNotes((notes) =>
+          notes.map((candidate) =>
+            candidate.id === note.id
+              ? { ...candidate, title: patch.title ?? candidate.title }
+              : candidate
+          )
+        );
     });
     return () => {
       void releaseCrdtSection(
@@ -221,9 +219,7 @@ export function useSectionData(selectedNote: DecryptedNote | null) {
         retryCrdtSection(note.id, section.id, note.keyEpoch);
       });
     }
-    const targetKeys = new Set(
-      targets.map(({ id }) => sectionRuntimeKey(note.id, id))
-    );
+    const targetKeys = new Set(targets.map(({ id }) => sectionRuntimeKey(note.id, id)));
     for (const [key, previous] of loadedTargetsRef.current) {
       if (previous.noteId === note.id && !targetKeys.has(key)) {
         void releaseTarget(previous, setLoadedSection, loadedTargetsRef.current);
@@ -310,7 +306,9 @@ async function loadSectionIndex(note: DecryptedNote, signal: AbortSignal): Promi
   throwIfCanceled(signal);
   const visibleIds = new Set(response.sections.map((section) => section.id));
   const encryptedOrder = getCrdtSectionOrder(note.id);
-  const encryptedVisibleOrder = encryptedOrder.filter((sectionId) => visibleIds.has(sectionId));
+  const encryptedVisibleOrder = encryptedOrder.filter((sectionId) =>
+    visibleIds.has(sectionId)
+  );
   const encryptedVisibleIds = new Set(encryptedVisibleOrder);
   const orderedSectionIds = [
     ...encryptedVisibleOrder,
@@ -331,9 +329,7 @@ async function loadSectionIndex(note: DecryptedNote, signal: AbortSignal): Promi
   const selected = state.selectedSectionByNote[note.id];
   state.setSelectedSection(
     note.id,
-    selected && visibleIds.has(selected)
-      ? selected
-      : (orderedSectionIds[0] ?? null)
+    selected && visibleIds.has(selected) ? selected : (orderedSectionIds[0] ?? null)
   );
 }
 
@@ -378,10 +374,7 @@ async function loadOneSection(
   input.loadedTargets.set(key, target);
   input.setLoadedSection(sectionState(input.note, section, "loading", prefetched));
   const onProgress = (value?: unknown) => {
-    if (
-      !isSectionTransferProgress(value) ||
-      input.loadedTargets.get(key) !== target
-    ) {
+    if (!isSectionTransferProgress(value) || input.loadedTargets.get(key) !== target) {
       return;
     }
     input.setLoadedSection({
@@ -391,12 +384,9 @@ async function loadOneSection(
   };
   lease.provider.on("progress", onProgress);
   try {
-    await waitForCrdtSectionReady(
-      input.note.id,
-      input.note.keyEpoch,
-      section.id,
-      { signal: input.signal }
-    );
+    await waitForCrdtSectionReady(input.note.id, input.note.keyEpoch, section.id, {
+      signal: input.signal
+    });
     throwIfCanceled(input.signal);
     if (!isSelectedNote(input.note) || input.loadedTargets.get(key) !== target) {
       return;
@@ -450,15 +440,17 @@ async function initializeSectionIfNeeded(
       )
     });
   }
-  state.setNotes((notes) => notes.map((candidate) =>
-    candidate.id === note.id && candidate.keyEpoch === note.keyEpoch
-      ? {
-          ...candidate,
-          rootVersion: initialized.rootVersion,
-          version: initialized.version
-        }
-      : candidate
-  ));
+  state.setNotes((notes) =>
+    notes.map((candidate) =>
+      candidate.id === note.id && candidate.keyEpoch === note.keyEpoch
+        ? {
+            ...candidate,
+            rootVersion: initialized.rootVersion,
+            version: initialized.version
+          }
+        : candidate
+    )
+  );
   return ready;
 }
 

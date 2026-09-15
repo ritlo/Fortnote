@@ -2,7 +2,10 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deriveCollaborationState, defaultCollaborationDimensions } from "@client/lib/collaborationState";
+import {
+  deriveCollaborationState,
+  defaultCollaborationDimensions
+} from "@client/lib/collaborationState";
 import { RecoveryPanel, type RecoveryCallbacks } from "@client/components/RecoveryPanel";
 
 afterEach(cleanup);
@@ -30,7 +33,11 @@ describe("RecoveryPanel", () => {
     const callbacks = recoveryCallbacks();
     renderPanel({ recovery: "divergent", draftRetained: true }, callbacks);
 
-    expect(screen.getByText("Your encrypted draft is retained until you explicitly discard it.")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Your encrypted draft is retained until you explicitly discard it."
+      )
+    ).toBeTruthy();
     click("Review draft");
     click("Encrypted export");
     click("Reapply");
@@ -62,7 +69,10 @@ function renderPanel(
 ) {
   return render(
     <RecoveryPanel
-      state={deriveCollaborationState({ ...defaultCollaborationDimensions, ...overrides })}
+      state={deriveCollaborationState({
+        ...defaultCollaborationDimensions,
+        ...overrides
+      })}
       callbacks={callbacks}
     />
   );

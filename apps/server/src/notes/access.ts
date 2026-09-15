@@ -29,8 +29,7 @@ export function canReadNote(access: NoteAccess | undefined): access is NoteAcces
 
 export function canEditNote(access: NoteAccess | undefined): access is NoteAccess {
   return (
-    access?.status === "active" &&
-    (access.role === "owner" || access.role === "editor")
+    access?.status === "active" && (access.role === "owner" || access.role === "editor")
   );
 }
 

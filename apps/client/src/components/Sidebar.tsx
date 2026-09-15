@@ -79,7 +79,12 @@ export function Sidebar({
         <div className="brand-mark">FN</div>
         <h1>Fortnote</h1>
       </div>
-      <DropTarget folderId={null} onDrop={(noteId: string) => { void moveNoteToFolder(noteId, null); }}>
+      <DropTarget
+        folderId={null}
+        onDrop={(noteId: string) => {
+          void moveNoteToFolder(noteId, null);
+        }}
+      >
         <button
           className={
             notesView === "notes" && selectedFolderId === null
@@ -107,7 +112,12 @@ export function Sidebar({
           .filter((folder) => folder.parentFolderId === null)
           .map((folder) => (
             <div key={folder.id}>
-              <DropTarget folderId={folder.id} onDrop={(noteId: string) => { void moveNoteToFolder(noteId, folder.id); }}>
+              <DropTarget
+                folderId={folder.id}
+                onDrop={(noteId: string) => {
+                  void moveNoteToFolder(noteId, folder.id);
+                }}
+              >
                 <div className="folder-row">
                   <button
                     className={
@@ -147,7 +157,13 @@ export function Sidebar({
               {folders
                 .filter((child) => child.parentFolderId === folder.id)
                 .map((child) => (
-                  <DropTarget key={child.id} folderId={child.id} onDrop={(noteId: string) => { void moveNoteToFolder(noteId, child.id); }}>
+                  <DropTarget
+                    key={child.id}
+                    folderId={child.id}
+                    onDrop={(noteId: string) => {
+                      void moveNoteToFolder(noteId, child.id);
+                    }}
+                  >
                     <div className="folder-row child">
                       <button
                         className={

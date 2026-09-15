@@ -106,14 +106,14 @@ export async function encryptContentChunksV2(input: {
   ) {
     throw new Error("Invalid encrypted content chunk limit");
   }
-  if (
-    (input.kind === "checkpoint") !==
-    (input.checkpointSequenceCutoff !== undefined)
-  ) {
+  if ((input.kind === "checkpoint") !== (input.checkpointSequenceCutoff !== undefined)) {
     throw new Error("Invalid checkpoint sequence cutoff");
   }
   const plaintextChunkBytes = maxCipherChunkBytes - CONTENT_CHUNK_AUTH_BYTES;
-  const chunkCount = Math.max(1, Math.ceil(input.plaintext.byteLength / plaintextChunkBytes));
+  const chunkCount = Math.max(
+    1,
+    Math.ceil(input.plaintext.byteLength / plaintextChunkBytes)
+  );
   if (chunkCount > 1_000_000) {
     throw new Error("Encrypted content requires too many chunks");
   }
@@ -214,8 +214,8 @@ export async function decryptContentChunksV2(input: {
     throw new Error("Encrypted content manifest mismatch");
   }
 
-  const plaintextBytes = input.totalCipherBytes -
-    input.chunkCount * CONTENT_CHUNK_AUTH_BYTES;
+  const plaintextBytes =
+    input.totalCipherBytes - input.chunkCount * CONTENT_CHUNK_AUTH_BYTES;
   if (!Number.isSafeInteger(plaintextBytes) || plaintextBytes < 0) {
     throw new Error("Invalid encrypted content length");
   }

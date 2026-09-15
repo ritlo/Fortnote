@@ -15,7 +15,9 @@ describe("Fortnote attachment references", () => {
   });
 
   it("rejects malformed Fortnote references and ids", () => {
-    expect(() => formatAttachmentReference("not-a-uuid")).toThrow("Invalid attachment id");
+    expect(() => formatAttachmentReference("not-a-uuid")).toThrow(
+      "Invalid attachment id"
+    );
     expect(() => parseAttachmentReference("fortnote-attachment:not-a-uuid")).toThrow(
       "Invalid Fortnote attachment reference"
     );

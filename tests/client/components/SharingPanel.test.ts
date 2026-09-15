@@ -61,8 +61,22 @@ describe("role change assertion", () => {
 
   it("guards that owner role cannot be revoked", () => {
     const memberships = [
-      { userId: "alice", role: "owner", status: "active", username: "alice", createdAt: "2026-01-01", updatedAt: "2026-01-01" },
-      { userId: "bob", role: "editor", status: "active", username: "bob", createdAt: "2026-01-01", updatedAt: "2026-01-01" }
+      {
+        userId: "alice",
+        role: "owner",
+        status: "active",
+        username: "alice",
+        createdAt: "2026-01-01",
+        updatedAt: "2026-01-01"
+      },
+      {
+        userId: "bob",
+        role: "editor",
+        status: "active",
+        username: "bob",
+        createdAt: "2026-01-01",
+        updatedAt: "2026-01-01"
+      }
     ];
     const owner = memberships.find((m) => m.role === "owner");
     expect(owner?.role).toBe("owner");

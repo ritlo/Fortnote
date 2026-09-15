@@ -1,10 +1,7 @@
 import { and, eq, gt, or, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "../db/postgres/schema.js";
-import {
-  ROOT_CRDT_SECTION_ID,
-  storageSectionId
-} from "../notes/sections.js";
+import { ROOT_CRDT_SECTION_ID, storageSectionId } from "../notes/sections.js";
 import type { ContentKind } from "./manifests.js";
 import type { StorageQuotaStatus } from "./quota.js";
 import type {
@@ -32,14 +29,12 @@ import {
 
 type PostgresDatabase = NodePgDatabase<typeof schema>;
 
-export class PostgresContentUploadRepository
-  implements ContentUploadRepository
-{
+export class PostgresContentUploadRepository implements ContentUploadRepository {
   constructor(private readonly orm: PostgresDatabase) {}
 
   begin(input: BeginContentUploadInput): Promise<BeginContentUploadOutcome> {
     return this.orm.transaction(async (transaction) => {
-      if (!await activeSession(transaction, input.sessionId)) {
+      if (!(await activeSession(transaction, input.sessionId))) {
         return { kind: "unauthorized" } as const;
       }
       let existingId = await findExistingUploadId(
@@ -47,12 +42,7 @@ export class PostgresContentUploadRepository
         input.uploadId,
         input.updateId
       );
-      const access = await uploadAccess(
-        transaction,
-        input.noteId,
-        input.userId,
-        true
-      );
+      const access = await uploadAccess(transaction, input.noteId, input.userId, true);
       const gate = beginGate(access, input);
       if (gate) {
         return gate;
@@ -78,12 +68,14 @@ export class PostgresContentUploadRepository
         }
         let cleanupStorageKeys: string[] = [];
         if (existing.status === "expired" || existing.status === "aborted") {
-          if (!await reserveStorage(
-            transaction,
-            access!.ownerUserId,
-            input.totalCipherBytes,
-            input.quotaBytes
-          )) {
+          if (
+            !(await reserveStorage(
+              transaction,
+              access!.ownerUserId,
+              input.totalCipherBytes,
+              input.quotaBytes
+            ))
+          ) {
             return { kind: "storage-limit" } as const;
           }
           cleanupStorageKeys = await deleteChunkMetadata(transaction, existing.id);
@@ -96,19 +88,16 @@ export class PostgresContentUploadRepository
             })
             .where(eq(schema.contentUploads.id, existing.id));
         }
-        return beginUploadView(
-          transaction,
-          existing.id,
-          "existing",
-          cleanupStorageKeys
-        );
+        return beginUploadView(transaction, existing.id, "existing", cleanupStorageKeys);
       }
-      if (!await reserveStorage(
-        transaction,
-        access!.ownerUserId,
-        input.totalCipherBytes,
-        input.quotaBytes
-      )) {
+      if (
+        !(await reserveStorage(
+          transaction,
+          access!.ownerUserId,
+          input.totalCipherBytes,
+          input.quotaBytes
+        ))
+      ) {
         return { kind: "storage-limit" } as const;
       }
       const inserted = await transaction
@@ -132,11 +121,7 @@ export class PostgresContentUploadRepository
         .onConflictDoNothing()
         .returning({ id: schema.contentUploads.id });
       if (inserted.length !== 1) {
-        await releaseStorage(
-          transaction,
-          access!.ownerUserId,
-          input.totalCipherBytes
-        );
+        await releaseStorage(transaction, access!.ownerUserId, input.totalCipherBytes);
         return { kind: "conflict" } as const;
       }
       return beginUploadView(transaction, input.uploadId, "created", []);
@@ -153,12 +138,7 @@ export class PostgresContentUploadRepository
       if (!upload) {
         return null;
       }
-      const access = await uploadAccess(
-        transaction,
-        upload.noteId,
-        userId,
-        true
-      );
+      const access = await uploadAccess(transaction, upload.noteId, userId, true);
       if (!canEdit(access)) {
         return null;
       }
@@ -167,11 +147,7 @@ export class PostgresContentUploadRepository
         reservesStorage(upload.status) &&
         Date.parse(upload.expiresAt) <= Date.parse(now)
       ) {
-        await releaseStorage(
-          transaction,
-          upload.ownerUserId,
-          upload.totalCipherBytes
-        );
+        await releaseStorage(transaction, upload.ownerUserId, upload.totalCipherBytes);
         cleanupStorageKeys = await deleteChunkMetadata(transaction, upload.id);
         await transaction
           .update(schema.contentUploads)
@@ -201,23 +177,16 @@ export class PostgresContentUploadRepository
     return findChunk(this.orm, uploadId, chunkIndex);
   }
 
-  registerChunk(
-    input: RegisterContentChunkInput
-  ): Promise<RegisterContentChunkOutcome> {
+  registerChunk(input: RegisterContentChunkInput): Promise<RegisterContentChunkOutcome> {
     return this.orm.transaction(async (transaction) => {
-      if (!await activeSession(transaction, input.sessionId)) {
+      if (!(await activeSession(transaction, input.sessionId))) {
         return "unauthorized" as const;
       }
       const upload = await findUpload(transaction, input.uploadId, true);
       if (!upload) {
         return "not-found" as const;
       }
-      const access = await uploadAccess(
-        transaction,
-        upload.noteId,
-        input.userId,
-        true
-      );
+      const access = await uploadAccess(transaction, upload.noteId, input.userId, true);
       if (!canEdit(access)) {
         return "not-found" as const;
       }
@@ -233,16 +202,11 @@ export class PostgresContentUploadRepository
       if (upload.status !== "receiving" && upload.status !== "complete") {
         return "conflict" as const;
       }
-      const existing = await findChunk(
-        transaction,
-        upload.id,
-        input.chunkIndex,
-        true
-      );
+      const existing = await findChunk(transaction, upload.id, input.chunkIndex, true);
       if (existing) {
         return sameChunk(existing, input)
-          ? "raced" as const
-          : "chunk-conflict" as const;
+          ? ("raced" as const)
+          : ("chunk-conflict" as const);
       }
       const inserted = await transaction
         .insert(schema.contentChunks)
@@ -257,15 +221,10 @@ export class PostgresContentUploadRepository
         .onConflictDoNothing()
         .returning({ chunkIndex: schema.contentChunks.chunkIndex });
       if (inserted.length !== 1) {
-        const raced = await findChunk(
-          transaction,
-          upload.id,
-          input.chunkIndex,
-          false
-        );
+        const raced = await findChunk(transaction, upload.id, input.chunkIndex, false);
         return raced && sameChunk(raced, input)
-          ? "raced" as const
-          : "chunk-conflict" as const;
+          ? ("raced" as const)
+          : ("chunk-conflict" as const);
       }
       const aggregate = await contentAggregate(transaction, upload.id);
       if (aggregate.bytes > upload.totalCipherBytes) {
@@ -294,19 +253,14 @@ export class PostgresContentUploadRepository
     userId: string
   ): Promise<AbortContentUploadOutcome> {
     return this.orm.transaction(async (transaction) => {
-      if (!await activeSession(transaction, sessionId)) {
+      if (!(await activeSession(transaction, sessionId))) {
         return { kind: "unauthorized" } as const;
       }
       const upload = await findUpload(transaction, uploadId, true);
       if (!upload) {
         return { kind: "not-found" } as const;
       }
-      const access = await uploadAccess(
-        transaction,
-        upload.noteId,
-        userId,
-        true
-      );
+      const access = await uploadAccess(transaction, upload.noteId, userId, true);
       if (!canEdit(access)) {
         return { kind: "not-found" } as const;
       }
@@ -315,11 +269,7 @@ export class PostgresContentUploadRepository
       }
       let storageKeys: string[] = [];
       if (reservesStorage(upload.status)) {
-        await releaseStorage(
-          transaction,
-          upload.ownerUserId,
-          upload.totalCipherBytes
-        );
+        await releaseStorage(transaction, upload.ownerUserId, upload.totalCipherBytes);
         storageKeys = await deleteChunkMetadata(transaction, upload.id);
         await transaction
           .update(schema.contentUploads)
@@ -408,16 +358,8 @@ async function uploadAccess(
       status: schema.noteMemberships.status
     })
     .from(schema.notes)
-    .innerJoin(
-      schema.noteMemberships,
-      eq(schema.noteMemberships.noteId, schema.notes.id)
-    )
-    .where(
-      and(
-        eq(schema.notes.id, noteId),
-        eq(schema.noteMemberships.userId, userId)
-      )
-    )
+    .innerJoin(schema.noteMemberships, eq(schema.noteMemberships.noteId, schema.notes.id))
+    .where(and(eq(schema.notes.id, noteId), eq(schema.noteMemberships.userId, userId)))
     .limit(1);
   const rows = lock
     ? await query.for("update", { of: [schema.notes, schema.noteMemberships] })
@@ -446,10 +388,7 @@ async function ensureSection(
     })
     .from(schema.noteSections)
     .where(
-      and(
-        eq(schema.noteSections.id, storedId),
-        eq(schema.noteSections.noteId, noteId)
-      )
+      and(eq(schema.noteSections.id, storedId), eq(schema.noteSections.noteId, noteId))
     )
     .limit(1)
     .for("update");
@@ -584,10 +523,7 @@ async function reserveStorage(
   bytes: number,
   quotaBytes: number
 ): Promise<boolean> {
-  await database
-    .insert(schema.storageAccounts)
-    .values({ userId })
-    .onConflictDoNothing();
+  await database.insert(schema.storageAccounts).values({ userId }).onConflictDoNothing();
   const rows = await database
     .update(schema.storageAccounts)
     .set({
@@ -636,7 +572,9 @@ async function contentAggregate(
   const rows = await database
     .select({
       count: sql<number>`COUNT(*)`.mapWith(Number),
-      bytes: sql<number>`COALESCE(SUM(${schema.contentChunks.cipherLength}), 0)`.mapWith(Number)
+      bytes: sql<number>`COALESCE(SUM(${schema.contentChunks.cipherLength}), 0)`.mapWith(
+        Number
+      )
     })
     .from(schema.contentChunks)
     .where(eq(schema.contentChunks.uploadId, uploadId));

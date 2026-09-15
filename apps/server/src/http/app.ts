@@ -105,7 +105,8 @@ export function createApp(context: AppContext) {
     logOperationalError({
       boundary: "http",
       code: "internal_error",
-      durationMs: performance.now() - Number(response.locals.requestStartedAt ?? performance.now()),
+      durationMs:
+        performance.now() - Number(response.locals.requestStartedAt ?? performance.now()),
       error,
       method: _request.method,
       requestId: response.locals.requestId as string,
@@ -121,9 +122,9 @@ export function createApp(context: AppContext) {
 function isUuid(value: string | undefined): value is string {
   return Boolean(
     value &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-        value
-      )
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      value
+    )
   );
 }
 

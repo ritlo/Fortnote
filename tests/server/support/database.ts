@@ -80,7 +80,10 @@ export function trackTestDatabase<T extends ApplicationDatabase>(
 }
 
 export interface TestSql {
-  get<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T | undefined>;
+  get<T = Record<string, unknown>>(
+    sql: string,
+    ...params: unknown[]
+  ): Promise<T | undefined>;
   all<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]>;
   run(sql: string, ...params: unknown[]): Promise<void>;
 }

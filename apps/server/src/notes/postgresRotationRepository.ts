@@ -105,10 +105,7 @@ export class PostgresNoteRotationRepository implements NoteRotationRepository {
           .where(
             and(
               eq(schema.userSharingKeys.userId, share.recipientUserId),
-              eq(
-                schema.userSharingKeys.sharingKeyVersion,
-                share.sharingKeyVersion
-              )
+              eq(schema.userSharingKeys.sharingKeyVersion, share.sharingKeyVersion)
             )
           )
           .limit(1);
@@ -167,10 +164,7 @@ export class PostgresNoteRotationRepository implements NoteRotationRepository {
             formatVersion: share.formatVersion
           })
           .onConflictDoUpdate({
-            target: [
-              schema.noteKeyShares.noteId,
-              schema.noteKeyShares.recipientUserId
-            ],
+            target: [schema.noteKeyShares.noteId, schema.noteKeyShares.recipientUserId],
             set: {
               senderUserId: input.actorUserId,
               sharingKeyVersion: share.sharingKeyVersion,
@@ -204,10 +198,7 @@ export class PostgresNoteRotationRepository implements NoteRotationRepository {
           updatedAt: sql`CURRENT_TIMESTAMP`
         })
         .where(
-          and(
-            eq(schema.notes.id, current.noteId),
-            eq(schema.notes.rotationFenced, true)
-          )
+          and(eq(schema.notes.id, current.noteId), eq(schema.notes.rotationFenced, true))
         )
         .returning({ id: schema.notes.id });
       if (rotated.length !== 1) {
@@ -307,10 +298,7 @@ export class PostgresNoteRotationRepository implements NoteRotationRepository {
           .where(
             and(
               eq(schema.userSharingKeys.userId, share.recipientUserId),
-              eq(
-                schema.userSharingKeys.sharingKeyVersion,
-                share.sharingKeyVersion
-              )
+              eq(schema.userSharingKeys.sharingKeyVersion, share.sharingKeyVersion)
             )
           )
           .limit(1);
@@ -368,10 +356,7 @@ export class PostgresNoteRotationRepository implements NoteRotationRepository {
             formatVersion: share.formatVersion
           })
           .onConflictDoUpdate({
-            target: [
-              schema.noteKeyShares.noteId,
-              schema.noteKeyShares.recipientUserId
-            ],
+            target: [schema.noteKeyShares.noteId, schema.noteKeyShares.recipientUserId],
             set: {
               senderUserId: input.actorUserId,
               sharingKeyVersion: share.sharingKeyVersion,

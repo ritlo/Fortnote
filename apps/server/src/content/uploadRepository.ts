@@ -1,10 +1,7 @@
 import { and, eq, gt, or, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "../db/schema.js";
-import {
-  ROOT_CRDT_SECTION_ID,
-  storageSectionId
-} from "../notes/sections.js";
+import { ROOT_CRDT_SECTION_ID, storageSectionId } from "../notes/sections.js";
 import type { ContentKind } from "./manifests.js";
 import type { StorageQuotaStatus } from "./quota.js";
 import type {
@@ -73,7 +70,14 @@ export class SqliteContentUploadRepository implements ContentUploadRepository {
         }
         const cleanupStorageKeys: string[] = [];
         if (existing.status === "expired" || existing.status === "aborted") {
-          if (!reserveStorage(transaction, access!.ownerUserId, input.totalCipherBytes, input.quotaBytes)) {
+          if (
+            !reserveStorage(
+              transaction,
+              access!.ownerUserId,
+              input.totalCipherBytes,
+              input.quotaBytes
+            )
+          ) {
             return { kind: "storage-limit" } as const;
           }
           cleanupStorageKeys.push(...deleteChunkMetadata(transaction, existing.id));
@@ -89,7 +93,14 @@ export class SqliteContentUploadRepository implements ContentUploadRepository {
         }
         return beginUploadView(transaction, existing.id, "existing", cleanupStorageKeys);
       }
-      if (!reserveStorage(transaction, access!.ownerUserId, input.totalCipherBytes, input.quotaBytes)) {
+      if (
+        !reserveStorage(
+          transaction,
+          access!.ownerUserId,
+          input.totalCipherBytes,
+          input.quotaBytes
+        )
+      ) {
         return { kind: "storage-limit" } as const;
       }
       transaction
@@ -116,7 +127,11 @@ export class SqliteContentUploadRepository implements ContentUploadRepository {
     return Promise.resolve(outcome);
   }
 
-  status(uploadId: string, userId: string, now: string): Promise<ContentUploadView | null> {
+  status(
+    uploadId: string,
+    userId: string,
+    now: string
+  ): Promise<ContentUploadView | null> {
     const view = this.orm.transaction((transaction) => {
       const upload = findUpload(transaction, uploadId);
       if (!upload || !canEdit(uploadAccess(transaction, upload.noteId, userId))) {
@@ -142,9 +157,7 @@ export class SqliteContentUploadRepository implements ContentUploadRepository {
 
   findEditable(uploadId: string, userId: string): Promise<ContentUploadRecord | null> {
     const upload = findUpload(this.orm, uploadId);
-    const access = upload
-      ? uploadAccess(this.orm, upload.noteId, userId)
-      : null;
+    const access = upload ? uploadAccess(this.orm, upload.noteId, userId) : null;
     return Promise.resolve(upload && canEdit(access) ? upload : null);
   }
 
@@ -178,7 +191,9 @@ export class SqliteContentUploadRepository implements ContentUploadRepository {
       }
       const existing = findChunk(transaction, upload.id, input.chunkIndex);
       if (existing) {
-        return sameChunk(existing, input) ? "raced" as const : "chunk-conflict" as const;
+        return sameChunk(existing, input)
+          ? ("raced" as const)
+          : ("chunk-conflict" as const);
       }
       transaction
         .insert(schema.contentChunks)
@@ -200,7 +215,10 @@ export class SqliteContentUploadRepository implements ContentUploadRepository {
           .run();
         return "manifest-mismatch" as const;
       }
-      if (aggregate.count === upload.chunkCount && aggregate.bytes === upload.totalCipherBytes) {
+      if (
+        aggregate.count === upload.chunkCount &&
+        aggregate.bytes === upload.totalCipherBytes
+      ) {
         transaction
           .update(schema.contentUploads)
           .set({ status: "complete", updatedAt: sql`CURRENT_TIMESTAMP` })
@@ -222,9 +240,7 @@ export class SqliteContentUploadRepository implements ContentUploadRepository {
         return { kind: "unauthorized" } as const;
       }
       const upload = findUpload(transaction, uploadId);
-      const access = upload
-        ? uploadAccess(transaction, upload.noteId, userId)
-        : null;
+      const access = upload ? uploadAccess(transaction, upload.noteId, userId) : null;
       if (!upload || !canEdit(access)) {
         return { kind: "not-found" } as const;
       }
@@ -312,28 +328,25 @@ function uploadAccess(
   noteId: string,
   userId: string
 ): UploadAccess | null {
-  return database
-    .select({
-      ownerUserId: schema.notes.userId,
-      cryptoOwnerId: schema.notes.cryptoOwnerId,
-      keyEpoch: schema.notes.keyEpoch,
-      rotationFenced: schema.notes.rotationFenced,
-      isDeleted: schema.notes.isDeleted,
-      role: schema.noteMemberships.role,
-      status: schema.noteMemberships.status
-    })
-    .from(schema.notes)
-    .innerJoin(
-      schema.noteMemberships,
-      eq(schema.noteMemberships.noteId, schema.notes.id)
-    )
-    .where(
-      and(
-        eq(schema.notes.id, noteId),
-        eq(schema.noteMemberships.userId, userId)
+  return (
+    database
+      .select({
+        ownerUserId: schema.notes.userId,
+        cryptoOwnerId: schema.notes.cryptoOwnerId,
+        keyEpoch: schema.notes.keyEpoch,
+        rotationFenced: schema.notes.rotationFenced,
+        isDeleted: schema.notes.isDeleted,
+        role: schema.noteMemberships.role,
+        status: schema.noteMemberships.status
+      })
+      .from(schema.notes)
+      .innerJoin(
+        schema.noteMemberships,
+        eq(schema.noteMemberships.noteId, schema.notes.id)
       )
-    )
-    .get() ?? null;
+      .where(and(eq(schema.notes.id, noteId), eq(schema.noteMemberships.userId, userId)))
+      .get() ?? null
+  );
 }
 
 function ensureSection(
@@ -358,10 +371,7 @@ function ensureSection(
     })
     .from(schema.noteSections)
     .where(
-      and(
-        eq(schema.noteSections.id, storedId),
-        eq(schema.noteSections.noteId, noteId)
-      )
+      and(eq(schema.noteSections.id, storedId), eq(schema.noteSections.noteId, noteId))
     )
     .get();
   return section && !section.isDeleted && section.createdEpoch <= keyEpoch
@@ -466,24 +476,22 @@ function reserveStorage(
   bytes: number,
   quotaBytes: number
 ): boolean {
-  database
-    .insert(schema.storageAccounts)
-    .values({ userId })
-    .onConflictDoNothing()
-    .run();
-  return database
-    .update(schema.storageAccounts)
-    .set({
-      reservedBytes: sql`${schema.storageAccounts.reservedBytes} + ${bytes}`,
-      updatedAt: sql`CURRENT_TIMESTAMP`
-    })
-    .where(
-      and(
-        eq(schema.storageAccounts.userId, userId),
-        sql`${schema.storageAccounts.usedBytes} + ${schema.storageAccounts.reservedBytes} + ${bytes} <= ${quotaBytes}`
+  database.insert(schema.storageAccounts).values({ userId }).onConflictDoNothing().run();
+  return (
+    database
+      .update(schema.storageAccounts)
+      .set({
+        reservedBytes: sql`${schema.storageAccounts.reservedBytes} + ${bytes}`,
+        updatedAt: sql`CURRENT_TIMESTAMP`
+      })
+      .where(
+        and(
+          eq(schema.storageAccounts.userId, userId),
+          sql`${schema.storageAccounts.usedBytes} + ${schema.storageAccounts.reservedBytes} + ${bytes} <= ${quotaBytes}`
+        )
       )
-    )
-    .run().changes === 1;
+      .run().changes === 1
+  );
 }
 
 function releaseStorage(

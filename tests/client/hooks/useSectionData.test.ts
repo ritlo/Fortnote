@@ -50,7 +50,9 @@ describe("useSectionData", () => {
     useAppStore.getState().resetVaultState("test reset");
     mocks.getCrdtSectionOrder.mockReturnValue(sectionIds(5));
     mocks.isCrdtHistoryUnreadableError.mockImplementation(
-      (error: unknown) => error instanceof Error && error.message === "Realtime history could not be decrypted"
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message === "Realtime history could not be decrypted"
     );
     mocks.createCrdtSectionInitializationManifest.mockResolvedValue({
       manifestId: "manifest-1",
@@ -169,8 +171,9 @@ describe("useSectionData", () => {
     renderHook(() => useSectionData(current));
 
     await waitFor(() => {
-      expect(useAppStore.getState().sectionIndexes[current.id]?.orderedSectionIds)
-        .toEqual(sectionIds(5));
+      expect(
+        useAppStore.getState().sectionIndexes[current.id]?.orderedSectionIds
+      ).toEqual(sectionIds(5));
     });
     await waitFor(() => {
       expect(mocks.openCrdtSection).toHaveBeenCalledWith(current, "section-1");
@@ -186,15 +189,11 @@ describe("useSectionData", () => {
     renderHook(() => useSectionData(current));
 
     await waitFor(() => {
-      expect(mocks.initializeNoteSection).toHaveBeenCalledWith(
-        current.id,
-        "section-1",
-        {
-          manifestId: "manifest-1",
-          expectedKeyEpoch: current.keyEpoch,
-          expectedRootVersion: current.rootVersion
-        }
-      );
+      expect(mocks.initializeNoteSection).toHaveBeenCalledWith(current.id, "section-1", {
+        manifestId: "manifest-1",
+        expectedKeyEpoch: current.keyEpoch,
+        expectedRootVersion: current.rootVersion
+      });
     });
     expect(useAppStore.getState().sectionIndexes[current.id]?.sections[0]).toMatchObject({
       initialized: true,
@@ -231,9 +230,8 @@ describe("useSectionData", () => {
   it("keeps a released section visible as releasing until pending-safe cleanup completes", async () => {
     const current = installNote();
     const release = deferred<boolean>();
-    mocks.releaseCrdtSection.mockImplementation(
-      (_noteId: string, sectionId: string) =>
-        sectionId === "section-1" ? release.promise : Promise.resolve(true)
+    mocks.releaseCrdtSection.mockImplementation((_noteId: string, sectionId: string) =>
+      sectionId === "section-1" ? release.promise : Promise.resolve(true)
     );
     renderHook(() => useSectionData(current));
     await waitFor(() => {
@@ -265,9 +263,8 @@ describe("useSectionData", () => {
   it("does not let a stale release remove a section reopened during navigation", async () => {
     const current = installNote();
     const release = deferred<boolean>();
-    mocks.releaseCrdtSection.mockImplementation(
-      (_noteId: string, sectionId: string) =>
-        sectionId === "section-1" ? release.promise : Promise.resolve(true)
+    mocks.releaseCrdtSection.mockImplementation((_noteId: string, sectionId: string) =>
+      sectionId === "section-1" ? release.promise : Promise.resolve(true)
     );
     const view = renderHook(() => useSectionData(current));
     await waitFor(() => {
@@ -333,10 +330,9 @@ describe("useSectionData", () => {
 
   it("reopens the selected section when access changes", async () => {
     const current = installNote();
-    const { rerender } = renderHook(
-      ({ note: selected }) => useSectionData(selected),
-      { initialProps: { note: current } }
-    );
+    const { rerender } = renderHook(({ note: selected }) => useSectionData(selected), {
+      initialProps: { note: current }
+    });
 
     await waitFor(() => {
       expect(sectionState(current.id, "section-1")?.status).toBe("ready");

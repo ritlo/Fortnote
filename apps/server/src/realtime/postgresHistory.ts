@@ -11,10 +11,7 @@ import {
   type SectionHistoryRepository,
   type SectionHistoryRow
 } from "./history.js";
-import {
-  ROOT_CRDT_SECTION_ID,
-  storageSectionId
-} from "../notes/sections.js";
+import { ROOT_CRDT_SECTION_ID, storageSectionId } from "../notes/sections.js";
 
 type PostgresDatabase = NodePgDatabase<typeof schema>;
 
@@ -70,16 +67,8 @@ async function historyAccess(
       status: schema.noteMemberships.status
     })
     .from(schema.notes)
-    .innerJoin(
-      schema.noteMemberships,
-      eq(schema.noteMemberships.noteId, schema.notes.id)
-    )
-    .where(
-      and(
-        eq(schema.notes.id, noteId),
-        eq(schema.noteMemberships.userId, userId)
-      )
-    )
+    .innerJoin(schema.noteMemberships, eq(schema.noteMemberships.noteId, schema.notes.id))
+    .where(and(eq(schema.notes.id, noteId), eq(schema.noteMemberships.userId, userId)))
     .limit(1)
     .for("update", { of: [schema.notes, schema.noteMemberships] });
   return rows[0] ?? null;
@@ -118,10 +107,7 @@ async function ensureSection(
     })
     .from(schema.noteSections)
     .where(
-      and(
-        eq(schema.noteSections.id, storedId),
-        eq(schema.noteSections.noteId, noteId)
-      )
+      and(eq(schema.noteSections.id, storedId), eq(schema.noteSections.noteId, noteId))
     )
     .limit(1)
     .for("update");
@@ -132,21 +118,15 @@ async function ensureSection(
   return section;
 }
 
-export class PostgresSectionHistoryRepository
-  implements SectionHistoryRepository
-{
+export class PostgresSectionHistoryRepository implements SectionHistoryRepository {
   constructor(private readonly orm: PostgresDatabase) {}
 
   persist(input: PersistBinaryUpdateInput): Promise<BinaryUpdateOutcome> {
     return this.orm.transaction(async (transaction) => {
-      if (!await activeSession(transaction, input.sessionId)) {
+      if (!(await activeSession(transaction, input.sessionId))) {
         return { status: "rejected", code: "forbidden" } as const;
       }
-      const access = await historyAccess(
-        transaction,
-        input.header.noteId,
-        input.userId
-      );
+      const access = await historyAccess(transaction, input.header.noteId, input.userId);
       if (access?.status !== "active" || access.isDeleted) {
         return { status: "rejected", code: "forbidden" } as const;
       }
@@ -173,10 +153,8 @@ export class PostgresSectionHistoryRepository
       }
       const checkpointCutoff = input.header.checkpointSequenceCutoff;
       if (
-        (input.header.kind === "checkpoint") !==
-          (checkpointCutoff !== undefined) ||
-        (checkpointCutoff !== undefined &&
-          checkpointCutoff > section.currentSequence)
+        (input.header.kind === "checkpoint") !== (checkpointCutoff !== undefined) ||
+        (checkpointCutoff !== undefined && checkpointCutoff > section.currentSequence)
       ) {
         return { status: "rejected", code: "forbidden" } as const;
       }
@@ -215,8 +193,7 @@ export class PostgresSectionHistoryRepository
           kind: input.header.kind,
           inlineCipher: Buffer.from(input.cipher),
           nonce: Buffer.from(fromCanonicalBase64(input.header.nonce)),
-          checkpointSequenceCutoff:
-            input.header.checkpointSequenceCutoff ?? null
+          checkpointSequenceCutoff: input.header.checkpointSequenceCutoff ?? null
         })
         .onConflictDoNothing()
         .returning({ updateId: schema.sectionUpdates.updateId });
@@ -234,7 +211,7 @@ export class PostgresSectionHistoryRepository
         const duplicate = duplicates[0];
         return duplicate
           ? matchingUpdate(duplicate, input.header, storedSectionId)
-          : { status: "rejected", code: "forbidden" } as const;
+          : ({ status: "rejected", code: "forbidden" } as const);
       }
       const advanced = await transaction
         .update(schema.noteSections)
@@ -260,10 +237,7 @@ export class PostgresSectionHistoryRepository
             and(
               eq(schema.sectionUpdates.noteId, input.header.noteId),
               eq(schema.sectionUpdates.sectionId, storedSectionId),
-              eq(
-                schema.sectionUpdates.keyEpoch,
-                input.header.expectedKeyEpoch
-              ),
+              eq(schema.sectionUpdates.keyEpoch, input.header.expectedKeyEpoch),
               lte(schema.sectionUpdates.serverSequence, checkpointCutoff),
               ne(schema.sectionUpdates.updateId, input.header.updateId)
             )
@@ -294,8 +268,7 @@ export class PostgresSectionHistoryRepository
           kind: schema.sectionUpdates.kind,
           inlineCipher: schema.sectionUpdates.inlineCipher,
           nonce: schema.sectionUpdates.nonce,
-          checkpointSequenceCutoff:
-            schema.sectionUpdates.checkpointSequenceCutoff,
+          checkpointSequenceCutoff: schema.sectionUpdates.checkpointSequenceCutoff,
           manifestId: schema.sectionUpdates.manifestId,
           uploadId: schema.contentManifests.uploadId,
           totalCipherBytes: schema.contentManifests.totalCipherBytes,

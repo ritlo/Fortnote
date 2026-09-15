@@ -41,7 +41,11 @@ export function RecoveryPanel({ state, callbacks }: RecoveryPanelProps) {
       <div className="action-row">
         {state.actions.map((action) => {
           const [label, callback] = actions[action];
-          return <button type="button" key={action} onClick={() => void callbacks[callback]()}>{label}</button>;
+          return (
+            <button type="button" key={action} onClick={() => void callbacks[callback]()}>
+              {label}
+            </button>
+          );
         })}
       </div>
     </section>

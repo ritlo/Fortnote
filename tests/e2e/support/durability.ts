@@ -1,11 +1,16 @@
 import { expect, type Page } from "@playwright/test";
 
 export async function waitForCrdtDurability(page: Page): Promise<void> {
-  await page.evaluate(async () => new Promise<void>((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      resolve();
-    }));
-  }));
+  await page.evaluate(
+    async () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            resolve();
+          })
+        );
+      })
+  );
   await expect(page.locator(".collaboration-status")).toContainText(
     "Saved and synchronized",
     { timeout: 15_000 }
@@ -27,8 +32,10 @@ async function pendingEncryptedUpdates(page: Page): Promise<number> {
     try {
       if (!database.objectStoreNames.contains("encryptedOutbox")) return 0;
       const records = await new Promise<{ state: string }[]>((resolve, reject) => {
-        const read = database.transaction("encryptedOutbox", "readonly")
-          .objectStore("encryptedOutbox").getAll();
+        const read = database
+          .transaction("encryptedOutbox", "readonly")
+          .objectStore("encryptedOutbox")
+          .getAll();
         read.onsuccess = () => {
           resolve(read.result as { state: string }[]);
         };

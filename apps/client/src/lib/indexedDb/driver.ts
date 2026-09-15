@@ -1,7 +1,4 @@
-import {
-  IndexedDbOperationError,
-  normalizeIndexedDbError
-} from "./contracts";
+import { IndexedDbOperationError, normalizeIndexedDbError } from "./contracts";
 
 const DATABASE_VERSION = 3;
 
@@ -34,12 +31,7 @@ export async function openDatabase(
       CONTENT_TRANSFER_STORE,
       CONTENT_TRANSFER_KEY
     );
-    ensureStore(
-      database,
-      request.transaction,
-      SEARCH_INDEX_STORE,
-      SEARCH_INDEX_KEY
-    );
+    ensureStore(database, request.transaction, SEARCH_INDEX_STORE, SEARCH_INDEX_KEY);
   };
   return requestResult(request);
 }
@@ -81,7 +73,9 @@ export async function listByUser<T>(
   return safeOperation(async () => {
     const transaction = database.transaction(storeName, "readonly");
     const result = await requestResult(
-      transaction.objectStore(storeName).index("byUserId").getAll(userId) as IDBRequest<T[]>
+      transaction.objectStore(storeName).index("byUserId").getAll(userId) as IDBRequest<
+        T[]
+      >
     );
     await transactionDone(transaction);
     return result;

@@ -19,8 +19,20 @@ afterEach(cleanup);
 
 const folders: FolderSummary[] = [
   { id: "folder-1", name: "Work", parentFolderId: null, createdAt: "", updatedAt: "" },
-  { id: "folder-2", name: "Personal", parentFolderId: null, createdAt: "", updatedAt: "" },
-  { id: "folder-3", name: "Projects", parentFolderId: "folder-1", createdAt: "", updatedAt: "" }
+  {
+    id: "folder-2",
+    name: "Personal",
+    parentFolderId: null,
+    createdAt: "",
+    updatedAt: ""
+  },
+  {
+    id: "folder-3",
+    name: "Projects",
+    parentFolderId: "folder-1",
+    createdAt: "",
+    updatedAt: ""
+  }
 ];
 
 describe("Sidebar folder navigation", () => {

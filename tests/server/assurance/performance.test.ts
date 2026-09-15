@@ -38,7 +38,9 @@ interface MetricSummary {
 }
 
 interface PerformanceHelpers {
-  fingerprintPerformanceEnvironment: (environment: Record<string, string | number>) => string;
+  fingerprintPerformanceEnvironment: (
+    environment: Record<string, string | number>
+  ) => string;
   nearestRankP95: (values: number[]) => number;
   summarizePerformanceMetric: (
     name: string,
@@ -52,7 +54,7 @@ interface PerformanceHelpers {
 }
 
 async function helpers(): Promise<PerformanceHelpers> {
-  return await import(verifierUrl) as PerformanceHelpers;
+  return (await import(verifierUrl)) as PerformanceHelpers;
 }
 
 describe("performance assurance calculations", () => {
@@ -69,7 +71,9 @@ describe("performance assurance calculations", () => {
       seed: "release-candidate",
       warmupRuns: 2
     });
-    expect(new Set(Object.values(first.accounts).map(({ username }) => username)).size).toBe(3);
+    expect(
+      new Set(Object.values(first.accounts).map(({ username }) => username)).size
+    ).toBe(3);
   });
 
   it("isolates performance runs on the selected database", () => {
@@ -77,10 +81,12 @@ describe("performance assurance calculations", () => {
       DATABASE_PATH: "/tmp/performance.sqlite",
       DATABASE_PROVIDER: "sqlite"
     });
-    expect(performanceDatabaseEnvironment(
-      "postgresql://fortnote:secret@127.0.0.1:5432/fortnote",
-      "/tmp/performance.sqlite"
-    )).toEqual({
+    expect(
+      performanceDatabaseEnvironment(
+        "postgresql://fortnote:secret@127.0.0.1:5432/fortnote",
+        "/tmp/performance.sqlite"
+      )
+    ).toEqual({
       DATABASE_PROVIDER: "postgres",
       DATABASE_URL: "postgresql://fortnote:secret@127.0.0.1:5432/fortnote"
     });
@@ -88,10 +94,14 @@ describe("performance assurance calculations", () => {
 
   it("calculates nearest-rank p95 from sorted and unsorted samples", async () => {
     const { nearestRankP95 } = await helpers();
-    const values = [20, 1, 19, 2, 18, 3, 17, 4, 16, 5, 15, 6, 14, 7, 13, 8, 12, 9, 11, 10];
+    const values = [
+      20, 1, 19, 2, 18, 3, 17, 4, 16, 5, 15, 6, 14, 7, 13, 8, 12, 9, 11, 10
+    ];
 
     expect(nearestRankP95(values)).toBe(19);
-    expect(values).toEqual([20, 1, 19, 2, 18, 3, 17, 4, 16, 5, 15, 6, 14, 7, 13, 8, 12, 9, 11, 10]);
+    expect(values).toEqual([
+      20, 1, 19, 2, 18, 3, 17, 4, 16, 5, 15, 6, 14, 7, 13, 8, 12, 9, 11, 10
+    ]);
   });
 
   it("counts failures and timeouts in both latency and success rate", async () => {
@@ -117,12 +127,22 @@ describe("performance assurance calculations", () => {
   it("requires at least 95 percent successful samples", async () => {
     const { summarizePerformanceMetric } = await helpers();
     const sample = (successes: number): PerformanceSample[] => [
-      ...Array.from({ length: successes }, () => ({ durationMs: 50, result: "success" as const })),
-      ...Array.from({ length: 20 - successes }, () => ({ durationMs: 50, result: "failure" as const }))
+      ...Array.from({ length: successes }, () => ({
+        durationMs: 50,
+        result: "success" as const
+      })),
+      ...Array.from({ length: 20 - successes }, () => ({
+        durationMs: 50,
+        result: "failure" as const
+      }))
     ];
 
-    expect(summarizePerformanceMetric("local-feedback", 100, sample(19)).successRatePassed).toBe(true);
-    expect(summarizePerformanceMetric("local-feedback", 100, sample(18)).successRatePassed).toBe(false);
+    expect(
+      summarizePerformanceMetric("local-feedback", 100, sample(19)).successRatePassed
+    ).toBe(true);
+    expect(
+      summarizePerformanceMetric("local-feedback", 100, sample(18)).successRatePassed
+    ).toBe(false);
   });
 
   it("requires all six named metrics with their exact budgets", async () => {
@@ -136,12 +156,19 @@ describe("performance assurance calculations", () => {
     );
     const baseline = Object.fromEntries(metrics.map(({ name, p95Ms }) => [name, p95Ms]));
 
-    expect(verifyPerformanceMetrics(metrics, baseline)).toEqual({ errors: [], passed: true });
-    expect(verifyPerformanceMetrics(metrics.slice(1), baseline).errors.join(" ")).toMatch(/six|local-feedback/iu);
+    expect(verifyPerformanceMetrics(metrics, baseline)).toEqual({
+      errors: [],
+      passed: true
+    });
+    expect(verifyPerformanceMetrics(metrics.slice(1), baseline).errors.join(" ")).toMatch(
+      /six|local-feedback/iu
+    );
 
     const wrongBudget = metrics.map((metric) => ({ ...metric }));
     wrongBudget[0]!.budgetMs += 1;
-    expect(verifyPerformanceMetrics(wrongBudget, baseline).errors.join(" ")).toMatch(/budget/iu);
+    expect(verifyPerformanceMetrics(wrongBudget, baseline).errors.join(" ")).toMatch(
+      /budget/iu
+    );
   });
 
   it("fingerprints only performance-equivalent environment properties", async () => {
@@ -162,11 +189,13 @@ describe("performance assurance calculations", () => {
     expect(fingerprintPerformanceEnvironment(reordered)).toBe(
       fingerprintPerformanceEnvironment(environment)
     );
-    expect(fingerprintPerformanceEnvironment({
-      ...environment,
-      browser: "chromium 138.0.7204.92",
-      node: "26.2.1"
-    })).toBe(fingerprintPerformanceEnvironment(environment));
+    expect(
+      fingerprintPerformanceEnvironment({
+        ...environment,
+        browser: "chromium 138.0.7204.92",
+        node: "26.2.1"
+      })
+    ).toBe(fingerprintPerformanceEnvironment(environment));
     expect(fingerprintPerformanceEnvironment({ ...environment, cpu: "4-vCPU" })).not.toBe(
       fingerprintPerformanceEnvironment(environment)
     );
@@ -183,11 +212,16 @@ describe("performance assurance calculations", () => {
     );
     const baseline = Object.fromEntries(metrics.map(({ name }) => [name, 100]));
 
-    expect(verifyPerformanceMetrics(metrics, baseline)).toEqual({ errors: [], passed: true });
+    expect(verifyPerformanceMetrics(metrics, baseline)).toEqual({
+      errors: [],
+      passed: true
+    });
 
     const regressed = metrics.map((metric, index) =>
       index === 0 ? { ...metric, p95Ms: 110.01 } : metric
     );
-    expect(verifyPerformanceMetrics(regressed, baseline).errors.join(" ")).toMatch(/regression/iu);
+    expect(verifyPerformanceMetrics(regressed, baseline).errors.join(" ")).toMatch(
+      /regression/iu
+    );
   });
 });

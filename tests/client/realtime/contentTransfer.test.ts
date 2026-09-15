@@ -17,7 +17,9 @@ import {
 const databases: FortnoteIndexedDb[] = [];
 
 afterEach(async () => {
-  await Promise.all(databases.splice(0).map(async (database) => database.deleteDatabase()));
+  await Promise.all(
+    databases.splice(0).map(async (database) => database.deleteDatabase())
+  );
 });
 
 describe("resumable encrypted content transfer", () => {
@@ -148,12 +150,14 @@ describe("resumable encrypted content transfer", () => {
         return Promise.resolve(status(payload.uploadId, []));
       }
     });
-    await expect(uploadPreparedContent({
-      userId: "user-a",
-      database: localCapacityDatabase,
-      prepared,
-      api: neverCalledApi
-    })).resolves.toEqual({ kind: "local-capacity", error: localCapacityError });
+    await expect(
+      uploadPreparedContent({
+        userId: "user-a",
+        database: localCapacityDatabase,
+        prepared,
+        api: neverCalledApi
+      })
+    ).resolves.toEqual({ kind: "local-capacity", error: localCapacityError });
     expect(began).toBe(false);
 
     const serverCapacityError = new ApiRequestError(
@@ -166,30 +170,37 @@ describe("resumable encrypted content transfer", () => {
         return Promise.reject(serverCapacityError);
       }
     });
-    await expect(uploadPreparedContent({
-      userId: "user-a",
-      database,
-      prepared,
-      api: serverApi
-    })).resolves.toEqual({ kind: "server-capacity", error: serverCapacityError });
+    await expect(
+      uploadPreparedContent({
+        userId: "user-a",
+        database,
+        prepared,
+        api: serverApi
+      })
+    ).resolves.toEqual({ kind: "server-capacity", error: serverCapacityError });
     const persisted = await database.getContentTransfer("user-a", prepared.uploadId);
     expect(persisted).not.toBeNull();
-    if (!persisted) throw new Error("Expected capacity-limited transfer to remain persisted");
+    if (!persisted)
+      throw new Error("Expected capacity-limited transfer to remain persisted");
     const durableSnapshot = structuredClone(persisted);
 
-    await expect(resumeContentUpload({
-      database,
-      record: persisted,
-      api: serverApi
-    })).resolves.toEqual({ kind: "server-capacity", error: serverCapacityError });
-    await expect(resumeContentUpload({
-      database: localCapacityDatabase,
-      record: persisted,
-      api: neverCalledApi
-    })).resolves.toEqual({ kind: "local-capacity", error: localCapacityError });
-    await expect(database.getContentTransfer("user-a", prepared.uploadId)).resolves.toEqual(
-      durableSnapshot
-    );
+    await expect(
+      resumeContentUpload({
+        database,
+        record: persisted,
+        api: serverApi
+      })
+    ).resolves.toEqual({ kind: "server-capacity", error: serverCapacityError });
+    await expect(
+      resumeContentUpload({
+        database: localCapacityDatabase,
+        record: persisted,
+        api: neverCalledApi
+      })
+    ).resolves.toEqual({ kind: "local-capacity", error: localCapacityError });
+    await expect(
+      database.getContentTransfer("user-a", prepared.uploadId)
+    ).resolves.toEqual(durableSnapshot);
   });
 
   it("downloads and verifies the complete manifest before authenticated decryption", async () => {

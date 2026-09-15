@@ -27,9 +27,7 @@ interface EditorPaneProps {
   rotateRecoveryKey: () => Promise<void>;
   rotateSharingKey: () => Promise<void>;
   setNewPassword: (value: string) => void;
-  updateSelectedNote: (
-    patch: Partial<Pick<DecryptedNote, "folderId" | "title">>
-  ) => void;
+  updateSelectedNote: (patch: Partial<Pick<DecryptedNote, "folderId" | "title">>) => void;
   uploadSelectedAttachment: (file: File | undefined) => Promise<AttachmentSummary | null>;
 }
 
@@ -72,7 +70,9 @@ export function EditorPane({
         lockVault={lockVault}
         moveSelectedToTrash={moveSelectedToTrash}
         notesView={notesView}
-        onShare={() => { setSharingOpen(true); }}
+        onShare={() => {
+          setSharingOpen(true);
+        }}
         shareButtonRef={shareButtonRef}
         recoveryCallbacks={recoveryCallbacks}
         recoveryOpen={recoveryOpen}
@@ -85,12 +85,16 @@ export function EditorPane({
         state={collaborationState}
         callbacks={recoveryCallbacks}
         open={recoveryOpen}
-        onClose={() => { setRecoveryOpen(false); }}
+        onClose={() => {
+          setRecoveryOpen(false);
+        }}
       />
       <SharingDialog
         selectedNote={selectedNote}
         open={sharingOpen}
-        onClose={() => { setSharingOpen(false); }}
+        onClose={() => {
+          setSharingOpen(false);
+        }}
         returnFocusRef={shareButtonRef}
       />
       {notesView === "settings" ? (

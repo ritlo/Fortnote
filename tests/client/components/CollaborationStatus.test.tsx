@@ -2,7 +2,10 @@
 
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { deriveCollaborationState, defaultCollaborationDimensions } from "@client/lib/collaborationState";
+import {
+  deriveCollaborationState,
+  defaultCollaborationDimensions
+} from "@client/lib/collaborationState";
 import { CollaborationStatus } from "@client/components/CollaborationStatus";
 
 afterEach(cleanup);
@@ -20,7 +23,11 @@ describe("CollaborationStatus", () => {
   });
 
   it("uses an assertive status for offline work without claiming synchronization", () => {
-    render(<CollaborationStatus state={state({ connection: "offline", durability: "pending" })} />);
+    render(
+      <CollaborationStatus
+        state={state({ connection: "offline", durability: "pending" })}
+      />
+    );
     const status = screen.getByRole("status");
     expect(status.textContent).toBe("Offline — changes kept on this device");
     expect(status.getAttribute("aria-live")).toBe("assertive");
@@ -45,7 +52,9 @@ describe("CollaborationStatus", () => {
         progress={{ completed: 2, total: 5 }}
       />
     );
-    const progress = screen.getByRole("progressbar", { name: "Encrypted synchronization progress" });
+    const progress = screen.getByRole("progressbar", {
+      name: "Encrypted synchronization progress"
+    });
     expect(progress.getAttribute("value")).toBe("2");
     expect(progress.getAttribute("max")).toBe("5");
   });

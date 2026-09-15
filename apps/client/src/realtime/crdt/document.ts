@@ -23,12 +23,14 @@ export function createCrdtDocument(): { doc: Y.Doc; fragment: Y.XmlFragment } {
 }
 
 export function getSectionOrder(doc: Y.Doc): string[] {
-  return [...new Set(
-    doc
-      .getArray<unknown>(SECTION_ORDER_KEY)
-      .toArray()
-      .filter((sectionId): sectionId is string => typeof sectionId === "string")
-  )];
+  return [
+    ...new Set(
+      doc
+        .getArray<unknown>(SECTION_ORDER_KEY)
+        .toArray()
+        .filter((sectionId): sectionId is string => typeof sectionId === "string")
+    )
+  ];
 }
 
 export function replaceSectionOrder(doc: Y.Doc, orderedSectionIds: string[]): void {
@@ -53,10 +55,7 @@ export function replaceSectionContent(
   replaceBlockNoteFragmentSnapshot(fragment, snapshot);
 }
 
-export function replaceLegacySectionContent(
-  fragment: Y.XmlFragment,
-  body: string
-): void {
+export function replaceLegacySectionContent(fragment: Y.XmlFragment, body: string): void {
   replaceBlockNoteFragment(fragment, body);
 }
 

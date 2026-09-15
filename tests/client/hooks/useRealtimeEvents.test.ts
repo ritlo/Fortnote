@@ -255,24 +255,29 @@ describe("realtime event processing", () => {
     expect(eventsRequireFolderReload([event({ resourceType: "note" })])).toBe(false);
     expect(eventsRequireTrashReload([event({ type: "note.deleted" })])).toBe(true);
     expect(eventsRequireTrashReload([event({ type: "note.restored" })])).toBe(true);
-    expect(
-      eventsRequireTrashReload([event({ type: "note.permanently_deleted" })])
-    ).toBe(true);
+    expect(eventsRequireTrashReload([event({ type: "note.permanently_deleted" })])).toBe(
+      true
+    );
     expect(eventsRequireTrashReload([event({ type: "note.updated" })])).toBe(false);
-    expect(noteIdsRequiringReload([
-      otherTabEvent,
-      event({ noteId: "note_2", resourceType: "membership" }),
-      event({ noteId: "note_2", resourceType: "membership" }),
-      event({ noteId: "section_note", resourceType: "section" }),
-      event({ noteId: "attachment_note", resourceType: "attachment" }),
-      event({
-        noteId: "revoked_note",
-        resourceType: "membership",
-        type: "membership.revoked",
-        metadata: { membershipUserId: "user_bob" }
-      }),
-      event({ noteId: "deleted_note", type: "note.permanently_deleted" })
-    ], "user_bob")).toEqual(["note_1", "note_2", "section_note"]);
+    expect(
+      noteIdsRequiringReload(
+        [
+          otherTabEvent,
+          event({ noteId: "note_2", resourceType: "membership" }),
+          event({ noteId: "note_2", resourceType: "membership" }),
+          event({ noteId: "section_note", resourceType: "section" }),
+          event({ noteId: "attachment_note", resourceType: "attachment" }),
+          event({
+            noteId: "revoked_note",
+            resourceType: "membership",
+            type: "membership.revoked",
+            metadata: { membershipUserId: "user_bob" }
+          }),
+          event({ noteId: "deleted_note", type: "note.permanently_deleted" })
+        ],
+        "user_bob"
+      )
+    ).toEqual(["note_1", "note_2", "section_note"]);
   });
 
   it("keeps owner state fresh after its own member revocation", () => {

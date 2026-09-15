@@ -58,8 +58,12 @@ test.describe("representative focused document", () => {
       await exerciseServerQuotaPressure(ownerPage, owner, title);
       await shareDocument(ownerPage, collaborator.username, "editor");
 
-      expect(Math.max(...controls.bodies.map((body) => body.byteLength))).toBeLessThanOrEqual(MIB);
-      expect(controls.bodies.some((body) => body.includes(Buffer.from(dataset.marker)))).toBe(false);
+      expect(
+        Math.max(...controls.bodies.map((body) => body.byteLength))
+      ).toBeLessThanOrEqual(MIB);
+      expect(
+        controls.bodies.some((body) => body.includes(Buffer.from(dataset.marker)))
+      ).toBe(false);
       controls.stop();
 
       const collaboratorPage = await newPerformancePage(browser, baseURL, contexts);

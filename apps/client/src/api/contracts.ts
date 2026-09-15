@@ -324,8 +324,7 @@ export interface LinkedRotateNoteKeyPayload {
 }
 
 export type RotateNoteKeyPayload =
-  | LegacyRotateNoteKeyPayload
-  | LinkedRotateNoteKeyPayload;
+  LegacyRotateNoteKeyPayload | LinkedRotateNoteKeyPayload;
 
 export interface NoteEpochLink {
   sourceEpoch: number;

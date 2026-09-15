@@ -17,10 +17,7 @@ export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("base64url");
 }
 
-export function createSession(
-  db: ApplicationDatabase,
-  userId: string
-): Promise<string> {
+export function createSession(db: ApplicationDatabase, userId: string): Promise<string> {
   return db.sessions.create(userId);
 }
 

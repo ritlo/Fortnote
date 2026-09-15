@@ -166,9 +166,7 @@ export interface AccountRepository {
   activateHandle(userId: string, canonicalHandle: string): Promise<boolean>;
   recover(input: RecoverAccountInput): Promise<RecoverAccountOutcome>;
   keyMaterial(userId: string): Promise<KeyMaterialRecord | null>;
-  rotateKeyMaterial(
-    input: RotateKeyMaterialInput
-  ): Promise<RotateKeyMaterialOutcome>;
+  rotateKeyMaterial(input: RotateKeyMaterialInput): Promise<RotateKeyMaterialOutcome>;
 }
 
 type SqliteDatabase = BetterSQLite3Database<typeof schema>;
@@ -228,7 +226,10 @@ export class SqliteAccountRepository implements AccountRepository {
         vaultKdfVersion: schema.userKeyMaterial.kdfVersion
       })
       .from(schema.users)
-      .innerJoin(schema.userKeyMaterial, eq(schema.userKeyMaterial.userId, schema.users.id))
+      .innerJoin(
+        schema.userKeyMaterial,
+        eq(schema.userKeyMaterial.userId, schema.users.id)
+      )
       .where(eq(schema.users.id, userId))
       .get();
     return Promise.resolve(row ?? null);
@@ -241,7 +242,8 @@ export class SqliteAccountRepository implements AccountRepository {
         recoveryEncryptedRootKey: schema.userKeyMaterial.recoveryEncryptedRootKey,
         recoveryRootKeyNonce: schema.userKeyMaterial.recoveryRootKeyNonce,
         recoveryRootKeyFormatVersion: schema.userKeyMaterial.recoveryRootKeyFormatVersion,
-        recoveryRootKeyContextVersion: schema.userKeyMaterial.recoveryRootKeyContextVersion,
+        recoveryRootKeyContextVersion:
+          schema.userKeyMaterial.recoveryRootKeyContextVersion,
         recoveryKdfSalt: schema.userKeyMaterial.recoveryKdfSalt,
         recoveryKdfOpsLimit: schema.userKeyMaterial.recoveryKdfOpsLimit,
         recoveryKdfMemLimit: schema.userKeyMaterial.recoveryKdfMemLimit,
@@ -271,7 +273,10 @@ export class SqliteAccountRepository implements AccountRepository {
         keyMaterialVersion: schema.userKeyMaterial.keyMaterialVersion
       })
       .from(schema.users)
-      .innerJoin(schema.userKeyMaterial, eq(schema.userKeyMaterial.userId, schema.users.id))
+      .innerJoin(
+        schema.userKeyMaterial,
+        eq(schema.userKeyMaterial.userId, schema.users.id)
+      )
       .where(eq(schema.users.id, userId))
       .get();
     return Promise.resolve(row ?? null);
@@ -279,14 +284,20 @@ export class SqliteAccountRepository implements AccountRepository {
 
   register(input: RegisterAccountInput): Promise<void> {
     this.orm.transaction((transaction) => {
-      transaction.insert(schema.users).values({
-        ...input.user,
-        handleState: "active"
-      }).run();
-      transaction.insert(schema.userKeyMaterial).values({
-        userId: input.user.id,
-        ...input.keyMaterial
-      }).run();
+      transaction
+        .insert(schema.users)
+        .values({
+          ...input.user,
+          handleState: "active"
+        })
+        .run();
+      transaction
+        .insert(schema.userKeyMaterial)
+        .values({
+          userId: input.user.id,
+          ...input.keyMaterial
+        })
+        .run();
     });
     return Promise.resolve();
   }
@@ -362,9 +373,7 @@ export class SqliteAccountRepository implements AccountRepository {
           userId: input.userId,
           sessionHash: hashToken(token),
           idleExpiresAt: new Date(now + this.sessionIdleTimeoutMs).toISOString(),
-          absoluteExpiresAt: new Date(
-            now + this.sessionAbsoluteTimeoutMs
-          ).toISOString()
+          absoluteExpiresAt: new Date(now + this.sessionAbsoluteTimeoutMs).toISOString()
         })
         .run();
       return { kind: "recovered" as const, token, revokedSessionIds };
@@ -386,7 +395,8 @@ export class SqliteAccountRepository implements AccountRepository {
         recoveryEncryptedRootKey: schema.userKeyMaterial.recoveryEncryptedRootKey,
         recoveryRootKeyNonce: schema.userKeyMaterial.recoveryRootKeyNonce,
         recoveryRootKeyFormatVersion: schema.userKeyMaterial.recoveryRootKeyFormatVersion,
-        recoveryRootKeyContextVersion: schema.userKeyMaterial.recoveryRootKeyContextVersion,
+        recoveryRootKeyContextVersion:
+          schema.userKeyMaterial.recoveryRootKeyContextVersion,
         recoveryKdfSalt: schema.userKeyMaterial.recoveryKdfSalt,
         recoveryKdfOpsLimit: schema.userKeyMaterial.recoveryKdfOpsLimit,
         recoveryKdfMemLimit: schema.userKeyMaterial.recoveryKdfMemLimit,
@@ -399,9 +409,7 @@ export class SqliteAccountRepository implements AccountRepository {
     return Promise.resolve(row ?? null);
   }
 
-  rotateKeyMaterial(
-    input: RotateKeyMaterialInput
-  ): Promise<RotateKeyMaterialOutcome> {
+  rotateKeyMaterial(input: RotateKeyMaterialInput): Promise<RotateKeyMaterialOutcome> {
     const outcome = this.orm.transaction((transaction) => {
       const current = transaction
         .select({ keyMaterialVersion: schema.userKeyMaterial.keyMaterialVersion })
@@ -491,9 +499,7 @@ export class SqliteAccountRepository implements AccountRepository {
           userId: input.userId,
           sessionHash: hashToken(replacementToken),
           idleExpiresAt: new Date(now + this.sessionIdleTimeoutMs).toISOString(),
-          absoluteExpiresAt: new Date(
-            now + this.sessionAbsoluteTimeoutMs
-          ).toISOString()
+          absoluteExpiresAt: new Date(now + this.sessionAbsoluteTimeoutMs).toISOString()
         })
         .run();
       return {

@@ -4,11 +4,7 @@ import { isRealtimeMessage } from "./protocol";
 const CRDT_OUTBOX_KEY_PREFIX = "fortnote:crdt-outbox:v1:";
 const volatileCrdtOutboxes = new Map<string, Map<string, EncryptedCrdtMessage>>();
 
-export function flushCrdtOutbox(
-  socket: WebSocket,
-  userId: string,
-  enabled = true
-): void {
+export function flushCrdtOutbox(socket: WebSocket, userId: string, enabled = true): void {
   if (socket.readyState !== WebSocket.OPEN || !enabled) {
     return;
   }
@@ -17,9 +13,7 @@ export function flushCrdtOutbox(
   }
 }
 
-export function readCrdtOutbox(
-  userId: string
-): Map<string, EncryptedCrdtMessage> {
+export function readCrdtOutbox(userId: string): Map<string, EncryptedCrdtMessage> {
   const existing = volatileCrdtOutboxes.get(userId);
   if (existing) {
     return existing;

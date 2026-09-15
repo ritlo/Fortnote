@@ -1,10 +1,6 @@
 import { Buffer } from "node:buffer";
 import { readStoredAttachment, readStoredNote } from "./support/stored.js";
-import {
-  expect,
-  test,
-  type BrowserContext
-} from "@playwright/test";
+import { expect, test, type BrowserContext } from "@playwright/test";
 import { waitForCrdtDurability } from "./support/durability.js";
 import {
   blockEditor,
@@ -89,7 +85,6 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     await expect(alicePage.getByText(/^Last saved/)).toHaveCount(0);
     await closeShareDialog(alicePage);
 
-
     await editSelectedNote(alicePage, aliceBody);
     await expect(blockEditor(bobPage)).toContainText(aliceBody, {
       timeout: 10_000
@@ -105,24 +100,30 @@ test("syncs a shared note for an online editor and offline viewer", async ({
       aliceEditor.pressSequentially(concurrentAliceEdit),
       bobEditor.pressSequentially(concurrentBobEdit)
     ]);
-    await expect.poll(async () => {
-      const [aliceValue, bobValue] = await Promise.all([
-        editorText(alicePage),
-        editorText(bobPage)
-      ]);
-      return (
-        aliceValue === bobValue &&
-        aliceValue.includes(concurrentAliceEdit) &&
-        aliceValue.includes(concurrentBobEdit)
-      );
-    }, { timeout: 10_000 }).toBe(true);
+    await expect
+      .poll(
+        async () => {
+          const [aliceValue, bobValue] = await Promise.all([
+            editorText(alicePage),
+            editorText(bobPage)
+          ]);
+          return (
+            aliceValue === bobValue &&
+            aliceValue.includes(concurrentAliceEdit) &&
+            aliceValue.includes(concurrentBobEdit)
+          );
+        },
+        { timeout: 10_000 }
+      )
+      .toBe(true);
     const mergedBody = await editorText(alicePage);
-    expect(mergedBody.match(new RegExp(escapeRegExp(concurrentAliceEdit), "gu"))).toHaveLength(1);
-    expect(mergedBody.match(new RegExp(escapeRegExp(concurrentBobEdit), "gu"))).toHaveLength(1);
-    await Promise.all([
-      waitForCrdtDurability(alicePage),
-      waitForCrdtDurability(bobPage)
-    ]);
+    expect(
+      mergedBody.match(new RegExp(escapeRegExp(concurrentAliceEdit), "gu"))
+    ).toHaveLength(1);
+    expect(
+      mergedBody.match(new RegExp(escapeRegExp(concurrentBobEdit), "gu"))
+    ).toHaveLength(1);
+    await Promise.all([waitForCrdtDurability(alicePage), waitForCrdtDurability(bobPage)]);
 
     carolPage = await newUserPage(browser, baseURL, contexts);
     captureApiTraffic(carolPage, traffic);
@@ -132,13 +133,17 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     await expect.poll(() => editorText(carolPage)).toBe(mergedBody);
     await expect(blockEditor(carolPage)).toHaveAttribute("contenteditable", "false");
     await expect(carolPage.getByRole("button", { name: "Save" })).toHaveCount(0);
-    await expect(carolPage.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
-    await expect(carolPage.getByRole("button", { name: "Redo", exact: true })).toHaveCount(0);
+    await expect(
+      carolPage.getByRole("button", { name: "Undo", exact: true })
+    ).toHaveCount(0);
+    await expect(
+      carolPage.getByRole("button", { name: "Redo", exact: true })
+    ).toHaveCount(0);
     await revokeMember(alicePage, carol.username);
     await expect.poll(() => carolRealtime.closes).toBeGreaterThan(0);
-    await expect(carolPage.getByRole("button", { name: noteTitlePattern(noteTitle) })).toHaveCount(
-      0
-    );
+    await expect(
+      carolPage.getByRole("button", { name: noteTitlePattern(noteTitle) })
+    ).toHaveCount(0);
     await expect(blockEditor(carolPage)).toHaveCount(0);
     await expect(blockEditor(alicePage)).toBeVisible({ timeout: 10_000 });
     await waitForCrdtDurability(alicePage);
@@ -161,8 +166,12 @@ test("syncs a shared note for an online editor and offline viewer", async ({
       timeout: 10_000
     });
     await expect(bobPage.getByRole("button", { name: "Save" })).toHaveCount(0);
-    await expect(bobPage.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
-    await expect(bobPage.getByRole("button", { name: "Redo", exact: true })).toHaveCount(0);
+    await expect(bobPage.getByRole("button", { name: "Undo", exact: true })).toHaveCount(
+      0
+    );
+    await expect(bobPage.getByRole("button", { name: "Redo", exact: true })).toHaveCount(
+      0
+    );
     expect(realtimeFrames.join("\n")).not.toContain(aliceBody);
     expect(realtimeFrames.join("\n")).not.toContain(bobBody);
     expect(realtimeFrames.join("\n")).not.toContain("awareness");
@@ -171,26 +180,23 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     captureApiTraffic(carolPage, traffic);
     captureRealtimeFrames(carolPage, realtimeFrames);
     await signIn(carolPage, carol.username, carol.password);
-    await expect(carolPage.getByRole("button", { name: noteTitlePattern(noteTitle) })).toHaveCount(
-      0
-    );
+    await expect(
+      carolPage.getByRole("button", { name: noteTitlePattern(noteTitle) })
+    ).toHaveCount(0);
     await expect(blockEditor(carolPage)).toHaveCount(0);
 
     const stored = await readStoredNote(alice.username);
     expect(stored.contentBytes.length).toBeGreaterThan(0);
     const responseBodies = await Promise.all(traffic.responseBodies);
     const browserTraffic = Buffer.concat([...traffic.requestBodies, ...responseBodies]);
-    for (const plaintext of [
-      noteTitle,
-      initialBody,
-      aliceBody,
-      mergedBody,
-      bobBody
-    ]) {
+    for (const plaintext of [noteTitle, initialBody, aliceBody, mergedBody, bobBody]) {
       expect(browserTraffic.toString("utf8")).not.toContain(plaintext);
       expect(realtimeFrames.join("\n")).not.toContain(plaintext);
       expect(stored.databasePayload).not.toContain(plaintext);
-      for (const bytes of [...stored.attachments.map((attachment) => attachment.bytes), ...stored.contentBytes]) {
+      for (const bytes of [
+        ...stored.attachments.map((attachment) => attachment.bytes),
+        ...stored.contentBytes
+      ]) {
         expect(bytes.toString("utf8")).not.toContain(plaintext);
       }
     }
@@ -305,8 +311,9 @@ test("embeds encrypted media for reloads and shared viewers", async ({
       });
       await expect(attachmentDialog).toBeVisible();
       await attachmentDialog.getByRole("button", { name: filename, exact: true }).click();
-      await expect(attachmentDialog.getByRole("img", { name: `Preview of ${filename}` }))
-        .toBeVisible();
+      await expect(
+        attachmentDialog.getByRole("img", { name: `Preview of ${filename}` })
+      ).toBeVisible();
       await attachmentDialog.getByRole("button", { name: "Close attachments" }).click();
     });
 
@@ -328,10 +335,9 @@ test("embeds encrypted media for reloads and shared viewers", async ({
     await test.step("reload and render for a read-only collaborator", async () => {
       await reloadAndUnlock(alicePage, alice.password);
       await expect(alicePage.getByRole("img", { name: filename })).toHaveCount(2);
-      await expect(alicePage.getByRole("img", { name: filename }).first()).toHaveAttribute(
-        "src",
-        /^blob:/
-      );
+      await expect(
+        alicePage.getByRole("img", { name: filename }).first()
+      ).toHaveAttribute("src", /^blob:/);
 
       await shareNote(alicePage, bob.username, "viewer");
       await openNote(bobPage, noteTitle);
@@ -392,7 +398,9 @@ test("embeds encrypted media for reloads and shared viewers", async ({
           )
         )
         .toEqual([null, null]);
-      await expect(readStoredAttachment(storedStorageKey)).rejects.toThrow("Stored ciphertext not found");
+      await expect(readStoredAttachment(storedStorageKey)).rejects.toThrow(
+        "Stored ciphertext not found"
+      );
     });
   } finally {
     await closeContexts(contexts);
@@ -436,14 +444,19 @@ test("syncs edits between two tabs signed in to the same account", async ({
       firstEditor.press("Control+Home"),
       secondEditor.press("Control+End")
     ]);
-    await Promise.all([firstEditor.pressSequentially("A "), secondEditor.pressSequentially(" B")]);
-    await expect.poll(async () => {
-      const [firstValue, secondValue] = await Promise.all([
-        editorText(firstPage),
-        editorText(secondPage)
-      ]);
-      return firstValue === secondValue;
-    }).toBe(true);
+    await Promise.all([
+      firstEditor.pressSequentially("A "),
+      secondEditor.pressSequentially(" B")
+    ]);
+    await expect
+      .poll(async () => {
+        const [firstValue, secondValue] = await Promise.all([
+          editorText(firstPage),
+          editorText(secondPage)
+        ]);
+        return firstValue === secondValue;
+      })
+      .toBe(true);
     await expect(firstEditor).toContainText(/^A.*B$/);
   } finally {
     await closeContexts(contexts);
@@ -488,7 +501,9 @@ test("converges offline tabs after a lost ack, API restart, and fresh session", 
     await blockEditor(firstAlicePage).press("ControlOrMeta+End");
     await blockEditor(firstAlicePage).pressSequentially(` lost-ack-${alice.suffix}`);
     await expect.poll(() => droppedAcks.dropped, { timeout: 10_000 }).toBe(1);
-    await expect.poll(() => droppedAcks.targetSends, { timeout: 15_000 }).toBeGreaterThan(1);
+    await expect
+      .poll(() => droppedAcks.targetSends, { timeout: 15_000 })
+      .toBeGreaterThan(1);
     await expect(blockEditor(secondAlicePage)).toContainText(`lost-ack-${alice.suffix}`, {
       timeout: 15_000
     });
@@ -505,13 +520,18 @@ test("converges offline tabs after a lost ack, API restart, and fresh session", 
     await blockEditor(secondAlicePage).pressSequentially(` alice-tail-${alice.suffix}`);
 
     await bobPage.context().setOffline(false);
-    await expect.poll(async () => {
-      const values = await Promise.all([
-        editorText(secondAlicePage),
-        editorText(bobPage)
-      ]);
-      return new Set(values).size;
-    }, { timeout: 30_000 }).toBe(1);
+    await expect
+      .poll(
+        async () => {
+          const values = await Promise.all([
+            editorText(secondAlicePage),
+            editorText(bobPage)
+          ]);
+          return new Set(values).size;
+        },
+        { timeout: 30_000 }
+      )
+      .toBe(1);
     const beforeRestart = await editorText(secondAlicePage);
     expect(beforeRestart).toContain(`bob-offline-${alice.suffix}`);
     expect(beforeRestart).toContain(`lost-ack-${alice.suffix}`);
@@ -525,13 +545,18 @@ test("converges offline tabs after a lost ack, API restart, and fresh session", 
         description: "API restart skipped because Playwright reused an external server"
       });
     }
-    await expect.poll(async () => {
-      const values = await Promise.all([
-        editorText(secondAlicePage),
-        editorText(bobPage)
-      ]);
-      return new Set(values).size;
-    }, { timeout: 30_000 }).toBe(1);
+    await expect
+      .poll(
+        async () => {
+          const values = await Promise.all([
+            editorText(secondAlicePage),
+            editorText(bobPage)
+          ]);
+          return new Set(values).size;
+        },
+        { timeout: 30_000 }
+      )
+      .toBe(1);
 
     const postRestartSuffix = ` post-restart-${alice.suffix}`;
     await blockEditor(secondAlicePage).press("ControlOrMeta+End");
@@ -585,7 +610,9 @@ test("removes a permanently deleted shared note after an offline client reconnec
     await expect(alicePage.getByText("Note permanently deleted")).toBeVisible();
 
     await bobPage.context().setOffline(false);
-    await expect(bobPage.getByRole("button", { name: noteTitlePattern(noteTitle) })).toHaveCount(0, {
+    await expect(
+      bobPage.getByRole("button", { name: noteTitlePattern(noteTitle) })
+    ).toHaveCount(0, {
       timeout: 15_000
     });
     await expect(blockEditor(bobPage)).toHaveCount(0);
@@ -617,7 +644,10 @@ test("cancels sharing-key confirmation when another note is selected", async ({
     await createNote(alicePage, otherTitle, `Other body ${alice.suffix}`);
     await openNote(alicePage, targetTitle);
     alicePage.on("response", (response) => {
-      if (response.request().method() === "POST" && response.url().includes("/memberships")) {
+      if (
+        response.request().method() === "POST" &&
+        response.url().includes("/memberships")
+      ) {
         membershipPosted = true;
       }
     });
@@ -633,7 +663,10 @@ test("cancels sharing-key confirmation when another note is selected", async ({
   }
 });
 
-test("blocks sharing when a trusted sharing key changes", async ({ baseURL, browser }) => {
+test("blocks sharing when a trusted sharing key changes", async ({
+  baseURL,
+  browser
+}) => {
   const contexts: BrowserContext[] = [];
   const alice = uniqueAccount("trust-alice");
   const bob = uniqueAccount("trust-bob");
@@ -732,7 +765,10 @@ test("retries failed revocation key rotation", async ({ baseURL, browser }) => {
 
     await revokeMember(alicePage, bob.username, false);
     await expect(alicePage.getByText("Key rotation incomplete")).toBeVisible();
-    const retryButton = alicePage.getByRole("button", { name: "Retry rotation", exact: true });
+    const retryButton = alicePage.getByRole("button", {
+      name: "Retry rotation",
+      exact: true
+    });
     await expect(retryButton).toBeVisible();
 
     await closeShareDialog(alicePage);

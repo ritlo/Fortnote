@@ -37,18 +37,19 @@ describe("collaboration event store", () => {
       .addCollaborationEvents([collaborationEvent({ cursor: 5, eventId: "event_5" })]);
 
     expect(useAppStore.getState().eventCursor).toBe(10);
-    expect(useAppStore.getState().collaborationEvents.map((event) => event.eventId)).toEqual([
-      "event_10",
-      "event_5"
-    ]);
+    expect(
+      useAppStore.getState().collaborationEvents.map((event) => event.eventId)
+    ).toEqual(["event_10", "event_5"]);
   });
 
   it("keeps selection inside shared notes after access is revoked in the shared view", () => {
-    useAppStore.getState().setNotes([
-      note({ id: "owner_note", role: "owner" }),
-      note({ id: "revoked_note", role: "editor" }),
-      note({ id: "next_shared_note", role: "viewer" })
-    ]);
+    useAppStore
+      .getState()
+      .setNotes([
+        note({ id: "owner_note", role: "owner" }),
+        note({ id: "revoked_note", role: "editor" }),
+        note({ id: "next_shared_note", role: "viewer" })
+      ]);
     useAppStore.getState().setNotesView("shared");
     useAppStore.getState().setSelectedNoteId("revoked_note");
 
@@ -168,47 +169,55 @@ describe("collaboration event store", () => {
   });
 
   it("maps recognized failures without exposing their details", () => {
-    expect(operationFailureState(
-      { code: "version_conflict", message: "private server detail", status: 409 },
-      "fallback"
-    )).toEqual({
+    expect(
+      operationFailureState(
+        { code: "version_conflict", message: "private server detail", status: 409 },
+        "fallback"
+      )
+    ).toEqual({
       kind: "conflict",
       message: "Encrypted changes were retained because the server version changed.",
       status: "Changes need review"
     });
-    expect(operationFailureState(
-      { code: "forbidden", message: "private server detail", status: 409 },
-      "fallback"
-    )).toMatchObject({
+    expect(
+      operationFailureState(
+        { code: "forbidden", message: "private server detail", status: 409 },
+        "fallback"
+      )
+    ).toMatchObject({
       kind: "conflict",
       status: "Changes need review"
     });
-    expect(operationFailureState(
-      { code: "quota_exceeded", message: "private server detail", status: 413 },
-      "fallback"
-    )).toEqual({
+    expect(
+      operationFailureState(
+        { code: "quota_exceeded", message: "private server detail", status: 413 },
+        "fallback"
+      )
+    ).toEqual({
       kind: "server-capacity",
-      message: "Encrypted changes remain on this device until server storage is available.",
+      message:
+        "Encrypted changes remain on this device until server storage is available.",
       status: "Server storage full — changes kept on this device"
     });
-    expect(operationFailureState(
-      { message: "private browser detail", name: "QuotaExceededError" },
-      "fallback"
-    )).toMatchObject({
+    expect(
+      operationFailureState(
+        { message: "private browser detail", name: "QuotaExceededError" },
+        "fallback"
+      )
+    ).toMatchObject({
       kind: "local-capacity",
       status: "Local storage full — changes need attention"
     });
-    expect(operationFailureState(
-      { code: "storage_limit", message: "private server detail", status: 507 },
-      "fallback"
-    )).toMatchObject({
+    expect(
+      operationFailureState(
+        { code: "storage_limit", message: "private server detail", status: 507 },
+        "fallback"
+      )
+    ).toMatchObject({
       kind: "server-capacity",
       status: "Server storage full — changes kept on this device"
     });
-    expect(operationFailureState(
-      { code: "storage-limit" },
-      "fallback"
-    )).toMatchObject({
+    expect(operationFailureState({ code: "storage-limit" }, "fallback")).toMatchObject({
       kind: "server-capacity",
       status: "Server storage full — changes kept on this device"
     });

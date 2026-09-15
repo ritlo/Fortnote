@@ -59,12 +59,8 @@ export interface CrdtTransport {
   ) => void;
   unsubscribe?: (noteId: string, sectionId: string, keyEpoch: number) => void;
   send: (update: ScopedEncryptedCrdtMessage) => Promise<void>;
-  sendDurably?: (
-    update: ScopedEncryptedCrdtMessage
-  ) => DurableDelivery<void>;
-  sendContent?: (
-    prepared: PreparedEncryptedContentV2
-  ) => Promise<ContentManifestSummary>;
+  sendDurably?: (update: ScopedEncryptedCrdtMessage) => DurableDelivery<void>;
+  sendContent?: (prepared: PreparedEncryptedContentV2) => Promise<ContentManifestSummary>;
   sendContentDurably?: (
     prepared: PreparedEncryptedContentV2
   ) => DurableDelivery<ContentManifestSummary>;
@@ -116,10 +112,12 @@ export function sendOutbound(
   outbound: PreparedOutbound
 ): DurableDelivery<ContentManifestSummary | null> {
   if (outbound.storage === "inline") {
-    const delivery = currentTransport.sendDurably?.(outbound.update) ?? (() => {
-      const delivered = Promise.resolve(currentTransport.send(outbound.update));
-      return { durable: delivered, delivered };
-    })();
+    const delivery =
+      currentTransport.sendDurably?.(outbound.update) ??
+      (() => {
+        const delivered = Promise.resolve(currentTransport.send(outbound.update));
+        return { durable: delivered, delivered };
+      })();
     return {
       durable: delivery.durable,
       delivered: delivery.delivered.then(() => null)

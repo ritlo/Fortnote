@@ -9,10 +9,7 @@ import {
   utf8,
   type EncryptedPayload
 } from "@fortnote/shared";
-import {
-  encryptNoteKeyEnvelopeV2,
-  encryptNoteTitleV2
-} from "./protected";
+import { encryptNoteKeyEnvelopeV2, encryptNoteTitleV2 } from "./protected";
 
 export interface EncryptedNoteDraft {
   id: string;

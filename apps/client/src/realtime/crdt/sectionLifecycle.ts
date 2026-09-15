@@ -32,7 +32,8 @@ export function getCrdtFragment(
   keyEpoch?: number,
   sectionId?: string
 ): Y.XmlFragment {
-  return getOrCreateBinding(noteId, sectionId ?? defaultSectionId(noteId), keyEpoch).fragment;
+  return getOrCreateBinding(noteId, sectionId ?? defaultSectionId(noteId), keyEpoch)
+    .fragment;
 }
 
 export function getCrdtProvider(
@@ -40,7 +41,8 @@ export function getCrdtProvider(
   keyEpoch?: number,
   sectionId?: string
 ): CrdtProvider {
-  return getOrCreateBinding(noteId, sectionId ?? defaultSectionId(noteId), keyEpoch).provider;
+  return getOrCreateBinding(noteId, sectionId ?? defaultSectionId(noteId), keyEpoch)
+    .provider;
 }
 
 export function openCrdtSection(
@@ -67,10 +69,7 @@ export function retryCrdtSection(
   keyEpoch: number
 ): number | null {
   const binding = bindings.get(bindingKey(noteId, sectionId));
-  if (
-    binding?.keyEpoch !== keyEpoch ||
-    binding.failedUpdateIds.size === 0
-  ) {
+  if (binding?.keyEpoch !== keyEpoch || binding.failedUpdateIds.size === 0) {
     return null;
   }
   const failedSequences = [...binding.failedUpdateIds]
@@ -237,10 +236,7 @@ export async function releaseCrdtSection(
   } catch {
     return false;
   }
-  if (
-    expectedGeneration !== undefined &&
-    binding.openGeneration !== expectedGeneration
-  ) {
+  if (expectedGeneration !== undefined && binding.openGeneration !== expectedGeneration) {
     return true;
   }
   if (!isActiveBinding(binding) || binding.pendingBroadcasts.size > 0) {

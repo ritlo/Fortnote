@@ -4,10 +4,7 @@ import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "../db/schema.js";
 
 export type LegacyHistoryPersistOutcome =
-  | "inserted"
-  | "duplicate"
-  | "storage-limit"
-  | "forbidden";
+  "inserted" | "duplicate" | "storage-limit" | "forbidden";
 
 export interface PersistLegacyHistoryInput {
   sessionId: string;
@@ -76,11 +73,7 @@ export class SqliteLegacyHistoryRepository implements LegacyHistoryRepository {
       if (!activeSession(transaction, input.sessionId)) {
         return "forbidden" as const;
       }
-      const access = writeAccess(
-        transaction,
-        input.update.noteId,
-        input.userId
-      );
+      const access = writeAccess(transaction, input.update.noteId, input.userId);
       if (
         access?.status !== "active" ||
         (access.role !== "owner" && access.role !== "editor") ||
@@ -153,25 +146,22 @@ function writeAccess(
   noteId: string,
   userId: string
 ): LegacyWriteAccess | null {
-  return database
-    .select({
-      cryptoOwnerId: schema.notes.cryptoOwnerId,
-      keyEpoch: schema.notes.keyEpoch,
-      role: schema.noteMemberships.role,
-      status: schema.noteMemberships.status
-    })
-    .from(schema.notes)
-    .innerJoin(
-      schema.noteMemberships,
-      eq(schema.noteMemberships.noteId, schema.notes.id)
-    )
-    .where(
-      and(
-        eq(schema.notes.id, noteId),
-        eq(schema.noteMemberships.userId, userId)
+  return (
+    database
+      .select({
+        cryptoOwnerId: schema.notes.cryptoOwnerId,
+        keyEpoch: schema.notes.keyEpoch,
+        role: schema.noteMemberships.role,
+        status: schema.noteMemberships.status
+      })
+      .from(schema.notes)
+      .innerJoin(
+        schema.noteMemberships,
+        eq(schema.noteMemberships.noteId, schema.notes.id)
       )
-    )
-    .get() ?? null;
+      .where(and(eq(schema.notes.id, noteId), eq(schema.noteMemberships.userId, userId)))
+      .get() ?? null
+  );
 }
 
 export function legacyStorageLimitExceeded(
@@ -179,9 +169,7 @@ export function legacyStorageLimitExceeded(
   input: Pick<PersistLegacyHistoryInput, "update" | "maxEnvelopes" | "maxBytes">
 ): boolean {
   const compactedIds = new Set(
-    input.update.type === "crdt-checkpoint"
-      ? input.update.compactedUpdateIds
-      : []
+    input.update.type === "crdt-checkpoint" ? input.update.compactedUpdateIds : []
   );
   const compactedUpdates = storedUpdates.filter(({ updateId }) =>
     compactedIds.has(updateId)
@@ -212,9 +200,7 @@ export function legacyHistoryValues(update: EncryptedCrdtMessage) {
     nonce: update.nonce,
     kind: update.type === "crdt-checkpoint" ? "checkpoint" : "update",
     compactedUpdateIds:
-      update.type === "crdt-checkpoint"
-        ? JSON.stringify(update.compactedUpdateIds)
-        : null
+      update.type === "crdt-checkpoint" ? JSON.stringify(update.compactedUpdateIds) : null
   };
 }
 

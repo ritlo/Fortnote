@@ -18,7 +18,9 @@ describe("PostgreSQL foundation", () => {
       .readdirSync(migrationsDirectory)
       .filter((filename) => filename.endsWith(".sql"))
       .sort()
-      .map((filename) => fs.readFileSync(path.join(migrationsDirectory, filename), "utf8"))
+      .map((filename) =>
+        fs.readFileSync(path.join(migrationsDirectory, filename), "utf8")
+      )
       .join("\n");
 
     expect(migrationSql).toContain('CREATE TABLE "attachment_objects"');

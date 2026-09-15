@@ -10,10 +10,7 @@ import {
 import type { AppContext } from "../http/app.js";
 import { canReadNote } from "../notes/access.js";
 import type { RealtimePublisher } from "./types.js";
-import type {
-  BinaryUpdateOutcome,
-  ManifestSectionHistoryEntry
-} from "./history.js";
+import type { BinaryUpdateOutcome, ManifestSectionHistoryEntry } from "./history.js";
 
 export interface RealtimeClient {
   id: string;
@@ -171,7 +168,7 @@ export class RealtimeHub implements RealtimePublisher {
           client.subscribedCrdtScopes.delete(scope);
         }
       }
-        this.disconnectClient(client, `Note access revoked:${noteId}`);
+      this.disconnectClient(client, `Note access revoked:${noteId}`);
     }
   }
 
@@ -193,11 +190,7 @@ export class RealtimeHub implements RealtimePublisher {
     }
     for (const cursor of cursors) {
       for (const [userId, clients] of await this.activeClientsByUser()) {
-        const [event] = await this.context.db.events.listVisible(
-          userId,
-          cursor - 1,
-          1
-        );
+        const [event] = await this.context.db.events.listVisible(userId, cursor - 1, 1);
         if (event?.cursor !== cursor) {
           continue;
         }
@@ -229,13 +222,11 @@ export class RealtimeHub implements RealtimePublisher {
     for (const client of this.clients) {
       if (
         !client.crdtV2Enabled ||
-        !client.subscribedCrdtScopes.has(
-          crdtScope(reference.noteId, reference.sectionId)
-        )
+        !client.subscribedCrdtScopes.has(crdtScope(reference.noteId, reference.sectionId))
       ) {
         continue;
       }
-      if (!await this.ensureClientSessionAsync(client)) {
+      if (!(await this.ensureClientSessionAsync(client))) {
         continue;
       }
       const access = await this.context.db.noteAccess.find(
@@ -257,7 +248,7 @@ export class RealtimeHub implements RealtimePublisher {
     if (!this.context) {
       return;
     }
-    if (!await this.ensureClientSessionAsync(client)) {
+    if (!(await this.ensureClientSessionAsync(client))) {
       return;
     }
 
@@ -271,7 +262,8 @@ export class RealtimeHub implements RealtimePublisher {
       return;
     }
 
-    const notePresence = this.presenceByNote.get(noteId) ?? new Map<string, PresenceEntry>();
+    const notePresence =
+      this.presenceByNote.get(noteId) ?? new Map<string, PresenceEntry>();
     notePresence.set(client.id, {
       clientId: client.id,
       userId: client.userId,
@@ -287,7 +279,7 @@ export class RealtimeHub implements RealtimePublisher {
     if (!this.context || !client.crdtEnabled) {
       return;
     }
-    if (!await this.ensureClientSessionAsync(client)) {
+    if (!(await this.ensureClientSessionAsync(client))) {
       return;
     }
     const access = await this.context.db.noteAccess.find(noteId, client.userId);
@@ -295,10 +287,7 @@ export class RealtimeHub implements RealtimePublisher {
       return;
     }
     client.subscribedNoteIds.add(noteId);
-    const updates = await this.context.db.legacyHistory.list(
-      noteId,
-      access.keyEpoch
-    );
+    const updates = await this.context.db.legacyHistory.list(noteId, access.keyEpoch);
     for (const update of updates) {
       sendJson(client.socket, update);
     }
@@ -310,21 +299,15 @@ export class RealtimeHub implements RealtimePublisher {
     });
   }
 
-  async subscribeCrdtV2(
-    client: RealtimeClient,
-    request: CrdtSubscribeV2
-  ): Promise<void> {
+  async subscribeCrdtV2(client: RealtimeClient, request: CrdtSubscribeV2): Promise<void> {
     if (
       !this.context ||
       !client.crdtV2Enabled ||
-      !await this.ensureClientSessionAsync(client)
+      !(await this.ensureClientSessionAsync(client))
     ) {
       return;
     }
-    const access = await this.context.db.noteAccess.find(
-      request.noteId,
-      client.userId
-    );
+    const access = await this.context.db.noteAccess.find(request.noteId, client.userId);
     if (!canReadNote(access)) {
       this.rejectCrdtV2(client, request.requestId, request.sectionId, "forbidden");
       return;
@@ -413,7 +396,7 @@ export class RealtimeHub implements RealtimePublisher {
     if (
       !this.context ||
       !client.crdtV2Enabled ||
-      !await this.ensureClientSessionAsync(client)
+      !(await this.ensureClientSessionAsync(client))
     ) {
       return { status: "rejected", code: "forbidden" };
     }
@@ -439,7 +422,7 @@ export class RealtimeHub implements RealtimePublisher {
       ) {
         continue;
       }
-      if (!await this.ensureClientSessionAsync(recipient)) {
+      if (!(await this.ensureClientSessionAsync(recipient))) {
         continue;
       }
       const access = await this.context.db.noteAccess.find(
@@ -461,7 +444,7 @@ export class RealtimeHub implements RealtimePublisher {
     if (!this.context || !client.crdtEnabled) {
       return "forbidden";
     }
-    if (!await this.ensureClientSessionAsync(client)) {
+    if (!(await this.ensureClientSessionAsync(client))) {
       return "forbidden";
     }
     const outcome = await this.context.db.legacyHistory.persist({
@@ -488,7 +471,7 @@ export class RealtimeHub implements RealtimePublisher {
       ) {
         continue;
       }
-      if (!await this.ensureClientSessionAsync(recipient)) {
+      if (!(await this.ensureClientSessionAsync(recipient))) {
         continue;
       }
       const access = await this.context.db.noteAccess.find(
@@ -565,9 +548,7 @@ export class RealtimeHub implements RealtimePublisher {
   }
 
   private queuePresenceBroadcast(noteId: string): Promise<void> {
-    const publish = this.presencePublishQueue.then(() =>
-      this.broadcastPresence(noteId)
-    );
+    const publish = this.presencePublishQueue.then(() => this.broadcastPresence(noteId));
     this.presencePublishQueue = publish.catch((error: unknown) => {
       console.error("Unable to publish note presence", error);
     });
@@ -612,7 +593,7 @@ export class RealtimeHub implements RealtimePublisher {
         this.disconnectClient(client, "Session expired");
         continue;
       }
-      const active = knownSessionState ?? await this.ensureClientSessionAsync(client);
+      const active = knownSessionState ?? (await this.ensureClientSessionAsync(client));
       activeSessions.set(client.sessionId, active);
       if (!active) {
         continue;
@@ -624,10 +605,8 @@ export class RealtimeHub implements RealtimePublisher {
     return clientsByUser;
   }
 
-  private async ensureClientSessionAsync(
-    client: RealtimeClient
-  ): Promise<boolean> {
-    if (this.context && await this.context.db.sessions.isActive(client.sessionId)) {
+  private async ensureClientSessionAsync(client: RealtimeClient): Promise<boolean> {
+    if (this.context && (await this.context.db.sessions.isActive(client.sessionId))) {
       return true;
     }
     this.disconnectClient(client, "Session expired");

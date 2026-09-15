@@ -45,10 +45,7 @@ export function createSharingKeysRouter(context: AppContext): Router {
       return;
     }
 
-    const row = await context.db.sharingKeys.version(
-      session.userId,
-      version.data
-    );
+    const row = await context.db.sharingKeys.version(session.userId, version.data);
 
     if (!row) {
       sendApiError(response, "not_found", "Sharing key not found");
@@ -101,9 +98,7 @@ export function createSharingKeysRouter(context: AppContext): Router {
     }
 
     const username = z.string().min(1).max(128).safeParse(request.query.username);
-    const canonicalHandle = username.success
-      ? canonicalizeHandle(username.data)
-      : null;
+    const canonicalHandle = username.success ? canonicalizeHandle(username.data) : null;
     if (!canonicalHandle) {
       sendApiError(response, "not_found", "Sharing key not found");
       return;

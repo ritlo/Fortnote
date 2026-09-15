@@ -39,10 +39,9 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command:
-        productionPerformance
-          ? "node apps/server/dist/index.js"
-          : "pnpm exec tsx tests/e2e/support/runE2eServer.ts",
+      command: productionPerformance
+        ? "node apps/server/dist/index.js"
+        : "pnpm exec tsx tests/e2e/support/runE2eServer.ts",
       env: {
         API_PORT: String(apiPort),
         CLIENT_PORT: String(clientPort),

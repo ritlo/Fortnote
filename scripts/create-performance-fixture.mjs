@@ -27,7 +27,11 @@ export function performanceFixtureDefinition(
   seed = "fortnote-performance-v1",
   profile = "smoke"
 ) {
-  const suffix = seed.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 24);
+  const suffix = seed
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-|-$/gu, "")
+    .slice(0, 24);
   if (!suffix) throw new Error("Performance fixture seed must contain a letter or digit");
   const account = (role) => ({
     password: `Fortnote-${suffix}-${role}-password`,
@@ -81,27 +85,23 @@ async function run() {
   );
   await mkdir(outputDirectory, { recursive: true });
 
-  const child = spawn(
-    "pnpm",
-    ["exec", "playwright", "test", "--project=performance"],
-    {
-      env: {
-        ...process.env,
-        ...databaseEnvironment,
-        DATA_DIR: path.join(fixtureRoot, "ciphertext"),
-        API_PORT: String(apiPort),
-        ALLOWED_ORIGIN: `http://127.0.0.1:${String(clientPort)}`,
-        CLIENT_PORT: String(clientPort),
-        PORT: String(apiPort),
-        FORTNOTE_PERFORMANCE_BUILD: "1",
-        FORTNOTE_PERFORMANCE_OUTPUT: outputDirectory,
-        FORTNOTE_PERFORMANCE_PROFILE: profile,
-        FORTNOTE_PERFORMANCE_SEED: definition.seed,
-        FORTNOTE_RUN_PERFORMANCE: "1"
-      },
-      stdio: "inherit"
-    }
-  );
+  const child = spawn("pnpm", ["exec", "playwright", "test", "--project=performance"], {
+    env: {
+      ...process.env,
+      ...databaseEnvironment,
+      DATA_DIR: path.join(fixtureRoot, "ciphertext"),
+      API_PORT: String(apiPort),
+      ALLOWED_ORIGIN: `http://127.0.0.1:${String(clientPort)}`,
+      CLIENT_PORT: String(clientPort),
+      PORT: String(apiPort),
+      FORTNOTE_PERFORMANCE_BUILD: "1",
+      FORTNOTE_PERFORMANCE_OUTPUT: outputDirectory,
+      FORTNOTE_PERFORMANCE_PROFILE: profile,
+      FORTNOTE_PERFORMANCE_SEED: definition.seed,
+      FORTNOTE_RUN_PERFORMANCE: "1"
+    },
+    stdio: "inherit"
+  });
 
   const exitCode = await new Promise((resolve, reject) => {
     child.once("error", reject);
@@ -133,11 +133,14 @@ function availablePort() {
         reject(new Error("Could not allocate an isolated performance port"));
         return;
       }
-      server.close((error) => error ? reject(error) : resolve(address.port));
+      server.close((error) => (error ? reject(error) : resolve(address.port)));
     });
   });
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)
+) {
   await run();
 }

@@ -1,8 +1,4 @@
-import {
-  BlockNoteEditor,
-  blockToNode,
-  type PartialBlock
-} from "@blocknote/core";
+import { BlockNoteEditor, blockToNode, type PartialBlock } from "@blocknote/core";
 import {
   prosemirrorJSONToYXmlFragment,
   prosemirrorToYXmlFragment,
@@ -47,7 +43,10 @@ export function blockNoteInitialContent(body: string | undefined): PartialBlock[
   return body ? [{ type: "paragraph", content: body }] : emptyDocument;
 }
 
-export function replaceBlockNoteFragment(fragment: Y.XmlFragment, body: string | undefined): void {
+export function replaceBlockNoteFragment(
+  fragment: Y.XmlFragment,
+  body: string | undefined
+): void {
   if (fragment.length > 0) {
     fragment.delete(0, fragment.length);
   }
@@ -93,13 +92,12 @@ export function appendBlockNoteFragmentSnapshot(
   const current = snapshotBlockNoteFragment(fragment);
   replaceBlockNoteFragmentSnapshot(fragment, {
     ...current,
-    content: [{
-      ...current.content[0],
-      content: [
-        ...current.content[0].content,
-        ...appended.content[0].content
-      ]
-    }]
+    content: [
+      {
+        ...current.content[0],
+        content: [...current.content[0].content, ...appended.content[0].content]
+      }
+    ]
   });
 }
 

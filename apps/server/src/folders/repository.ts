@@ -26,13 +26,10 @@ export interface FolderMutationInput extends FolderNameValues {
 }
 
 export type FolderMutationOutcome =
-  | { kind: "saved"; cursor: number }
-  | { kind: "invalid-parent" }
-  | { kind: "not-found" };
+  { kind: "saved"; cursor: number } | { kind: "invalid-parent" } | { kind: "not-found" };
 
 export type DeleteFolderOutcome =
-  | { kind: "deleted"; cursor: number }
-  | { kind: "not-found" };
+  { kind: "deleted"; cursor: number } | { kind: "not-found" };
 
 export interface FolderRepository {
   list(userId: string): Promise<FolderRecord[]>;
@@ -147,9 +144,7 @@ export class SqliteFolderRepository implements FolderRepository {
         eventType: "folder.created",
         folderId: input.folderId,
         userId: input.userId,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return { kind: "saved" as const, cursor };
     });
@@ -158,12 +153,7 @@ export class SqliteFolderRepository implements FolderRepository {
 
   update(input: FolderMutationInput): Promise<FolderMutationOutcome> {
     const outcome = this.orm.transaction((transaction) => {
-      if (!validParent(
-        transaction,
-        input.userId,
-        input.parentFolderId,
-        input.folderId
-      )) {
+      if (!validParent(transaction, input.userId, input.parentFolderId, input.folderId)) {
         return { kind: "invalid-parent" as const };
       }
       const updated = transaction
@@ -190,9 +180,7 @@ export class SqliteFolderRepository implements FolderRepository {
         eventType: "folder.updated",
         folderId: input.folderId,
         userId: input.userId,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return { kind: "saved" as const, cursor };
     });
@@ -208,24 +196,14 @@ export class SqliteFolderRepository implements FolderRepository {
       const folder = transaction
         .select({ parentFolderId: schema.folders.parentFolderId })
         .from(schema.folders)
-        .where(
-          and(
-            eq(schema.folders.id, folderId),
-            eq(schema.folders.userId, userId)
-          )
-        )
+        .where(and(eq(schema.folders.id, folderId), eq(schema.folders.userId, userId)))
         .get();
       if (!folder) {
         return { kind: "not-found" as const };
       }
       transaction
         .delete(schema.folders)
-        .where(
-          and(
-            eq(schema.folders.id, folderId),
-            eq(schema.folders.userId, userId)
-          )
-        )
+        .where(and(eq(schema.folders.id, folderId), eq(schema.folders.userId, userId)))
         .run();
       const cursor = insertFolderEvent(transaction, {
         eventType: "folder.deleted",

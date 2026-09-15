@@ -24,20 +24,23 @@ describe("confidentiality inspection CLI", () => {
     "websocket",
     "logs",
     "browser-storage"
-  ] as const)("detects a client-only canary in %s without copying it into the report", (surface) => {
-    const fixture = createFixture(surface);
+  ] as const)(
+    "detects a client-only canary in %s without copying it into the report",
+    (surface) => {
+      const fixture = createFixture(surface);
 
-    const result = inspect(fixture);
-    const reportText = readFileSync(fixture.report, "utf8");
-    const report = JSON.parse(reportText) as InspectionReport;
+      const result = inspect(fixture);
+      const reportText = readFileSync(fixture.report, "utf8");
+      const report = JSON.parse(reportText) as InspectionReport;
 
-    expect(result.status).not.toBe(0);
-    expect(report.result).toBe("fail");
-    expect(report.inspected).toContain(surface);
-    expect(report.findings).toContainEqual(expect.objectContaining({ surface }));
-    expect(reportText).not.toContain(fixture.canary);
-    expect(reportText).not.toContain(fixture.protectedPayload);
-  });
+      expect(result.status).not.toBe(0);
+      expect(report.result).toBe("fail");
+      expect(report.inspected).toContain(surface);
+      expect(report.findings).toContainEqual(expect.objectContaining({ surface }));
+      expect(reportText).not.toContain(fixture.canary);
+      expect(reportText).not.toContain(fixture.protectedPayload);
+    }
+  );
 
   it("passes after inspecting every declared surface when no canary is present", () => {
     const fixture = createFixture(null);
@@ -59,12 +62,7 @@ describe("confidentiality inspection CLI", () => {
 });
 
 type Surface =
-  | "sqlite"
-  | "ciphertext-files"
-  | "http"
-  | "websocket"
-  | "logs"
-  | "browser-storage";
+  "sqlite" | "ciphertext-files" | "http" | "websocket" | "logs" | "browser-storage";
 
 interface Fixture {
   browserStorage: string;
@@ -117,19 +115,23 @@ function createFixture(leakingSurface: Surface | null): Fixture {
   );
   writeFileSync(
     fixture.websocket,
-    JSON.stringify([{ payload: leakingSurface === "websocket" ? leakedValue : cleanValue }])
+    JSON.stringify([
+      { payload: leakingSurface === "websocket" ? leakedValue : cleanValue }
+    ])
   );
   writeFileSync(fixture.logs, leakingSurface === "logs" ? leakedValue : cleanValue);
   writeFileSync(
     fixture.browserStorage,
-    JSON.stringify({ indexedDb: leakingSurface === "browser-storage" ? leakedValue : cleanValue })
+    JSON.stringify({
+      indexedDb: leakingSurface === "browser-storage" ? leakedValue : cleanValue
+    })
   );
   const database = new Database(fixture.sqlite);
   try {
     database.exec("CREATE TABLE captured_values (value TEXT NOT NULL)");
-    database.prepare("INSERT INTO captured_values (value) VALUES (?)").run(
-      leakingSurface === "sqlite" ? leakedValue : cleanValue
-    );
+    database
+      .prepare("INSERT INTO captured_values (value) VALUES (?)")
+      .run(leakingSurface === "sqlite" ? leakedValue : cleanValue);
   } finally {
     database.close();
   }
@@ -137,15 +139,27 @@ function createFixture(leakingSurface: Surface | null): Fixture {
 }
 
 function inspect(fixture: Fixture) {
-  return spawnSync(process.execPath, [
-    inspector,
-    "--canary-file", fixture.canaryFile,
-    "--sqlite", fixture.sqlite,
-    "--ciphertext-files", fixture.ciphertextDirectory,
-    "--http", fixture.http,
-    "--websocket", fixture.websocket,
-    "--logs", fixture.logs,
-    "--browser-storage", fixture.browserStorage,
-    "--report", fixture.report
-  ], { cwd: repositoryRoot, encoding: "utf8" });
+  return spawnSync(
+    process.execPath,
+    [
+      inspector,
+      "--canary-file",
+      fixture.canaryFile,
+      "--sqlite",
+      fixture.sqlite,
+      "--ciphertext-files",
+      fixture.ciphertextDirectory,
+      "--http",
+      fixture.http,
+      "--websocket",
+      fixture.websocket,
+      "--logs",
+      fixture.logs,
+      "--browser-storage",
+      fixture.browserStorage,
+      "--report",
+      fixture.report
+    ],
+    { cwd: repositoryRoot, encoding: "utf8" }
+  );
 }

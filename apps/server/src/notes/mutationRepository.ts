@@ -26,8 +26,7 @@ export interface CreateNoteInput extends NoteMutationInput {
 }
 
 export type CreateNoteOutcome =
-  | { kind: "created"; eventCursor: number }
-  | { kind: "invalid-folder" };
+  { kind: "created"; eventCursor: number } | { kind: "invalid-folder" };
 
 export interface ProtectedNoteUpdateInput extends NoteMutationInput {
   expectedRootVersion: number;
@@ -78,9 +77,7 @@ export type LegacyNoteUpdateOutcome =
 
 export interface NoteMutationRepository {
   create(input: CreateNoteInput): Promise<CreateNoteOutcome>;
-  updateProtected(
-    input: ProtectedNoteUpdateInput
-  ): Promise<ProtectedNoteUpdateOutcome>;
+  updateProtected(input: ProtectedNoteUpdateInput): Promise<ProtectedNoteUpdateOutcome>;
   updateLegacy(input: LegacyNoteUpdateInput): Promise<LegacyNoteUpdateOutcome>;
 }
 
@@ -98,9 +95,7 @@ function validFolder(
     database
       .select({ id: schema.folders.id })
       .from(schema.folders)
-      .where(
-        and(eq(schema.folders.id, folderId), eq(schema.folders.userId, userId))
-      )
+      .where(and(eq(schema.folders.id, folderId), eq(schema.folders.userId, userId)))
       .get()
   );
 }
@@ -181,18 +176,14 @@ export class SqliteNoteMutationRepository implements NoteMutationRepository {
         actorUserId: input.actorUserId,
         eventType: "note.created",
         noteVersion: 1,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       return { kind: "created", eventCursor } as const;
     });
     return Promise.resolve(outcome);
   }
 
-  updateProtected(
-    input: ProtectedNoteUpdateInput
-  ): Promise<ProtectedNoteUpdateOutcome> {
+  updateProtected(input: ProtectedNoteUpdateInput): Promise<ProtectedNoteUpdateOutcome> {
     const outcome = this.orm.transaction((transaction) => {
       const current = transaction
         .select({
@@ -300,9 +291,7 @@ export class SqliteNoteMutationRepository implements NoteMutationRepository {
         actorUserId: input.actorUserId,
         eventType: "note.updated",
         noteVersion: rootVersion,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       const saved = transaction
         .select({ updatedAt: schema.notes.updatedAt })
@@ -401,9 +390,7 @@ export class SqliteNoteMutationRepository implements NoteMutationRepository {
         actorUserId: input.actorUserId,
         eventType: "note.updated",
         noteVersion: version,
-        ...(input.clientInstanceId
-          ? { clientInstanceId: input.clientInstanceId }
-          : {})
+        ...(input.clientInstanceId ? { clientInstanceId: input.clientInstanceId } : {})
       });
       const saved = transaction
         .select({ updatedAt: schema.notes.updatedAt })

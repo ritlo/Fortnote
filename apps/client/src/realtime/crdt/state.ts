@@ -54,13 +54,13 @@ export function getOrCreateBinding(
   const existing = bindings.get(key);
   if (
     existing &&
-    (keyEpoch === undefined || existing.keyEpoch === keyEpoch || keyEpoch < existing.keyEpoch)
+    (keyEpoch === undefined ||
+      existing.keyEpoch === keyEpoch ||
+      keyEpoch < existing.keyEpoch)
   ) {
     return existing;
   }
-  const inheritedState = existing
-    ? Y.encodeStateAsUpdate(existing.doc)
-    : null;
+  const inheritedState = existing ? Y.encodeStateAsUpdate(existing.doc) : null;
   const epochAdvanced = Boolean(
     existing && keyEpoch !== undefined && keyEpoch > existing.keyEpoch
   );
@@ -124,10 +124,7 @@ export function getOrCreateBinding(
       created.provider.emit("save-state", "saving");
       void delivery.delivered.then(
         () => {
-          if (
-            isActiveBinding(created) &&
-            created.pendingBroadcasts.size === 0
-          ) {
+          if (isActiveBinding(created) && created.pendingBroadcasts.size === 0) {
             created.provider.emit("save-state", "saved");
           }
         },
@@ -155,7 +152,9 @@ export function throwIfCrdtHistoryUnreadable(binding: Binding): void {
 }
 
 export function isCrdtHistoryUnreadableError(error: unknown): boolean {
-  return error instanceof Error && error.message === "Realtime history could not be decrypted";
+  return (
+    error instanceof Error && error.message === "Realtime history could not be decrypted"
+  );
 }
 
 export function trackPendingBroadcast(binding: Binding, pending: Promise<void>): void {

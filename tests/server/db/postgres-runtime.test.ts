@@ -17,11 +17,7 @@ import type { ApplicationDatabase } from "@server/db/types.js";
 import { createApp } from "@server/http/app.js";
 import { readStoredAttachment, readStoredNote } from "../../e2e/support/stored.js";
 import { protectedNotePayload } from "../notes/routes.fixtures.js";
-import {
-  csrfHeaders,
-  notePayload,
-  registerPayload
-} from "../support/http.js";
+import { csrfHeaders, notePayload, registerPayload } from "../support/http.js";
 import {
   activeConnectionCount,
   attachmentObjectState,
@@ -70,17 +66,13 @@ describe.each(runtimeProviders)("$name runtime contract", (runtime) => {
         const attachment = attachmentPayload();
 
         await uploadAttachment(agent, noteId, attachment).expect(201);
-        const stored = await harness.database.attachmentMetadata.find(
-          attachment.id
-        );
+        const stored = await harness.database.attachmentMetadata.find(attachment.id);
         expect(stored).toMatchObject({
           id: attachment.id,
           noteId,
           size: attachment.ciphertext.byteLength
         });
-        const download = await agent
-          .get(`/api/attachments/${attachment.id}`)
-          .expect(200);
+        const download = await agent.get(`/api/attachments/${attachment.id}`).expect(200);
         expect(download.body).toEqual(attachment.ciphertext);
 
         const contentBytes = Buffer.from("stored-content-probe-ciphertext");
@@ -91,14 +83,18 @@ describe.each(runtimeProviders)("$name runtime contract", (runtime) => {
         expect(inspected.contentBytes).toContainEqual(contentBytes);
         expect(inspected.databasePayload).toContain(note.encryptedNoteKey);
         const storageKey = inspected.attachments[0]!.storageKey;
-        expect(await readStoredAttachment(storageKey, harness.config)).toEqual(attachment.ciphertext);
+        expect(await readStoredAttachment(storageKey, harness.config)).toEqual(
+          attachment.ciphertext
+        );
 
         await agent
           .delete(`/api/attachments/${attachment.id}`)
           .set(csrfHeaders())
           .expect(204);
         await agent.get(`/api/attachments/${attachment.id}`).expect(404);
-        await expect(readStoredAttachment(storageKey, harness.config)).rejects.toThrow("Stored ciphertext not found");
+        await expect(readStoredAttachment(storageKey, harness.config)).rejects.toThrow(
+          "Stored ciphertext not found"
+        );
       } finally {
         await harness.database.close();
         await harness.cleanup();
@@ -106,126 +102,175 @@ describe.each(runtimeProviders)("$name runtime contract", (runtime) => {
     }
   );
 
-  it.skipIf(!runtime.enabled)("returns canonical timestamps from both save APIs", async () => {
-    const harness = await runtime.createHarness();
-    try {
-      const agent = request.agent(createApp({ config: harness.config, db: harness.database }));
-      await registerUser(agent, `${runtime.provider}_timestamps`);
-      for (const format of ["legacy", "protected"] as const) {
-        const note = format === "legacy" ? notePayload() : protectedNotePayload();
-        await agent.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
-        const response = await agent.put(`/api/notes/${note.id}`).set(csrfHeaders())
-          .send(format === "legacy" ? {
-            version: 1, contentCipher: "timestamp_content_cipher",
-            contentNonce: "timestamp_content_nonce", contentLength: 24
-          } : { rootVersion: 1, keyEpoch: 1 })
-          .expect(200);
-        const updatedAt = response.body.updatedAt as string;
-        expect(updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-        expect(new Date(updatedAt).toISOString()).toBe(updatedAt);
+  it.skipIf(!runtime.enabled)(
+    "returns canonical timestamps from both save APIs",
+    async () => {
+      const harness = await runtime.createHarness();
+      try {
+        const agent = request.agent(
+          createApp({ config: harness.config, db: harness.database })
+        );
+        await registerUser(agent, `${runtime.provider}_timestamps`);
+        for (const format of ["legacy", "protected"] as const) {
+          const note = format === "legacy" ? notePayload() : protectedNotePayload();
+          await agent.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
+          const response = await agent
+            .put(`/api/notes/${note.id}`)
+            .set(csrfHeaders())
+            .send(
+              format === "legacy"
+                ? {
+                    version: 1,
+                    contentCipher: "timestamp_content_cipher",
+                    contentNonce: "timestamp_content_nonce",
+                    contentLength: 24
+                  }
+                : { rootVersion: 1, keyEpoch: 1 }
+            )
+            .expect(200);
+          const updatedAt = response.body.updatedAt as string;
+          expect(updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+          expect(new Date(updatedAt).toISOString()).toBe(updatedAt);
+        }
+      } finally {
+        await harness.database.close();
+        await harness.cleanup();
       }
-    } finally {
-      await harness.database.close();
-      await harness.cleanup();
     }
-  });
+  );
 
-  it.skipIf(!runtime.enabled)("rejects mis-sized content chunks with provider-neutral errors", async () => {
-    const harness = await runtime.createHarness();
-    try {
-      const declared = Buffer.from("declared-content-chunk-ciphertext");
-      const write = (source: Buffer, maxBytes = 1024) =>
-        harness.database.contentStorage.write({
-          uploadId: crypto.randomUUID(),
-          chunkIndex: 0,
-          expectedLength: declared.byteLength,
-          expectedHash: createHash("sha256").update(declared).digest("hex"),
-          maxBytes,
-          source: Readable.from([source])
-        });
-      // The chunk route maps these messages to 400 responses.
-      await expect(write(declared.subarray(0, 8))).rejects.toThrow(
-        "Encrypted content chunk length mismatch"
-      );
-      await expect(write(Buffer.concat([declared, declared]), declared.byteLength))
-        .rejects.toThrow("Encrypted content chunk exceeds maximum bytes");
-    } finally {
-      await harness.database.close();
-      await harness.cleanup();
+  it.skipIf(!runtime.enabled)(
+    "rejects mis-sized content chunks with provider-neutral errors",
+    async () => {
+      const harness = await runtime.createHarness();
+      try {
+        const declared = Buffer.from("declared-content-chunk-ciphertext");
+        const write = (source: Buffer, maxBytes = 1024) =>
+          harness.database.contentStorage.write({
+            uploadId: crypto.randomUUID(),
+            chunkIndex: 0,
+            expectedLength: declared.byteLength,
+            expectedHash: createHash("sha256").update(declared).digest("hex"),
+            maxBytes,
+            source: Readable.from([source])
+          });
+        // The chunk route maps these messages to 400 responses.
+        await expect(write(declared.subarray(0, 8))).rejects.toThrow(
+          "Encrypted content chunk length mismatch"
+        );
+        await expect(
+          write(Buffer.concat([declared, declared]), declared.byteLength)
+        ).rejects.toThrow("Encrypted content chunk exceeds maximum bytes");
+      } finally {
+        await harness.database.close();
+        await harness.cleanup();
+      }
     }
-  });
+  );
 
-  it.skipIf(!runtime.enabled)("returns canonical UTC timestamps from read APIs", async () => {
-    const harness = await runtime.createHarness();
-    try {
-      const app = createApp({ config: harness.config, db: harness.database });
-      const owner = request.agent(app);
-      const recipient = request.agent(app);
-      await registerUser(owner, `${runtime.provider}_timestamp_owner`);
-      const member = await registerUser(recipient, `${runtime.provider}_timestamp_member`);
-      for (const agent of [owner, recipient]) {
-        await agent.put("/api/sharing-keys/current").set(csrfHeaders())
-          .send(sharingKeyPayload(1)).expect(201);
-      }
-      const folderId = crypto.randomUUID();
-      await owner.post("/api/folders").set(csrfHeaders())
-        .send({ id: folderId, name: "Timestamp folder" }).expect(201);
-      const note = notePayload(folderId);
-      await owner.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
-      await uploadAttachment(owner, note.id, attachmentPayload()).expect(201);
-      const upload = contentBeginPayload(note.id);
-      await owner.post("/api/content/uploads").set(csrfHeaders()).send(upload).expect(201);
-      await owner.post(`/api/notes/${note.id}/memberships`).set(csrfHeaders()).send({
-        username: member.username,
-        role: "viewer",
-        sharingKeyVersion: 1,
-        encryptedNoteKey: "contract_member_note_key_abcdefghijklmnopqrstuvwxyz",
-        formatVersion: 1
-      }).expect(201);
+  it.skipIf(!runtime.enabled)(
+    "returns canonical UTC timestamps from read APIs",
+    async () => {
+      const harness = await runtime.createHarness();
+      try {
+        const app = createApp({ config: harness.config, db: harness.database });
+        const owner = request.agent(app);
+        const recipient = request.agent(app);
+        await registerUser(owner, `${runtime.provider}_timestamp_owner`);
+        const member = await registerUser(
+          recipient,
+          `${runtime.provider}_timestamp_member`
+        );
+        for (const agent of [owner, recipient]) {
+          await agent
+            .put("/api/sharing-keys/current")
+            .set(csrfHeaders())
+            .send(sharingKeyPayload(1))
+            .expect(201);
+        }
+        const folderId = crypto.randomUUID();
+        await owner
+          .post("/api/folders")
+          .set(csrfHeaders())
+          .send({ id: folderId, name: "Timestamp folder" })
+          .expect(201);
+        const note = notePayload(folderId);
+        await owner.post("/api/notes").set(csrfHeaders()).send(note).expect(201);
+        await uploadAttachment(owner, note.id, attachmentPayload()).expect(201);
+        const upload = contentBeginPayload(note.id);
+        await owner
+          .post("/api/content/uploads")
+          .set(csrfHeaders())
+          .send(upload)
+          .expect(201);
+        await owner
+          .post(`/api/notes/${note.id}/memberships`)
+          .set(csrfHeaders())
+          .send({
+            username: member.username,
+            role: "viewer",
+            sharingKeyVersion: 1,
+            encryptedNoteKey: "contract_member_note_key_abcdefghijklmnopqrstuvwxyz",
+            formatVersion: 1
+          })
+          .expect(201);
 
-      const timestamps: unknown[] = [];
-      const folders = (await owner.get("/api/folders").expect(200)).body.folders;
-      timestamps.push(folders[0].createdAt, folders[0].updatedAt);
-      const listed = (await owner.get("/api/notes").expect(200)).body.notes;
-      timestamps.push(listed[0].createdAt, listed[0].updatedAt);
-      const detail = (await owner.get(`/api/notes/${note.id}`).expect(200)).body;
-      timestamps.push(detail.createdAt, detail.updatedAt);
-      const attachments = (await owner.get(`/api/notes/${note.id}/attachments`).expect(200))
-        .body.attachments;
-      timestamps.push(attachments[0].createdAt);
-      const memberships = (await owner.get(`/api/notes/${note.id}/memberships`).expect(200))
-        .body.memberships as { createdAt: unknown; updatedAt: unknown }[];
-      expect(memberships).toHaveLength(2);
-      for (const membership of memberships) {
-        timestamps.push(membership.createdAt, membership.updatedAt);
-      }
-      const currentKey = (await owner.get("/api/sharing-keys/current").expect(200)).body;
-      timestamps.push(currentKey.createdAt, currentKey.updatedAt);
-      const versionKey = (await owner.get("/api/sharing-keys/versions/1").expect(200)).body;
-      timestamps.push(versionKey.createdAt, versionKey.updatedAt);
-      const lookup = (await owner.get("/api/sharing-keys/lookup")
-        .query({ username: member.username }).expect(200)).body;
-      timestamps.push(lookup.createdAt);
-      const status = (await owner.get(`/api/content/uploads/${upload.uploadId}`).expect(200)).body;
-      timestamps.push(status.expiresAt);
-      const events = (await owner.get("/api/events").expect(200)).body
-        .events as { createdAt: unknown }[];
-      expect(events.length).toBeGreaterThan(0);
-      timestamps.push(...events.map(({ createdAt }) => createdAt));
-      await owner.delete(`/api/notes/${note.id}`).set(csrfHeaders()).expect(204);
-      const deleted = (await owner.get("/api/notes").query({ deleted: "true" }).expect(200))
-        .body.notes as { id: string; deletedAt: unknown }[];
-      timestamps.push(deleted.find(({ id }) => id === note.id)?.deletedAt);
+        const timestamps: unknown[] = [];
+        const folders = (await owner.get("/api/folders").expect(200)).body.folders;
+        timestamps.push(folders[0].createdAt, folders[0].updatedAt);
+        const listed = (await owner.get("/api/notes").expect(200)).body.notes;
+        timestamps.push(listed[0].createdAt, listed[0].updatedAt);
+        const detail = (await owner.get(`/api/notes/${note.id}`).expect(200)).body;
+        timestamps.push(detail.createdAt, detail.updatedAt);
+        const attachments = (
+          await owner.get(`/api/notes/${note.id}/attachments`).expect(200)
+        ).body.attachments;
+        timestamps.push(attachments[0].createdAt);
+        const memberships = (
+          await owner.get(`/api/notes/${note.id}/memberships`).expect(200)
+        ).body.memberships as { createdAt: unknown; updatedAt: unknown }[];
+        expect(memberships).toHaveLength(2);
+        for (const membership of memberships) {
+          timestamps.push(membership.createdAt, membership.updatedAt);
+        }
+        const currentKey = (await owner.get("/api/sharing-keys/current").expect(200))
+          .body;
+        timestamps.push(currentKey.createdAt, currentKey.updatedAt);
+        const versionKey = (await owner.get("/api/sharing-keys/versions/1").expect(200))
+          .body;
+        timestamps.push(versionKey.createdAt, versionKey.updatedAt);
+        const lookup = (
+          await owner
+            .get("/api/sharing-keys/lookup")
+            .query({ username: member.username })
+            .expect(200)
+        ).body;
+        timestamps.push(lookup.createdAt);
+        const status = (
+          await owner.get(`/api/content/uploads/${upload.uploadId}`).expect(200)
+        ).body;
+        timestamps.push(status.expiresAt);
+        const events = (await owner.get("/api/events").expect(200)).body.events as {
+          createdAt: unknown;
+        }[];
+        expect(events.length).toBeGreaterThan(0);
+        timestamps.push(...events.map(({ createdAt }) => createdAt));
+        await owner.delete(`/api/notes/${note.id}`).set(csrfHeaders()).expect(204);
+        const deleted = (
+          await owner.get("/api/notes").query({ deleted: "true" }).expect(200)
+        ).body.notes as { id: string; deletedAt: unknown }[];
+        timestamps.push(deleted.find(({ id }) => id === note.id)?.deletedAt);
 
-      for (const timestamp of timestamps) {
-        expect(timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-        expect(new Date(timestamp as string).toISOString()).toBe(timestamp);
+        for (const timestamp of timestamps) {
+          expect(timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+          expect(new Date(timestamp as string).toISOString()).toBe(timestamp);
+        }
+      } finally {
+        await harness.database.close();
+        await harness.cleanup();
       }
-    } finally {
-      await harness.database.close();
-      await harness.cleanup();
     }
-  });
+  );
 
   it.skipIf(!runtime.enabled)(
     "rotates account credentials and encrypted key material",
@@ -257,12 +302,15 @@ describe.each(runtimeProviders)("$name runtime contract", (runtime) => {
               keyMaterialVersion: 1
             });
           });
-        await agent.get("/api/key-material").expect(200).expect(({ body }) => {
-          expect(body).toMatchObject({
-            encryptedRootKey: initial.encryptedRootKey,
-            keyMaterialVersion: 1
+        await agent
+          .get("/api/key-material")
+          .expect(200)
+          .expect(({ body }) => {
+            expect(body).toMatchObject({
+              encryptedRootKey: initial.encryptedRootKey,
+              keyMaterialVersion: 1
+            });
           });
-        });
 
         const newAuthVerifier = `rotated_auth_verifier_${account.userId}`;
         await agent
@@ -560,12 +608,14 @@ describe.skipIf(!postgresUrl)("PostgreSQL storage lifecycle", () => {
         expect(Buffer.concat(parts)).toEqual(ciphertext);
 
         const rejectedId = crypto.randomUUID();
-        await expect(resources.attachmentStorage.write({
-          storageId: rejectedId,
-          source: Readable.from([ciphertext]),
-          expectedBytes: 1024,
-          maxBytes: 1024
-        })).rejects.toThrow("Encrypted attachment exceeds maximum bytes");
+        await expect(
+          resources.attachmentStorage.write({
+            storageId: rejectedId,
+            source: Readable.from([ciphertext]),
+            expectedBytes: 1024,
+            maxBytes: 1024
+          })
+        ).rejects.toThrow("Encrypted attachment exceeds maximum bytes");
         const leftovers = await resources.pool.query<{ count: number }>(
           "SELECT COUNT(*)::integer AS count FROM attachment_objects WHERE storage_key = $1",
           [rejectedId]
@@ -602,9 +652,7 @@ describe.skipIf(!postgresUrl)("PostgreSQL storage lifecycle", () => {
         storedBytes: ciphertext.length,
         usedBytes: ciphertext.length
       });
-      const download = await agent
-        .get(`/api/attachments/${attachment.id}`)
-        .expect(200);
+      const download = await agent.get(`/api/attachments/${attachment.id}`).expect(200);
       expect(download.body).toEqual(ciphertext);
 
       await agent
@@ -693,12 +741,16 @@ describe.skipIf(!postgresUrl)("PostgreSQL storage lifecycle", () => {
         "UPDATE attachment_objects SET created_at = $1 WHERE storage_key = ANY($2::uuid[])",
         ["2000-01-01T00:00:00.000Z", orphanIds]
       );
-      await expect(
-        removeOrphanContentObjectsPage(context)
-      ).resolves.toEqual({ scanned: 2, removed: 2, done: false });
-      await expect(
-        removeOrphanContentObjectsPage(context)
-      ).resolves.toEqual({ scanned: 1, removed: 1, done: true });
+      await expect(removeOrphanContentObjectsPage(context)).resolves.toEqual({
+        scanned: 2,
+        removed: 2,
+        done: false
+      });
+      await expect(removeOrphanContentObjectsPage(context)).resolves.toEqual({
+        scanned: 1,
+        removed: 1,
+        done: true
+      });
       expect((await storageCounts(postgres)).objects).toBe(1);
 
       const otherUserIds = [];
@@ -706,11 +758,7 @@ describe.skipIf(!postgresUrl)("PostgreSQL storage lifecycle", () => {
         const agent = request.agent(app);
         const other = await registerUser(agent, label);
         otherUserIds.push(other.userId);
-        await agent
-          .post("/api/notes")
-          .set(csrfHeaders())
-          .send(notePayload())
-          .expect(201);
+        await agent.post("/api/notes").set(csrfHeaders()).send(notePayload()).expect(201);
       }
       await postgres.pool.query(`
         INSERT INTO storage_accounts (user_id, used_bytes, reserved_bytes)
@@ -752,9 +800,7 @@ describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
       const noteId = await registerAndCreateNote(agent, "concurrent_quota");
       const uploads = [attachmentPayload(), attachmentPayload()];
       const responses = await Promise.all(
-        uploads.map((attachment) =>
-          uploadAttachment(agent, noteId, attachment)
-        )
+        uploads.map((attachment) => uploadAttachment(agent, noteId, attachment))
       );
 
       expect(responses.map(({ status }) => status).sort()).toEqual([201, 413]);
@@ -782,12 +828,8 @@ describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
       await uploadAttachment(agent, noteId, attachment).expect(201);
 
       const responses = await Promise.all([
-        agent
-          .delete(`/api/attachments/${attachment.id}`)
-          .set(csrfHeaders()),
-        agent
-          .delete(`/api/attachments/${attachment.id}`)
-          .set(csrfHeaders())
+        agent.delete(`/api/attachments/${attachment.id}`).set(csrfHeaders()),
+        agent.delete(`/api/attachments/${attachment.id}`).set(csrfHeaders())
       ]);
 
       expect(responses.map(({ status }) => status).sort()).toEqual([204, 404]);
@@ -814,10 +856,7 @@ describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
       const payloads = [contentBeginPayload(noteId), contentBeginPayload(noteId)];
       const responses = await Promise.all(
         payloads.map((payload) =>
-          agent
-            .post("/api/content/uploads")
-            .set(csrfHeaders())
-            .send(payload)
+          agent.post("/api/content/uploads").set(csrfHeaders()).send(payload)
         )
       );
 
@@ -940,14 +979,8 @@ describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
         attachmentKeys: []
       };
       const responses = await Promise.all([
-        agent
-          .post(`/api/notes/${noteId}/key-rotation`)
-          .set(csrfHeaders())
-          .send(rotation),
-        agent
-          .post(`/api/notes/${noteId}/key-rotation`)
-          .set(csrfHeaders())
-          .send(rotation)
+        agent.post(`/api/notes/${noteId}/key-rotation`).set(csrfHeaders()).send(rotation),
+        agent.post(`/api/notes/${noteId}/key-rotation`).set(csrfHeaders()).send(rotation)
       ]);
 
       expect(responses.map(({ status }) => status).sort()).toEqual([200, 409]);
@@ -990,20 +1023,11 @@ describe.skipIf(!postgresUrl)("PostgreSQL concurrency", () => {
       const cursorResult = await postgres.pool.query<{ cursor: number }>(
         "SELECT MAX(cursor)::integer AS cursor FROM note_events"
       );
-      const cursor = requiredRow(
-        cursorResult.rows[0],
-        "latest event cursor"
-      ).cursor;
+      const cursor = requiredRow(cursorResult.rows[0], "latest event cursor").cursor;
 
       const responses = await Promise.all([
-        owner
-          .post("/api/events/ack")
-          .set(csrfHeaders())
-          .send({ cursor }),
-        collaborator
-          .post("/api/events/ack")
-          .set(csrfHeaders())
-          .send({ cursor })
+        owner.post("/api/events/ack").set(csrfHeaders()).send({ cursor }),
+        collaborator.post("/api/events/ack").set(csrfHeaders()).send({ cursor })
       ]);
 
       expect(responses.map(({ status }) => status)).toEqual([204, 204]);

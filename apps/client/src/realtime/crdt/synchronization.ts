@@ -118,12 +118,7 @@ async function finishBindingSync(
     hasUpdates &&
     binding.appliedUpdateCount > 0
   ) {
-    replaceWithSnapshot(
-      binding.doc,
-      binding.fragment,
-      binding.sectionId,
-      binding.note
-    );
+    replaceWithSnapshot(binding.doc, binding.fragment, binding.sectionId, binding.note);
     binding.snapshotSeeded = true;
     if (binding.note.role !== "viewer") {
       await broadcastCheckpoint(binding);
@@ -143,7 +138,10 @@ async function finishBindingSync(
         : binding.note
     );
     if (binding.sectionId === ROOT_SECTION_ID) {
-      binding.titleAuthorityVersion = Math.max(binding.titleAuthorityVersion, binding.note.version);
+      binding.titleAuthorityVersion = Math.max(
+        binding.titleAuthorityVersion,
+        binding.note.version
+      );
     }
     binding.snapshotSeeded = true;
     if (binding.note.role !== "viewer") {
@@ -162,10 +160,7 @@ async function finishBindingSync(
   }
   const pendingPatch = binding.pendingPatch;
   binding.pendingPatch = {};
-  if (
-    binding.sectionId === ROOT_SECTION_ID &&
-    pendingPatch.title !== undefined
-  ) {
+  if (binding.sectionId === ROOT_SECTION_ID && pendingPatch.title !== undefined) {
     editCrdtNote(binding.note, pendingPatch);
   }
 }

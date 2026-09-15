@@ -48,14 +48,13 @@ function fixtureRoot(mutationArtifact?: object | string): string {
   const root = mkdtempSync(path.join(tmpdir(), "fortnote-assurance-artifacts-"));
   temporaryDirectories.push(root);
   if (mutationArtifact === undefined) return root;
-  const directory = path.join(
-    root,
-    "specs/001-collaboration-design-assurance/evidence"
-  );
+  const directory = path.join(root, "specs/001-collaboration-design-assurance/evidence");
   mkdirSync(directory, { recursive: true });
   writeFileSync(
     path.join(directory, "mutation-results.json"),
-    typeof mutationArtifact === "string" ? mutationArtifact : JSON.stringify(mutationArtifact)
+    typeof mutationArtifact === "string"
+      ? mutationArtifact
+      : JSON.stringify(mutationArtifact)
   );
   return root;
 }

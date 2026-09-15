@@ -5,11 +5,7 @@ import type {
   RecoveryParamsResponse,
   User
 } from "../api";
-import {
-  fromBase64,
-  randomBytes,
-  type KdfParams
-} from "@fortnote/shared";
+import { fromBase64, randomBytes, type KdfParams } from "@fortnote/shared";
 import {
   decryptLegacyNoteKey,
   decryptNoteKeyEnvelopeV2,

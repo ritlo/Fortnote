@@ -4,11 +4,7 @@ import type { AppContext } from "../http/app.js";
 import { sendApiError } from "../http/errors.js";
 import { canonicalTimestamp, withCanonicalTimestamps } from "../db/timestamps.js";
 import { requireSessionAsync } from "../auth/session.js";
-import {
-  canOwnNote,
-  canReadNote,
-  getNoteAccessAsync
-} from "./access.js";
+import { canOwnNote, canReadNote, getNoteAccessAsync } from "./access.js";
 import { requestClientInstanceId } from "./events.js";
 import { registerMembershipRoutes } from "./membershipRoutes.js";
 import { registerSectionRoutes } from "./sectionRoutes.js";
@@ -172,12 +168,10 @@ export function createNotesRouter(context: AppContext): Router {
       title: "title" in payload ? payload.title : "",
       titleCipher: "titleCipher" in payload ? payload.titleCipher : null,
       titleNonce: "titleCipher" in payload ? payload.titleNonce : null,
-      titleFormatVersion:
-        "titleCipher" in payload ? payload.titleFormatVersion : null,
+      titleFormatVersion: "titleCipher" in payload ? payload.titleFormatVersion : null,
       encryptedNoteKey: payload.encryptedNoteKey,
       noteKeyNonce: payload.noteKeyNonce,
-      noteKeyFormatVersion:
-        "titleCipher" in payload ? payload.noteKeyFormatVersion : 1,
+      noteKeyFormatVersion: "titleCipher" in payload ? payload.noteKeyFormatVersion : 1,
       contentCipher: "contentCipher" in payload ? payload.contentCipher : "",
       contentNonce: "contentCipher" in payload ? payload.contentNonce : "",
       contentLength: "contentCipher" in payload ? payload.contentLength : 0,
@@ -321,10 +315,7 @@ export function createNotesRouter(context: AppContext): Router {
         sendApiError(response, "conflict", "Note rotation state changed");
         return;
       }
-      context.realtime?.closeNoteAccess(
-        request.params.id,
-        rotation.revokedUserId
-      );
+      context.realtime?.closeNoteAccess(request.params.id, rotation.revokedUserId);
       publishEventCursors(context, [outcome.eventCursor]);
       response.json({
         id: request.params.id,
@@ -477,11 +468,7 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const access = await getNoteAccessAsync(
-      context,
-      request.params.id,
-      session.userId
-    );
+    const access = await getNoteAccessAsync(context, request.params.id, session.userId);
     if (!canOwnNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
@@ -511,11 +498,7 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const access = await getNoteAccessAsync(
-      context,
-      request.params.id,
-      session.userId
-    );
+    const access = await getNoteAccessAsync(context, request.params.id, session.userId);
     if (!canOwnNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
@@ -545,11 +528,7 @@ export function createNotesRouter(context: AppContext): Router {
       return;
     }
 
-    const access = await getNoteAccessAsync(
-      context,
-      request.params.id,
-      session.userId
-    );
+    const access = await getNoteAccessAsync(context, request.params.id, session.userId);
     if (!canOwnNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;

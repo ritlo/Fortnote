@@ -14,23 +14,35 @@ function inspectionConfig(): ServerConfig {
   return getConfig(e2eServerEnvironment());
 }
 
-async function inspect<T>(config: ServerConfig, read: (select: Select) => Promise<T>): Promise<T> {
+async function inspect<T>(
+  config: ServerConfig,
+  read: (select: Select) => Promise<T>
+): Promise<T> {
   if (config.database.provider === "sqlite") {
-    const database = new DatabaseSync(config.database.path, { readOnly: true, timeout: 5_000 });
+    const database = new DatabaseSync(config.database.path, {
+      readOnly: true,
+      timeout: 5_000
+    });
     try {
-      return await read((sql, parameters) => Promise.resolve(
-        database.prepare(sql).all(...parameters)
-      ));
+      return await read((sql, parameters) =>
+        Promise.resolve(database.prepare(sql).all(...parameters))
+      );
     } finally {
       database.close();
     }
   }
-  const client = new Client({ connectionString: config.database.url, connectionTimeoutMillis: 5_000 });
+  const client = new Client({
+    connectionString: config.database.url,
+    connectionTimeoutMillis: 5_000
+  });
   try {
     await client.connect();
     return await read(async (sql, parameters) => {
       let index = 0;
-      const result = await client.query<Row>(sql.replace(/\?/g, () => `$${String(++index)}`), parameters);
+      const result = await client.query<Row>(
+        sql.replace(/\?/g, () => `$${String(++index)}`),
+        parameters
+      );
       return result.rows;
     });
   } finally {
@@ -38,7 +50,11 @@ async function inspect<T>(config: ServerConfig, read: (select: Select) => Promis
   }
 }
 
-async function readCiphertext(config: ServerConfig, select: Select, storageKey: string): Promise<Buffer> {
+async function readCiphertext(
+  config: ServerConfig,
+  select: Select,
+  storageKey: string
+): Promise<Buffer> {
   validateStorageId(storageKey);
   if (config.database.provider === "sqlite") {
     return readFile(resolve(config.dataDir, storageKey)).catch((error: unknown) => {
@@ -48,33 +64,47 @@ async function readCiphertext(config: ServerConfig, select: Select, storageKey: 
       throw error;
     });
   }
-  const object = (await select("SELECT byte_length FROM attachment_objects WHERE storage_key = ?", [storageKey])).at(0);
+  const object = (
+    await select("SELECT byte_length FROM attachment_objects WHERE storage_key = ?", [
+      storageKey
+    ])
+  ).at(0);
   if (!object) throw new Error("Stored ciphertext not found");
   const chunks = await select(
     "SELECT ciphertext FROM attachment_object_chunks WHERE storage_key = ? ORDER BY chunk_index",
     [storageKey]
   );
-  const bytes = Buffer.concat(chunks.map((row) => {
-    if (!Buffer.isBuffer(row.ciphertext)) throw new Error("Invalid stored ciphertext");
-    return row.ciphertext;
-  }));
-  if (bytes.length !== Number(object.byte_length)) throw new Error("Incomplete stored ciphertext");
+  const bytes = Buffer.concat(
+    chunks.map((row) => {
+      if (!Buffer.isBuffer(row.ciphertext)) throw new Error("Invalid stored ciphertext");
+      return row.ciphertext;
+    })
+  );
+  if (bytes.length !== Number(object.byte_length))
+    throw new Error("Incomplete stored ciphertext");
   return bytes;
 }
 
-export function readStoredAttachment(storageKey: string, config = inspectionConfig()): Promise<Buffer> {
+export function readStoredAttachment(
+  storageKey: string,
+  config = inspectionConfig()
+): Promise<Buffer> {
   return inspect(config, (select) => readCiphertext(config, select, storageKey));
 }
 
 export function readStoredNote(ownerUsername: string, config = inspectionConfig()) {
   return inspect(config, async (select) => {
-    const note = (await select(
-      "SELECT n.* FROM notes n JOIN users u ON u.id = n.user_id WHERE u.username = ? ORDER BY n.created_at DESC LIMIT 1",
-      [ownerUsername]
-    )).at(0);
-    if (!note || typeof note.id !== "string") throw new Error(`Stored note not found for: ${ownerUsername}`);
+    const note = (
+      await select(
+        "SELECT n.* FROM notes n JOIN users u ON u.id = n.user_id WHERE u.username = ? ORDER BY n.created_at DESC LIMIT 1",
+        [ownerUsername]
+      )
+    ).at(0);
+    if (!note || typeof note.id !== "string")
+      throw new Error(`Stored note not found for: ${ownerUsername}`);
     const noteId = note.id;
-    const forNote = (table: string) => select(`SELECT * FROM ${table} WHERE note_id = ?`, [noteId]);
+    const forNote = (table: string) =>
+      select(`SELECT * FROM ${table} WHERE note_id = ?`, [noteId]);
     const metadata = {
       attachments: await forNote("attachments"),
       note_updates: await forNote("note_updates"),
@@ -87,25 +117,40 @@ export function readStoredNote(ownerUsername: string, config = inspectionConfig(
         [noteId]
       )
     };
-    const attachments = await Promise.all(metadata.attachments.map(async (row) => {
-      const storageKey = row.storage_key ?? row.file_cipher_path;
-      if (typeof row.id !== "string" || typeof storageKey !== "string") throw new Error("Invalid stored attachment");
-      return { id: row.id, storageKey, bytes: await readCiphertext(config, select, storageKey) };
-    }));
+    const attachments = await Promise.all(
+      metadata.attachments.map(async (row) => {
+        const storageKey = row.storage_key ?? row.file_cipher_path;
+        if (typeof row.id !== "string" || typeof storageKey !== "string")
+          throw new Error("Invalid stored attachment");
+        return {
+          id: row.id,
+          storageKey,
+          bytes: await readCiphertext(config, select, storageKey)
+        };
+      })
+    );
     const contentBytes: Buffer[] = [];
     for (const row of metadata.content_chunks) {
       if (typeof row.file_cipher_path !== "string" || typeof row.upload_id !== "string") {
         throw new Error("Invalid stored content chunk");
       }
-      contentBytes.push(config.database.provider === "sqlite"
-        ? await readFile(contentChunkPath(config, row.upload_id, Number(row.chunk_index)))
-        : await readCiphertext(config, select, row.file_cipher_path));
+      contentBytes.push(
+        config.database.provider === "sqlite"
+          ? await readFile(
+              contentChunkPath(config, row.upload_id, Number(row.chunk_index))
+            )
+          : await readCiphertext(config, select, row.file_cipher_path)
+      );
     }
     for (const row of metadata.section_updates) {
       if (Buffer.isBuffer(row.inline_cipher) || row.inline_cipher instanceof Uint8Array) {
         contentBytes.push(Buffer.from(row.inline_cipher));
       }
     }
-    return { databasePayload: JSON.stringify({ note, ...metadata }), attachments, contentBytes };
+    return {
+      databasePayload: JSON.stringify({ note, ...metadata }),
+      attachments,
+      contentBytes
+    };
   });
 }

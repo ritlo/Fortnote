@@ -1,5 +1,11 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type BrowserContext, type Page, type Route } from "@playwright/test";
+import {
+  expect,
+  test,
+  type BrowserContext,
+  type Page,
+  type Route
+} from "@playwright/test";
 import { decodeCrdtBinaryFrame } from "../../packages/shared/src/index.js";
 import {
   closeAssuranceContexts,
@@ -9,7 +15,9 @@ import {
 } from "./support/assurance.js";
 import { waitForCrdtDurability } from "./support/durability.js";
 
-test("retains offline work through reconnect and ignores a delayed old-note save", async ({ page }) => {
+test("retains offline work through reconnect and ignores a delayed old-note save", async ({
+  page
+}) => {
   const account = uniqueAssuranceAccount("failure-offline");
   await register(page, account);
   const first = `Delayed note ${account.suffix}`;
@@ -28,9 +36,12 @@ test("retains offline work through reconnect and ignores a delayed old-note save
     "Offline — changes kept on this device"
   );
   await page.context().setOffline(false);
-  await expect(page.locator(".collaboration-status")).toContainText("Saved and synchronized", {
-    timeout: 30_000
-  });
+  await expect(page.locator(".collaboration-status")).toContainText(
+    "Saved and synchronized",
+    {
+      timeout: 30_000
+    }
+  );
 
   let delayed: Route | null = null;
   await page.route("**/api/notes/*", async (route) => {
@@ -51,7 +62,9 @@ test("retains offline work through reconnect and ignores a delayed old-note save
   await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(second);
 });
 
-test("distinguishes local and server quota while retaining the visible draft", async ({ page }) => {
+test("distinguishes local and server quota while retaining the visible draft", async ({
+  page
+}) => {
   await installOutboxQuotaFault(page);
   const account = uniqueAssuranceAccount("failure-quota");
   await register(page, account);
@@ -101,7 +114,9 @@ test("distinguishes local and server quota while retaining the visible draft", a
   });
 });
 
-test("preserves conflict, undecryptable, stale-epoch, and terminally rejected work", async ({ page }) => {
+test("preserves conflict, undecryptable, stale-epoch, and terminally rejected work", async ({
+  page
+}) => {
   const account = uniqueAssuranceAccount("failure-repair");
   await register(page, account);
   const title = `Repair note ${account.suffix}`;
@@ -116,7 +131,9 @@ test("preserves conflict, undecryptable, stale-epoch, and terminally rejected wo
   });
   await page.getByRole("textbox", { name: "Title" }).fill(`${title} conflict`);
   await expect(page.getByRole("alert")).toContainText("Changes need review");
-  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(`${title} conflict`);
+  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(
+    `${title} conflict`
+  );
   await expectRecoveryActions(page, ["Review draft", "Encrypted export", "Reapply"]);
   await page.unroute("**/api/notes/*");
 
@@ -194,7 +211,9 @@ test("keeps viewer and trash read-only, reports rotation abort, then removes rev
     await ownerPage.getByRole("menuitem", { name: "Move to trash" }).click();
     await ownerPage.getByRole("button", { name: "Trash", exact: true }).click();
     await openNote(ownerPage, title);
-    await expect(ownerPage.locator(".collaboration-status")).toContainText("In trash — view only");
+    await expect(ownerPage.locator(".collaboration-status")).toContainText(
+      "In trash — view only"
+    );
     await expect(ownerPage.getByRole("textbox", { name: "Title" })).toBeDisabled();
     await ownerPage.getByRole("button", { name: "More note actions" }).click();
     await ownerPage.getByRole("menuitem", { name: "Restore" }).click();
@@ -211,12 +230,16 @@ test("keeps viewer and trash read-only, reports rotation abort, then removes rev
       await route.continue();
     });
     await revokeMember(ownerPage, viewer.username, false);
-    await expect(ownerPage.getByRole("alert")).toContainText("Access change not completed");
+    await expect(ownerPage.getByRole("alert")).toContainText(
+      "Access change not completed"
+    );
     await expectRecoveryActions(ownerPage, ["Try again", "Review access"]);
     await ownerPage.getByRole("button", { name: "Close recovery dialog" }).click();
 
     await revokeMember(ownerPage, viewer.username, true);
-    await expect(viewerPage.getByRole("alert")).toContainText("You no longer have access");
+    await expect(viewerPage.getByRole("alert")).toContainText(
+      "You no longer have access"
+    );
     await expect(blockEditor(viewerPage)).toHaveCount(0);
   } finally {
     await closeAssuranceContexts(contexts);
@@ -247,8 +270,11 @@ async function createNote(page: Page, title: string): Promise<void> {
   await page.getByRole("button", { name: "Create" }).click();
   const titleInput = page.getByRole("textbox", { name: "Title" });
   await expect(titleInput).toHaveValue("Untitled note");
-  const saved = page.waitForResponse((response) =>
-    response.request().method() === "PUT" && response.url().includes("/api/notes/") && response.ok()
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().includes("/api/notes/") &&
+      response.ok()
   );
   await titleInput.fill(title);
   await saved;
@@ -263,7 +289,11 @@ async function openNote(page: Page, title: string): Promise<void> {
   await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(title);
 }
 
-async function shareNote(page: Page, username: string, role: "editor" | "viewer"): Promise<void> {
+async function shareNote(
+  page: Page,
+  username: string,
+  role: "editor" | "viewer"
+): Promise<void> {
   await page.getByRole("button", { name: "Share note" }).click();
   const dialog = page.getByRole("dialog", { name: "Share note" });
   await expect(dialog).toBeVisible();
@@ -274,34 +304,48 @@ async function shareNote(page: Page, username: string, role: "editor" | "viewer"
   await expect(trust).toBeVisible();
   await page.getByLabel("I independently verified this exact key").check();
   await trust.click();
-  await expect(page.locator(".membership-list li", { hasText: username })).toContainText(role);
+  await expect(page.locator(".membership-list li", { hasText: username })).toContainText(
+    role
+  );
   await page.getByRole("button", { name: "Close sharing dialog" }).click();
   await expect(dialog).not.toBeVisible();
 }
 
-async function revokeMember(page: Page, username: string, success: boolean): Promise<void> {
+async function revokeMember(
+  page: Page,
+  username: string,
+  success: boolean
+): Promise<void> {
   const dialog = page.getByRole("dialog", { name: "Share note" });
   if (!(await dialog.isVisible())) {
     await page.getByRole("button", { name: "Share note" }).click();
     await expect(dialog).toBeVisible();
   }
-  const response = page.waitForResponse((candidate) =>
-    candidate.request().method() === "POST" && candidate.url().includes("/key-rotation")
+  const response = page.waitForResponse(
+    (candidate) =>
+      candidate.request().method() === "POST" && candidate.url().includes("/key-rotation")
   );
   page.once("dialog", (dialog) => {
     void dialog.accept();
   });
-  await dialog.locator(".membership-list li", { hasText: username })
-    .getByRole("button", { name: "Revoke" }).click();
+  await dialog
+    .locator(".membership-list li", { hasText: username })
+    .getByRole("button", { name: "Revoke" })
+    .click();
   expect((await response).ok()).toBe(success);
   await page.getByRole("button", { name: "Close sharing dialog" }).click();
   await expect(dialog).not.toBeVisible();
 }
 
 async function waitForSharingKey(page: Page): Promise<void> {
-  await expect.poll(() => page.evaluate(async () =>
-    (await fetch("/api/sharing-keys/current", { credentials: "include" })).ok
-  )).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        async () =>
+          (await fetch("/api/sharing-keys/current", { credentials: "include" })).ok
+      )
+    )
+    .toBe(true);
 }
 
 async function appendEditorText(page: Page, text: string): Promise<void> {
@@ -311,20 +355,33 @@ async function appendEditorText(page: Page, text: string): Promise<void> {
   await editor.pressSequentially(text);
 }
 
-async function appendGeneratedText(page: Page, bytes: number, prefix: string): Promise<void> {
+async function appendGeneratedText(
+  page: Page,
+  bytes: number,
+  prefix: string
+): Promise<void> {
   await blockEditor(page).focus();
-  expect(await page.evaluate(({ byteLength, value }) => {
-    const editor = document.querySelector<HTMLElement>(".block-editor .bn-editor");
-    const selection = getSelection();
-    if (!editor || !selection) return false;
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    range.collapse(false);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    return document.execCommand("insertText", false, value + "x".repeat(byteLength - value.length));
-  }, { byteLength: bytes, value: prefix })).toBe(true);
+  expect(
+    await page.evaluate(
+      ({ byteLength, value }) => {
+        const editor = document.querySelector<HTMLElement>(".block-editor .bn-editor");
+        const selection = getSelection();
+        if (!editor || !selection) return false;
+        const range = document.createRange();
+        range.selectNodeContents(editor);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        // eslint-disable-next-line @typescript-eslint/no-deprecated
+        return document.execCommand(
+          "insertText",
+          false,
+          value + "x".repeat(byteLength - value.length)
+        );
+      },
+      { byteLength: bytes, value: prefix }
+    )
+  ).toBe(true);
 }
 
 async function installOutboxQuotaFault(page: Page): Promise<void> {
@@ -336,8 +393,9 @@ async function installOutboxQuotaFault(page: Page): Promise<void> {
         this.name === "encryptedOutbox" &&
         (window as Window & { __fortnoteFailOutbox?: boolean }).__fortnoteFailOutbox
       ) {
-        (window as Window & { __fortnoteOutboxFailureAt?: number })
-          .__fortnoteOutboxFailureAt = performance.now();
+        (
+          window as Window & { __fortnoteOutboxFailureAt?: number }
+        ).__fortnoteOutboxFailureAt = performance.now();
         throw new DOMException("Browser quota exhausted", "QuotaExceededError");
       }
       return original.apply(this, args);
@@ -345,7 +403,12 @@ async function installOutboxQuotaFault(page: Page): Promise<void> {
   });
 }
 
-async function safeError(route: Route, status: number, code: string, message: string): Promise<void> {
+async function safeError(
+  route: Route,
+  status: number,
+  code: string,
+  message: string
+): Promise<void> {
   await route.fulfill({
     status,
     contentType: "application/json",
@@ -364,7 +427,9 @@ async function expectRecoveryActions(page: Page, labels: string[]): Promise<void
 async function expectNoSeriousAxeViolations(page: Page): Promise<void> {
   const results = await new AxeBuilder({ page }).analyze();
   expect(
-    results.violations.filter(({ impact }) => impact === "serious" || impact === "critical")
+    results.violations.filter(
+      ({ impact }) => impact === "serious" || impact === "critical"
+    )
   ).toEqual([]);
 }
 

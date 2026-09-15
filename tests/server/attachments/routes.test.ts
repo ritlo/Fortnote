@@ -76,7 +76,10 @@ async function uploadDuringMutation(
   mutate: (db: AppDb, userId: string) => Promise<void>
 ): Promise<{ body: unknown; status: number }> {
   const db = app.locals.db as AppDb;
-  const user = (await testSql(db).get<{ id: string }>("SELECT id FROM users WHERE username = ?", username))!;
+  const user = (await testSql(db).get<{ id: string }>(
+    "SELECT id FROM users WHERE username = ?",
+    username
+  ))!;
   const token = await createSession(db, user.id);
   const server = createServer(app);
   server.listen(0, "127.0.0.1");
@@ -138,7 +141,9 @@ async function uploadDuringMutation(
 
 async function waitForReservation(db: AppDb, size: number): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    const account = await testSql(db).get("SELECT reserved_bytes AS reservedBytes FROM storage_accounts");
+    const account = await testSql(db).get(
+      "SELECT reserved_bytes AS reservedBytes FROM storage_accounts"
+    );
     if (account?.reservedBytes === size) {
       return;
     }
@@ -156,16 +161,17 @@ describe("attachments routes", () => {
 
     await uploadAttachment(agent, noteId, payload).expect(201);
 
-    const stored = await testSql((app.locals.db as AppDb)).get("SELECT filename, mime_type AS mimeType, metadata_cipher AS metadataCipher FROM attachments WHERE id = ?", payload.id);
+    const stored = await testSql(app.locals.db as AppDb).get(
+      "SELECT filename, mime_type AS mimeType, metadata_cipher AS metadataCipher FROM attachments WHERE id = ?",
+      payload.id
+    );
     expect(stored).toEqual({
       filename: "",
       mimeType: "",
       metadataCipher: payload.metadataCipher
     });
 
-    const list = await agent
-      .get(`/api/notes/${noteId}/attachments`)
-      .expect(200);
+    const list = await agent.get(`/api/notes/${noteId}/attachments`).expect(200);
     expect(list.body.attachments).toHaveLength(1);
     expect(list.body.attachments[0]).toMatchObject({
       id: payload.id,
@@ -183,13 +189,12 @@ describe("attachments routes", () => {
     expect(download.headers["content-type"]).toMatch(/^application\/octet-stream/u);
     expect(download.headers["x-fortnote-attachment-id"]).toBe(payload.id);
 
-    await agent
-      .delete(`/api/attachments/${payload.id}`)
-      .set(csrfHeaders())
-      .expect(204);
+    await agent.delete(`/api/attachments/${payload.id}`).set(csrfHeaders()).expect(204);
     await agent.get(`/api/attachments/${payload.id}`).expect(404);
     expect(
-      await testSql((app.locals.db as AppDb)).get("SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts")
+      await testSql(app.locals.db as AppDb).get(
+        "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
+      )
     ).toEqual({ usedBytes: 0, reservedBytes: 0 });
   });
 
@@ -244,7 +249,9 @@ describe("attachments routes", () => {
     await uploadAttachment(agent, noteId, payload).expect(413);
     await agent.get(`/api/attachments/${payload.id}`).expect(404);
     expect(
-      await testSql(db).get("SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts")
+      await testSql(db).get(
+        "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
+      )
     ).toEqual({ usedBytes: 8, reservedBytes: 0 });
   });
 
@@ -291,7 +298,9 @@ describe("attachments routes", () => {
       body: { error: { code: "stale_epoch" } }
     });
     expect(
-      await testSql((app.locals.db as AppDb)).get("SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts")
+      await testSql(app.locals.db as AppDb).get(
+        "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
+      )
     ).toEqual({ usedBytes: 0, reservedBytes: 0 });
     expect(fs.readdirSync(String(app.locals.config.dataDir))).toHaveLength(0);
   });
@@ -302,8 +311,15 @@ describe("attachments routes", () => {
     await registerAgent(app, "attachment_auth_editor");
     const noteId = await createNote(owner);
     const db = app.locals.db as AppDb;
-    const editor = (await testSql(db).get("SELECT id FROM users WHERE username = ?", "attachment_auth_editor"))!;
-    await testSql(db).run("INSERT INTO note_memberships (note_id, user_id, role, status) VALUES (?, ?, 'editor', 'active')", noteId, editor.id);
+    const editor = (await testSql(db).get(
+      "SELECT id FROM users WHERE username = ?",
+      "attachment_auth_editor"
+    ))!;
+    await testSql(db).run(
+      "INSERT INTO note_memberships (note_id, user_id, role, status) VALUES (?, ?, 'editor', 'active')",
+      noteId,
+      editor.id
+    );
 
     const outcome = await uploadDuringMutation(
       app,
@@ -311,7 +327,11 @@ describe("attachments routes", () => {
       noteId,
       attachmentPayload(),
       async (liveDb, userId) => {
-        await testSql(liveDb).run("UPDATE note_memberships SET status = 'revoked' WHERE note_id = ? AND user_id = ?", noteId, userId);
+        await testSql(liveDb).run(
+          "UPDATE note_memberships SET status = 'revoked' WHERE note_id = ? AND user_id = ?",
+          noteId,
+          userId
+        );
       }
     );
 
@@ -320,7 +340,9 @@ describe("attachments routes", () => {
       body: { error: { code: "not_found" } }
     });
     expect(
-      await testSql(db).get("SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts")
+      await testSql(db).get(
+        "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
+      )
     ).toEqual({ usedBytes: 0, reservedBytes: 0 });
   });
 
@@ -332,17 +354,39 @@ describe("attachments routes", () => {
     const db = app.locals.db as AppDb;
     const noteId = await createNote(alice);
     const payload = attachmentPayload();
-    const owner = (await testSql(db).get("SELECT user_id AS userId FROM notes WHERE id = ?", noteId))!;
-    const bobUser = (await testSql(db).get("SELECT id FROM users WHERE username = ?", "bob_shared_attachments"))!;
-    const carolUser = (await testSql(db).get("SELECT id FROM users WHERE username = ?", "carol_shared_attachments"))!;
-    await testSql(db).run(`INSERT INTO note_memberships (note_id, user_id, role, status)
-         VALUES (?, ?, ?, 'active')`, noteId, bobUser.id, "editor");
-    await testSql(db).run(`INSERT INTO note_memberships (note_id, user_id, role, status)
-         VALUES (?, ?, ?, 'active')`, noteId, carolUser.id, "viewer");
+    const owner = (await testSql(db).get(
+      "SELECT user_id AS userId FROM notes WHERE id = ?",
+      noteId
+    ))!;
+    const bobUser = (await testSql(db).get(
+      "SELECT id FROM users WHERE username = ?",
+      "bob_shared_attachments"
+    ))!;
+    const carolUser = (await testSql(db).get(
+      "SELECT id FROM users WHERE username = ?",
+      "carol_shared_attachments"
+    ))!;
+    await testSql(db).run(
+      `INSERT INTO note_memberships (note_id, user_id, role, status)
+         VALUES (?, ?, ?, 'active')`,
+      noteId,
+      bobUser.id,
+      "editor"
+    );
+    await testSql(db).run(
+      `INSERT INTO note_memberships (note_id, user_id, role, status)
+         VALUES (?, ?, ?, 'active')`,
+      noteId,
+      carolUser.id,
+      "viewer"
+    );
 
     await uploadAttachment(bob, noteId, payload).expect(201);
 
-    const stored = (await testSql(db).get("SELECT user_id AS userId FROM attachments WHERE id = ?", payload.id))!;
+    const stored = (await testSql(db).get(
+      "SELECT user_id AS userId FROM attachments WHERE id = ?",
+      payload.id
+    ))!;
     expect(stored.userId).toBe(owner.userId);
 
     const carolList = await carol.get(`/api/notes/${noteId}/attachments`).expect(200);
@@ -352,10 +396,13 @@ describe("attachments routes", () => {
     await carol.delete(`/api/attachments/${payload.id}`).set(csrfHeaders()).expect(404);
 
     await bob.delete(`/api/attachments/${payload.id}`).set(csrfHeaders()).expect(204);
-    const events = await testSql(db).all(`SELECT event_type AS eventType, resource_type AS resourceType
+    const events = await testSql(db).all(
+      `SELECT event_type AS eventType, resource_type AS resourceType
          FROM note_events
          WHERE note_id = ?
-         ORDER BY cursor`, noteId);
+         ORDER BY cursor`,
+      noteId
+    );
     expect(events).toEqual(
       expect.arrayContaining([
         { eventType: "attachment.created", resourceType: "attachment" },
@@ -375,11 +422,16 @@ describe("attachments routes", () => {
 
     await uploadAttachment(agent, noteId, payload).expect(500);
 
-    const attachment = await testSql(db).get("SELECT id FROM attachments WHERE id = ?", payload.id);
+    const attachment = await testSql(db).get(
+      "SELECT id FROM attachments WHERE id = ?",
+      payload.id
+    );
     expect(attachment).toBeUndefined();
     expect(fs.readdirSync(String(app.locals.config.dataDir))).toHaveLength(0);
     expect(
-      await testSql(db).get("SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts")
+      await testSql(db).get(
+        "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
+      )
     ).toEqual({ usedBytes: 0, reservedBytes: 0 });
   });
 
@@ -395,7 +447,10 @@ describe("attachments routes", () => {
 
     await agent.delete(`/api/attachments/${payload.id}`).set(csrfHeaders()).expect(500);
 
-    const attachment = await testSql(db).get("SELECT id FROM attachments WHERE id = ?", payload.id);
+    const attachment = await testSql(db).get(
+      "SELECT id FROM attachments WHERE id = ?",
+      payload.id
+    );
     expect(attachment).toEqual({ id: payload.id });
     const download = await agent.get(`/api/attachments/${payload.id}`).expect(200);
     expect(download.body).toEqual(payload.encryptedBytes);
@@ -409,14 +464,13 @@ describe("attachments routes", () => {
 
     await uploadAttachment(agent, noteId, payload).expect(201);
 
-    await agent
-      .delete(`/api/notes/${noteId}/permanent`)
-      .set(csrfHeaders())
-      .expect(204);
+    await agent.delete(`/api/notes/${noteId}/permanent`).set(csrfHeaders()).expect(204);
 
     await agent.get(`/api/attachments/${payload.id}`).expect(404);
     expect(
-      await testSql((app.locals.db as AppDb)).get("SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts")
+      await testSql(app.locals.db as AppDb).get(
+        "SELECT used_bytes AS usedBytes, reserved_bytes AS reservedBytes FROM storage_accounts"
+      )
     ).toEqual({ usedBytes: 0, reservedBytes: 0 });
   });
 });

@@ -1,8 +1,4 @@
-import {
-  fromCanonicalBase64,
-  utf8,
-  XCHACHA_NONCE_BYTES
-} from "./crypto.js";
+import { fromCanonicalBase64, utf8, XCHACHA_NONCE_BYTES } from "./crypto.js";
 
 export const CRDT_REALTIME_CAPABILITY = "crdt-v1";
 export const CRDT_UPDATE_FORMAT_VERSION = 1;
@@ -54,11 +50,7 @@ export interface CrdtAckV2 {
 }
 
 export type CrdtRejectCode =
-  | "storage-limit"
-  | "frame-too-large"
-  | "stale-epoch"
-  | "rotation-pending"
-  | "forbidden";
+  "storage-limit" | "frame-too-large" | "stale-epoch" | "rotation-pending" | "forbidden";
 
 export interface CrdtRejectV2 {
   type: "crdt-reject";
@@ -128,15 +120,12 @@ export interface EncryptedCrdtUpdate {
   nonce: string;
 }
 
-export interface EncryptedCrdtCheckpoint
-  extends Omit<EncryptedCrdtUpdate, "type"> {
+export interface EncryptedCrdtCheckpoint extends Omit<EncryptedCrdtUpdate, "type"> {
   type: "crdt-checkpoint";
   compactedUpdateIds: string[];
 }
 
-export type EncryptedCrdtMessage =
-  | EncryptedCrdtUpdate
-  | EncryptedCrdtCheckpoint;
+export type EncryptedCrdtMessage = EncryptedCrdtUpdate | EncryptedCrdtCheckpoint;
 
 export interface CrdtAck {
   type: "crdt-ack";
@@ -225,7 +214,9 @@ export function decodeCrdtBinaryFrame(
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(new TextDecoder().decode(frame.subarray(4, 4 + headerLength))) as unknown;
+    parsed = JSON.parse(
+      new TextDecoder().decode(frame.subarray(4, 4 + headerLength))
+    ) as unknown;
   } catch {
     throw new Error("Invalid CRDT binary header");
   }
@@ -368,16 +359,13 @@ function parseReject(record: Record<string, unknown>): CrdtRejectV2 {
   if (
     !isUuid(record.updateId) ||
     !isSectionId(record.sectionId) ||
-    !isOneOf(
-      record.code,
-      [
-        "storage-limit",
-        "frame-too-large",
-        "stale-epoch",
-        "rotation-pending",
-        "forbidden"
-      ] as const
-    )
+    !isOneOf(record.code, [
+      "storage-limit",
+      "frame-too-large",
+      "stale-epoch",
+      "rotation-pending",
+      "forbidden"
+    ] as const)
   ) {
     throw new Error("Invalid CRDT control message");
   }
@@ -438,7 +426,9 @@ function parseHistoryEntry(value: unknown): CrdtHistoryEntry {
   throw new Error("Invalid CRDT control message");
 }
 
-function parseManifestReference(record: Record<string, unknown>): CrdtManifestReferenceV2 {
+function parseManifestReference(
+  record: Record<string, unknown>
+): CrdtManifestReferenceV2 {
   const checkpointSequenceCutoff = record.checkpointSequenceCutoff;
   if (
     record.formatVersion !== CRDT_BINARY_FORMAT_VERSION ||
@@ -477,9 +467,7 @@ function parseManifestReference(record: Record<string, unknown>): CrdtManifestRe
     totalCipherBytes: record.totalCipherBytes,
     chunkCount: record.chunkCount,
     manifestHash: record.manifestHash,
-    ...(checkpointSequenceCutoff === undefined
-      ? {}
-      : { checkpointSequenceCutoff }),
+    ...(checkpointSequenceCutoff === undefined ? {} : { checkpointSequenceCutoff }),
     serverSequence: record.serverSequence
   };
 }

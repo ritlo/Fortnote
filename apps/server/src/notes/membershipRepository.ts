@@ -45,9 +45,7 @@ export interface NoteMembershipRepository {
 
 type SqliteDatabase = BetterSQLite3Database<typeof schema>;
 
-export class SqliteNoteMembershipRepository
-  implements NoteMembershipRepository
-{
+export class SqliteNoteMembershipRepository implements NoteMembershipRepository {
   constructor(private readonly orm: SqliteDatabase) {}
 
   invite(input: InviteNoteMemberInput): Promise<InviteNoteMemberOutcome> {
@@ -70,10 +68,7 @@ export class SqliteNoteMembershipRepository
         .where(
           and(
             eq(schema.users.username, input.username),
-            eq(
-              schema.userSharingKeys.sharingKeyVersion,
-              input.sharingKeyVersion
-            )
+            eq(schema.userSharingKeys.sharingKeyVersion, input.sharingKeyVersion)
           )
         )
         .get();
@@ -126,10 +121,7 @@ export class SqliteNoteMembershipRepository
           formatVersion: input.formatVersion
         })
         .onConflictDoUpdate({
-          target: [
-            schema.noteKeyShares.noteId,
-            schema.noteKeyShares.recipientUserId
-          ],
+          target: [schema.noteKeyShares.noteId, schema.noteKeyShares.recipientUserId],
           set: {
             senderUserId: input.actorUserId,
             sharingKeyVersion: input.sharingKeyVersion,

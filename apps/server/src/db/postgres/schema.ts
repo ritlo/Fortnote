@@ -48,7 +48,9 @@ export const users = pgTable(
 
 export const sessions = pgTable("sessions", {
   id: text("id").primaryKey(),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   sessionHash: text("session_hash").notNull().unique(),
   idleExpiresAt: dateTime("idle_expires_at").notNull(),
   absoluteExpiresAt: dateTime("absolute_expires_at").notNull(),
@@ -57,7 +59,9 @@ export const sessions = pgTable("sessions", {
 });
 
 export const userKeyMaterial = pgTable("user_key_material", {
-  userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
   encryptedRootKey: text("encrypted_root_key").notNull(),
   rootKeyNonce: text("root_key_nonce").notNull(),
   rootKeyFormatVersion: integer("root_key_format_version").notNull().default(1),
@@ -86,22 +90,25 @@ export const userKeyMaterial = pgTable("user_key_material", {
 
 export const folders = pgTable("folders", {
   id: text("id").primaryKey(),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   nameCipher: text("name_cipher"),
   nameNonce: text("name_nonce"),
   nameFormatVersion: integer("name_format_version"),
-  parentFolderId: text("parent_folder_id").references(
-    (): AnyPgColumn => folders.id,
-    { onDelete: "set null" }
-  ),
+  parentFolderId: text("parent_folder_id").references((): AnyPgColumn => folders.id, {
+    onDelete: "set null"
+  }),
   createdAt: dateTime("created_at").notNull().defaultNow(),
   updatedAt: dateTime("updated_at").notNull().defaultNow()
 });
 
 export const notes = pgTable("notes", {
   id: text("id").primaryKey(),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   cryptoOwnerId: text("crypto_owner_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
@@ -132,7 +139,9 @@ export const noteUpdates = pgTable(
   "note_updates",
   {
     updateId: text("update_id").primaryKey(),
-    noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    noteId: text("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
     cryptoOwnerId: text("crypto_owner_id").notNull(),
     keyEpoch: integer("key_epoch").notNull(),
     formatVersion: integer("format_version").notNull(),
@@ -155,7 +164,9 @@ export const noteSections = pgTable(
   "note_sections",
   {
     id: text("id").primaryKey(),
-    noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    noteId: text("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
     createdEpoch: integer("created_epoch").notNull(),
     currentSequence: integer("current_sequence").notNull().default(0),
     initializationManifestId: text("initialization_manifest_id"),
@@ -170,7 +181,9 @@ export const sectionUpdates = pgTable(
   "section_updates",
   {
     updateId: text("update_id").primaryKey(),
-    noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    noteId: text("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
     sectionId: text("section_id")
       .notNull()
       .references(() => noteSections.id, { onDelete: "cascade" }),
@@ -210,7 +223,9 @@ export const contentUploads = pgTable(
   {
     id: text("id").primaryKey(),
     updateId: text("update_id").notNull(),
-    noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    noteId: text("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
     sectionId: text("section_id")
       .notNull()
       .references(() => noteSections.id, { onDelete: "cascade" }),
@@ -272,7 +287,9 @@ export const contentManifests = pgTable(
       .notNull()
       .references(() => contentUploads.id, { onDelete: "restrict" }),
     updateId: text("update_id").notNull(),
-    noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    noteId: text("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
     sectionId: text("section_id")
       .notNull()
       .references(() => noteSections.id, { onDelete: "cascade" }),
@@ -308,7 +325,9 @@ export const contentManifests = pgTable(
 export const crdtInitializations = pgTable(
   "crdt_initializations",
   {
-    noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    noteId: text("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
     sectionId: text("section_id")
       .notNull()
       .references(() => noteSections.id, { onDelete: "cascade" }),
@@ -325,7 +344,9 @@ export const crdtInitializations = pgTable(
 export const storageAccounts = pgTable(
   "storage_accounts",
   {
-    userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
     usedBytes: byteCount("used_bytes").notNull().default(0),
     reservedBytes: byteCount("reserved_bytes").notNull().default(0),
     updatedAt: dateTime("updated_at").notNull().defaultNow()
@@ -339,7 +360,9 @@ export const storageAccounts = pgTable(
 export const noteEpochLinks = pgTable(
   "note_epoch_links",
   {
-    noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    noteId: text("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
     targetEpoch: integer("target_epoch").notNull(),
     sourceEpoch: integer("source_epoch").notNull(),
     previousKeyCipher: text("previous_key_cipher").notNull(),
@@ -349,7 +372,10 @@ export const noteEpochLinks = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.noteId, table.targetEpoch] }),
-    check("note_epoch_links_adjacent", sql`${table.targetEpoch} = ${table.sourceEpoch} + 1`)
+    check(
+      "note_epoch_links_adjacent",
+      sql`${table.targetEpoch} = ${table.sourceEpoch} + 1`
+    )
   ]
 );
 
@@ -386,8 +412,12 @@ export const attachmentObjectChunks = pgTable(
 
 export const attachments = pgTable("attachments", {
   id: text("id").primaryKey(),
-  noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  noteId: text("note_id")
+    .notNull()
+    .references(() => notes.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   filename: text("filename").notNull(),
   mimeType: text("mime_type").notNull(),
   metadataCipher: text("metadata_cipher"),
@@ -407,7 +437,9 @@ export const attachments = pgTable("attachments", {
 export const userSharingKeys = pgTable(
   "user_sharing_keys",
   {
-    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
     sharingKeyVersion: integer("sharing_key_version").notNull(),
     publicKey: text("public_key").notNull(),
     encryptedPrivateKey: text("encrypted_private_key").notNull(),
@@ -422,8 +454,12 @@ export const userSharingKeys = pgTable(
 export const noteMemberships = pgTable(
   "note_memberships",
   {
-    noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
-    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    noteId: text("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
     role: text("role").notNull(),
     status: text("status").notNull(),
     createdAt: dateTime("created_at").notNull().defaultNow(),
@@ -434,14 +470,19 @@ export const noteMemberships = pgTable(
     index("idx_note_memberships_user_status").on(table.userId, table.status),
     index("idx_note_memberships_note").on(table.noteId),
     check("note_memberships_role", sql`${table.role} IN ('owner', 'editor', 'viewer')`),
-    check("note_memberships_status", sql`${table.status} IN ('active', 'invited', 'revoked')`)
+    check(
+      "note_memberships_status",
+      sql`${table.status} IN ('active', 'invited', 'revoked')`
+    )
   ]
 );
 
 export const noteKeyShares = pgTable(
   "note_key_shares",
   {
-    noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    noteId: text("note_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
     recipientUserId: text("recipient_user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -488,7 +529,9 @@ export const noteEvents = pgTable(
 export const eventAcknowledgements = pgTable(
   "event_acknowledgements",
   {
-    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
     noteId: text("note_id").notNull(),
     cursor: byteCount("cursor").notNull(),
     updatedAt: dateTime("updated_at").notNull().defaultNow()
@@ -502,7 +545,9 @@ export const eventAcknowledgements = pgTable(
 export const eventCursors = pgTable(
   "event_cursors",
   {
-    userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
     cursor: byteCount("cursor").notNull().default(0),
     updatedAt: dateTime("updated_at").notNull().defaultNow()
   },

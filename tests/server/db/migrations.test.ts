@@ -231,9 +231,9 @@ describe("database migrations", () => {
     const indexes = sqlite.prepare("PRAGMA index_list(event_acknowledgements)").all() as {
       name: string;
     }[];
-    expect(indexes.some((index) => index.name === "idx_event_acknowledgements_user_cursor")).toBe(
-      true
-    );
+    expect(
+      indexes.some((index) => index.name === "idx_event_acknowledgements_user_cursor")
+    ).toBe(true);
 
     const cursorColumns = sqlite.prepare("PRAGMA table_info(event_cursors)").all() as {
       name: string;
@@ -261,9 +261,9 @@ describe("database migrations", () => {
 
     const tables = new Set(
       (
-        sqlite
-          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
-          .all() as { name: string }[]
+        sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as {
+          name: string;
+        }[]
       ).map(({ name }) => name)
     );
     expect(tables).toEqual(
@@ -385,14 +385,14 @@ describe("database migrations", () => {
         );
     });
     expect(writeInvalidUpload).toThrow();
-    expect(
-      sqlite.prepare("SELECT COUNT(*) AS count FROM content_uploads").get()
-    ).toEqual({ count: 0 });
+    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM content_uploads").get()).toEqual(
+      { count: 0 }
+    );
   });
 });
 
 function columnNames(sqlite: Database.Database, table: string): string[] {
-  return (
-    sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
-  ).map(({ name }) => name);
+  return (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+    ({ name }) => name
+  );
 }

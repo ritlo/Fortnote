@@ -114,32 +114,25 @@ export class PostgresAttachmentStorage implements AttachmentStorage {
 
   async removeOrphans(): Promise<void> {
     const cutoff = new Date(Date.now() - ORPHAN_GRACE_MS).toISOString();
-    await this.database
-      .delete(schema.attachmentObjects)
-      .where(
-        and(
-          lt(schema.attachmentObjects.createdAt, cutoff),
-          notExists(
-            this.database
-              .select({ one: sql`1` })
-              .from(schema.attachments)
-              .where(
-                eq(
-                  schema.attachments.storageKey,
-                  schema.attachmentObjects.storageKey
-                )
-              )
-          ),
-          notExists(
-            this.database
-              .select({ one: sql`1` })
-              .from(schema.contentChunks)
-              .where(
-                sql`${schema.contentChunks.storageKey} = ${schema.attachmentObjects.storageKey}::text`
-              )
-          )
+    await this.database.delete(schema.attachmentObjects).where(
+      and(
+        lt(schema.attachmentObjects.createdAt, cutoff),
+        notExists(
+          this.database
+            .select({ one: sql`1` })
+            .from(schema.attachments)
+            .where(eq(schema.attachments.storageKey, schema.attachmentObjects.storageKey))
+        ),
+        notExists(
+          this.database
+            .select({ one: sql`1` })
+            .from(schema.contentChunks)
+            .where(
+              sql`${schema.contentChunks.storageKey} = ${schema.attachmentObjects.storageKey}::text`
+            )
         )
-      );
+      )
+    );
   }
 }
 
@@ -152,10 +145,12 @@ async function* readChunks(
     const rows = await database
       .select({ ciphertext: schema.attachmentObjectChunks.ciphertext })
       .from(schema.attachmentObjectChunks)
-      .where(and(
-        eq(schema.attachmentObjectChunks.storageKey, storageId),
-        eq(schema.attachmentObjectChunks.chunkIndex, chunkIndex)
-      ))
+      .where(
+        and(
+          eq(schema.attachmentObjectChunks.storageKey, storageId),
+          eq(schema.attachmentObjectChunks.chunkIndex, chunkIndex)
+        )
+      )
       .limit(1);
     const row = rows[0];
     if (!row) {

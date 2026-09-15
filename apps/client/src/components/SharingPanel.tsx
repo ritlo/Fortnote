@@ -11,15 +11,10 @@ import {
   type PresenceUser,
   type PublicSharingKey
 } from "../api";
-import {
-  encryptNoteKeyShareV2,
-} from "../cryptoClient";
+import { encryptNoteKeyShareV2 } from "../cryptoClient";
 import type { DecryptedNote } from "../store/appStore";
 import { useAppStore } from "../store/appStore";
-import {
-  getSharingKeyTrustDecision,
-  trustSharingKey
-} from "../lib/sharingKeyTrust";
+import { getSharingKeyTrustDecision, trustSharingKey } from "../lib/sharingKeyTrust";
 import {
   linkedEpochPreparationMatches,
   prepareLinkedEpochRotation,
@@ -68,7 +63,9 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     selectedNote ? state.revocationRotationFailures[selectedNote.id] : undefined
   );
   const presence = useAppStore((state) =>
-    selectedNote ? (state.presenceByNote[selectedNote.id] ?? EMPTY_PRESENCE) : EMPTY_PRESENCE
+    selectedNote
+      ? (state.presenceByNote[selectedNote.id] ?? EMPTY_PRESENCE)
+      : EMPTY_PRESENCE
   );
 
   useEffect(() => {
@@ -153,7 +150,9 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
       await shareWithPublicKey(note, publicKey, role, username.trim());
     } catch (inviteError) {
       setStatus("Share failed");
-      setError(inviteError instanceof Error ? inviteError.message : "Unable to share note");
+      setError(
+        inviteError instanceof Error ? inviteError.message : "Unable to share note"
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -327,11 +326,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
   }
 
   async function retryRevocationRotation() {
-    if (
-      selectedNote?.role !== "owner" ||
-      !rootKey ||
-      !selectedRotationFailure
-    ) {
+    if (selectedNote?.role !== "owner" || !rootKey || !selectedRotationFailure) {
       return;
     }
 
@@ -418,7 +413,9 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
           throw new Error(`Sharing key changed for ${membership.username}`);
         }
         if (trust.status === "untrusted") {
-          throw new Error(`Trust sharing key for ${membership.username} before rotating keys`);
+          throw new Error(
+            `Trust sharing key for ${membership.username} before rotating keys`
+          );
         }
         return {
           recipientUserId: membership.userId,
@@ -464,9 +461,7 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
     };
     setNotes((current) =>
       current.map((currentNote) =>
-        currentNote.id === note.id
-          ? { ...currentNote, ...rotationPatch }
-          : currentNote
+        currentNote.id === note.id ? { ...currentNote, ...rotationPatch } : currentNote
       )
     );
   }
@@ -572,7 +567,8 @@ export function SharingPanel({ selectedNote, disabled }: SharingPanelProps) {
               <span>
                 <strong>Key rotation incomplete</strong>
                 <small>
-                  {selectedRotationFailure.revokedUsername}: {selectedRotationFailure.message}
+                  {selectedRotationFailure.revokedUsername}:{" "}
+                  {selectedRotationFailure.message}
                 </small>
               </span>
               <button
@@ -646,8 +642,7 @@ export function pendingTrustMatchesNote(
   note: DecryptedNote | null
 ): note is DecryptedNote {
   return (
-    note?.id === pendingTrust.noteId &&
-    note.noteKeyBase64 === pendingTrust.noteKeyBase64
+    note?.id === pendingTrust.noteId && note.noteKeyBase64 === pendingTrust.noteKeyBase64
   );
 }
 

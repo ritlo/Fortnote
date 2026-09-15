@@ -2,12 +2,7 @@ import type { ContentKind } from "../manifests.js";
 import type { StorageQuotaStatus } from "../quota.js";
 
 export type ContentUploadStatus =
-  | "receiving"
-  | "complete"
-  | "committed"
-  | "aborted"
-  | "expired"
-  | "invalid";
+  "receiving" | "complete" | "committed" | "aborted" | "expired" | "invalid";
 
 export interface ContentUploadRecord {
   id: string;

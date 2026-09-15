@@ -48,11 +48,7 @@ export function broadcastUpdate(
       sectionId: binding.sectionId,
       kind
     } satisfies Omit<ScopedEncryptedCrdtMessage, "cipher" | "nonce">;
-    const outbound = await prepareOutbound(
-      envelope,
-      note.noteKeyBase64,
-      update
-    );
+    const outbound = await prepareOutbound(envelope, note.noteKeyBase64, update);
     if (!isActiveBindingForNote(binding, note)) {
       return null;
     }

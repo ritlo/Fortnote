@@ -54,25 +54,36 @@ export function NewNoteDialog({ folders, open, onClose, onCreate }: NewNoteDialo
         }
       }}
     >
-      <form method="dialog" onSubmit={(e) => { void handleSubmit(e); }}>
+      <form
+        method="dialog"
+        onSubmit={(e) => {
+          void handleSubmit(e);
+        }}
+      >
         <h3 id="new-note-dialog-title">New note</h3>
         <label>
           Folder
           <select
             value={selectedFolderId}
-            onChange={(e) => { setSelectedFolderId(e.target.value); }}
+            onChange={(e) => {
+              setSelectedFolderId(e.target.value);
+            }}
             disabled={submitting}
           >
             <option value="">No folder</option>
             {folders.map((f) => (
-              <option key={f.id} value={f.id}>{f.name}</option>
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
             ))}
           </select>
         </label>
         <div className="dialog-actions">
           <button
             type="button"
-            onClick={() => { dialogRef.current?.close(); }}
+            onClick={() => {
+              dialogRef.current?.close();
+            }}
             disabled={submitting}
           >
             Cancel

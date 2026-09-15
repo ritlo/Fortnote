@@ -182,7 +182,11 @@ function RegisterForm() {
           }}
         />
       </label>
-      {validationError ? <p className="error" role="alert">{validationError}</p> : null}
+      {validationError ? (
+        <p className="error" role="alert">
+          {validationError}
+        </p>
+      ) : null}
       <button className="primary" type="submit">
         Create encrypted vault
       </button>
@@ -258,7 +262,11 @@ function RecoverForm() {
           }}
         />
       </label>
-      {validationError ? <p className="error" role="alert">{validationError}</p> : null}
+      {validationError ? (
+        <p className="error" role="alert">
+          {validationError}
+        </p>
+      ) : null}
       <button className="primary" type="submit">
         Recover and decrypt
       </button>
@@ -302,7 +310,11 @@ export function AuthScreen() {
           <RecoverForm />
         )}
 
-        {error ? <p className="error" role="alert">{error}</p> : null}
+        {error ? (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        ) : null}
         <p
           className="muted"
           role={status.toLowerCase().includes("handle repair") ? "alert" : undefined}

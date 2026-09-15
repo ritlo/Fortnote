@@ -62,10 +62,7 @@ export class PostgresSharingKeyRepository implements SharingKeyRepository {
         .where(
           and(
             eq(schema.userSharingKeys.userId, userId),
-            eq(
-              schema.userSharingKeys.sharingKeyVersion,
-              input.sharingKeyVersion
-            )
+            eq(schema.userSharingKeys.sharingKeyVersion, input.sharingKeyVersion)
           )
         )
         .limit(1)
@@ -90,16 +87,13 @@ export class PostgresSharingKeyRepository implements SharingKeyRepository {
           .where(
             and(
               eq(schema.userSharingKeys.userId, userId),
-              eq(
-                schema.userSharingKeys.sharingKeyVersion,
-                input.sharingKeyVersion
-              ),
+              eq(schema.userSharingKeys.sharingKeyVersion, input.sharingKeyVersion),
               eq(schema.userSharingKeys.publicKey, input.publicKey),
               eq(schema.userSharingKeys.formatVersion, 1)
             )
           )
           .returning({ userId: schema.userSharingKeys.userId });
-        return migrated.length === 1 ? "upgraded" as const : "conflict" as const;
+        return migrated.length === 1 ? ("upgraded" as const) : ("conflict" as const);
       }
 
       const inserted = await transaction
@@ -107,7 +101,7 @@ export class PostgresSharingKeyRepository implements SharingKeyRepository {
         .values({ userId, ...input })
         .onConflictDoNothing()
         .returning({ userId: schema.userSharingKeys.userId });
-      return inserted.length === 1 ? "created" as const : "conflict" as const;
+      return inserted.length === 1 ? ("created" as const) : ("conflict" as const);
     });
   }
 
@@ -143,7 +137,10 @@ export class PostgresSharingKeyRepository implements SharingKeyRepository {
         createdAt: schema.userSharingKeys.createdAt
       })
       .from(schema.users)
-      .innerJoin(schema.userSharingKeys, eq(schema.userSharingKeys.userId, schema.users.id))
+      .innerJoin(
+        schema.userSharingKeys,
+        eq(schema.userSharingKeys.userId, schema.users.id)
+      )
       .where(
         and(
           eq(schema.users.canonicalHandle, canonicalHandle),

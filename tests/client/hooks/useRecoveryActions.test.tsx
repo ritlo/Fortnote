@@ -3,7 +3,12 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EncryptedOutboxRecord } from "@client/lib/indexedDb";
-import { recoverableDraftId, useAppStore, type DecryptedNote, type RetainedSectionDraft } from "@client/store/appStore";
+import {
+  recoverableDraftId,
+  useAppStore,
+  type DecryptedNote,
+  type RetainedSectionDraft
+} from "@client/store/appStore";
 import { useRecoveryActions } from "@client/hooks/useRecoveryActions";
 
 const mocks = vi.hoisted(() => ({
@@ -17,13 +22,15 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@client/lib/browser", () => ({ downloadBytes: mocks.downloadBytes }));
 vi.mock("@client/lib/indexedDb", async (importOriginal) => ({
-  ...await importOriginal<typeof import("@client/lib/indexedDb")>(),
-  openFortnoteIndexedDb: vi.fn(() => Promise.resolve({
-    close: mocks.close,
-    deleteOutboxFence: mocks.deleteOutboxFence,
-    evictSectionCache: mocks.evictSectionCache,
-    listOutbox: mocks.listOutbox
-  }))
+  ...(await importOriginal<typeof import("@client/lib/indexedDb")>()),
+  openFortnoteIndexedDb: vi.fn(() =>
+    Promise.resolve({
+      close: mocks.close,
+      deleteOutboxFence: mocks.deleteOutboxFence,
+      evictSectionCache: mocks.evictSectionCache,
+      listOutbox: mocks.listOutbox
+    })
+  )
 }));
 vi.mock("@client/realtime/crdt", () => ({
   createCrdtSectionInitializationManifest: vi.fn(),
@@ -94,11 +101,13 @@ describe("useRecoveryActions", () => {
     expect(mocks.deleteOutboxFence).not.toHaveBeenCalled();
 
     await act(async () => result.current.discard());
-    expect(mocks.deleteOutboxFence).toHaveBeenCalledWith(expect.objectContaining({
-      noteId: note.id,
-      sectionId: draft.sectionId,
-      keyEpoch: draft.keyEpoch
-    }));
+    expect(mocks.deleteOutboxFence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        noteId: note.id,
+        sectionId: draft.sectionId,
+        keyEpoch: draft.keyEpoch
+      })
+    );
     expect(currentDraft().state).toBe("discarded");
   });
 });

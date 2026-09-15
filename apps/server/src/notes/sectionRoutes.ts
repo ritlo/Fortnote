@@ -143,59 +143,52 @@ export function registerSectionRoutes(router: Router, context: AppContext): void
     });
   });
 
-  router.post(
-    "/:id/sections/:sectionId/initialization",
-    async (request, response) => {
-      const session = await requireSessionAsync(context.db, request, response);
-      if (!session) {
-        return;
-      }
-      const parsed = sectionInitializationSchema.safeParse(request.body);
-      if (!parsed.success) {
-        sendApiError(response, "bad_request", "Invalid section initialization");
-        return;
-      }
-      const clientInstanceId = requestClientInstanceId(request);
-      const outcome = await context.db.noteSections.initialize({
-        sessionId: session.id,
-        userId: session.userId,
-        noteId: request.params.id,
-        sectionId: request.params.sectionId,
-        expectedKeyEpoch: parsed.data.expectedKeyEpoch,
-        expectedRootVersion: parsed.data.expectedRootVersion,
-        manifestId: parsed.data.manifestId,
-        ...(clientInstanceId ? { clientInstanceId } : {})
-      });
-      if (outcome.status === "rejected") {
-        if (outcome.code === "forbidden") {
-          sendApiError(response, "not_found", "Note not found");
-        } else {
-          sendApiError(response, "conflict", legacyMigrationConflict(outcome.code));
-        }
-        return;
-      }
-      if (outcome.eventCursor !== null) {
-        publishEventCursor(context, outcome.eventCursor);
-      }
-      response.json({
-        status: outcome.status,
-        manifestId: outcome.manifestId,
-        rootVersion: outcome.rootVersion,
-        version: outcome.version
-      });
+  router.post("/:id/sections/:sectionId/initialization", async (request, response) => {
+    const session = await requireSessionAsync(context.db, request, response);
+    if (!session) {
+      return;
     }
-  );
+    const parsed = sectionInitializationSchema.safeParse(request.body);
+    if (!parsed.success) {
+      sendApiError(response, "bad_request", "Invalid section initialization");
+      return;
+    }
+    const clientInstanceId = requestClientInstanceId(request);
+    const outcome = await context.db.noteSections.initialize({
+      sessionId: session.id,
+      userId: session.userId,
+      noteId: request.params.id,
+      sectionId: request.params.sectionId,
+      expectedKeyEpoch: parsed.data.expectedKeyEpoch,
+      expectedRootVersion: parsed.data.expectedRootVersion,
+      manifestId: parsed.data.manifestId,
+      ...(clientInstanceId ? { clientInstanceId } : {})
+    });
+    if (outcome.status === "rejected") {
+      if (outcome.code === "forbidden") {
+        sendApiError(response, "not_found", "Note not found");
+      } else {
+        sendApiError(response, "conflict", legacyMigrationConflict(outcome.code));
+      }
+      return;
+    }
+    if (outcome.eventCursor !== null) {
+      publishEventCursor(context, outcome.eventCursor);
+    }
+    response.json({
+      status: outcome.status,
+      manifestId: outcome.manifestId,
+      rootVersion: outcome.rootVersion,
+      version: outcome.version
+    });
+  });
 
   router.get("/:id/sections", async (request, response) => {
     const session = await requireSessionAsync(context.db, request, response);
     if (!session) {
       return;
     }
-    const access = await getNoteAccessAsync(
-      context,
-      request.params.id,
-      session.userId
-    );
+    const access = await getNoteAccessAsync(context, request.params.id, session.userId);
     if (!canReadNote(access)) {
       sendApiError(response, "not_found", "Note not found");
       return;
@@ -224,19 +217,13 @@ function legacyMigrationConflict(
   if (code === "rotation-pending") {
     return "Note-key rotation is pending";
   }
-  return code === "stale-epoch"
-    ? "Note key epoch changed"
-    : "Note metadata changed";
+  return code === "stale-epoch" ? "Note key epoch changed" : "Note metadata changed";
 }
 
 function sendSectionMutationError(
   response: Parameters<typeof sendApiError>[0],
   code:
-    | "forbidden"
-    | "last-section"
-    | "rotation-pending"
-    | "stale-epoch"
-    | "stale-version"
+    "forbidden" | "last-section" | "rotation-pending" | "stale-epoch" | "stale-version"
 ): void {
   if (code === "forbidden") {
     sendApiError(response, "not_found", "Note not found");

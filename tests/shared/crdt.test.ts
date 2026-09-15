@@ -21,10 +21,9 @@ describe("bounded CRDT v2 protocol", () => {
     expect(new TextDecoder().decode(frame)).not.toContain(toBase64(cipher));
 
     const rootHeader = { ...header, sectionId: "root", kind: "root-update" as const };
-    expect(decodeCrdtBinaryFrame(
-      encodeCrdtBinaryFrame(rootHeader, cipher, 1024),
-      1024
-    ).header).toEqual(rootHeader);
+    expect(
+      decodeCrdtBinaryFrame(encodeCrdtBinaryFrame(rootHeader, cipher, 1024), 1024).header
+    ).toEqual(rootHeader);
   });
 
   it("preserves the originating client identity for relayed outbox updates", () => {
@@ -33,16 +32,19 @@ describe("bounded CRDT v2 protocol", () => {
       ...binaryHeader(cipher.length),
       originClientId: crypto.randomUUID()
     };
-    expect(decodeCrdtBinaryFrame(
-      encodeCrdtBinaryFrame(header, cipher, 1024),
-      1024
-    ).header).toEqual(header);
+    expect(
+      decodeCrdtBinaryFrame(encodeCrdtBinaryFrame(header, cipher, 1024), 1024).header
+    ).toEqual(header);
   });
 
   it("rejects mismatched lengths, malformed headers, and oversized frames", () => {
     const cipher = randomBytes(32);
     expect(() =>
-      encodeCrdtBinaryFrame({ ...binaryHeader(cipher.length), cipherLength: 31 }, cipher, 1024)
+      encodeCrdtBinaryFrame(
+        { ...binaryHeader(cipher.length), cipherLength: 31 },
+        cipher,
+        1024
+      )
     ).toThrow("cipher length");
     expect(() => encodeCrdtBinaryFrame(binaryHeader(cipher.length), cipher, 16)).toThrow(
       "frame limit"

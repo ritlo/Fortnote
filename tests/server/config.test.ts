@@ -45,7 +45,9 @@ describe("server configuration", () => {
 
   it("loads config.yaml and resolves data paths relative to it", () => {
     const cwd = temporaryDirectory();
-    writeFileSync(path.join(cwd, "config.yaml"), `
+    writeFileSync(
+      path.join(cwd, "config.yaml"),
+      `
 server:
   port: 4100
   host: 127.0.0.1
@@ -72,7 +74,8 @@ sessions:
 auth:
   ipRateLimitMaxAttempts: 120
   accountRateLimitMaxAttempts: 40
-`);
+`
+    );
 
     const config = getConfig({}, { cwd });
 
@@ -113,7 +116,9 @@ auth:
 
   it("applies environment overrides after YAML values", () => {
     const cwd = temporaryDirectory();
-    writeFileSync(path.join(cwd, "settings.yaml"), `
+    writeFileSync(
+      path.join(cwd, "settings.yaml"),
+      `
 server:
   port: 4100
 database:
@@ -121,7 +126,8 @@ database:
   path: yaml.sqlite
 localstorage:
   quotaBytes: 2048
-`);
+`
+    );
 
     const config = getConfig(
       {
@@ -145,7 +151,9 @@ localstorage:
 
   it("loads PostgreSQL settings from YAML and environment overrides", () => {
     const cwd = temporaryDirectory();
-    writeFileSync(path.join(cwd, "config.yaml"), `
+    writeFileSync(
+      path.join(cwd, "config.yaml"),
+      `
 database:
   provider: postgres
   url: postgresql://yaml-user:yaml-password@localhost:5432/fortnote
@@ -155,7 +163,8 @@ database:
   lockTimeoutMs: 7000
   startupRetryAttempts: 12
   startupRetryDelayMs: 1500
-`);
+`
+    );
 
     expect(getConfig({}, { cwd }).database).toEqual({
       provider: "postgres",
@@ -167,16 +176,21 @@ database:
       startupRetryAttempts: 12,
       startupRetryDelayMs: 1500
     });
-    expect(getConfig({
-      DATABASE_PROVIDER: "postgres",
-      DATABASE_URL: "postgres://environment-user:secret@database:5432/fortnote",
-      DATABASE_MAX_CONNECTIONS: "16",
-      DATABASE_CONNECTION_TIMEOUT_MS: "7000",
-      DATABASE_STATEMENT_TIMEOUT_MS: "32000",
-      DATABASE_LOCK_TIMEOUT_MS: "8000",
-      DATABASE_STARTUP_RETRY_ATTEMPTS: "14",
-      DATABASE_STARTUP_RETRY_DELAY_MS: "2000"
-    }, { cwd }).database).toEqual({
+    expect(
+      getConfig(
+        {
+          DATABASE_PROVIDER: "postgres",
+          DATABASE_URL: "postgres://environment-user:secret@database:5432/fortnote",
+          DATABASE_MAX_CONNECTIONS: "16",
+          DATABASE_CONNECTION_TIMEOUT_MS: "7000",
+          DATABASE_STATEMENT_TIMEOUT_MS: "32000",
+          DATABASE_LOCK_TIMEOUT_MS: "8000",
+          DATABASE_STARTUP_RETRY_ATTEMPTS: "14",
+          DATABASE_STARTUP_RETRY_DELAY_MS: "2000"
+        },
+        { cwd }
+      ).database
+    ).toEqual({
       provider: "postgres",
       url: "postgres://environment-user:secret@database:5432/fortnote",
       maxConnections: 16,
@@ -197,11 +211,16 @@ database:
     expect(() => getConfig({ DATABASE_PROVIDER: "mongo" }, { cwd })).toThrow(
       /expected sqlite or postgres/iu
     );
-    expect(() => getConfig({
-      DATABASE_PROVIDER: "postgres",
-      DATABASE_URL: "postgresql://localhost/fortnote",
-      DATABASE_MAX_CONNECTIONS: "0"
-    }, { cwd })).toThrow("Invalid DATABASE_MAX_CONNECTIONS");
+    expect(() =>
+      getConfig(
+        {
+          DATABASE_PROVIDER: "postgres",
+          DATABASE_URL: "postgresql://localhost/fortnote",
+          DATABASE_MAX_CONNECTIONS: "0"
+        },
+        { cwd }
+      )
+    ).toThrow("Invalid DATABASE_MAX_CONNECTIONS");
   });
 
   it("rejects malformed YAML and unknown settings", () => {
@@ -244,11 +263,16 @@ database:
     ["DATABASE_STATEMENT_TIMEOUT_MS", "NaN"]
   ])("rejects unsafe PostgreSQL %s values", (name, value) => {
     const cwd = temporaryDirectory();
-    expect(() => getConfig({
-      DATABASE_PROVIDER: "postgres",
-      DATABASE_URL: "postgresql://localhost/fortnote",
-      [name]: value
-    }, { cwd })).toThrow(`Invalid ${name}`);
+    expect(() =>
+      getConfig(
+        {
+          DATABASE_PROVIDER: "postgres",
+          DATABASE_URL: "postgresql://localhost/fortnote",
+          [name]: value
+        },
+        { cwd }
+      )
+    ).toThrow(`Invalid ${name}`);
   });
 });
 

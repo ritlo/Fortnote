@@ -22,13 +22,16 @@ export class SqliteSessionRepository implements SessionRepository {
   create(userId: string): Promise<string> {
     const token = randomBytes(32).toString("base64url");
     const now = Date.now();
-    this.orm.insert(schema.sessions).values({
-      id: crypto.randomUUID(),
-      userId,
-      sessionHash: hashToken(token),
-      idleExpiresAt: new Date(now + this.idleTimeoutMs).toISOString(),
-      absoluteExpiresAt: new Date(now + this.absoluteTimeoutMs).toISOString()
-    }).run();
+    this.orm
+      .insert(schema.sessions)
+      .values({
+        id: crypto.randomUUID(),
+        userId,
+        sessionHash: hashToken(token),
+        idleExpiresAt: new Date(now + this.idleTimeoutMs).toISOString(),
+        absoluteExpiresAt: new Date(now + this.absoluteTimeoutMs).toISOString()
+      })
+      .run();
     return Promise.resolve(token);
   }
 
@@ -49,11 +52,13 @@ export class SqliteSessionRepository implements SessionRepository {
       })
       .from(schema.sessions)
       .innerJoin(schema.users, eq(schema.users.id, schema.sessions.userId))
-      .where(and(
-        eq(schema.sessions.sessionHash, hashToken(token)),
-        gt(schema.sessions.idleExpiresAt, now),
-        gt(schema.sessions.absoluteExpiresAt, now)
-      ))
+      .where(
+        and(
+          eq(schema.sessions.sessionHash, hashToken(token)),
+          gt(schema.sessions.idleExpiresAt, now),
+          gt(schema.sessions.absoluteExpiresAt, now)
+        )
+      )
       .get();
 
     if (!row) {
@@ -80,11 +85,13 @@ export class SqliteSessionRepository implements SessionRepository {
     const row = this.orm
       .select({ id: schema.sessions.id })
       .from(schema.sessions)
-      .where(and(
-        eq(schema.sessions.id, sessionId),
-        gt(schema.sessions.idleExpiresAt, now),
-        gt(schema.sessions.absoluteExpiresAt, now)
-      ))
+      .where(
+        and(
+          eq(schema.sessions.id, sessionId),
+          gt(schema.sessions.idleExpiresAt, now),
+          gt(schema.sessions.absoluteExpiresAt, now)
+        )
+      )
       .get();
     return Promise.resolve(Boolean(row));
   }
@@ -105,10 +112,12 @@ export class SqliteSessionRepository implements SessionRepository {
   deleteExpired(now: string): Promise<number> {
     const result = this.orm
       .delete(schema.sessions)
-      .where(or(
-        lte(schema.sessions.idleExpiresAt, now),
-        lte(schema.sessions.absoluteExpiresAt, now)
-      ))
+      .where(
+        or(
+          lte(schema.sessions.idleExpiresAt, now),
+          lte(schema.sessions.absoluteExpiresAt, now)
+        )
+      )
       .run();
     return Promise.resolve(result.changes);
   }

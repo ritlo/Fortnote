@@ -43,7 +43,9 @@ describe("encrypted realtime outbox", () => {
     outbox.setTransport(send);
     await outbox.activate(fenceFor(record));
 
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ updateId: record.updateId }));
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ updateId: record.updateId })
+    );
   });
 
   it("preserves concurrent same-account tab writes and grants one sender lease", async () => {
@@ -68,13 +70,23 @@ describe("encrypted realtime outbox", () => {
     const secondRecord = outboxRecord({ updateId: "update-b" });
 
     await Promise.all([first.enqueue(firstRecord), second.enqueue(secondRecord)]);
-    await Promise.all([first.activate(fenceFor(firstRecord)), second.activate(fenceFor(secondRecord))]);
+    await Promise.all([
+      first.activate(fenceFor(firstRecord)),
+      second.activate(fenceFor(secondRecord))
+    ]);
 
     await expect(firstDatabase.listOutbox("user-a")).resolves.toHaveLength(2);
     expect(firstSend.mock.calls.length + secondSend.mock.calls.length).toBe(2);
-    expect(firstSend.mock.calls.length === 0 || secondSend.mock.calls.length === 0).toBe(true);
-    expect(new Set([...firstSend.mock.calls, ...secondSend.mock.calls].map(([record]) => record.updateId)))
-      .toEqual(new Set(["update-a", "update-b"]));
+    expect(firstSend.mock.calls.length === 0 || secondSend.mock.calls.length === 0).toBe(
+      true
+    );
+    expect(
+      new Set(
+        [...firstSend.mock.calls, ...secondSend.mock.calls].map(
+          ([record]) => record.updateId
+        )
+      )
+    ).toEqual(new Set(["update-a", "update-b"]));
   });
 
   it("resends a stable update after a lost acknowledgement", async () => {
@@ -144,10 +156,15 @@ describe("encrypted realtime outbox", () => {
     const database = await openDatabase();
     const active = outboxRecord({ updateId: "active", keyEpoch: 2 });
     const staleEpoch = outboxRecord({ updateId: "stale", keyEpoch: 1 });
-    const otherSection = outboxRecord({ updateId: "other-section", sectionId: "section-b" });
+    const otherSection = outboxRecord({
+      updateId: "other-section",
+      sectionId: "section-b"
+    });
     const otherAccount = outboxRecord({ updateId: "other-account", userId: "user-b" });
     await Promise.all(
-      [active, staleEpoch, otherSection, otherAccount].map((record) => database.putOutbox(record))
+      [active, staleEpoch, otherSection, otherAccount].map((record) =>
+        database.putOutbox(record)
+      )
     );
     const send = vi.fn<(record: EncryptedOutboxRecord) => void>();
     const outbox = openOutbox({

@@ -30,7 +30,10 @@ const budgets = {
 type MetricName = keyof typeof budgets;
 
 test.describe("controlled production performance", () => {
-  test.skip(!runPerformance, "Run pnpm assurance:perf to create the isolated production fixture");
+  test.skip(
+    !runPerformance,
+    "Run pnpm assurance:perf to create the isolated production fixture"
+  );
 
   test("records focused-editor timings and bounded encrypted content residency", async ({
     baseURL,
@@ -38,17 +41,20 @@ test.describe("controlled production performance", () => {
     browserName
   }) => {
     test.setTimeout(45 * 60_000);
-    const performanceProfile = process.env.FORTNOTE_PERFORMANCE_PROFILE === "full"
-      ? "full"
-      : "smoke";
+    const performanceProfile =
+      process.env.FORTNOTE_PERFORMANCE_PROFILE === "full" ? "full" : "smoke";
     const definition = performanceFixtureDefinition(
       process.env.FORTNOTE_PERFORMANCE_SEED,
       performanceProfile
     );
-    const enforceBudgets = process.env.FORTNOTE_PERFORMANCE_ENFORCE_BUDGETS === "1" ||
+    const enforceBudgets =
+      process.env.FORTNOTE_PERFORMANCE_ENFORCE_BUDGETS === "1" ||
       (performanceProfile === "full" &&
         process.env.FORTNOTE_PERFORMANCE_ENFORCE_BUDGETS !== "0");
-    const samples = positiveInteger(process.env.FORTNOTE_PERFORMANCE_SAMPLES, definition.samples);
+    const samples = positiveInteger(
+      process.env.FORTNOTE_PERFORMANCE_SAMPLES,
+      definition.samples
+    );
     const warmupRuns = positiveInteger(
       process.env.FORTNOTE_PERFORMANCE_WARMUPS,
       definition.warmupRuns
@@ -79,7 +85,11 @@ test.describe("controlled production performance", () => {
 
       const ordinaryTitle = `Ordinary ${definition.seed}`;
       await createOrdinaryNote(ownerPage, ordinaryTitle);
-      const dataset = await createRepresentativeDocument(ownerPage, definition.title, profile);
+      const dataset = await createRepresentativeDocument(
+        ownerPage,
+        definition.title,
+        profile
+      );
       await crossCompactionBoundary(ownerPage, definition.compactionEdits);
       await shareDocument(ownerPage, definition.accounts.editor.username, "editor");
       await shareDocument(ownerPage, definition.accounts.viewer.username, "viewer");
@@ -87,8 +97,10 @@ test.describe("controlled production performance", () => {
       await openDocument(editorPage, definition.title, dataset.marker);
       await signInPerformanceUser(viewerPage, definition.accounts.viewer);
       await openDocument(viewerPage, definition.title, dataset.marker);
-      await expect(viewerPage.locator(".block-editor .bn-editor"))
-        .toHaveAttribute("contenteditable", "false");
+      await expect(viewerPage.locator(".block-editor .bn-editor")).toHaveAttribute(
+        "contenteditable",
+        "false"
+      );
       const samplePage = await newPerformancePage(browser, baseURL, contexts);
       const initialTraffic = captureDocumentTraffic(samplePage, dataset.noteId);
       trackTransferBytes(samplePage, (bytes) => {
@@ -98,9 +110,8 @@ test.describe("controlled production performance", () => {
 
       for (let run = 0; run < warmupRuns + samples; run += 1) {
         const retained = run >= warmupRuns;
-        const traffic = run === 0
-          ? initialTraffic
-          : captureDocumentTraffic(samplePage, dataset.noteId);
+        const traffic =
+          run === 0 ? initialTraffic : captureDocumentTraffic(samplePage, dataset.noteId);
         const noteUsable = await userTiming(samplePage, "note-usable", async () => {
           await openOrdinaryNote(samplePage, ordinaryTitle);
         });
@@ -127,37 +138,55 @@ test.describe("controlled production performance", () => {
         await accountPassword.fill(definition.accounts.owner.password);
         await expect(accountHandle).toHaveValue(definition.accounts.owner.username);
         await expect(accountPassword).toHaveValue(definition.accounts.owner.password);
-        const freshSessionUsable = await userTiming(samplePage, "fresh-session-usable", async () => {
-          await samplePage.getByRole("button", { name: "Sign in and decrypt" }).click();
-          await expect(samplePage.getByText("Signed in and decrypted")).toBeVisible({
-            timeout: 30_000
-          });
-          await openDocument(samplePage, definition.title, dataset.marker);
-        });
+        const freshSessionUsable = await userTiming(
+          samplePage,
+          "fresh-session-usable",
+          async () => {
+            await samplePage.getByRole("button", { name: "Sign in and decrypt" }).click();
+            await expect(samplePage.getByText("Signed in and decrypted")).toBeVisible({
+              timeout: 30_000
+            });
+            await openDocument(samplePage, definition.title, dataset.marker);
+          }
+        );
 
         const localFeedback = await userTiming(ownerPage, "local-feedback", async () => {
           await appendText(ownerPage, `l${String(run % 10)}`);
         });
 
         const currentTitle = `${definition.title} ${String(run).padStart(2, "0")}`;
-        const authenticatedAction = await userTiming(ownerPage, "authenticated-action", async () => {
-          const saved = ownerPage.waitForResponse((response) =>
-            response.request().method() === "PUT" &&
-            response.url().includes(`/api/notes/${dataset.noteId}`) && response.ok()
-          );
-          await ownerPage.getByRole("textbox", { name: "Title" }).fill(currentTitle);
-          await saved;
-          await expect(ownerPage.locator(".collaboration-status"))
-            .toContainText("Saved and synchronized");
-        });
+        const authenticatedAction = await userTiming(
+          ownerPage,
+          "authenticated-action",
+          async () => {
+            const saved = ownerPage.waitForResponse(
+              (response) =>
+                response.request().method() === "PUT" &&
+                response.url().includes(`/api/notes/${dataset.noteId}`) &&
+                response.ok()
+            );
+            await ownerPage.getByRole("textbox", { name: "Title" }).fill(currentTitle);
+            await saved;
+            await expect(ownerPage.locator(".collaboration-status")).toContainText(
+              "Saved and synchronized"
+            );
+          }
+        );
 
         const marker = `remote-${String(run).padStart(2, "0")}`;
-        const collaboratorVisible = await userTiming(editorPage, "collaborator-visible", async () => {
-          await appendText(editorPage, marker);
-          await expect(ownerPage.locator(".block-editor .bn-editor")).toContainText(marker, {
-            timeout: 30_000
-          });
-        });
+        const collaboratorVisible = await userTiming(
+          editorPage,
+          "collaborator-visible",
+          async () => {
+            await appendText(editorPage, marker);
+            await expect(ownerPage.locator(".block-editor .bn-editor")).toContainText(
+              marker,
+              {
+                timeout: 30_000
+              }
+            );
+          }
+        );
 
         if (retained) {
           raw["note-usable"].push(noteUsable);
@@ -172,9 +201,12 @@ test.describe("controlled production performance", () => {
       for (const name of Object.keys(budgets) as MetricName[]) {
         expect(raw[name]).toHaveLength(samples);
         if (enforceBudgets) {
-          expect(nearestRankP95(raw[name]), `${name} p95`).toBeLessThanOrEqual(budgets[name]);
-          expect(raw[name].filter((value) => value <= budgets[name]).length / samples)
-            .toBeGreaterThanOrEqual(0.95);
+          expect(nearestRankP95(raw[name]), `${name} p95`).toBeLessThanOrEqual(
+            budgets[name]
+          );
+          expect(
+            raw[name].filter((value) => value <= budgets[name]).length / samples
+          ).toBeGreaterThanOrEqual(0.95);
         }
       }
 
@@ -183,9 +215,10 @@ test.describe("controlled production performance", () => {
         buildMode: "production",
         collaborators: definition.collaborators,
         cpu: `${String(os.cpus().length)}x ${os.cpus()[0]?.model ?? "unknown"}`,
-        database: process.env.DATABASE_PROVIDER === "postgres"
-          ? "isolated PostgreSQL and database ciphertext storage"
-          : "isolated local SQLite and filesystem ciphertext storage",
+        database:
+          process.env.DATABASE_PROVIDER === "postgres"
+            ? "isolated PostgreSQL and database ciphertext storage"
+            : "isolated local SQLite and filesystem ciphertext storage",
         dataset: `${String(profile.documentBytes)} focused-document bytes/${String(definition.compactionEdits)} edits`,
         node: process.version,
         os: `${os.platform()} ${os.release()} ${os.arch()}`,
@@ -200,7 +233,11 @@ test.describe("controlled production performance", () => {
       const artifact = {
         budgetsEnforced: enforceBudgets,
         commit: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
-        dataset: { ...profile, collaborators: definition.collaborators, compactionEdits: definition.compactionEdits },
+        dataset: {
+          ...profile,
+          collaborators: definition.collaborators,
+          compactionEdits: definition.compactionEdits
+        },
         environment,
         finishedAt: new Date().toISOString(),
         metrics,
@@ -225,31 +262,47 @@ test.describe("controlled production performance", () => {
   });
 });
 
-async function userTiming(page: Page, name: MetricName, action: () => Promise<void>): Promise<number> {
+async function userTiming(
+  page: Page,
+  name: MetricName,
+  action: () => Promise<void>
+): Promise<number> {
   const id = `${name}-${crypto.randomUUID()}`;
   await page.evaluate((mark) => performance.mark(`${mark}:start`), id);
   await action();
-  return page.evaluate(async ({ mark, metric }) => {
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => {
-      resolve();
-    })));
-    performance.mark(`${mark}:end`);
-    const measure = performance.measure(metric, `${mark}:start`, `${mark}:end`);
-    performance.clearMarks(`${mark}:start`);
-    performance.clearMarks(`${mark}:end`);
-    performance.clearMeasures(metric);
-    return measure.duration;
-  }, { mark: id, metric: name });
+  return page.evaluate(
+    async ({ mark, metric }) => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            resolve();
+          })
+        )
+      );
+      performance.mark(`${mark}:end`);
+      const measure = performance.measure(metric, `${mark}:start`, `${mark}:end`);
+      performance.clearMarks(`${mark}:start`);
+      performance.clearMarks(`${mark}:end`);
+      performance.clearMeasures(metric);
+      return measure.duration;
+    },
+    { mark: id, metric: name }
+  );
 }
 
 async function createOrdinaryNote(page: Page, title: string): Promise<void> {
   await page.getByRole("button", { name: "New note" }).click();
-  await page.getByRole("dialog", { name: "New note" })
-    .getByRole("button", { name: "Create" }).click();
+  await page
+    .getByRole("dialog", { name: "New note" })
+    .getByRole("button", { name: "Create" })
+    .click();
   const titleInput = page.getByRole("textbox", { name: "Title" });
   await expect(titleInput).toHaveValue("Untitled note");
-  const saved = page.waitForResponse((response) =>
-    response.request().method() === "PUT" && response.url().includes("/api/notes/") && response.ok()
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().includes("/api/notes/") &&
+      response.ok()
   );
   await titleInput.fill(title);
   await saved;
@@ -268,9 +321,12 @@ async function crossCompactionBoundary(page: Page, edits: number): Promise<void>
   await editor.focus();
   await editor.press("ControlOrMeta+End");
   for (let edit = 0; edit < edits; edit += 1) await editor.pressSequentially("c");
-  await expect(page.locator(".collaboration-status")).toContainText("Saved and synchronized", {
-    timeout: 120_000
-  });
+  await expect(page.locator(".collaboration-status")).toContainText(
+    "Saved and synchronized",
+    {
+      timeout: 120_000
+    }
+  );
 }
 
 async function appendText(page: Page, text: string): Promise<void> {
@@ -288,7 +344,8 @@ function nearestRankP95(samples: number[]): number {
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = value === undefined ? fallback : Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error("Expected a positive integer");
+  if (!Number.isSafeInteger(parsed) || parsed <= 0)
+    throw new Error("Expected a positive integer");
   return parsed;
 }
 
@@ -302,14 +359,21 @@ function trackTransferBytes(page: Page, record: (bytes: number) => void): void {
   });
 }
 
-async function compareBaseline(artifact: { environment: object; metrics: { name: MetricName; p95Ms: number }[] }) {
+async function compareBaseline(artifact: {
+  environment: object;
+  metrics: { name: MetricName; p95Ms: number }[];
+}) {
   const baselinePath = process.env.FORTNOTE_PERFORMANCE_BASELINE;
   if (!baselinePath) return;
-  const baseline = JSON.parse(await readFile(path.resolve(baselinePath), "utf8")) as typeof artifact;
+  const baseline = JSON.parse(
+    await readFile(path.resolve(baselinePath), "utf8")
+  ) as typeof artifact;
   expect(baseline.environment).toEqual(artifact.environment);
   for (const metric of artifact.metrics) {
     const previous = baseline.metrics.find((candidate) => candidate.name === metric.name);
     if (!previous) throw new Error(`Baseline is missing ${metric.name}`);
-    expect(metric.p95Ms, `${metric.name} regression`).toBeLessThanOrEqual(previous.p95Ms * 1.1);
+    expect(metric.p95Ms, `${metric.name} regression`).toBeLessThanOrEqual(
+      previous.p95Ms * 1.1
+    );
   }
 }

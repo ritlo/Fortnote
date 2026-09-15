@@ -9,7 +9,12 @@ interface SharingDialogProps {
   returnFocusRef?: RefObject<HTMLButtonElement | null>;
 }
 
-export function SharingDialog({ selectedNote, open, onClose, returnFocusRef }: SharingDialogProps) {
+export function SharingDialog({
+  selectedNote,
+  open,
+  onClose,
+  returnFocusRef
+}: SharingDialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -32,17 +37,15 @@ export function SharingDialog({ selectedNote, open, onClose, returnFocusRef }: S
       returnFocusRef?.current?.focus();
     };
     el.addEventListener("close", handler);
-    return () => { el.removeEventListener("close", handler); };
+    return () => {
+      el.removeEventListener("close", handler);
+    };
   }, [onClose, returnFocusRef]);
 
   if (!open && !ref.current?.open) return null;
 
   return (
-    <dialog
-      ref={ref}
-      aria-label="Share note"
-      className="sharing-dialog"
-    >
+    <dialog ref={ref} aria-label="Share note" className="sharing-dialog">
       <div className="sharing-dialog-content">
         <div className="sharing-dialog-header">
           <h3>Share note</h3>
@@ -50,7 +53,9 @@ export function SharingDialog({ selectedNote, open, onClose, returnFocusRef }: S
             ref={closeButtonRef}
             type="button"
             className="text-button"
-            onClick={() => { ref.current?.close(); }}
+            onClick={() => {
+              ref.current?.close();
+            }}
             aria-label="Close sharing dialog"
           >
             Close

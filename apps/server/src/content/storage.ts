@@ -57,11 +57,7 @@ export class LocalContentStorage implements ContentStorage {
   read(storageKey: string): Promise<Readable> {
     const identity = localStorageIdentity(storageKey);
     return Promise.resolve(
-      readEncryptedContentChunk(
-        this.config,
-        identity.uploadId,
-        identity.chunkIndex
-      )
+      readEncryptedContentChunk(this.config, identity.uploadId, identity.chunkIndex)
     );
   }
 
@@ -155,7 +151,11 @@ export async function writeEncryptedContentChunk(
 ): Promise<StoredContentChunk> {
   const finalPath = contentChunkPath(config, input.uploadId, input.chunkIndex);
   validateExpectedChunk(input);
-  const existing = await inspectExisting(finalPath, input.expectedLength, input.expectedHash);
+  const existing = await inspectExisting(
+    finalPath,
+    input.expectedLength,
+    input.expectedHash
+  );
   if (existing) {
     return existing;
   }
@@ -186,7 +186,11 @@ export async function writeEncryptedContentChunk(
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
         throw error;
       }
-      const raced = await inspectExisting(finalPath, input.expectedLength, input.expectedHash);
+      const raced = await inspectExisting(
+        finalPath,
+        input.expectedLength,
+        input.expectedHash
+      );
       if (!raced) {
         throw new ContentChunkConflictError();
       }
@@ -320,9 +324,7 @@ async function* hashChunks(
   hash: ReturnType<typeof createHash>
 ): AsyncGenerator<Buffer> {
   for await (const value of source) {
-    const chunk = Buffer.isBuffer(value)
-      ? value
-      : Buffer.from(value as Uint8Array);
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value as Uint8Array);
     hash.update(chunk);
     yield chunk;
   }

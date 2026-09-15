@@ -107,10 +107,7 @@ export async function hkdfSha256(
     throw new Error("Invalid HKDF output length");
   }
 
-  const prk = hmacSha256(
-    inputKeyMaterial,
-    salt.length === 0 ? new Uint8Array(32) : salt
-  );
+  const prk = hmacSha256(inputKeyMaterial, salt.length === 0 ? new Uint8Array(32) : salt);
   const output = new Uint8Array(length);
   let previous = new Uint8Array() as Uint8Array;
   let offset = 0;
@@ -313,9 +310,7 @@ export function noteAssociatedData(input: {
   noteId: string;
   formatVersion: number;
 }): Uint8Array {
-  return utf8(
-    `note:${String(input.formatVersion)}:${input.userId}:${input.noteId}`
-  );
+  return utf8(`note:${String(input.formatVersion)}:${input.userId}:${input.noteId}`);
 }
 
 export function attachmentAssociatedData(input: {
@@ -373,8 +368,7 @@ export function contentChunkAssociatedData(input: {
     input.totalCipherBytes <= 0 ||
     !Number.isSafeInteger(checkpointSequenceCutoff) ||
     checkpointSequenceCutoff < 0 ||
-    (input.kind === "checkpoint") !==
-      (input.checkpointSequenceCutoff !== undefined)
+    (input.kind === "checkpoint") !== (input.checkpointSequenceCutoff !== undefined)
   ) {
     throw new Error("Invalid content chunk context");
   }

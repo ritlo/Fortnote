@@ -9,9 +9,7 @@ import type {
 
 type PostgresDatabase = NodePgDatabase<typeof schema>;
 
-export class PostgresAttachmentMetadataRepository
-  implements AttachmentMetadataRepository
-{
+export class PostgresAttachmentMetadataRepository implements AttachmentMetadataRepository {
   constructor(private readonly orm: PostgresDatabase) {}
 
   async find(attachmentId: string): Promise<AttachmentRecord | undefined> {

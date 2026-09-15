@@ -69,19 +69,23 @@ describe("PostgreSQL attachment storage", () => {
       256 * 1024,
       88 * 1024
     ]);
-    expect(Buffer.concat(insertedChunks.map(({ ciphertext }) => ciphertext))).toEqual(bytes);
+    expect(Buffer.concat(insertedChunks.map(({ ciphertext }) => ciphertext))).toEqual(
+      bytes
+    );
     expect(deletes()).toBe(0);
   });
 
   it("deletes the partial object when the stream fails validation", async () => {
     const { storage, deletes } = recordingDatabase();
 
-    await expect(storage.write({
-      storageId: crypto.randomUUID(),
-      source: Readable.from([Buffer.alloc(16)]),
-      expectedBytes: 8,
-      maxBytes: 8
-    })).rejects.toThrow("Encrypted attachment exceeds maximum bytes");
+    await expect(
+      storage.write({
+        storageId: crypto.randomUUID(),
+        source: Readable.from([Buffer.alloc(16)]),
+        expectedBytes: 8,
+        maxBytes: 8
+      })
+    ).rejects.toThrow("Encrypted attachment exceeds maximum bytes");
     expect(deletes()).toBe(1);
   });
 });

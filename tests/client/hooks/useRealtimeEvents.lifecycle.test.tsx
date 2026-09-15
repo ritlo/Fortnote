@@ -117,10 +117,11 @@ describe("useRealtimeEvents lifecycle", () => {
     await flushEffects();
     const connection = mocks.connections[0]!;
 
-    act(() => connection.options.onCrdtError?.(
-      "Offline edits could not be saved durably.",
-      { name: "IndexedDbCapacityError" }
-    ));
+    act(() =>
+      connection.options.onCrdtError?.("Offline edits could not be saved durably.", {
+        name: "IndexedDbCapacityError"
+      })
+    );
 
     expect(useAppStore.getState()).toMatchObject({
       localStorageCapacity: { status: "full" },
@@ -152,10 +153,12 @@ describe("useRealtimeEvents lifecycle", () => {
     await flushEffects();
     const connection = mocks.connections[0]!;
 
-    act(() => connection.options.onCrdtError?.(
-      "Encrypted update rejected",
-      { code: "stale_epoch", status: 409 }
-    ));
+    act(() =>
+      connection.options.onCrdtError?.("Encrypted update rejected", {
+        code: "stale_epoch",
+        status: 409
+      })
+    );
 
     expect(useAppStore.getState()).toMatchObject({
       noteProtectionFailures: { "note-1": "stale" },
@@ -177,10 +180,11 @@ describe("useRealtimeEvents lifecycle", () => {
       });
     });
     await flushEffects();
-    act(() => staleConnection.options.onCrdtError?.(
-      "Offline edits could not be saved durably.",
-      { name: "IndexedDbCapacityError" }
-    ));
+    act(() =>
+      staleConnection.options.onCrdtError?.("Offline edits could not be saved durably.", {
+        name: "IndexedDbCapacityError"
+      })
+    );
 
     expect(useAppStore.getState()).toMatchObject({
       localStorageCapacity: { status: "unknown" },
@@ -259,28 +263,32 @@ describe("useRealtimeEvents lifecycle", () => {
   it("removes a note immediately when the server closes access", async () => {
     mocks.getCursor.mockResolvedValue({ cursor: 3 });
     useAppStore.setState({
-      notes: [{
-        id: "note-1",
-        folderId: null,
-        title: "Shared",
-        noteKeyBase64: "key",
-        contentLength: 0,
-        version: 1,
-        keyEpoch: 1,
-        isDeleted: false,
-        updatedAt: "2026-07-18T00:00:00.000Z",
-        ownerUserId: "owner",
-        cryptoOwnerId: "owner",
-        role: "editor"
-      }],
+      notes: [
+        {
+          id: "note-1",
+          folderId: null,
+          title: "Shared",
+          noteKeyBase64: "key",
+          contentLength: 0,
+          version: 1,
+          keyEpoch: 1,
+          isDeleted: false,
+          updatedAt: "2026-07-18T00:00:00.000Z",
+          ownerUserId: "owner",
+          cryptoOwnerId: "owner",
+          role: "editor"
+        }
+      ],
       selectedNoteId: "note-1"
     });
     render(<RealtimeHarness />);
     await flushEffects();
 
-    act(() => mocks.connections[0]!.options.onClose?.(
-      new CloseEvent("close", { code: 1008, reason: "Note access revoked:note-1" })
-    ));
+    act(() =>
+      mocks.connections[0]!.options.onClose?.(
+        new CloseEvent("close", { code: 1008, reason: "Note access revoked:note-1" })
+      )
+    );
 
     expect(useAppStore.getState()).toMatchObject({
       notes: [],
@@ -296,20 +304,22 @@ describe("useRealtimeEvents lifecycle", () => {
       useAppStore.getState().setSelectedNoteId(null);
     });
     useAppStore.setState({
-      notes: [{
-        id: "note-1",
-        folderId: null,
-        title: "Shared",
-        noteKeyBase64: "key",
-        contentLength: 0,
-        version: 1,
-        keyEpoch: 1,
-        isDeleted: false,
-        updatedAt: "2026-07-18T00:00:00.000Z",
-        ownerUserId: "owner",
-        cryptoOwnerId: "owner",
-        role: "viewer"
-      }],
+      notes: [
+        {
+          id: "note-1",
+          folderId: null,
+          title: "Shared",
+          noteKeyBase64: "key",
+          contentLength: 0,
+          version: 1,
+          keyEpoch: 1,
+          isDeleted: false,
+          updatedAt: "2026-07-18T00:00:00.000Z",
+          ownerUserId: "owner",
+          cryptoOwnerId: "owner",
+          role: "viewer"
+        }
+      ],
       selectedNoteId: "note-1"
     });
     render(<RealtimeHarness />);
@@ -427,20 +437,22 @@ describe("useRealtimeEvents lifecycle", () => {
       useAppStore.setState({
         rootKey: replacementRootKey,
         user: { id: "user-2", username: "bob" },
-        notes: [{
-          id: "fresh-note",
-          folderId: "folder-1",
-          title: "Fresh",
-          noteKeyBase64: "fresh-key",
-          contentLength: 0,
-          version: 1,
-          keyEpoch: 1,
-          isDeleted: false,
-          updatedAt: "2026-07-18T00:00:00.000Z",
-          ownerUserId: "user-2",
-          cryptoOwnerId: "user-2",
-          role: "owner"
-        }]
+        notes: [
+          {
+            id: "fresh-note",
+            folderId: "folder-1",
+            title: "Fresh",
+            noteKeyBase64: "fresh-key",
+            contentLength: 0,
+            version: 1,
+            keyEpoch: 1,
+            isDeleted: false,
+            updatedAt: "2026-07-18T00:00:00.000Z",
+            ownerUserId: "user-2",
+            cryptoOwnerId: "user-2",
+            role: "owner"
+          }
+        ]
       });
       delayedFolders.resolve(undefined);
     });

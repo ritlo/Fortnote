@@ -14,10 +14,7 @@ type LegacyCrdtAadInput = {
   keyEpoch: number;
   updateId: string;
   formatVersion: number;
-} & (
-  | { type: "crdt-update" }
-  | { type: "crdt-checkpoint"; compactedUpdateIds: string[] }
-);
+} & ({ type: "crdt-update" } | { type: "crdt-checkpoint"; compactedUpdateIds: string[] });
 
 interface BinaryCrdtAadInput {
   type: "crdt-update" | "crdt-checkpoint";
@@ -33,23 +30,23 @@ interface BinaryCrdtAadInput {
 
 type CrdtAadInput = LegacyCrdtAadInput | BinaryCrdtAadInput;
 
-export async function encryptCrdtMessage(input: CrdtAadInput & {
-  noteKeyBase64: string;
-  update: Uint8Array;
-}) {
+export async function encryptCrdtMessage(
+  input: CrdtAadInput & {
+    noteKeyBase64: string;
+    update: Uint8Array;
+  }
+) {
   const encrypt = input.formatVersion === 2 ? encryptBytesV2 : encryptBytes;
-  return encrypt(
-    input.update,
-    fromBase64(input.noteKeyBase64),
-    crdtMessageAad(input)
-  );
+  return encrypt(input.update, fromBase64(input.noteKeyBase64), crdtMessageAad(input));
 }
 
-export async function decryptCrdtMessage(input: CrdtAadInput & {
-  noteKeyBase64: string;
-  cipher: string;
-  nonce: string;
-}): Promise<Uint8Array> {
+export async function decryptCrdtMessage(
+  input: CrdtAadInput & {
+    noteKeyBase64: string;
+    cipher: string;
+    nonce: string;
+  }
+): Promise<Uint8Array> {
   return decryptBytes(
     {
       cipher: input.cipher,

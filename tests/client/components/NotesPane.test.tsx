@@ -33,7 +33,9 @@ describe("NotesPane role labels", () => {
 
 describe("NotesPane drag and move", () => {
   it("uses human note metadata instead of encrypted byte counts", () => {
-    renderNotesPane({ filteredNotes: [note({ contentLength: 1024, folderId: "folder-1" })] });
+    renderNotesPane({
+      filteredNotes: [note({ contentLength: 1024, folderId: "folder-1" })]
+    });
     expect(screen.getByText(/Updated/)).toBeTruthy();
     expect(screen.getByText(/Updated .*Work/)).toBeTruthy();
     expect(screen.queryByText(/encrypted bytes/)).toBeNull();
@@ -54,7 +56,11 @@ describe("NotesPane drag and move", () => {
       value: { setData: vi.fn(), effectAllowed: "" }
     });
     card.dispatchEvent(event);
-    const dt = (event as unknown as { dataTransfer: { setData: ReturnType<typeof vi.fn>; effectAllowed: string } }).dataTransfer;
+    const dt = (
+      event as unknown as {
+        dataTransfer: { setData: ReturnType<typeof vi.fn>; effectAllowed: string };
+      }
+    ).dataTransfer;
     expect(dt.setData).toHaveBeenCalledWith("text/note-id", "note-drag");
     expect(dt.effectAllowed).toBe("move");
   });
@@ -114,10 +120,15 @@ describe("NotesPane drag and move", () => {
 
   it("opens the attachment dialog for the note from its actions menu", () => {
     const openAttachments = vi.fn();
-    renderNotesPane({ filteredNotes: [note({ id: "note-attachments" })], openAttachments });
+    renderNotesPane({
+      filteredNotes: [note({ id: "note-attachments" })],
+      openAttachments
+    });
     fireEvent.contextMenu(screen.getByText("Title"));
     fireEvent.click(screen.getByRole("menuitem", { name: "Attachments" }));
-    expect(openAttachments).toHaveBeenCalledWith(expect.objectContaining({ id: "note-attachments" }));
+    expect(openAttachments).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "note-attachments" })
+    );
   });
 
   it("opens the note actions menu with the context-menu key", () => {
@@ -149,7 +160,9 @@ describe("NotesPane new note dialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "New note" }));
     fireEvent.change(screen.getByLabelText("Folder"), { target: { value: "folder-1" } });
     fireEvent.click(screen.getByText("Create"));
-    await vi.waitFor(() => { expect(addNote).toHaveBeenCalledWith("folder-1"); });
+    await vi.waitFor(() => {
+      expect(addNote).toHaveBeenCalledWith("folder-1");
+    });
   });
 
   it("keeps the new-note dialog open when creation reports a failure", async () => {
@@ -202,9 +215,19 @@ function renderNotesPane(overrides: NotesPaneTestOverrides = {}) {
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
-    contentLength: 1024, cryptoOwnerId: "alice", folderId: null, id: "note-1",
-    isDeleted: false, keyEpoch: 1, noteKeyBase64: "key", ownerUserId: "alice",
-    role: "owner", rootSectionId: "root", title: "Title",
-    updatedAt: "2026-07-15T00:00:00.000Z", version: 1, ...overrides
+    contentLength: 1024,
+    cryptoOwnerId: "alice",
+    folderId: null,
+    id: "note-1",
+    isDeleted: false,
+    keyEpoch: 1,
+    noteKeyBase64: "key",
+    ownerUserId: "alice",
+    role: "owner",
+    rootSectionId: "root",
+    title: "Title",
+    updatedAt: "2026-07-15T00:00:00.000Z",
+    version: 1,
+    ...overrides
   };
 }
