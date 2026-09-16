@@ -1,5 +1,5 @@
 {
-  "id": "d9153715-9782-4daa-b281-308097387d87",
+  "id": "ae0d37e7-5c57-4fb5-8b2d-40034a79393e",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -58,6 +58,10 @@
         "attachment_object_chunks_nonnegative_index": {
           "name": "attachment_object_chunks_nonnegative_index",
           "value": "\"attachment_object_chunks\".\"chunk_index\" >= 0"
+        },
+        "attachment_object_chunks_nonempty_ciphertext": {
+          "name": "attachment_object_chunks_nonempty_ciphertext",
+          "value": "octet_length(\"attachment_object_chunks\".\"ciphertext\") > 0"
         }
       },
       "isRLSEnabled": false
@@ -91,7 +95,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "attachment_objects_nonnegative_length": {
+          "name": "attachment_objects_nonnegative_length",
+          "value": "\"attachment_objects\".\"byte_length\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.attachments": {
@@ -116,35 +125,24 @@
           "primaryKey": false,
           "notNull": true
         },
-        "filename": {
-          "name": "filename",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "mime_type": {
-          "name": "mime_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "metadata_cipher": {
           "name": "metadata_cipher",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "metadata_nonce": {
           "name": "metadata_nonce",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "metadata_format_version": {
           "name": "metadata_format_version",
           "type": "integer",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true,
+          "default": 2
         },
         "key_epoch": {
           "name": "key_epoch",
@@ -788,8 +786,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "legacy_root_version": {
-          "name": "legacy_root_version",
+        "root_version": {
+          "name": "root_version",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
@@ -1020,29 +1018,24 @@
           "primaryKey": false,
           "notNull": true
         },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "name_cipher": {
           "name": "name_cipher",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "name_nonce": {
           "name": "name_nonce",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "name_format_version": {
           "name": "name_format_version",
           "type": "integer",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true,
+          "default": 2
         },
         "parent_folder_id": {
           "name": "parent_folder_id",
@@ -1681,123 +1674,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.note_updates": {
-      "name": "note_updates",
-      "schema": "",
-      "columns": {
-        "update_id": {
-          "name": "update_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "note_id": {
-          "name": "note_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "crypto_owner_id": {
-          "name": "crypto_owner_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "key_epoch": {
-          "name": "key_epoch",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "format_version": {
-          "name": "format_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "cipher": {
-          "name": "cipher",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "nonce": {
-          "name": "nonce",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'update'"
-        },
-        "compacted_update_ids": {
-          "name": "compacted_update_ids",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "idx_note_updates_note_epoch_created": {
-          "name": "idx_note_updates_note_epoch_created",
-          "columns": [
-            {
-              "expression": "note_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "key_epoch",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "note_updates_note_id_notes_id_fk": {
-          "name": "note_updates_note_id_notes_id_fk",
-          "tableFrom": "note_updates",
-          "tableTo": "notes",
-          "columnsFrom": [
-            "note_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.notes": {
       "name": "notes",
       "schema": "",
@@ -1826,29 +1702,24 @@
           "primaryKey": false,
           "notNull": false
         },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "title_cipher": {
           "name": "title_cipher",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "title_nonce": {
           "name": "title_nonce",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "title_format_version": {
           "name": "title_format_version",
           "type": "integer",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true,
+          "default": 2
         },
         "encrypted_note_key": {
           "name": "encrypted_note_key",
@@ -1867,31 +1738,7 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "default": 1
-        },
-        "content_cipher": {
-          "name": "content_cipher",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "content_nonce": {
-          "name": "content_nonce",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "content_length": {
-          "name": "content_length",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "content_updated_at": {
-          "name": "content_updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
+          "default": 2
         },
         "version": {
           "name": "version",
@@ -1911,7 +1758,7 @@
           "name": "root_section_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "key_epoch": {
           "name": "key_epoch",
@@ -2609,13 +2456,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "handle_state": {
-          "name": "handle_state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'legacy'"
-        },
         "auth_verifier_hash": {
           "name": "auth_verifier_hash",
           "type": "text",
@@ -2661,7 +2501,24 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "idx_users_canonical_handle": {
+          "name": "idx_users_canonical_handle",
+          "columns": [
+            {
+              "expression": "canonical_handle",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"users\".\"canonical_handle\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {

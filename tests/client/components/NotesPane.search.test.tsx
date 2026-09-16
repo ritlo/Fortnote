@@ -73,7 +73,6 @@ describe("NotesPane protected search", () => {
 
 function note(): DecryptedNote {
   return {
-    contentLength: 1024,
     cryptoOwnerId: "alice",
     folderId: null,
     id: "note-a",

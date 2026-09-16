@@ -123,7 +123,6 @@ afterEach(() => {
 
 export function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
-    contentLength: 0,
     cryptoOwnerId: "alice",
     folderId: null,
     id: "note_1",

@@ -26,7 +26,6 @@ const noteSelection = {
   noteKeyFormatVersion: sql<
     number | null
   >`CASE WHEN ${schema.noteMemberships.role} = 'owner' THEN ${schema.notes.noteKeyFormatVersion} ELSE NULL END`,
-  contentLength: schema.notes.contentLength,
   version: schema.notes.version,
   rootVersion: schema.notes.rootVersion,
   rootSectionId: schema.notes.rootSectionId,

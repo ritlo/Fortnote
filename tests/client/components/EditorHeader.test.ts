@@ -245,7 +245,6 @@ function presence(overrides: Partial<PresenceUser>): PresenceUser {
 
 function note(): DecryptedNote {
   return {
-    contentLength: 0,
     cryptoOwnerId: "current-user",
     folderId: null,
     id: "note-1",

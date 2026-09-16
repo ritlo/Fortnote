@@ -407,7 +407,7 @@ export class PostgresNoteSectionRepository implements NoteSectionRepository {
           sectionId: storedSectionId,
           keyEpoch: input.expectedKeyEpoch,
           manifestId: input.manifestId,
-          legacyRootVersion: input.expectedRootVersion
+          rootVersion: input.expectedRootVersion
         });
         const initialized = await transaction
           .update(schema.noteSections)

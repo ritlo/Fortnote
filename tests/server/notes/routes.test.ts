@@ -60,8 +60,6 @@ describe("notes and folders routes", () => {
       rootVersion: 1,
       keyEpoch: 1
     });
-    expect(listed.body.notes[0]).not.toHaveProperty("contentCipher");
-    expect(listed.body.notes[0]).not.toHaveProperty("contentNonce");
     const folders = await agent.get("/api/folders").expect(200);
     expect(folders.body.folders[0]).toMatchObject({
       id: folderId,
@@ -70,16 +68,15 @@ describe("notes and folders routes", () => {
     });
 
     const stored = await testSql(app.locals.db).get(
-      `SELECT title, title_cipher AS titleCipher,
-	                content_cipher AS contentCipher, content_length AS contentLength
-	         FROM notes WHERE id = ?`,
+      `SELECT title_cipher AS titleCipher, title_format_version AS titleFormatVersion,
+              root_section_id AS rootSectionId
+         FROM notes WHERE id = ?`,
       payload.id
     );
     expect(stored).toEqual({
-      title: "",
       titleCipher: payload.titleCipher,
-      contentCipher: "",
-      contentLength: 0
+      titleFormatVersion: 2,
+      rootSectionId: payload.rootSectionId
     });
   });
 

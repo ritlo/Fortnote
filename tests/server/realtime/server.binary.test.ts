@@ -617,7 +617,7 @@ describe("realtime binary sections", () => {
         `
           SELECT
             i.manifest_id AS manifestId,
-            i.legacy_root_version AS legacyRootVersion,
+            i.root_version AS rootVersion,
             s.initialization_manifest_id AS sectionManifestId
           FROM crdt_initializations i
           INNER JOIN note_sections s ON s.id = i.section_id
@@ -628,7 +628,7 @@ describe("realtime binary sections", () => {
       )
     ).toEqual({
       manifestId: winnerManifestId,
-      legacyRootVersion: 1,
+      rootVersion: 1,
       sectionManifestId: winnerManifestId
     });
   });

@@ -73,18 +73,13 @@ export class PostgresNoteMutationRepository implements NoteMutationRepository {
         userId: input.actorUserId,
         cryptoOwnerId: input.actorUserId,
         folderId: input.folderId,
-        title: "",
         titleCipher: input.titleCipher,
         titleNonce: input.titleNonce,
         titleFormatVersion: input.titleFormatVersion,
         encryptedNoteKey: input.encryptedNoteKey,
         noteKeyNonce: input.noteKeyNonce,
         noteKeyFormatVersion: input.noteKeyFormatVersion,
-        contentCipher: "",
-        contentNonce: "",
-        contentLength: 0,
-        rootSectionId: input.rootSectionId,
-        contentUpdatedAt: sql`CURRENT_TIMESTAMP`
+        rootSectionId: input.rootSectionId
       });
       await transaction.insert(schema.noteSections).values({
         id: input.rootSectionId,
@@ -152,9 +147,7 @@ export class PostgresNoteMutationRepository implements NoteMutationRepository {
       }
       if (
         input.encryptedNoteKey !== undefined &&
-        (current.role !== "owner" ||
-          (current.rootSectionId !== null &&
-            current.rootSectionId !== input.rootSectionId))
+        (current.role !== "owner" || current.rootSectionId !== input.rootSectionId)
       ) {
         return { kind: "conflict" } as const;
       }

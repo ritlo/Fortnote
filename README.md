@@ -122,6 +122,15 @@ pnpm --filter @fortnote/server db:generate
 pnpm --filter @fortnote/server db:migrate
 ```
 
+`drizzle/` holds a single baseline migration. While the project has no deployed data, a schema
+change may also be folded into that baseline by regenerating it, which requires empty databases:
+
+```sh
+docker compose down -v
+pnpm --filter @fortnote/server db:migrate
+pnpm test:db:stop && pnpm test:db:start
+```
+
 The runtime contract tests in `tests/server/db/postgres-runtime.test.ts` apply migrations to the
 test database, clear it, and verify auth, notes, encrypted attachments, restart and failed-migration
 recovery, and concurrent attachment, content, note, membership, rotation, and event mutations.

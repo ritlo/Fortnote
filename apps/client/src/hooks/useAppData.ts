@@ -143,7 +143,7 @@ export async function loadFolders() {
   const payload = await listFolders();
   const folders = await Promise.all(
     payload.folders.map(async (folder): Promise<FolderSummary> => {
-      if (folder.nameFormatVersion !== 2 || !folder.nameCipher || !folder.nameNonce) {
+      if (folder.nameFormatVersion !== 2) {
         throw new Error("Protected folder name is incomplete");
       }
       return {

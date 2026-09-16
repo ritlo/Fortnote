@@ -403,11 +403,7 @@ export async function decryptAttachmentSummary(
   selectedNote: DecryptedNote,
   attachment: EncryptedAttachmentSummary
 ): Promise<AttachmentSummary> {
-  if (
-    attachment.metadataFormatVersion !== 2 ||
-    !attachment.metadataCipher ||
-    !attachment.metadataNonce
-  ) {
+  if (attachment.metadataFormatVersion !== 2) {
     throw new Error("Attachment metadata is incomplete");
   }
   if (attachment.keyEpoch !== selectedNote.keyEpoch) {

@@ -164,8 +164,6 @@ export class PostgresAttachmentMutationRepository implements AttachmentMutationR
 
       await transaction.insert(schema.attachments).values({
         ...input.attachment,
-        filename: "",
-        mimeType: "",
         noteId: current.noteId,
         userId: input.ownerUserId,
         keyEpoch: input.expectedKeyEpoch,

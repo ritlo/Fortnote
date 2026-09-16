@@ -314,7 +314,7 @@ describe("app data collaboration bootstrap", () => {
     ]);
   });
 
-  it("rejects folder names without a protected envelope", async () => {
+  it("rejects folder names that are not protected v2 envelopes", async () => {
     useAppStore.setState({
       rootKey: crypto.getRandomValues(new Uint8Array(32)),
       user: currentUser()
@@ -323,9 +323,9 @@ describe("app data collaboration bootstrap", () => {
       folders: [
         {
           id: crypto.randomUUID(),
-          nameCipher: null,
-          nameNonce: null,
-          nameFormatVersion: null,
+          nameCipher: "cipher",
+          nameNonce: "nonce",
+          nameFormatVersion: 1,
           parentFolderId: null,
           createdAt: "2026-07-02T00:00:00.000Z",
           updatedAt: "2026-07-02T00:00:00.000Z"
@@ -345,7 +345,6 @@ function mockedListNotesWith(...notes: NoteSummary[]) {
   vi.mocked(listNotes).mockResolvedValue({ notes });
   mockedDecryptNoteSummary.mockImplementation((_user, _rootKey, note) =>
     Promise.resolve({
-      contentLength: note.contentLength,
       cryptoOwnerId: note.cryptoOwnerId,
       folderId: note.folderId,
       id: note.id,
@@ -353,7 +352,7 @@ function mockedListNotesWith(...notes: NoteSummary[]) {
       noteKeyBase64: "note-key",
       ownerUserId: note.ownerUserId,
       role: note.role,
-      title: note.titleCipher ?? "Note",
+      title: note.titleCipher,
       updatedAt: note.updatedAt,
       version: note.version,
       keyEpoch: note.keyEpoch
@@ -363,7 +362,6 @@ function mockedListNotesWith(...notes: NoteSummary[]) {
 
 function noteSummary(overrides: Partial<NoteSummary>): NoteSummary {
   return {
-    contentLength: 1,
     cryptoOwnerId: "alice-id",
     encryptedNoteKey: "encrypted-key",
     folderId: null,
@@ -372,7 +370,10 @@ function noteSummary(overrides: Partial<NoteSummary>): NoteSummary {
     noteKeyNonce: "note-key-nonce",
     ownerUserId: "alice-id",
     role: "owner",
+    rootSectionId: "section-id",
     titleCipher: "Note",
+    titleNonce: "title-nonce",
+    titleFormatVersion: 2,
     updatedAt: "2026-07-02T00:00:00.000Z",
     version: 1,
     keyEpoch: 1,
@@ -384,7 +385,6 @@ function decryptedNote(
   overrides: Partial<Awaited<ReturnType<typeof decryptNoteSummary>>>
 ): Awaited<ReturnType<typeof decryptNoteSummary>> {
   return {
-    contentLength: 1,
     cryptoOwnerId: "alice-id",
     folderId: null,
     id: "note-id",

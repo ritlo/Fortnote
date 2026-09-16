@@ -86,7 +86,6 @@ describe("SharingPanel destructive actions", () => {
 
 function note(): DecryptedNote {
   return {
-    contentLength: 0,
     cryptoOwnerId: "alice",
     folderId: null,
     id: "note-1",

@@ -37,7 +37,6 @@ export function createDocument(title: string, body: string): Y.Doc {
 
 export function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
-    contentLength: 4,
     cryptoOwnerId: "owner_1",
     folderId: null,
     id: "00000000-0000-4000-8000-000000000001",

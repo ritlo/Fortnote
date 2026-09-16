@@ -1,7 +1,7 @@
 export interface FolderNameValues {
-  nameCipher: string | null;
-  nameNonce: string | null;
-  nameFormatVersion: number | null;
+  nameCipher: string;
+  nameNonce: string;
+  nameFormatVersion: number;
 }
 
 export interface FolderRecord extends FolderNameValues {

@@ -113,10 +113,7 @@ export class PostgresAccountRepository implements AccountRepository {
 
   register(input: RegisterAccountInput): Promise<void> {
     return this.orm.transaction(async (transaction) => {
-      await transaction.insert(schema.users).values({
-        ...input.user,
-        handleState: "active"
-      });
+      await transaction.insert(schema.users).values(input.user);
       await transaction.insert(schema.userKeyMaterial).values({
         userId: input.user.id,
         ...input.keyMaterial

@@ -102,7 +102,6 @@ export class PostgresFolderRepository implements FolderRepository {
       await transaction.insert(schema.folders).values({
         id: input.folderId,
         userId: input.userId,
-        name: "",
         nameCipher: input.nameCipher,
         nameNonce: input.nameNonce,
         nameFormatVersion: input.nameFormatVersion,

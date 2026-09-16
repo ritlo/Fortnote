@@ -173,7 +173,6 @@ export async function decryptNoteSummary(
     folderId: note.folderId,
     title: await decryptNoteTitle(note, noteKey),
     noteKeyBase64: noteKeyToBase64(noteKey),
-    contentLength: note.contentLength,
     version: note.version,
     keyEpoch: note.keyEpoch,
     isDeleted: Boolean(note.isDeleted),
@@ -182,7 +181,7 @@ export async function decryptNoteSummary(
     cryptoOwnerId: note.cryptoOwnerId,
     role: note.role,
     rootVersion: note.rootVersion ?? note.version,
-    rootSectionId: note.rootSectionId ?? null
+    rootSectionId: note.rootSectionId
   };
 }
 
@@ -238,7 +237,7 @@ async function decryptSharedNoteKey(
 }
 
 function decryptNoteTitle(note: NoteSummary, noteKey: Uint8Array): Promise<string> {
-  if (note.titleFormatVersion !== 2 || !note.titleCipher || !note.titleNonce) {
+  if (note.titleFormatVersion !== 2) {
     throw new Error("Protected note title is incomplete");
   }
   return decryptNoteTitleV2({

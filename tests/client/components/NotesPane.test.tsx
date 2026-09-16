@@ -34,7 +34,7 @@ describe("NotesPane role labels", () => {
 describe("NotesPane drag and move", () => {
   it("uses human note metadata instead of encrypted byte counts", () => {
     renderNotesPane({
-      filteredNotes: [note({ contentLength: 1024, folderId: "folder-1" })]
+      filteredNotes: [note({ folderId: "folder-1" })]
     });
     expect(screen.getByText(/Updated/)).toBeTruthy();
     expect(screen.getByText(/Updated .*Work/)).toBeTruthy();
@@ -215,7 +215,6 @@ function renderNotesPane(overrides: NotesPaneTestOverrides = {}) {
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
-    contentLength: 1024,
     cryptoOwnerId: "alice",
     folderId: null,
     id: "note-1",

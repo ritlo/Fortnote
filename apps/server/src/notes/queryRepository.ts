@@ -1,16 +1,15 @@
 export interface NoteQueryRecord {
   id: string;
   folderId: string | null;
-  titleCipher: string | null;
-  titleNonce: string | null;
-  titleFormatVersion: number | null;
+  titleCipher: string;
+  titleNonce: string;
+  titleFormatVersion: number;
   encryptedNoteKey: string | null;
   noteKeyNonce: string | null;
   noteKeyFormatVersion: number | null;
-  contentLength: number;
   version: number;
   rootVersion: number;
-  rootSectionId: string | null;
+  rootSectionId: string;
   keyEpoch: number;
   isDeleted: boolean;
   deletedAt: string | null;

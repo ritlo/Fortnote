@@ -475,6 +475,5 @@ describe("note save conflict handling", () => {
       updatedAt: "2026-07-02T10:00:00.000Z",
       version: 4
     });
-    expect(merged.contentLength).toBe(latestNote.contentLength);
   });
 });

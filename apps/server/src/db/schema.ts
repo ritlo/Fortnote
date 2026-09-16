@@ -30,7 +30,6 @@ export const users = pgTable(
     username: text("username").notNull().unique(),
     displayName: text("display_name"),
     canonicalHandle: text("canonical_handle"),
-    handleState: text("handle_state").notNull().default("legacy"),
     authVerifierHash: text("auth_verifier_hash").notNull(),
     authKdfSalt: text("auth_kdf_salt").notNull(),
     authKdfOpsLimit: integer("auth_kdf_ops_limit").notNull(),
@@ -93,10 +92,9 @@ export const folders = pgTable("folders", {
   userId: text("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  nameCipher: text("name_cipher"),
-  nameNonce: text("name_nonce"),
-  nameFormatVersion: integer("name_format_version"),
+  nameCipher: text("name_cipher").notNull(),
+  nameNonce: text("name_nonce").notNull(),
+  nameFormatVersion: integer("name_format_version").notNull().default(2),
   parentFolderId: text("parent_folder_id").references((): AnyPgColumn => folders.id, {
     onDelete: "set null"
   }),
@@ -113,20 +111,15 @@ export const notes = pgTable("notes", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   folderId: text("folder_id").references(() => folders.id, { onDelete: "set null" }),
-  title: text("title").notNull(),
-  titleCipher: text("title_cipher"),
-  titleNonce: text("title_nonce"),
-  titleFormatVersion: integer("title_format_version"),
+  titleCipher: text("title_cipher").notNull(),
+  titleNonce: text("title_nonce").notNull(),
+  titleFormatVersion: integer("title_format_version").notNull().default(2),
   encryptedNoteKey: text("encrypted_note_key").notNull(),
   noteKeyNonce: text("note_key_nonce").notNull(),
-  noteKeyFormatVersion: integer("note_key_format_version").notNull().default(1),
-  contentCipher: text("content_cipher").notNull(),
-  contentNonce: text("content_nonce").notNull(),
-  contentLength: byteCount("content_length").notNull(),
-  contentUpdatedAt: dateTime("content_updated_at").notNull(),
+  noteKeyFormatVersion: integer("note_key_format_version").notNull().default(2),
   version: integer("version").notNull().default(1),
   rootVersion: integer("root_version").notNull().default(1),
-  rootSectionId: text("root_section_id"),
+  rootSectionId: text("root_section_id").notNull(),
   keyEpoch: integer("key_epoch").notNull().default(1),
   rotationFenced: boolean("rotation_fenced").notNull().default(false),
   isDeleted: boolean("is_deleted").notNull().default(false),
@@ -134,31 +127,6 @@ export const notes = pgTable("notes", {
   createdAt: dateTime("created_at").notNull().defaultNow(),
   updatedAt: dateTime("updated_at").notNull().defaultNow()
 });
-
-export const noteUpdates = pgTable(
-  "note_updates",
-  {
-    updateId: text("update_id").primaryKey(),
-    noteId: text("note_id")
-      .notNull()
-      .references(() => notes.id, { onDelete: "cascade" }),
-    cryptoOwnerId: text("crypto_owner_id").notNull(),
-    keyEpoch: integer("key_epoch").notNull(),
-    formatVersion: integer("format_version").notNull(),
-    cipher: text("cipher").notNull(),
-    nonce: text("nonce").notNull(),
-    kind: text("kind").notNull().default("update"),
-    compactedUpdateIds: text("compacted_update_ids"),
-    createdAt: dateTime("created_at").notNull().defaultNow()
-  },
-  (table) => [
-    index("idx_note_updates_note_epoch_created").on(
-      table.noteId,
-      table.keyEpoch,
-      table.createdAt
-    )
-  ]
-);
 
 export const noteSections = pgTable(
   "note_sections",
@@ -335,7 +303,7 @@ export const crdtInitializations = pgTable(
     manifestId: text("manifest_id")
       .notNull()
       .references(() => contentManifests.id, { onDelete: "restrict" }),
-    legacyRootVersion: integer("legacy_root_version").notNull(),
+    rootVersion: integer("root_version").notNull(),
     createdAt: dateTime("created_at").notNull().defaultNow()
   },
   (table) => [primaryKey({ columns: [table.noteId, table.sectionId, table.keyEpoch] })]
@@ -418,11 +386,9 @@ export const attachments = pgTable("attachments", {
   userId: text("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  filename: text("filename").notNull(),
-  mimeType: text("mime_type").notNull(),
-  metadataCipher: text("metadata_cipher"),
-  metadataNonce: text("metadata_nonce"),
-  metadataFormatVersion: integer("metadata_format_version"),
+  metadataCipher: text("metadata_cipher").notNull(),
+  metadataNonce: text("metadata_nonce").notNull(),
+  metadataFormatVersion: integer("metadata_format_version").notNull().default(2),
   keyEpoch: integer("key_epoch").notNull().default(1),
   size: byteCount("size").notNull(),
   encryptedAttachmentKey: text("encrypted_attachment_key").notNull(),

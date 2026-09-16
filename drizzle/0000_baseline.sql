@@ -3,24 +3,24 @@ CREATE TABLE "attachment_object_chunks" (
 	"chunk_index" integer NOT NULL,
 	"ciphertext" "bytea" NOT NULL,
 	CONSTRAINT "attachment_object_chunks_storage_key_chunk_index_pk" PRIMARY KEY("storage_key","chunk_index"),
-	CONSTRAINT "attachment_object_chunks_nonnegative_index" CHECK ("attachment_object_chunks"."chunk_index" >= 0)
+	CONSTRAINT "attachment_object_chunks_nonnegative_index" CHECK ("attachment_object_chunks"."chunk_index" >= 0),
+	CONSTRAINT "attachment_object_chunks_nonempty_ciphertext" CHECK (octet_length("attachment_object_chunks"."ciphertext") > 0)
 );
 --> statement-breakpoint
 CREATE TABLE "attachment_objects" (
 	"storage_key" uuid PRIMARY KEY NOT NULL,
 	"byte_length" bigint NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "attachment_objects_nonnegative_length" CHECK ("attachment_objects"."byte_length" >= 0)
 );
 --> statement-breakpoint
 CREATE TABLE "attachments" (
 	"id" text PRIMARY KEY NOT NULL,
 	"note_id" text NOT NULL,
 	"user_id" text NOT NULL,
-	"filename" text NOT NULL,
-	"mime_type" text NOT NULL,
-	"metadata_cipher" text,
-	"metadata_nonce" text,
-	"metadata_format_version" integer,
+	"metadata_cipher" text NOT NULL,
+	"metadata_nonce" text NOT NULL,
+	"metadata_format_version" integer DEFAULT 2 NOT NULL,
 	"key_epoch" integer DEFAULT 1 NOT NULL,
 	"size" bigint NOT NULL,
 	"encrypted_attachment_key" text NOT NULL,
@@ -92,7 +92,7 @@ CREATE TABLE "crdt_initializations" (
 	"section_id" text NOT NULL,
 	"key_epoch" integer NOT NULL,
 	"manifest_id" text NOT NULL,
-	"legacy_root_version" integer NOT NULL,
+	"root_version" integer NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "crdt_initializations_note_id_section_id_key_epoch_pk" PRIMARY KEY("note_id","section_id","key_epoch")
 );
@@ -114,10 +114,9 @@ CREATE TABLE "event_cursors" (
 CREATE TABLE "folders" (
 	"id" text PRIMARY KEY NOT NULL,
 	"user_id" text NOT NULL,
-	"name" text NOT NULL,
-	"name_cipher" text,
-	"name_nonce" text,
-	"name_format_version" integer,
+	"name_cipher" text NOT NULL,
+	"name_nonce" text NOT NULL,
+	"name_format_version" integer DEFAULT 2 NOT NULL,
 	"parent_folder_id" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
@@ -183,38 +182,20 @@ CREATE TABLE "note_sections" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "note_updates" (
-	"update_id" text PRIMARY KEY NOT NULL,
-	"note_id" text NOT NULL,
-	"crypto_owner_id" text NOT NULL,
-	"key_epoch" integer NOT NULL,
-	"format_version" integer NOT NULL,
-	"cipher" text NOT NULL,
-	"nonce" text NOT NULL,
-	"kind" text DEFAULT 'update' NOT NULL,
-	"compacted_update_ids" text,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE "notes" (
 	"id" text PRIMARY KEY NOT NULL,
 	"user_id" text NOT NULL,
 	"crypto_owner_id" text NOT NULL,
 	"folder_id" text,
-	"title" text NOT NULL,
-	"title_cipher" text,
-	"title_nonce" text,
-	"title_format_version" integer,
+	"title_cipher" text NOT NULL,
+	"title_nonce" text NOT NULL,
+	"title_format_version" integer DEFAULT 2 NOT NULL,
 	"encrypted_note_key" text NOT NULL,
 	"note_key_nonce" text NOT NULL,
-	"note_key_format_version" integer DEFAULT 1 NOT NULL,
-	"content_cipher" text NOT NULL,
-	"content_nonce" text NOT NULL,
-	"content_length" bigint NOT NULL,
-	"content_updated_at" timestamp with time zone NOT NULL,
+	"note_key_format_version" integer DEFAULT 2 NOT NULL,
 	"version" integer DEFAULT 1 NOT NULL,
 	"root_version" integer DEFAULT 1 NOT NULL,
-	"root_section_id" text,
+	"root_section_id" text NOT NULL,
 	"key_epoch" integer DEFAULT 1 NOT NULL,
 	"rotation_fenced" boolean DEFAULT false NOT NULL,
 	"is_deleted" boolean DEFAULT false NOT NULL,
@@ -301,7 +282,6 @@ CREATE TABLE "users" (
 	"username" text NOT NULL,
 	"display_name" text,
 	"canonical_handle" text,
-	"handle_state" text DEFAULT 'legacy' NOT NULL,
 	"auth_verifier_hash" text NOT NULL,
 	"auth_kdf_salt" text NOT NULL,
 	"auth_kdf_ops_limit" integer NOT NULL,
@@ -337,7 +317,6 @@ ALTER TABLE "note_key_shares" ADD CONSTRAINT "note_key_shares_sender_user_id_use
 ALTER TABLE "note_memberships" ADD CONSTRAINT "note_memberships_note_id_notes_id_fk" FOREIGN KEY ("note_id") REFERENCES "public"."notes"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "note_memberships" ADD CONSTRAINT "note_memberships_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "note_sections" ADD CONSTRAINT "note_sections_note_id_notes_id_fk" FOREIGN KEY ("note_id") REFERENCES "public"."notes"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "note_updates" ADD CONSTRAINT "note_updates_note_id_notes_id_fk" FOREIGN KEY ("note_id") REFERENCES "public"."notes"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "notes" ADD CONSTRAINT "notes_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "notes" ADD CONSTRAINT "notes_crypto_owner_id_users_id_fk" FOREIGN KEY ("crypto_owner_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "notes" ADD CONSTRAINT "notes_folder_id_folders_id_fk" FOREIGN KEY ("folder_id") REFERENCES "public"."folders"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
@@ -361,6 +340,85 @@ CREATE INDEX "idx_note_key_shares_recipient" ON "note_key_shares" USING btree ("
 CREATE INDEX "idx_note_memberships_user_status" ON "note_memberships" USING btree ("user_id","status");--> statement-breakpoint
 CREATE INDEX "idx_note_memberships_note" ON "note_memberships" USING btree ("note_id");--> statement-breakpoint
 CREATE INDEX "idx_note_sections_note_deleted" ON "note_sections" USING btree ("note_id","is_deleted");--> statement-breakpoint
-CREATE INDEX "idx_note_updates_note_epoch_created" ON "note_updates" USING btree ("note_id","key_epoch","created_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "idx_section_updates_sequence" ON "section_updates" USING btree ("note_id","section_id","key_epoch","server_sequence");--> statement-breakpoint
-CREATE INDEX "idx_section_updates_page" ON "section_updates" USING btree ("note_id","section_id","key_epoch","server_sequence");
+CREATE INDEX "idx_section_updates_page" ON "section_updates" USING btree ("note_id","section_id","key_epoch","server_sequence");--> statement-breakpoint
+CREATE UNIQUE INDEX "idx_users_canonical_handle" ON "users" USING btree ("canonical_handle") WHERE "users"."canonical_handle" IS NOT NULL;--> statement-breakpoint
+CREATE FUNCTION fortnote_validate_folder_parent_owner()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.parent_folder_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1
+    FROM folders AS parent
+    WHERE parent.id = NEW.parent_folder_id
+      AND parent.user_id = NEW.user_id
+  ) THEN
+    RAISE EXCEPTION 'invalid folder parent' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER folders_parent_owner_insert
+BEFORE INSERT ON folders
+FOR EACH ROW
+EXECUTE FUNCTION fortnote_validate_folder_parent_owner();
+--> statement-breakpoint
+CREATE TRIGGER folders_parent_owner_update
+BEFORE UPDATE OF parent_folder_id, user_id ON folders
+FOR EACH ROW
+EXECUTE FUNCTION fortnote_validate_folder_parent_owner();
+--> statement-breakpoint
+CREATE FUNCTION fortnote_validate_note_folder_owner()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.folder_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1
+    FROM folders
+    WHERE folders.id = NEW.folder_id
+      AND folders.user_id = NEW.user_id
+  ) THEN
+    RAISE EXCEPTION 'invalid note folder' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER notes_folder_owner_insert
+BEFORE INSERT ON notes
+FOR EACH ROW
+EXECUTE FUNCTION fortnote_validate_note_folder_owner();
+--> statement-breakpoint
+CREATE TRIGGER notes_folder_owner_update
+BEFORE UPDATE OF folder_id, user_id ON notes
+FOR EACH ROW
+EXECUTE FUNCTION fortnote_validate_note_folder_owner();
+--> statement-breakpoint
+CREATE FUNCTION fortnote_reparent_folder_children()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  UPDATE notes
+  SET folder_id = OLD.parent_folder_id,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE folder_id = OLD.id
+    AND user_id = OLD.user_id;
+
+  UPDATE folders
+  SET parent_folder_id = OLD.parent_folder_id,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE parent_folder_id = OLD.id
+    AND user_id = OLD.user_id;
+
+  RETURN OLD;
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER folders_reparent_after_delete
+BEFORE DELETE ON folders
+FOR EACH ROW
+EXECUTE FUNCTION fortnote_reparent_folder_children();

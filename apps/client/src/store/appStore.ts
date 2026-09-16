@@ -22,7 +22,6 @@ export interface DecryptedNote {
   folderId: string | null;
   title: string;
   noteKeyBase64: string;
-  contentLength: number;
   version: number;
   keyEpoch: number;
   isDeleted: boolean;

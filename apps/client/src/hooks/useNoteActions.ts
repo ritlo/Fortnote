@@ -81,7 +81,6 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
         folderId: targetFolderId,
         title: "Untitled note",
         noteKeyBase64: noteKeyToBase64(draft.noteKey),
-        contentLength: 0,
         version: created.version,
         keyEpoch: 1,
         isDeleted: false,

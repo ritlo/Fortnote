@@ -100,7 +100,6 @@ describe("revoke error state", () => {
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
-    contentLength: 0,
     cryptoOwnerId: "alice",
     folderId: null,
     id: "note-1",

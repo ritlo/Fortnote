@@ -439,7 +439,6 @@ describe("ordered content regression fixtures", () => {
     });
     const { result } = renderHook(() => useNoteViewModel());
     expect(result.current.selectedNote?.id).toBe("note_1");
-    expect(result.current.selectedNote?.contentLength).toBe(0);
   });
 
   it("preserves empty note state without section exposure", () => {
@@ -456,7 +455,6 @@ describe("ordered content regression fixtures", () => {
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {
   return {
-    contentLength: 0,
     cryptoOwnerId: "alice",
     folderId: null,
     id: "note_1",

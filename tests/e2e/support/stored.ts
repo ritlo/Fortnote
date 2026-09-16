@@ -78,7 +78,6 @@ export function readStoredNote(ownerUsername: string, config = inspectionConfig(
       select(`SELECT * FROM ${table} WHERE note_id = ?`, [noteId]);
     const metadata = {
       attachments: await forNote("attachments"),
-      note_updates: await forNote("note_updates"),
       note_key_shares: await forNote("note_key_shares"),
       section_updates: await forNote("section_updates"),
       content_manifests: await forNote("content_manifests"),

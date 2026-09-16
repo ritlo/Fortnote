@@ -169,16 +169,15 @@ export interface KeyMaterialResponse {
 export interface NoteSummary {
   id: string;
   folderId: string | null;
-  titleCipher?: string | null;
-  titleNonce?: string | null;
-  titleFormatVersion?: number | null;
+  titleCipher: string;
+  titleNonce: string;
+  titleFormatVersion: number;
   encryptedNoteKey: string | null;
   noteKeyNonce: string | null;
   noteKeyFormatVersion?: number | null;
-  contentLength: number;
   version: number;
   rootVersion?: number;
-  rootSectionId?: string | null;
+  rootSectionId: string;
   keyEpoch: number;
   isDeleted: boolean | 0 | 1;
   deletedAt?: string | null;
@@ -198,9 +197,9 @@ export interface FolderSummary {
 
 export interface EncryptedFolderSummary {
   id: string;
-  nameCipher: string | null;
-  nameNonce: string | null;
-  nameFormatVersion: number | null;
+  nameCipher: string;
+  nameNonce: string;
+  nameFormatVersion: number;
   parentFolderId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -283,9 +282,9 @@ export interface AttachmentSummary {
 
 export interface EncryptedAttachmentSummary {
   id: string;
-  metadataCipher: string | null;
-  metadataNonce: string | null;
-  metadataFormatVersion: number | null;
+  metadataCipher: string;
+  metadataNonce: string;
+  metadataFormatVersion: number;
   keyEpoch: number;
   size: number;
   encryptedAttachmentKey: string;

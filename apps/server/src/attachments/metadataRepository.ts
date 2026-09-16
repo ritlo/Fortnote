@@ -2,9 +2,9 @@ export interface AttachmentRecord {
   id: string;
   noteId: string;
   userId: string;
-  metadataCipher: string | null;
-  metadataNonce: string | null;
-  metadataFormatVersion: number | null;
+  metadataCipher: string;
+  metadataNonce: string;
+  metadataFormatVersion: number;
   keyEpoch: number;
   size: number;
   encryptedAttachmentKey: string;
