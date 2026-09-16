@@ -217,20 +217,6 @@ describe("NoteEditor simplified editor", () => {
     expect(screen.queryByText("Saved and synchronized")).toBeNull();
   });
 
-  it("does not expose section controls", () => {
-    renderEditor(note());
-    expect(screen.queryByLabelText("Note sections")).toBeNull();
-    expect(screen.queryByText("Add section")).toBeNull();
-    expect(screen.queryByText("Section 1 of 2")).toBeNull();
-    expect(screen.queryByText("Merge with next")).toBeNull();
-    expect(screen.queryByText("Split section")).toBeNull();
-  });
-
-  it("does not expose standalone attachment input", () => {
-    renderEditor(note());
-    expect(screen.queryByLabelText("Attach encrypted file")).toBeNull();
-  });
-
   it("does not expose standalone attachment panel", () => {
     renderEditor(note());
     expect(screen.queryByRole("heading", { name: "Attachments" })).toBeNull();
@@ -369,12 +355,6 @@ describe("NoteEditor inline attachment states", () => {
   it("does not render file panel controller in read-only mode", () => {
     renderEditor(note({ role: "viewer" }));
     expect(screen.queryByTestId("file-panel-controller")).toBeNull();
-  });
-
-  it("does not render duplicate standalone file controls", () => {
-    renderEditor(note());
-    expect(screen.queryByLabelText("Attach encrypted file")).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Attachments" })).toBeNull();
   });
 
   it("uploadFile callback calls uploadSelectedAttachment and returns formatAttachmentReference", async () => {

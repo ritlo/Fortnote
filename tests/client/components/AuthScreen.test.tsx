@@ -150,15 +150,6 @@ describe("AuthScreen account identity", () => {
     expect((input as HTMLInputElement).value).toBe("alice.example");
   });
 
-  it("shows the legacy handle repair prompt as an alert", () => {
-    useAppStore.setState({
-      status: "Handle repair required. Sign in again, then choose a unique handle"
-    });
-    render(<AuthScreen />);
-
-    expect(screen.getByRole("alert").textContent).toContain("Handle repair required");
-  });
-
   it("offers an explicit recovery-key copy action", () => {
     useAppStore.setState({ recoverySecret: "recovery-secret-value" });
     render(<AuthScreen />);

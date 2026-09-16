@@ -250,7 +250,7 @@ describe("realtime binary sections", () => {
     });
   });
 
-  it("replays paged binary history after a file-backed database restart", async () => {
+  it("replays paged binary history after a server restart", async () => {
     await cryptoReady();
     const database = await createTestDatabaseConfig();
     onTestFinished(() => database.dispose());

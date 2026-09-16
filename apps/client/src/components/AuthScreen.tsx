@@ -315,12 +315,7 @@ export function AuthScreen() {
             {error}
           </p>
         ) : null}
-        <p
-          className="muted"
-          role={status.toLowerCase().includes("handle repair") ? "alert" : undefined}
-        >
-          {status}
-        </p>
+        <p className="muted">{status}</p>
         {recoverySecret ? (
           <div className="recovery-code">
             <output aria-label="Recovery key">{recoverySecret}</output>

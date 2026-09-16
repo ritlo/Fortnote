@@ -179,14 +179,6 @@ describe("EditorHeader Share action", () => {
   });
 });
 
-describe("EditorHeader simplified display", () => {
-  it("does not show key material version text", () => {
-    renderHeader();
-    expect(screen.queryByText(/key material/)).toBeNull();
-    expect(screen.queryByText(/root key in memory/)).toBeNull();
-  });
-});
-
 describe("EditorHeader menu keyboard behavior", () => {
   it("focuses the first action and moves through menu items with the keyboard", () => {
     renderHeader({

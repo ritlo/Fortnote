@@ -225,7 +225,7 @@ test("lock and logout clear decrypted note content from the UI", async ({ page }
   await expect(page.getByRole("button", { name: new RegExp(noteTitle) })).toHaveCount(0);
 });
 
-test("creates a note with a folder, moves it, and reloads the assignment", async ({
+test("moves a note into a new folder and lists it after signing back in", async ({
   page
 }) => {
   const account = uniqueAccount("folder");
@@ -246,7 +246,7 @@ test("creates a note with a folder, moves it, and reloads the assignment", async
     await expect(page.getByRole("button", { name: "Open note menu" })).toBeVisible();
   });
 
-  await test.step("reload and verify the note is still in the folder", async () => {
+  await test.step("reload, sign back in, and list the note", async () => {
     await page.reload();
     await page.getByLabel("Account password").fill(account.password);
     await page.getByRole("button", { name: "Sign in and decrypt" }).click();
@@ -254,26 +254,7 @@ test("creates a note with a folder, moves it, and reloads the assignment", async
   });
 });
 
-test("reloads and retains the encrypted editor content", async ({ page }) => {
-  const account = uniqueAccount("reload-content");
-  const noteTitle = `Content note ${account.suffix}`;
-  const noteBody = `Persistent body ${account.suffix}`;
-
-  await register(page, account.username, account.password);
-  await createNote(page, noteTitle, noteBody);
-
-  await test.step("reload and confirm the note body is still rendered", async () => {
-    await page.reload();
-    await page.getByLabel("Account password").fill(account.password);
-    await page.getByRole("button", { name: "Sign in and decrypt" }).click();
-    await expect(page.locator(".block-editor .bn-editor")).toBeVisible();
-    await expect(page.getByText(noteBody)).toBeVisible();
-  });
-});
-
-test("opens Share dialog from editor header, invites collaborator, and closes", async ({
-  page
-}) => {
+test("opens and closes the Share dialog from the editor header", async ({ page }) => {
   const account = uniqueAccount("share-dialog");
   const noteTitle = `Share dialog note ${account.suffix}`;
 

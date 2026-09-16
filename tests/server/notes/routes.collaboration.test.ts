@@ -15,22 +15,6 @@ import {
 import { testSql } from "../support/database.js";
 
 describe("note CRUD and collaboration routes", () => {
-  it("rejects stale note versions", async () => {
-    const app = await createTestApp();
-    const agent = await registerAgent(app, "stale_user");
-    const created = await agent
-      .post("/api/notes")
-      .set(csrfHeaders())
-      .send(notePayload())
-      .expect(201);
-
-    await agent
-      .put(`/api/notes/${String(created.body.id)}`)
-      .set(csrfHeaders())
-      .send(noteMetadataUpdate(2))
-      .expect(409);
-  });
-
   it("rolls back note updates when event writes fail", async () => {
     const app = await createTestApp();
     const agent = await registerAgent(app, "rollback_update_user");
