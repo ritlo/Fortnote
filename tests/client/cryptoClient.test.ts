@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createAccountRecoveryCrypto,
+  createEncryptedAttachmentDraft,
   createEpochLinkV2,
   createUserSharingKey,
   createLoginAuthVerifier,
@@ -9,6 +10,7 @@ import {
   createRegistrationCrypto,
   createRecoveryRotationCrypto,
   decryptCrdtMessage,
+  decryptAttachmentBytes,
   decryptAttachmentMetadataV2,
   decryptContentChunkV2,
   decryptContentChunksV2,
@@ -33,6 +35,7 @@ import {
   openVault,
   traverseEpochLinksBackward
 } from "@client/cryptoClient";
+import { toBase64 } from "@fortnote/shared";
 
 describe("client crypto workflows", () => {
   it("registers, opens the vault, and unwraps a note key", async () => {
@@ -40,14 +43,20 @@ describe("client crypto workflows", () => {
       "alice",
       "correct horse battery staple"
     );
-    const opened = await openVault(
-      "correct horse battery staple",
-      registration.payload.authKdf,
-      registration.payload.vaultKdf,
-      registration.payload.encryptedRootKey,
-      registration.payload.rootKeyNonce
-    );
+    const opened = await openVault({
+      password: "correct horse battery staple",
+      authKdf: registration.payload.authKdf,
+      vaultKdf: registration.payload.vaultKdf,
+      encryptedRootKey: registration.payload.encryptedRootKey,
+      rootKeyNonce: registration.payload.rootKeyNonce,
+      rootKeyFormatVersion: registration.payload.rootKeyFormatVersion,
+      context: { userId: registration.payload.id, keyMaterialVersion: 1 }
+    });
 
+    expect(registration.payload).toMatchObject({
+      rootKeyFormatVersion: 2,
+      recoveryRootKeyFormatVersion: 2
+    });
     expect(opened.authVerifier).toBe(registration.payload.authVerifier);
 
     const draft = await createProtectedNoteDraftV2({
@@ -70,22 +79,49 @@ describe("client crypto workflows", () => {
     ).resolves.toEqual(draft.noteKey);
   });
 
-  it("recovers the root key and creates a new password envelope", async () => {
+  it("binds registration root envelopes to the account and first key version", async () => {
+    const registration = await createRegistrationCrypto("alice", "password");
+    const open = (context: { userId: string; keyMaterialVersion: number }) =>
+      openVault({
+        password: "password",
+        authKdf: registration.payload.authKdf,
+        vaultKdf: registration.payload.vaultKdf,
+        encryptedRootKey: registration.payload.encryptedRootKey,
+        rootKeyNonce: registration.payload.rootKeyNonce,
+        rootKeyFormatVersion: 2,
+        context
+      });
+
+    await expect(
+      open({ userId: crypto.randomUUID(), keyMaterialVersion: 1 })
+    ).rejects.toThrow();
+    await expect(
+      open({ userId: registration.payload.id, keyMaterialVersion: 2 })
+    ).rejects.toThrow();
+  });
+
+  it("recovers the root key from the registration recovery envelope", async () => {
     const registration = await createRegistrationCrypto("alice", "old password");
     const recovery = await createAccountRecoveryCrypto({
+      userId: registration.payload.id,
       recoverySecret: registration.recoverySecret,
       recoveryKdf: registration.payload.recoveryKdf,
       recoveryEncryptedRootKey: registration.payload.recoveryEncryptedRootKey,
       recoveryRootKeyNonce: registration.payload.recoveryRootKeyNonce,
+      recoveryRootKeyFormatVersion: registration.payload.recoveryRootKeyFormatVersion,
+      recoveryRootKeyContextVersion: 1,
+      nextKeyMaterialVersion: 2,
       newPassword: "new password"
     });
-    const opened = await openVault(
-      "new password",
-      recovery.passwordChange.authKdf,
-      recovery.passwordChange.vaultKdf,
-      recovery.passwordChange.encryptedRootKey,
-      recovery.passwordChange.rootKeyNonce
-    );
+    const opened = await openVault({
+      password: "new password",
+      authKdf: recovery.passwordChange.authKdf,
+      vaultKdf: recovery.passwordChange.vaultKdf,
+      encryptedRootKey: recovery.passwordChange.encryptedRootKey,
+      rootKeyNonce: recovery.passwordChange.rootKeyNonce,
+      rootKeyFormatVersion: recovery.passwordChange.rootKeyFormatVersion,
+      context: { userId: registration.payload.id, keyMaterialVersion: 2 }
+    });
     const newVerifier = await createLoginAuthVerifier(
       "new password",
       recovery.passwordChange.authKdf
@@ -95,21 +131,22 @@ describe("client crypto workflows", () => {
     expect(newVerifier).toBe(recovery.passwordChange.authVerifier);
   });
 
-  it("opens context-bound password and recovery root envelopes", async () => {
+  it("opens context-bound password and rotated recovery root envelopes", async () => {
     const registration = await createRegistrationCrypto("alice", "old password");
     const passwordChange = await createPasswordChangeCrypto(
       registration.rootKey,
       "new password",
       { userId: "user-a", keyMaterialVersion: 2 }
     );
-    const opened = await openVault(
-      "new password",
-      passwordChange.authKdf,
-      passwordChange.vaultKdf,
-      passwordChange.encryptedRootKey,
-      passwordChange.rootKeyNonce,
-      { userId: "user-a", formatVersion: 2, contextVersion: 2 }
-    );
+    const opened = await openVault({
+      password: "new password",
+      authKdf: passwordChange.authKdf,
+      vaultKdf: passwordChange.vaultKdf,
+      encryptedRootKey: passwordChange.encryptedRootKey,
+      rootKeyNonce: passwordChange.rootKeyNonce,
+      rootKeyFormatVersion: passwordChange.rootKeyFormatVersion,
+      context: { userId: "user-a", keyMaterialVersion: 2 }
+    });
     expect(opened.rootKey).toEqual(registration.rootKey);
 
     const recoveryRotation = await createRecoveryRotationCrypto(registration.rootKey, {
@@ -251,6 +288,41 @@ describe("client crypto workflows", () => {
       filename: "private-plan.pdf",
       mimeType: "application/pdf"
     });
+  });
+
+  it("binds attachment keys and file bytes to their exact context", async () => {
+    const noteKey = key(7);
+    const draft = await createEncryptedAttachmentDraft({
+      cryptoOwnerId: "owner-a",
+      noteId: "note-a",
+      keyEpoch: 2,
+      noteKeyBase64: noteKeyToBase64(noteKey),
+      file: new File(["file bytes"], "plan.txt", { type: "text/plain" })
+    });
+    const context = {
+      cryptoOwnerId: "owner-a",
+      noteId: "note-a",
+      attachmentId: draft.id,
+      keyEpoch: 2,
+      noteKeyBase64: noteKeyToBase64(noteKey),
+      encryptedAttachmentKey: draft.encryptedAttachmentKey,
+      attachmentKeyNonce: draft.attachmentKeyNonce,
+      encryptedBytes: toBase64(draft.encryptedBytes),
+      fileNonce: draft.fileNonce
+    };
+
+    expect(draft.size).toBe(draft.encryptedBytes.byteLength);
+    await expect(decryptAttachmentBytes(context)).resolves.toEqual(
+      new TextEncoder().encode("file bytes")
+    );
+    for (const changed of [
+      { cryptoOwnerId: "owner-b" },
+      { noteId: "note-b" },
+      { attachmentId: crypto.randomUUID() },
+      { keyEpoch: 3 }
+    ]) {
+      await expect(decryptAttachmentBytes({ ...context, ...changed })).rejects.toThrow();
+    }
   });
 
   it("binds root, private-sharing, and note-key envelopes and rejects v1 downgrade", async () => {

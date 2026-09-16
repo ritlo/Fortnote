@@ -1,8 +1,13 @@
-import { decryptBytes, encryptBytes, fromBase64, sha256, utf8 } from "@fortnote/shared";
+import {
+  associatedDataV2,
+  decryptBytes,
+  encryptBytesV2,
+  fromBase64,
+  sha256
+} from "@fortnote/shared";
 import type { PublicSharingKey } from "../api";
 
-const TRUST_STORAGE_PREFIX = "fortnote:sharing-key-trust:v1";
-const TRUST_AAD_PREFIX = "fortnote:sharing-key-trust:v1";
+const TRUST_STORAGE_PREFIX = "fortnote:sharing-key-trust:v2";
 
 export interface TrustedSharingKeyRecord {
   userId: string;
@@ -13,7 +18,7 @@ export interface TrustedSharingKeyRecord {
 }
 
 interface SharingKeyTrustState {
-  formatVersion: 1;
+  formatVersion: 2;
   records: TrustedSharingKeyRecord[];
 }
 
@@ -103,7 +108,7 @@ export async function trustSharingKey(input: {
   );
   await saveSharingKeyTrustState(
     {
-      formatVersion: 1,
+      formatVersion: 2,
       records: [...records, record]
     },
     input
@@ -126,7 +131,7 @@ async function loadSharingKeyTrustState(input: {
   const storage = getStorage(input.storage);
   const raw = storage.getItem(storageKey(input.ownerUserId));
   if (!raw) {
-    return { formatVersion: 1, records: [] };
+    return { formatVersion: 2, records: [] };
   }
 
   try {
@@ -138,7 +143,7 @@ async function loadSharingKeyTrustState(input: {
     const plaintext = await decryptBytes(
       envelope,
       input.rootKey,
-      utf8(`${TRUST_AAD_PREFIX}:${input.ownerUserId}`)
+      trustAssociatedData(input.ownerUserId)
     );
     return parseTrustState(new TextDecoder().decode(plaintext));
   } catch {
@@ -154,10 +159,10 @@ async function saveSharingKeyTrustState(
     storage?: StorageLike;
   }
 ): Promise<void> {
-  const encrypted = await encryptBytes(
+  const encrypted = await encryptBytesV2(
     new TextEncoder().encode(JSON.stringify(state)),
     input.rootKey,
-    utf8(`${TRUST_AAD_PREFIX}:${input.ownerUserId}`)
+    trustAssociatedData(input.ownerUserId)
   );
   getStorage(input.storage).setItem(
     storageKey(input.ownerUserId),
@@ -168,14 +173,14 @@ async function saveSharingKeyTrustState(
 function parseTrustState(value: string): SharingKeyTrustState {
   const parsed = JSON.parse(value) as Partial<SharingKeyTrustState>;
   if (
-    parsed.formatVersion !== 1 ||
+    parsed.formatVersion !== 2 ||
     !Array.isArray(parsed.records) ||
     !parsed.records.every(isTrustRecord)
   ) {
     throw new Error("Invalid sharing key trust records");
   }
   return {
-    formatVersion: 1,
+    formatVersion: 2,
     records: parsed.records
   };
 }
@@ -192,6 +197,10 @@ function isTrustRecord(value: unknown): value is TrustedSharingKeyRecord {
     typeof record.fingerprint === "string" &&
     typeof record.trustedAt === "string"
   );
+}
+
+function trustAssociatedData(ownerUserId: string): Uint8Array {
+  return associatedDataV2("sharing-key-trust", { userId: ownerUserId });
 }
 
 function storageKey(ownerUserId: string): string {

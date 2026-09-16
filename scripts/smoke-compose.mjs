@@ -508,6 +508,7 @@ function selectContainerEngine(explicitEngine) {
 
 function registrationPayload(username) {
   return {
+    id: crypto.randomUUID(),
     username,
     authVerifier: `smoke_auth_verifier_${username}_abcdefghijklmnopqrstuvwxyz`,
     authKdf: {
@@ -524,6 +525,7 @@ function registrationPayload(username) {
     },
     encryptedRootKey: `smoke_encrypted_root_key_${username}_abcdefghijklmnopqrstuvwxyz`,
     rootKeyNonce: `smoke_root_key_nonce_${username}_abcdefghijklmnopqrstuvwxyz`,
+    rootKeyFormatVersion: 2,
     recoveryAuthVerifier: `smoke_recovery_auth_verifier_${username}_abcdefghijklmnopqrstuvwxyz`,
     recoveryKdf: {
       salt: `smoke_recovery_salt_${username}_abcdefghijklmnopqrstuvwxyz`,
@@ -532,7 +534,8 @@ function registrationPayload(username) {
       version: 1
     },
     recoveryEncryptedRootKey: `smoke_recovery_root_key_${username}_abcdefghijklmnopqrstuvwxyz`,
-    recoveryRootKeyNonce: `smoke_recovery_root_nonce_${username}_abcdefghijklmnopqrstuvwxyz`
+    recoveryRootKeyNonce: `smoke_recovery_root_nonce_${username}_abcdefghijklmnopqrstuvwxyz`,
+    recoveryRootKeyFormatVersion: 2
   };
 }
 

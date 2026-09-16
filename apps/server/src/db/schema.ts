@@ -63,7 +63,7 @@ export const userKeyMaterial = pgTable("user_key_material", {
     .references(() => users.id, { onDelete: "cascade" }),
   encryptedRootKey: text("encrypted_root_key").notNull(),
   rootKeyNonce: text("root_key_nonce").notNull(),
-  rootKeyFormatVersion: integer("root_key_format_version").notNull().default(1),
+  rootKeyFormatVersion: integer("root_key_format_version").notNull().default(2),
   rootKeyContextVersion: integer("root_key_context_version").notNull().default(1),
   kdfSalt: text("kdf_salt").notNull(),
   kdfOpsLimit: integer("kdf_ops_limit").notNull(),
@@ -73,7 +73,7 @@ export const userKeyMaterial = pgTable("user_key_material", {
   recoveryRootKeyNonce: text("recovery_root_key_nonce").notNull(),
   recoveryRootKeyFormatVersion: integer("recovery_root_key_format_version")
     .notNull()
-    .default(1),
+    .default(2),
   recoveryRootKeyContextVersion: integer("recovery_root_key_context_version")
     .notNull()
     .default(1),

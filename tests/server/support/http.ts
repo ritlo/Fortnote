@@ -37,6 +37,7 @@ export function csrfHeaders() {
 
 export function registerPayload(username = "alice") {
   return {
+    id: crypto.randomUUID(),
     username,
     authVerifier: `auth_verifier_value_${username}_abcdefghijklmnopqrstuvwxyz`,
     authKdf: {
@@ -53,6 +54,7 @@ export function registerPayload(username = "alice") {
     },
     encryptedRootKey: `encrypted_root_key_${username}_abcdefghijklmnopqrstuvwxyz`,
     rootKeyNonce: `root_key_nonce_${username}_abcdefghijklmnopqrstuvwxyz`,
+    rootKeyFormatVersion: 2,
     recoveryAuthVerifier: `recovery_auth_verifier_${username}_abcdefghijklmnopqrstuvwxyz`,
     recoveryKdf: {
       salt: `recovery_salt_${username}_abcdefghijklmnopqrstuvwxyz`,
@@ -61,7 +63,8 @@ export function registerPayload(username = "alice") {
       version: 1
     },
     recoveryEncryptedRootKey: `recovery_encrypted_root_key_${username}_abcdefghijklmnopqrstuvwxyz`,
-    recoveryRootKeyNonce: `recovery_root_nonce_${username}_abcdefghijklmnopqrstuvwxyz`
+    recoveryRootKeyNonce: `recovery_root_nonce_${username}_abcdefghijklmnopqrstuvwxyz`,
+    recoveryRootKeyFormatVersion: 2
   };
 }
 

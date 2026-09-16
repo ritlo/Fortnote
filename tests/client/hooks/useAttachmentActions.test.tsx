@@ -250,7 +250,8 @@ describe("embedded attachment resolver", () => {
       expect.objectContaining({
         attachmentId: ATTACHMENT_ID,
         noteId: "note-1",
-        userId: "alice"
+        cryptoOwnerId: "alice",
+        keyEpoch: 1
       })
     );
     expect(mocks.createObjectUrl).toHaveBeenCalledWith(

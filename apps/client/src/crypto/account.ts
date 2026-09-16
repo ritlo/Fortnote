@@ -1,22 +1,18 @@
 import {
   createKdfParams,
   cryptoReady,
-  decryptBytes,
   deriveAuthVerifier,
   deriveRecoveryAuthVerifier,
   deriveRecoveryWrappingKey,
   deriveVaultWrappingKey,
-  encryptBytes,
   generateRecoverySecret,
   randomBytes,
+  randomUuid,
   toBase64,
-  utf8,
   type KdfParams
 } from "@fortnote/shared";
 import type { RegisterPayload } from "../api/contracts";
 import { decryptRootKeyEnvelopeV2, encryptRootKeyEnvelopeV2 } from "./protected";
-
-const ROOT_KEY_AAD = utf8("fortnote:root-key:v1");
 
 export interface RegistrationCrypto {
   payload: RegisterPayload;
@@ -31,13 +27,19 @@ export interface OpenedVault {
   rootKey: Uint8Array;
 }
 
+/** Binds a root key envelope to its account and key material version. */
+export interface RootKeyContext {
+  userId: string;
+  keyMaterialVersion: number;
+}
+
 export interface PasswordChangeCrypto {
   authVerifier: string;
   authKdf: KdfParams;
   vaultKdf: KdfParams;
   encryptedRootKey: string;
   rootKeyNonce: string;
-  rootKeyFormatVersion: 1 | 2;
+  rootKeyFormatVersion: 2;
   rootKeyContextVersion: number;
 }
 
@@ -47,7 +49,7 @@ export interface RecoveryRotationCrypto {
   recoveryKdf: KdfParams;
   recoveryEncryptedRootKey: string;
   recoveryRootKeyNonce: string;
-  recoveryRootKeyFormatVersion: 1 | 2;
+  recoveryRootKeyFormatVersion: 2;
   recoveryRootKeyContextVersion: number;
 }
 
@@ -57,16 +59,20 @@ export interface AccountRecoveryCrypto {
   passwordChange: PasswordChangeCrypto;
 }
 
+const INITIAL_KEY_MATERIAL_VERSION = 1;
+
 export async function createRegistrationCrypto(
   username: string,
   password: string
 ): Promise<RegistrationCrypto> {
   await cryptoReady();
+  const userId = randomUuid();
   const authKdf = createKdfParams();
   const vaultKdf = createKdfParams();
   const recoveryKdf = createKdfParams();
   const rootKey = randomBytes(32);
   const recoverySecret = generateRecoverySecret();
+  const context = { userId, keyMaterialVersion: INITIAL_KEY_MATERIAL_VERSION };
 
   const authVerifier = await deriveAuthVerifier(password, authKdf);
   const vaultKey = await deriveVaultWrappingKey(password, vaultKdf);
@@ -78,60 +84,59 @@ export async function createRegistrationCrypto(
     recoverySecret,
     recoveryKdf
   );
-  const encryptedRoot = await encryptBytes(rootKey, vaultKey, ROOT_KEY_AAD);
-  const recoveryEncryptedRoot = await encryptBytes(
+  const encryptedRoot = await encryptRootKeyEnvelopeV2({
+    ...context,
     rootKey,
-    recoveryWrappingKey,
-    ROOT_KEY_AAD
-  );
+    wrappingKey: vaultKey
+  });
+  const recoveryEncryptedRoot = await encryptRootKeyEnvelopeV2({
+    ...context,
+    rootKey,
+    wrappingKey: recoveryWrappingKey
+  });
 
   return {
     rootKey,
     vaultKey,
     recoverySecret,
     payload: {
+      id: userId,
       username,
       authVerifier: toBase64(authVerifier),
       authKdf,
       vaultKdf,
       encryptedRootKey: encryptedRoot.cipher,
       rootKeyNonce: encryptedRoot.nonce,
+      rootKeyFormatVersion: 2,
       recoveryAuthVerifier: toBase64(recoveryAuthVerifier),
       recoveryKdf,
       recoveryEncryptedRootKey: recoveryEncryptedRoot.cipher,
-      recoveryRootKeyNonce: recoveryEncryptedRoot.nonce
+      recoveryRootKeyNonce: recoveryEncryptedRoot.nonce,
+      recoveryRootKeyFormatVersion: 2
     }
   };
 }
 
-export async function openVault(
-  password: string,
-  authKdf: KdfParams,
-  vaultKdf: KdfParams,
-  encryptedRootKey: string,
-  rootKeyNonce: string,
-  context?: {
-    userId: string;
-    formatVersion: number;
-    contextVersion: number;
-  }
-): Promise<OpenedVault> {
-  const authVerifier = await deriveAuthVerifier(password, authKdf);
-  const vaultKey = await deriveVaultWrappingKey(password, vaultKdf);
-  const envelope = {
-    cipher: encryptedRootKey,
-    nonce: rootKeyNonce,
-    formatVersion: context?.formatVersion ?? 1
-  };
-  const rootKey =
-    context?.formatVersion === 2
-      ? await decryptRootKeyEnvelopeV2({
-          userId: context.userId,
-          keyMaterialVersion: context.contextVersion,
-          wrappingKey: vaultKey,
-          envelope
-        })
-      : await decryptBytes(envelope, vaultKey, ROOT_KEY_AAD);
+export async function openVault(input: {
+  password: string;
+  authKdf: KdfParams;
+  vaultKdf: KdfParams;
+  encryptedRootKey: string;
+  rootKeyNonce: string;
+  rootKeyFormatVersion: number;
+  context: RootKeyContext;
+}): Promise<OpenedVault> {
+  const authVerifier = await deriveAuthVerifier(input.password, input.authKdf);
+  const vaultKey = await deriveVaultWrappingKey(input.password, input.vaultKdf);
+  const rootKey = await decryptRootKeyEnvelopeV2({
+    ...input.context,
+    wrappingKey: vaultKey,
+    envelope: {
+      cipher: input.encryptedRootKey,
+      nonce: input.rootKeyNonce,
+      formatVersion: input.rootKeyFormatVersion
+    }
+  });
 
   return {
     authVerifier: toBase64(authVerifier),
@@ -150,21 +155,18 @@ export async function createLoginAuthVerifier(
 export async function createPasswordChangeCrypto(
   rootKey: Uint8Array,
   newPassword: string,
-  context?: { userId: string; keyMaterialVersion: number }
+  context: RootKeyContext
 ): Promise<PasswordChangeCrypto> {
   await cryptoReady();
   const authKdf = createKdfParams();
   const vaultKdf = createKdfParams();
   const authVerifier = await deriveAuthVerifier(newPassword, authKdf);
   const vaultKey = await deriveVaultWrappingKey(newPassword, vaultKdf);
-  const encryptedRoot = context
-    ? await encryptRootKeyEnvelopeV2({
-        userId: context.userId,
-        keyMaterialVersion: context.keyMaterialVersion,
-        rootKey,
-        wrappingKey: vaultKey
-      })
-    : await encryptBytes(rootKey, vaultKey, ROOT_KEY_AAD);
+  const encryptedRoot = await encryptRootKeyEnvelopeV2({
+    ...context,
+    rootKey,
+    wrappingKey: vaultKey
+  });
 
   return {
     authVerifier: toBase64(authVerifier),
@@ -172,14 +174,14 @@ export async function createPasswordChangeCrypto(
     vaultKdf,
     encryptedRootKey: encryptedRoot.cipher,
     rootKeyNonce: encryptedRoot.nonce,
-    rootKeyFormatVersion: context ? 2 : 1,
-    rootKeyContextVersion: context?.keyMaterialVersion ?? 1
+    rootKeyFormatVersion: 2,
+    rootKeyContextVersion: context.keyMaterialVersion
   };
 }
 
 export async function createRecoveryRotationCrypto(
   rootKey: Uint8Array,
-  context?: { userId: string; keyMaterialVersion: number }
+  context: RootKeyContext
 ): Promise<RecoveryRotationCrypto> {
   await cryptoReady();
   const recoverySecret = generateRecoverySecret();
@@ -192,14 +194,11 @@ export async function createRecoveryRotationCrypto(
     recoverySecret,
     recoveryKdf
   );
-  const recoveryEncryptedRoot = context
-    ? await encryptRootKeyEnvelopeV2({
-        userId: context.userId,
-        keyMaterialVersion: context.keyMaterialVersion,
-        rootKey,
-        wrappingKey: recoveryWrappingKey
-      })
-    : await encryptBytes(rootKey, recoveryWrappingKey, ROOT_KEY_AAD);
+  const recoveryEncryptedRoot = await encryptRootKeyEnvelopeV2({
+    ...context,
+    rootKey,
+    wrappingKey: recoveryWrappingKey
+  });
 
   return {
     recoverySecret,
@@ -207,20 +206,20 @@ export async function createRecoveryRotationCrypto(
     recoveryKdf,
     recoveryEncryptedRootKey: recoveryEncryptedRoot.cipher,
     recoveryRootKeyNonce: recoveryEncryptedRoot.nonce,
-    recoveryRootKeyFormatVersion: context ? 2 : 1,
-    recoveryRootKeyContextVersion: context?.keyMaterialVersion ?? 1
+    recoveryRootKeyFormatVersion: 2,
+    recoveryRootKeyContextVersion: context.keyMaterialVersion
   };
 }
 
 export async function createAccountRecoveryCrypto(input: {
+  userId: string;
   recoverySecret: string;
   recoveryKdf: KdfParams;
   recoveryEncryptedRootKey: string;
   recoveryRootKeyNonce: string;
-  recoveryRootKeyFormatVersion?: number;
-  recoveryRootKeyContextVersion?: number;
-  userId?: string;
-  nextKeyMaterialVersion?: number;
+  recoveryRootKeyFormatVersion: number;
+  recoveryRootKeyContextVersion: number;
+  nextKeyMaterialVersion: number;
   newPassword: string;
 }): Promise<AccountRecoveryCrypto> {
   const recoveryAuthVerifier = await deriveRecoveryAuthVerifier(
@@ -231,49 +230,23 @@ export async function createAccountRecoveryCrypto(input: {
     input.recoverySecret,
     input.recoveryKdf
   );
-  const recoveryEnvelope = {
-    cipher: input.recoveryEncryptedRootKey,
-    nonce: input.recoveryRootKeyNonce,
-    formatVersion: input.recoveryRootKeyFormatVersion ?? 1
-  };
-  const rootKey =
-    input.recoveryRootKeyFormatVersion === 2
-      ? await decryptRootKeyEnvelopeV2({
-          userId: requireEnvelopeUserId(input.userId),
-          keyMaterialVersion: requireKeyMaterialVersion(
-            input.recoveryRootKeyContextVersion
-          ),
-          wrappingKey: recoveryWrappingKey,
-          envelope: recoveryEnvelope
-        })
-      : await decryptBytes(recoveryEnvelope, recoveryWrappingKey, ROOT_KEY_AAD);
+  const rootKey = await decryptRootKeyEnvelopeV2({
+    userId: input.userId,
+    keyMaterialVersion: input.recoveryRootKeyContextVersion,
+    wrappingKey: recoveryWrappingKey,
+    envelope: {
+      cipher: input.recoveryEncryptedRootKey,
+      nonce: input.recoveryRootKeyNonce,
+      formatVersion: input.recoveryRootKeyFormatVersion
+    }
+  });
 
   return {
     rootKey,
     recoveryAuthVerifier: toBase64(recoveryAuthVerifier),
-    passwordChange: await createPasswordChangeCrypto(
-      rootKey,
-      input.newPassword,
-      input.userId && input.nextKeyMaterialVersion
-        ? {
-            userId: input.userId,
-            keyMaterialVersion: input.nextKeyMaterialVersion
-          }
-        : undefined
-    )
+    passwordChange: await createPasswordChangeCrypto(rootKey, input.newPassword, {
+      userId: input.userId,
+      keyMaterialVersion: input.nextKeyMaterialVersion
+    })
   };
-}
-
-function requireEnvelopeUserId(userId: string | undefined): string {
-  if (!userId) {
-    throw new Error("Protected sharing key account context is missing");
-  }
-  return userId;
-}
-
-function requireKeyMaterialVersion(version: number | undefined): number {
-  if (!version) {
-    throw new Error("Protected root key material context is missing");
-  }
-  return version;
 }

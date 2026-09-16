@@ -1,7 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   associatedDataV2,
-  attachmentAssociatedData,
   contentChunkAssociatedData,
   crdtBinaryAssociatedData,
   createKdfParams,
@@ -12,7 +11,6 @@ import {
   deriveRecoveryAuthVerifier,
   deriveRecoveryWrappingKey,
   deriveVaultWrappingKey,
-  encryptBytes,
   encryptBytesV2,
   epochLinkAssociatedData,
   fromBase64,
@@ -57,33 +55,6 @@ describe("crypto helpers", () => {
         )
       )
     );
-  });
-
-  it("rejects attachment ciphertext moved to another note", async () => {
-    const key = randomBytes(32);
-    const encrypted = await encryptBytes(
-      utf8("file bytes"),
-      key,
-      attachmentAssociatedData({
-        userId: "user_a",
-        noteId: "note_a",
-        attachmentId: "attachment_a",
-        formatVersion: 1
-      })
-    );
-
-    await expect(
-      decryptBytes(
-        encrypted,
-        key,
-        attachmentAssociatedData({
-          userId: "user_a",
-          noteId: "note_b",
-          attachmentId: "attachment_a",
-          formatVersion: 1
-        })
-      )
-    ).rejects.toThrow();
   });
 
   it("binds binary CRDT ciphertext to its section and checkpoint cutoff", async () => {
@@ -151,7 +122,7 @@ describe("crypto helpers", () => {
     ).rejects.toThrow();
   });
 
-  it("reads v1 payloads while new protected writes use v2", async () => {
+  it("writes and reads only v2 payloads", async () => {
     const key = randomBytes(32);
     const aad = associatedDataV2("note-title", {
       cryptoOwnerId: "owner-a",
@@ -159,15 +130,15 @@ describe("crypto helpers", () => {
       noteId: "note-a",
       rootVersion: 7
     });
-    const legacy = await encryptBytes(utf8("legacy"), key, aad);
-    const current = await encryptBytesV2(utf8("current"), key, aad);
+    const encrypted = await encryptBytesV2(utf8("current"), key, aad);
 
-    expect(legacy.formatVersion).toBe(1);
-    expect(current.formatVersion).toBe(2);
-    expect(toBase64(await decryptBytes(legacy, key, aad))).toBe(toBase64(utf8("legacy")));
-    expect(toBase64(await decryptBytes(current, key, aad))).toBe(
+    expect(encrypted.formatVersion).toBe(2);
+    expect(toBase64(await decryptBytes(encrypted, key, aad))).toBe(
       toBase64(utf8("current"))
     );
+    await expect(
+      decryptBytes({ ...encrypted, formatVersion: 1 }, key, aad)
+    ).rejects.toThrow("Unsupported encrypted payload format");
   });
 
   it("rejects protected metadata moved to another context", async () => {

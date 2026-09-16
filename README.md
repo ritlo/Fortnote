@@ -98,7 +98,8 @@ rather than large objects, so backups and deletions stay transactional.
 
 Migrations in `drizzle/` run automatically when the server starts:
 
-- `0000_baseline.sql` is generated from `apps/server/src/db/schema.ts`.
+- `0000_baseline.sql` and later numbered migrations are generated from
+  `apps/server/src/db/schema.ts`.
 - `0001_folder_integrity.sql` is a custom migration (`drizzle-kit generate --custom`) with the
   folder ownership triggers, which the schema cannot express. `db:generate` never recreates it.
 

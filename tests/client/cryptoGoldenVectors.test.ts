@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fromBase64, toBase64 } from "@fortnote/shared";
 import {
+  decryptAttachmentBytes,
   decryptAttachmentMetadataV2,
   decryptContentChunkV2,
   decryptCrdtMessage,
@@ -45,6 +46,14 @@ const VECTORS = {
     formatVersion: 2,
     attachmentId: "00000000-0000-4000-8000-000000000011",
     keyEpoch: 3
+  },
+  attachmentKey: {
+    cipher: "ebfvs+S2moXTXnnpQm4cPOHZKYthB/O6Tj1wDgcKrFJ0WuBV6+7azZf29q4s/Fht",
+    nonce: "F61JpVEpk4NffhsaPiXkYy4IoQ7NE/un"
+  },
+  attachmentFile: {
+    cipher: "jbA87KpASXtuyH1j7Lw2Yts6JHd+69cQkmAU6X1AqHzo",
+    nonce: "6gWHUn9RDrDpg1oNLjR7HPIHk/OOwbTJ"
   },
   rootKey: {
     cipher: "lGo/Hy+YbD52fuTZNbVYcXCb6M1U/hJ1FdIlQVx0e9ukYA6RXbT1y34PMsSreeg/",
@@ -117,6 +126,22 @@ describe("v2 envelope golden vectors", () => {
         envelope: VECTORS.attachmentMetadata
       })
     ).resolves.toEqual({ filename: "golden.pdf", mimeType: "application/pdf" });
+  });
+
+  it("decrypts attachment keys and file bytes", async () => {
+    await expect(
+      decryptAttachmentBytes({
+        cryptoOwnerId: OWNER,
+        noteId: NOTE,
+        attachmentId: ATTACHMENT,
+        keyEpoch: 3,
+        noteKeyBase64: toBase64(key(1)),
+        encryptedAttachmentKey: VECTORS.attachmentKey.cipher,
+        attachmentKeyNonce: VECTORS.attachmentKey.nonce,
+        encryptedBytes: VECTORS.attachmentFile.cipher,
+        fileNonce: VECTORS.attachmentFile.nonce
+      })
+    ).resolves.toEqual(new TextEncoder().encode("Golden attachment"));
   });
 
   it("decrypts root, sharing private, and note key envelopes", async () => {

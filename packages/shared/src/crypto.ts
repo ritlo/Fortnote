@@ -202,27 +202,10 @@ export async function deriveRecoveryWrappingKey(
   return deriveKey(recoverySecret, params, DOMAIN_LABELS.recoveryVault);
 }
 
-export async function encryptBytes(
-  plaintext: Uint8Array,
-  key: Uint8Array,
-  associatedData: Uint8Array
-): Promise<EncryptedPayload> {
-  return encryptBytesWithFormat(plaintext, key, associatedData, 1);
-}
-
 export async function encryptBytesV2(
   plaintext: Uint8Array,
   key: Uint8Array,
   associatedData: Uint8Array
-): Promise<EncryptedPayload> {
-  return encryptBytesWithFormat(plaintext, key, associatedData, 2);
-}
-
-async function encryptBytesWithFormat(
-  plaintext: Uint8Array,
-  key: Uint8Array,
-  associatedData: Uint8Array,
-  formatVersion: 1 | 2
 ): Promise<EncryptedPayload> {
   await cryptoReady();
   const nonce = randomBytes(XCHACHA_NONCE_BYTES);
@@ -237,7 +220,7 @@ async function encryptBytesWithFormat(
   return {
     cipher: toBase64(cipher),
     nonce: toBase64(nonce),
-    formatVersion
+    formatVersion: 2
   };
 }
 
@@ -261,7 +244,7 @@ export function validateEncryptedPayload(payload: EncryptedPayload): {
   cipher: Uint8Array;
   nonce: Uint8Array;
 } {
-  if (payload.formatVersion !== 1 && payload.formatVersion !== 2) {
+  if (payload.formatVersion !== 2) {
     throw new Error("Unsupported encrypted payload format");
   }
   const cipher = fromCanonicalBase64(payload.cipher);
@@ -302,17 +285,6 @@ export async function openSealedBytes(input: {
     fromBase64(input.cipher),
     fromBase64(input.publicKey),
     fromBase64(input.privateKey)
-  );
-}
-
-export function attachmentAssociatedData(input: {
-  userId: string;
-  noteId: string;
-  attachmentId: string;
-  formatVersion: number;
-}): Uint8Array {
-  return utf8(
-    `attachment:${String(input.formatVersion)}:${input.userId}:${input.noteId}:${input.attachmentId}`
   );
 }
 

@@ -3,31 +3,23 @@ import { fromBase64 } from "@fortnote/shared";
 import {
   decryptNoteTitleV2,
   decryptNoteKeyEnvelopeV2,
-  decryptRootKeyEnvelopeV2,
   noteKeyToBase64
 } from "@client/cryptoClient";
 import type { DecryptedNote } from "@client/store/appStore";
 
-const mocks = vi.hoisted(() => ({
-  updateKeyMaterial: vi.fn()
-}));
-
 vi.mock("@client/api", () => ({
   getNoteKeyShare: vi.fn(),
-  getSharingKeyVersion: vi.fn(),
-  updateKeyMaterial: mocks.updateKeyMaterial
+  getSharingKeyVersion: vi.fn()
 }));
 
 import {
   linkedEpochPreparationMatches,
-  migrateRootKeyEnvelopeV2,
   prepareLinkedEpochRotation,
   resolveNoteKeyAtEpoch
 } from "@client/lib/keyMaterial";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.updateKeyMaterial.mockResolvedValue({ keyMaterialVersion: 4 });
 });
 
 describe("linked epoch preparation", () => {
@@ -94,60 +86,6 @@ describe("linked epoch preparation", () => {
         revokedUserId: "user-revoked"
       })
     ).toBe(true);
-  });
-});
-
-describe("root key envelope migration", () => {
-  it("writes v2 against the atomically activated material version", async () => {
-    const rootKey = key(1);
-    const vaultKey = key(2);
-
-    await expect(
-      migrateRootKeyEnvelopeV2({
-        userId: "user-a",
-        rootKey,
-        vaultKey,
-        vaultKdf: { salt: "salt", opsLimit: 4, memLimit: 67_108_864, version: 1 },
-        keyMaterialVersion: 3,
-        rootKeyFormatVersion: 1
-      })
-    ).resolves.toBe(4);
-
-    expect(mocks.updateKeyMaterial).toHaveBeenCalledWith(
-      expect.objectContaining({
-        rootKeyFormatVersion: 2,
-        rootKeyContextVersion: 4,
-        keyMaterialVersion: 3
-      })
-    );
-    const payload = mocks.updateKeyMaterial.mock.calls[0]![0];
-    await expect(
-      decryptRootKeyEnvelopeV2({
-        userId: "user-a",
-        keyMaterialVersion: 4,
-        wrappingKey: vaultKey,
-        envelope: {
-          cipher: payload.encryptedRootKey,
-          nonce: payload.rootKeyNonce,
-          formatVersion: payload.rootKeyFormatVersion
-        }
-      })
-    ).resolves.toEqual(rootKey);
-  });
-
-  it("does not rewrite an envelope that is already v2", async () => {
-    await expect(
-      migrateRootKeyEnvelopeV2({
-        userId: "user-a",
-        rootKey: key(1),
-        vaultKey: key(2),
-        vaultKdf: { salt: "salt", opsLimit: 4, memLimit: 67_108_864, version: 1 },
-        keyMaterialVersion: 5,
-        rootKeyFormatVersion: 2
-      })
-    ).resolves.toBe(5);
-
-    expect(mocks.updateKeyMaterial).not.toHaveBeenCalled();
   });
 });
 

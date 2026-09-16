@@ -207,7 +207,7 @@ export function useAttachmentActions(selectedNote: DecryptedNote | null) {
     setStatus("Encrypting attachment");
     try {
       const encrypted = await createEncryptedAttachmentDraft({
-        userId: selectedNote.cryptoOwnerId,
+        cryptoOwnerId: selectedNote.cryptoOwnerId,
         noteId: selectedNote.id,
         keyEpoch: selectedNote.keyEpoch,
         noteKeyBase64: selectedNote.noteKeyBase64,
@@ -382,20 +382,15 @@ export async function decryptAuthorizedAttachment(
     throw new Error("Attachment does not belong to the selected note");
   }
   return decryptAttachmentBytes({
-    userId: selectedNote.cryptoOwnerId,
+    cryptoOwnerId: selectedNote.cryptoOwnerId,
     noteId: selectedNote.id,
-    noteKeyBase64: selectedNote.noteKeyBase64,
     attachmentId: attachment.id,
-    encryptedAttachmentKey: {
-      cipher: attachment.encryptedAttachmentKey,
-      nonce: attachment.attachmentKeyNonce,
-      formatVersion: 1
-    },
-    encryptedBytes: {
-      cipher: toBase64(encrypted.encryptedBytes),
-      nonce: attachment.fileNonce,
-      formatVersion: 1
-    }
+    keyEpoch: attachment.keyEpoch,
+    noteKeyBase64: selectedNote.noteKeyBase64,
+    encryptedAttachmentKey: attachment.encryptedAttachmentKey,
+    attachmentKeyNonce: attachment.attachmentKeyNonce,
+    encryptedBytes: toBase64(encrypted.encryptedBytes),
+    fileNonce: attachment.fileNonce
   });
 }
 

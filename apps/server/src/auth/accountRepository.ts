@@ -50,12 +50,16 @@ export interface RegisterAccountInput {
   keyMaterial: {
     encryptedRootKey: string;
     rootKeyNonce: string;
+    rootKeyFormatVersion: number;
+    rootKeyContextVersion: number;
     kdfSalt: string;
     kdfOpsLimit: number;
     kdfMemLimit: number;
     kdfVersion: number;
     recoveryEncryptedRootKey: string;
     recoveryRootKeyNonce: string;
+    recoveryRootKeyFormatVersion: number;
+    recoveryRootKeyContextVersion: number;
     recoveryAuthVerifierHash: string;
     recoveryKdfSalt: string;
     recoveryKdfOpsLimit: number;

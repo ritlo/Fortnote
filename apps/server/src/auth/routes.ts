@@ -32,17 +32,23 @@ const nonceSchema = z.string().min(16).max(128);
 const usernameSchema = z.string().min(1).max(64);
 
 const registerSchema = z.object({
+  id: z.uuid(),
   username: z.string().min(1).max(128),
   authVerifier: verifierSchema,
   authKdf: kdfParamsSchema,
   vaultKdf: kdfParamsSchema,
   encryptedRootKey: encryptedKeySchema,
   rootKeyNonce: nonceSchema,
+  rootKeyFormatVersion: z.literal(2),
   recoveryAuthVerifier: verifierSchema,
   recoveryKdf: kdfParamsSchema,
   recoveryEncryptedRootKey: encryptedKeySchema,
-  recoveryRootKeyNonce: nonceSchema
+  recoveryRootKeyNonce: nonceSchema,
+  recoveryRootKeyFormatVersion: z.literal(2)
 });
+
+// Registration envelopes bind the root key to the first key material version.
+const INITIAL_KEY_MATERIAL_VERSION = 1;
 
 const loginSchema = z.object({
   username: usernameSchema,
@@ -57,8 +63,8 @@ const recoverSchema = z.object({
   vaultKdf: kdfParamsSchema,
   encryptedRootKey: encryptedKeySchema,
   rootKeyNonce: nonceSchema,
-  rootKeyFormatVersion: z.number().int().min(1).max(2).optional(),
-  rootKeyContextVersion: z.number().int().positive().optional(),
+  rootKeyFormatVersion: z.literal(2),
+  rootKeyContextVersion: z.number().int().positive(),
   keyMaterialVersion: z.number().int().positive()
 });
 
@@ -83,7 +89,7 @@ function unknownUserRecoveryResponse(username: string) {
     userId: pseudorandomUuid(username, "user-id"),
     recoveryEncryptedRootKey: pseudorandomBase64(username, "recovery-root", 48),
     recoveryRootKeyNonce: pseudorandomBase64(username, "recovery-nonce", 24),
-    recoveryRootKeyFormatVersion: 1,
+    recoveryRootKeyFormatVersion: 2,
     recoveryRootKeyContextVersion: 1,
     recoveryKdfSalt: pseudorandomBase64(username, "recovery-salt", 16),
     recoveryKdfOpsLimit: DEFAULT_KDF.opsLimit,
@@ -247,7 +253,7 @@ export function createAuthRouter(context: AppContext): Router {
       return;
     }
     const displayName = accountDisplayName(parsed.data.username);
-    const userId = crypto.randomUUID();
+    const userId = parsed.data.id;
     const authVerifierHash = await argon2.hash(parsed.data.authVerifier);
     const recoveryAuthVerifierHash = await argon2.hash(parsed.data.recoveryAuthVerifier);
 
@@ -267,12 +273,16 @@ export function createAuthRouter(context: AppContext): Router {
         keyMaterial: {
           encryptedRootKey: parsed.data.encryptedRootKey,
           rootKeyNonce: parsed.data.rootKeyNonce,
+          rootKeyFormatVersion: parsed.data.rootKeyFormatVersion,
+          rootKeyContextVersion: INITIAL_KEY_MATERIAL_VERSION,
           kdfSalt: parsed.data.vaultKdf.salt,
           kdfOpsLimit: parsed.data.vaultKdf.opsLimit,
           kdfMemLimit: parsed.data.vaultKdf.memLimit,
           kdfVersion: parsed.data.vaultKdf.version,
           recoveryEncryptedRootKey: parsed.data.recoveryEncryptedRootKey,
           recoveryRootKeyNonce: parsed.data.recoveryRootKeyNonce,
+          recoveryRootKeyFormatVersion: parsed.data.recoveryRootKeyFormatVersion,
+          recoveryRootKeyContextVersion: INITIAL_KEY_MATERIAL_VERSION,
           recoveryAuthVerifierHash,
           recoveryKdfSalt: parsed.data.recoveryKdf.salt,
           recoveryKdfOpsLimit: parsed.data.recoveryKdf.opsLimit,
@@ -330,14 +340,6 @@ export function createAuthRouter(context: AppContext): Router {
       sendApiError(response, "bad_request", "Invalid recovery payload");
       return;
     }
-    if (
-      parsed.data.rootKeyFormatVersion === 2 &&
-      parsed.data.rootKeyContextVersion === undefined
-    ) {
-      sendApiError(response, "bad_request", "Incomplete protected key context");
-      return;
-    }
-
     const identity = await findAccountIdentity(context, parsed.data.username);
     const row = identity ? await context.db.accounts.recoveryVerifier(identity.id) : null;
 
@@ -364,9 +366,8 @@ export function createAuthRouter(context: AppContext): Router {
       vaultKdf: parsed.data.vaultKdf,
       encryptedRootKey: parsed.data.encryptedRootKey,
       rootKeyNonce: parsed.data.rootKeyNonce,
-      rootKeyFormatVersion: parsed.data.rootKeyFormatVersion ?? 1,
-      rootKeyContextVersion:
-        parsed.data.rootKeyContextVersion ?? parsed.data.keyMaterialVersion + 1
+      rootKeyFormatVersion: parsed.data.rootKeyFormatVersion,
+      rootKeyContextVersion: parsed.data.rootKeyContextVersion
     });
     if (recovered.kind === "conflict") {
       sendApiError(response, "conflict", "Key material version conflict");

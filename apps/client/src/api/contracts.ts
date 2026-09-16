@@ -103,16 +103,19 @@ export interface StorageQuotaStatus {
 }
 
 export interface RegisterPayload {
+  id: string;
   username: string;
   authVerifier: string;
   authKdf: KdfParams;
   vaultKdf: KdfParams;
   encryptedRootKey: string;
   rootKeyNonce: string;
+  rootKeyFormatVersion: 2;
   recoveryAuthVerifier: string;
   recoveryKdf: KdfParams;
   recoveryEncryptedRootKey: string;
   recoveryRootKeyNonce: string;
+  recoveryRootKeyFormatVersion: 2;
 }
 
 export interface User {
@@ -134,11 +137,11 @@ export interface AuthKdfResponse {
 }
 
 export interface RecoveryParamsResponse {
-  userId?: string;
+  userId: string;
   recoveryEncryptedRootKey: string;
   recoveryRootKeyNonce: string;
-  recoveryRootKeyFormatVersion?: number;
-  recoveryRootKeyContextVersion?: number;
+  recoveryRootKeyFormatVersion: number;
+  recoveryRootKeyContextVersion: number;
   recoveryKdfSalt: string;
   recoveryKdfOpsLimit: number;
   recoveryKdfMemLimit: number;
@@ -149,16 +152,16 @@ export interface RecoveryParamsResponse {
 export interface KeyMaterialResponse {
   encryptedRootKey: string;
   rootKeyNonce: string;
-  rootKeyFormatVersion?: number;
-  rootKeyContextVersion?: number;
+  rootKeyFormatVersion: number;
+  rootKeyContextVersion: number;
   kdfSalt: string;
   kdfOpsLimit: number;
   kdfMemLimit: number;
   kdfVersion: number;
   recoveryEncryptedRootKey: string;
   recoveryRootKeyNonce: string;
-  recoveryRootKeyFormatVersion?: number;
-  recoveryRootKeyContextVersion?: number;
+  recoveryRootKeyFormatVersion: number;
+  recoveryRootKeyContextVersion: number;
   recoveryKdfSalt: string;
   recoveryKdfOpsLimit: number;
   recoveryKdfMemLimit: number;
@@ -323,14 +326,14 @@ export interface UpdateKeyMaterialPayload {
   authKdf?: KdfParams;
   encryptedRootKey: string;
   rootKeyNonce: string;
-  rootKeyFormatVersion?: number;
-  rootKeyContextVersion?: number;
+  rootKeyFormatVersion: 2;
+  rootKeyContextVersion: number;
   vaultKdf: KdfParams;
   recoveryAuthVerifier?: string;
   recoveryKdf?: KdfParams;
   recoveryEncryptedRootKey?: string;
   recoveryRootKeyNonce?: string;
-  recoveryRootKeyFormatVersion?: number;
+  recoveryRootKeyFormatVersion?: 2;
   recoveryRootKeyContextVersion?: number;
   keyMaterialVersion: number;
 }
@@ -419,7 +422,7 @@ export interface RecoverPayload {
   vaultKdf: KdfParams;
   encryptedRootKey: string;
   rootKeyNonce: string;
-  rootKeyFormatVersion?: number;
-  rootKeyContextVersion?: number;
+  rootKeyFormatVersion: 2;
+  rootKeyContextVersion: number;
   keyMaterialVersion: number;
 }

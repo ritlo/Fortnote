@@ -21,12 +21,12 @@ const updateKeyMaterialSchema = z.object({
   authKdf: kdfParamsSchema.optional(),
   encryptedRootKey: z.string().min(32).max(256),
   rootKeyNonce: z.string().min(16).max(128),
-  rootKeyFormatVersion: z.number().int().min(1).max(2).optional(),
-  rootKeyContextVersion: z.number().int().positive().optional(),
+  rootKeyFormatVersion: z.literal(2),
+  rootKeyContextVersion: z.number().int().positive(),
   vaultKdf: kdfParamsSchema,
   recoveryEncryptedRootKey: z.string().min(32).max(256).optional(),
   recoveryRootKeyNonce: z.string().min(16).max(128).optional(),
-  recoveryRootKeyFormatVersion: z.number().int().min(1).max(2).optional(),
+  recoveryRootKeyFormatVersion: z.literal(2).optional(),
   recoveryRootKeyContextVersion: z.number().int().positive().optional(),
   recoveryAuthVerifier: z.string().min(32).max(128).optional(),
   recoveryKdf: kdfParamsSchema.optional(),
@@ -79,23 +79,12 @@ export function createKeyMaterialRouter(context: AppContext): Router {
       recoveryAuthVerifier,
       recoveryEncryptedRootKey,
       recoveryKdf,
-      recoveryRootKeyNonce
+      recoveryRootKeyNonce,
+      recoveryRootKeyFormatVersion,
+      recoveryRootKeyContextVersion
     ].filter((value) => value !== undefined).length;
-    if (recoveryFieldCount !== 0 && recoveryFieldCount !== 4) {
+    if (recoveryFieldCount !== 0 && recoveryFieldCount !== 6) {
       sendApiError(response, "bad_request", "Incomplete recovery key payload");
-      return;
-    }
-
-    if (
-      (parsed.data.rootKeyFormatVersion === 2 &&
-        parsed.data.rootKeyContextVersion === undefined) ||
-      (recoveryRootKeyFormatVersion === 2 &&
-        recoveryRootKeyContextVersion === undefined) ||
-      ((recoveryRootKeyFormatVersion !== undefined ||
-        recoveryRootKeyContextVersion !== undefined) &&
-        recoveryFieldCount !== 4)
-    ) {
-      sendApiError(response, "bad_request", "Incomplete protected key context");
       return;
     }
 
@@ -111,29 +100,29 @@ export function createKeyMaterialRouter(context: AppContext): Router {
       ? await argon2.hash(recoveryAuthVerifier)
       : null;
 
-    const nextVersion = parsed.data.keyMaterialVersion + 1;
     const sessionRotation = await context.db.accounts.rotateKeyMaterial({
       userId: session.userId,
       expectedKeyMaterialVersion: parsed.data.keyMaterialVersion,
       encryptedRootKey: parsed.data.encryptedRootKey,
       rootKeyNonce: parsed.data.rootKeyNonce,
-      rootKeyFormatVersion: parsed.data.rootKeyFormatVersion ?? 1,
-      rootKeyContextVersion: parsed.data.rootKeyContextVersion ?? nextVersion,
+      rootKeyFormatVersion: parsed.data.rootKeyFormatVersion,
+      rootKeyContextVersion: parsed.data.rootKeyContextVersion,
       vaultKdf: parsed.data.vaultKdf,
       ...(authKdf && newAuthVerifierHash
         ? { auth: { verifierHash: newAuthVerifierHash, kdf: authKdf } }
         : {}),
-      ...(recoveryFieldCount === 4 &&
-      recoveryEncryptedRootKey &&
+      ...(recoveryEncryptedRootKey &&
       recoveryRootKeyNonce &&
+      recoveryRootKeyFormatVersion &&
+      recoveryRootKeyContextVersion &&
       recoveryAuthVerifierHash &&
       recoveryKdf
         ? {
             recovery: {
               encryptedRootKey: recoveryEncryptedRootKey,
               rootKeyNonce: recoveryRootKeyNonce,
-              rootKeyFormatVersion: recoveryRootKeyFormatVersion ?? 1,
-              rootKeyContextVersion: recoveryRootKeyContextVersion ?? nextVersion,
+              rootKeyFormatVersion: recoveryRootKeyFormatVersion,
+              rootKeyContextVersion: recoveryRootKeyContextVersion,
               verifierHash: recoveryAuthVerifierHash,
               kdf: recoveryKdf
             }

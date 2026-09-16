@@ -237,7 +237,7 @@ function publicSharingKey(input: {
 }): PublicSharingKey {
   return {
     ...input,
-    formatVersion: 1,
+    formatVersion: 2,
     createdAt: new Date().toISOString()
   };
 }

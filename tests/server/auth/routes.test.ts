@@ -8,16 +8,42 @@ describe("auth routes", () => {
     const app = await createTestApp();
     const agent = request.agent(app);
 
+    const payload = registerPayload();
     const register = await agent
       .post("/api/auth/register")
       .set(csrfHeaders())
-      .send(registerPayload())
+      .send(payload)
       .expect(201);
 
-    expect(register.body).toMatchObject({ username: "alice" });
+    expect(register.body).toMatchObject({ id: payload.id, username: "alice" });
 
     const me = await agent.get("/api/auth/me").expect(200);
     expect(me.body).toMatchObject({ username: "alice" });
+    await expect(agent.get("/api/key-material")).resolves.toMatchObject({
+      body: expect.objectContaining({
+        rootKeyFormatVersion: 2,
+        rootKeyContextVersion: 1,
+        recoveryRootKeyFormatVersion: 2,
+        recoveryRootKeyContextVersion: 1
+      })
+    });
+  });
+
+  it("rejects registrations without a client user id or v2 root envelopes", async () => {
+    const app = await createTestApp();
+
+    for (const [username, change] of [
+      ["no_id_user", { id: undefined }],
+      ["bad_id_user", { id: "not-a-uuid" }],
+      ["v1_root_user", { rootKeyFormatVersion: 1 }],
+      ["v1_recovery_user", { recoveryRootKeyFormatVersion: 1 }]
+    ] as const) {
+      await request(app)
+        .post("/api/auth/register")
+        .set(csrfHeaders())
+        .send({ ...registerPayload(username), ...change })
+        .expect(400);
+    }
   });
 
   it("uses one canonical handle for registration, login, and sharing lookup", async () => {
@@ -157,6 +183,8 @@ describe("auth routes", () => {
       .expect(200);
 
     expect(response.body).toMatchObject({
+      recoveryRootKeyFormatVersion: 2,
+      recoveryRootKeyContextVersion: 1,
       recoveryKdfVersion: 1,
       keyMaterialVersion: 1
     });
@@ -194,30 +222,34 @@ describe("auth routes", () => {
       .send(registerPayload("dina"))
       .expect(201);
 
+    const recovery = {
+      username: "dina",
+      recoveryAuthVerifier: "recovery_auth_verifier_dina_abcdefghijklmnopqrstuvwxyz",
+      newAuthVerifier: "new_auth_verifier_abcdefghijklmnopqrstuvwxyz",
+      authKdf: {
+        salt: "new_auth_salt_abcdefghijklmnopqrstuvwxyz",
+        opsLimit: 4,
+        memLimit: 67108864,
+        version: 1
+      },
+      vaultKdf: {
+        salt: "new_vault_salt_abcdefghijklmnopqrstuvwxyz",
+        opsLimit: 4,
+        memLimit: 67108864,
+        version: 1
+      },
+      encryptedRootKey: "new_encrypted_root_key_abcdefghijklmnopqrstuvwxyz",
+      rootKeyNonce: "new_root_key_nonce_abcdefghijklmnopqrstuvwxyz",
+      rootKeyFormatVersion: 2,
+      rootKeyContextVersion: 2,
+      keyMaterialVersion: 1
+    };
     await agent
       .post("/api/auth/recover")
       .set(csrfHeaders())
-      .send({
-        username: "dina",
-        recoveryAuthVerifier: "recovery_auth_verifier_dina_abcdefghijklmnopqrstuvwxyz",
-        newAuthVerifier: "new_auth_verifier_abcdefghijklmnopqrstuvwxyz",
-        authKdf: {
-          salt: "new_auth_salt_abcdefghijklmnopqrstuvwxyz",
-          opsLimit: 4,
-          memLimit: 67108864,
-          version: 1
-        },
-        vaultKdf: {
-          salt: "new_vault_salt_abcdefghijklmnopqrstuvwxyz",
-          opsLimit: 4,
-          memLimit: 67108864,
-          version: 1
-        },
-        encryptedRootKey: "new_encrypted_root_key_abcdefghijklmnopqrstuvwxyz",
-        rootKeyNonce: "new_root_key_nonce_abcdefghijklmnopqrstuvwxyz",
-        keyMaterialVersion: 1
-      })
-      .expect(200);
+      .send({ ...recovery, rootKeyFormatVersion: 1 })
+      .expect(400);
+    await agent.post("/api/auth/recover").set(csrfHeaders()).send(recovery).expect(200);
 
     await request(app)
       .post("/api/auth/login")

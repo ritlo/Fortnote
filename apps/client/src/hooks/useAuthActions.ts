@@ -23,12 +23,7 @@ import {
   createUserSharingKey,
   openVault
 } from "../cryptoClient";
-import {
-  authKdf,
-  migrateRootKeyEnvelopeV2,
-  recoveryKdf,
-  vaultKdf
-} from "../lib/keyMaterial";
+import { authKdf, recoveryKdf, vaultKdf } from "../lib/keyMaterial";
 import { openFortnoteIndexedDb, type FortnoteIndexedDb } from "../lib/indexedDb";
 import { removeSharingKeyTrustRecords } from "../lib/sharingKeyTrust";
 import { useAppStore } from "../store/appStore";
@@ -89,20 +84,7 @@ export function useAuthActions() {
         const currentUser = await register(registration.payload);
         setUser(currentUser);
         setRootKey(registration.rootKey);
-        let registeredKeyMaterialVersion = 1;
-        try {
-          registeredKeyMaterialVersion = await migrateRootKeyEnvelopeV2({
-            userId: currentUser.id,
-            rootKey: registration.rootKey,
-            vaultKey: registration.vaultKey,
-            vaultKdf: registration.payload.vaultKdf,
-            keyMaterialVersion: 1,
-            rootKeyFormatVersion: 1
-          });
-        } catch {
-          // Registration remains usable; the next unlock retries the v2 envelope write.
-        }
-        setKeyMaterialVersion(registeredKeyMaterialVersion);
+        setKeyMaterialVersion(1);
         setRecoverySecret(registration.recoverySecret);
         setStatus("Loading vault");
         await ensureSharingKey(registration.rootKey);
@@ -116,22 +98,13 @@ export function useAuthActions() {
       if (authMode === "recover") {
         const recoveryParams = await getRecoveryParams(accountHandle);
         const recovery = await createAccountRecoveryCrypto({
+          userId: recoveryParams.userId,
           recoverySecret: recoveryInput,
           recoveryKdf: recoveryKdf(recoveryParams),
           recoveryEncryptedRootKey: recoveryParams.recoveryEncryptedRootKey,
           recoveryRootKeyNonce: recoveryParams.recoveryRootKeyNonce,
-          ...(recoveryParams.recoveryRootKeyFormatVersion !== undefined
-            ? {
-                recoveryRootKeyFormatVersion: recoveryParams.recoveryRootKeyFormatVersion
-              }
-            : {}),
-          ...(recoveryParams.recoveryRootKeyContextVersion !== undefined
-            ? {
-                recoveryRootKeyContextVersion:
-                  recoveryParams.recoveryRootKeyContextVersion
-              }
-            : {}),
-          ...(recoveryParams.userId ? { userId: recoveryParams.userId } : {}),
+          recoveryRootKeyFormatVersion: recoveryParams.recoveryRootKeyFormatVersion,
+          recoveryRootKeyContextVersion: recoveryParams.recoveryRootKeyContextVersion,
           nextKeyMaterialVersion: recoveryParams.keyMaterialVersion + 1,
           newPassword: recoveryNewPassword
         });
@@ -165,35 +138,21 @@ export function useAuthActions() {
       const authVerifier = await createLoginAuthVerifier(password, authKdf(kdf));
       const currentUser = await login(accountHandle, authVerifier);
       const keyMaterial = await getKeyMaterial();
-      const openedVault = await openVault(
+      const openedVault = await openVault({
         password,
-        authKdf(kdf),
-        vaultKdf(keyMaterial),
-        keyMaterial.encryptedRootKey,
-        keyMaterial.rootKeyNonce,
-        {
+        authKdf: authKdf(kdf),
+        vaultKdf: vaultKdf(keyMaterial),
+        encryptedRootKey: keyMaterial.encryptedRootKey,
+        rootKeyNonce: keyMaterial.rootKeyNonce,
+        rootKeyFormatVersion: keyMaterial.rootKeyFormatVersion,
+        context: {
           userId: currentUser.id,
-          formatVersion: keyMaterial.rootKeyFormatVersion ?? 1,
-          contextVersion:
-            keyMaterial.rootKeyContextVersion ?? keyMaterial.keyMaterialVersion
+          keyMaterialVersion: keyMaterial.rootKeyContextVersion
         }
-      );
+      });
       setUser(currentUser);
       setRootKey(openedVault.rootKey);
-      let currentKeyMaterialVersion = keyMaterial.keyMaterialVersion;
-      try {
-        currentKeyMaterialVersion = await migrateRootKeyEnvelopeV2({
-          userId: currentUser.id,
-          rootKey: openedVault.rootKey,
-          vaultKey: openedVault.vaultKey,
-          vaultKdf: vaultKdf(keyMaterial),
-          keyMaterialVersion: keyMaterial.keyMaterialVersion,
-          rootKeyFormatVersion: keyMaterial.rootKeyFormatVersion ?? 1
-        });
-      } catch {
-        // The v1 read succeeded; keep the vault open and retry migration next unlock.
-      }
-      setKeyMaterialVersion(currentKeyMaterialVersion);
+      setKeyMaterialVersion(keyMaterial.keyMaterialVersion);
       setStatus("Loading vault");
       await ensureSharingKey(openedVault.rootKey);
       await loadFolders();
@@ -351,9 +310,8 @@ export function useAuthActions() {
       const updated = await updateKeyMaterial({
         encryptedRootKey: current.encryptedRootKey,
         rootKeyNonce: current.rootKeyNonce,
-        rootKeyFormatVersion: current.rootKeyFormatVersion ?? 1,
-        rootKeyContextVersion:
-          current.rootKeyContextVersion ?? current.keyMaterialVersion,
+        rootKeyFormatVersion: 2,
+        rootKeyContextVersion: current.rootKeyContextVersion,
         vaultKdf: vaultKdf(current),
         recoveryAuthVerifier: rotated.recoveryAuthVerifier,
         recoveryKdf: rotated.recoveryKdf,

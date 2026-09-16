@@ -15,6 +15,13 @@
       "when": 1789580310243,
       "tag": "0001_folder_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789589431205,
+      "tag": "0002_root_key_format_default",
+      "breakpoints": true
     }
   ]
 }

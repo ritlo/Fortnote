@@ -5,7 +5,7 @@ import type {
   RecoveryParamsResponse,
   User
 } from "../api";
-import { fromBase64, randomBytes, type KdfParams } from "@fortnote/shared";
+import { fromBase64, randomBytes } from "@fortnote/shared";
 import {
   decryptNoteKeyEnvelopeV2,
   decryptNoteKeyShareV2,
@@ -13,18 +13,12 @@ import {
   createEpochLinkV2,
   encryptNoteKeyEnvelopeV2,
   encryptNoteTitleV2,
-  encryptRootKeyEnvelopeV2,
   noteKeyToBase64,
   openUserSharingKey,
   traverseEpochLinksBackward,
   type OpenedSharingKey
 } from "../cryptoClient";
-import {
-  getNoteKeyShare,
-  getSharingKeyVersion,
-  updateKeyMaterial,
-  type NoteEpochLink
-} from "../api";
+import { getNoteKeyShare, getSharingKeyVersion, type NoteEpochLink } from "../api";
 import type { DecryptedNote } from "../store/appStore";
 
 export interface LinkedEpochRotationPreparation {
@@ -126,35 +120,6 @@ export function resolveNoteKeyAtEpoch(input: {
       formatVersion: link.formatVersion as 2
     }))
   });
-}
-
-export async function migrateRootKeyEnvelopeV2(input: {
-  userId: string;
-  rootKey: Uint8Array;
-  vaultKey: Uint8Array;
-  vaultKdf: KdfParams;
-  keyMaterialVersion: number;
-  rootKeyFormatVersion?: number;
-}): Promise<number> {
-  if (input.rootKeyFormatVersion === 2) {
-    return input.keyMaterialVersion;
-  }
-  const nextVersion = input.keyMaterialVersion + 1;
-  const encrypted = await encryptRootKeyEnvelopeV2({
-    userId: input.userId,
-    keyMaterialVersion: nextVersion,
-    rootKey: input.rootKey,
-    wrappingKey: input.vaultKey
-  });
-  const updated = await updateKeyMaterial({
-    encryptedRootKey: encrypted.cipher,
-    rootKeyNonce: encrypted.nonce,
-    rootKeyFormatVersion: 2,
-    rootKeyContextVersion: nextVersion,
-    vaultKdf: input.vaultKdf,
-    keyMaterialVersion: input.keyMaterialVersion
-  });
-  return updated.keyMaterialVersion;
 }
 
 export async function decryptNoteSummary(

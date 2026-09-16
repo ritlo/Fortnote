@@ -125,6 +125,68 @@ export async function decryptAttachmentMetadataV2(input: {
   return { filename: value.filename, mimeType: value.mimeType };
 }
 
+export function encryptAttachmentKeyV2(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  attachmentId: string;
+  keyEpoch: number;
+  noteKey: Uint8Array;
+  attachmentKey: Uint8Array;
+}): Promise<ProtectedEnvelopeV2> {
+  return encryptProtectedBytesV2(
+    input.attachmentKey,
+    input.noteKey,
+    "attachment-key",
+    protectedContext(input, ["cryptoOwnerId", "noteId", "attachmentId", "keyEpoch"])
+  );
+}
+
+export function decryptAttachmentKeyV2(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  attachmentId: string;
+  keyEpoch: number;
+  noteKey: Uint8Array;
+  envelope: EncryptedPayload;
+}): Promise<Uint8Array> {
+  return decryptProtectedBytesV2(
+    input.envelope,
+    input.noteKey,
+    "attachment-key",
+    protectedContext(input, ["cryptoOwnerId", "noteId", "attachmentId", "keyEpoch"])
+  );
+}
+
+export function encryptAttachmentFileV2(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  attachmentId: string;
+  attachmentKey: Uint8Array;
+  bytes: Uint8Array;
+}): Promise<ProtectedEnvelopeV2> {
+  return encryptProtectedBytesV2(
+    input.bytes,
+    input.attachmentKey,
+    "attachment-file",
+    protectedContext(input, ["cryptoOwnerId", "noteId", "attachmentId"])
+  );
+}
+
+export function decryptAttachmentFileV2(input: {
+  cryptoOwnerId: string;
+  noteId: string;
+  attachmentId: string;
+  attachmentKey: Uint8Array;
+  envelope: EncryptedPayload;
+}): Promise<Uint8Array> {
+  return decryptProtectedBytesV2(
+    input.envelope,
+    input.attachmentKey,
+    "attachment-file",
+    protectedContext(input, ["cryptoOwnerId", "noteId", "attachmentId"])
+  );
+}
+
 export function encryptRootKeyEnvelopeV2(input: {
   userId: string;
   keyMaterialVersion: number;

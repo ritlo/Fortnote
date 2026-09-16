@@ -1,15 +1,11 @@
+import { cryptoReady, fromBase64, randomBytes, randomUuid } from "@fortnote/shared";
 import {
-  attachmentAssociatedData,
-  cryptoReady,
-  decryptBytes,
-  encryptBytes,
-  fromBase64,
-  randomBytes,
-  randomUuid,
-  utf8,
-  type EncryptedPayload
-} from "@fortnote/shared";
-import { encryptAttachmentMetadataV2 } from "./protected";
+  decryptAttachmentFileV2,
+  decryptAttachmentKeyV2,
+  encryptAttachmentFileV2,
+  encryptAttachmentKeyV2,
+  encryptAttachmentMetadataV2
+} from "./protected";
 
 export interface EncryptedAttachmentDraft {
   id: string;
@@ -24,46 +20,8 @@ export interface EncryptedAttachmentDraft {
   encryptedBytes: Uint8Array;
 }
 
-export interface RewrappedAttachmentKey {
-  attachmentId: string;
-  encryptedAttachmentKey: string;
-  attachmentKeyNonce: string;
-}
-
-export async function rewrapAttachmentKey(input: {
-  cryptoOwnerId: string;
-  noteId: string;
-  oldNoteKeyBase64: string;
-  newNoteKeyBase64: string;
-  attachmentId: string;
-  encryptedAttachmentKey: string;
-  attachmentKeyNonce: string;
-}): Promise<RewrappedAttachmentKey> {
-  const aad = attachmentKeyAad(input.cryptoOwnerId, input.noteId, input.attachmentId);
-  const attachmentKey = await decryptBytes(
-    {
-      cipher: input.encryptedAttachmentKey,
-      nonce: input.attachmentKeyNonce,
-      formatVersion: 1
-    },
-    fromBase64(input.oldNoteKeyBase64),
-    aad
-  );
-  const encryptedAttachmentKey = await encryptBytes(
-    attachmentKey,
-    fromBase64(input.newNoteKeyBase64),
-    aad
-  );
-
-  return {
-    attachmentId: input.attachmentId,
-    encryptedAttachmentKey: encryptedAttachmentKey.cipher,
-    attachmentKeyNonce: encryptedAttachmentKey.nonce
-  };
-}
-
 export async function createEncryptedAttachmentDraft(input: {
-  userId: string;
+  cryptoOwnerId: string;
   noteId: string;
   keyEpoch: number;
   noteKeyBase64: string;
@@ -73,23 +31,23 @@ export async function createEncryptedAttachmentDraft(input: {
   const id = randomUuid();
   const attachmentKey = randomBytes(32);
   const noteKey = fromBase64(input.noteKeyBase64);
-  const encryptedAttachmentKey = await encryptBytes(
-    attachmentKey,
+  const encryptedAttachmentKey = await encryptAttachmentKeyV2({
+    cryptoOwnerId: input.cryptoOwnerId,
+    noteId: input.noteId,
+    attachmentId: id,
+    keyEpoch: input.keyEpoch,
     noteKey,
-    attachmentKeyAad(input.userId, input.noteId, id)
-  );
-  const encryptedFile = await encryptBytes(
-    new Uint8Array(await input.file.arrayBuffer()),
+    attachmentKey
+  });
+  const encryptedFile = await encryptAttachmentFileV2({
+    cryptoOwnerId: input.cryptoOwnerId,
+    noteId: input.noteId,
+    attachmentId: id,
     attachmentKey,
-    attachmentAssociatedData({
-      userId: input.userId,
-      noteId: input.noteId,
-      attachmentId: id,
-      formatVersion: 1
-    })
-  );
+    bytes: new Uint8Array(await input.file.arrayBuffer())
+  });
   const encryptedMetadata = await encryptAttachmentMetadataV2({
-    cryptoOwnerId: input.userId,
+    cryptoOwnerId: input.cryptoOwnerId,
     noteId: input.noteId,
     attachmentId: id,
     keyEpoch: input.keyEpoch,
@@ -97,6 +55,7 @@ export async function createEncryptedAttachmentDraft(input: {
     filename: input.file.name,
     mimeType: input.file.type || "application/octet-stream"
   });
+  const encryptedBytes = fromBase64(encryptedFile.cipher);
 
   return {
     id,
@@ -104,44 +63,42 @@ export async function createEncryptedAttachmentDraft(input: {
     metadataCipher: encryptedMetadata.cipher,
     metadataNonce: encryptedMetadata.nonce,
     metadataFormatVersion: 2,
-    size: fromBase64(encryptedFile.cipher).byteLength,
+    size: encryptedBytes.byteLength,
     encryptedAttachmentKey: encryptedAttachmentKey.cipher,
     attachmentKeyNonce: encryptedAttachmentKey.nonce,
     fileNonce: encryptedFile.nonce,
-    encryptedBytes: fromBase64(encryptedFile.cipher)
+    encryptedBytes
   };
 }
 
 export async function decryptAttachmentBytes(input: {
-  userId: string;
+  cryptoOwnerId: string;
   noteId: string;
-  noteKeyBase64: string;
   attachmentId: string;
-  encryptedAttachmentKey: EncryptedPayload;
-  encryptedBytes: EncryptedPayload;
+  keyEpoch: number;
+  noteKeyBase64: string;
+  encryptedAttachmentKey: string;
+  attachmentKeyNonce: string;
+  encryptedBytes: string;
+  fileNonce: string;
 }): Promise<Uint8Array> {
-  const noteKey = fromBase64(input.noteKeyBase64);
-  const attachmentKey = await decryptBytes(
-    input.encryptedAttachmentKey,
-    noteKey,
-    attachmentKeyAad(input.userId, input.noteId, input.attachmentId)
-  );
-  return decryptBytes(
-    input.encryptedBytes,
+  const attachmentKey = await decryptAttachmentKeyV2({
+    cryptoOwnerId: input.cryptoOwnerId,
+    noteId: input.noteId,
+    attachmentId: input.attachmentId,
+    keyEpoch: input.keyEpoch,
+    noteKey: fromBase64(input.noteKeyBase64),
+    envelope: {
+      cipher: input.encryptedAttachmentKey,
+      nonce: input.attachmentKeyNonce,
+      formatVersion: 2
+    }
+  });
+  return decryptAttachmentFileV2({
+    cryptoOwnerId: input.cryptoOwnerId,
+    noteId: input.noteId,
+    attachmentId: input.attachmentId,
     attachmentKey,
-    attachmentAssociatedData({
-      userId: input.userId,
-      noteId: input.noteId,
-      attachmentId: input.attachmentId,
-      formatVersion: 1
-    })
-  );
-}
-
-function attachmentKeyAad(
-  userId: string,
-  noteId: string,
-  attachmentId: string
-): Uint8Array {
-  return utf8(`fortnote:attachment-key:v1:${userId}:${noteId}:${attachmentId}`);
+    envelope: { cipher: input.encryptedBytes, nonce: input.fileNonce, formatVersion: 2 }
+  });
 }

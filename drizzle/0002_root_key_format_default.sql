@@ -1,0 +1,2 @@
+ALTER TABLE "user_key_material" ALTER COLUMN "root_key_format_version" SET DEFAULT 2;--> statement-breakpoint
+ALTER TABLE "user_key_material" ALTER COLUMN "recovery_root_key_format_version" SET DEFAULT 2;
