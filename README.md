@@ -1,27 +1,41 @@
 # Fortnote
 
-Fortnote is a self-hosted, end-to-end encrypted notes application with realtime collaboration, sharing, attachments, and account recovery.
+Fortnote is a self-hosted notes application with end-to-end encryption, realtime collaboration,
+sharing, encrypted attachments, and account recovery. Note content, titles, folder names, and
+attachment files and names are encrypted in the browser before they reach the server.
+
+| Path              | Contents                                                          |
+| ----------------- | ----------------------------------------------------------------- |
+| `apps/client`     | React web app built with Vite, the BlockNote editor, and Yjs      |
+| `apps/server`     | Express API and realtime WebSocket server on PostgreSQL (Drizzle) |
+| `packages/shared` | Cryptography and realtime protocol shared by client and server    |
+| `drizzle`         | Database migrations                                               |
+| `tests`           | Unit, integration, and Playwright end-to-end tests                |
+| `scripts`         | Test database, performance, and deployment smoke tooling          |
 
 ## Requirements
 
 - Node.js 22 or newer
-- pnpm
+- pnpm 11 (`corepack enable` installs the version pinned in `package.json`)
 - Docker or Podman, for PostgreSQL in development and tests
+
+## Run the full stack
+
+```sh
+docker compose -f compose.postgres.yaml up --build
+```
+
+Open <http://localhost:3001>. The application container builds the client and API, serves both
+from one origin, and stores all data, including encrypted attachments, in the `postgres` service.
 
 ## Development
 
-Install dependencies:
-
 ```sh
 pnpm install
-```
-
-Start PostgreSQL, then the API server and web client in separate terminals. The server applies
-database migrations before it listens:
-
-```sh
 docker compose -f compose.postgres.yaml up -d postgres
 ```
+
+Then run the API and the web client in separate terminals:
 
 ```sh
 pnpm dev:server
@@ -31,62 +45,101 @@ pnpm dev:server
 pnpm dev
 ```
 
-Open <http://localhost:5173>.
+Open <http://localhost:5173>. The API listens on port 3001 and applies database migrations before
+it accepts requests; the Vite dev server proxies `/api` to it.
 
-### Tests
-
-The server tests need PostgreSQL. Start the disposable test database once, then run the tests:
+To delete all local data, remove the database volume:
 
 ```sh
-pnpm test:db:start
-pnpm test
+docker compose -f compose.postgres.yaml down -v
 ```
-
-Each server test creates and drops its own database, and the runtime contract tests clear the
-test database itself. Stop the container with `pnpm test:db:stop`. To use another server, set
-`FORTNOTE_POSTGRES_TEST_URL` to a URL whose user can create databases; never point it at data you
-want to keep.
 
 ## Configuration
 
-Server settings live in the root [`config.yaml`](config.yaml). The committed file contains
-safe local defaults and no secrets; its database URL matches the `postgres` service in
-`compose.postgres.yaml`.
+The server reads [`config.yaml`](config.yaml), searching the current directory and its parents;
+set `FORTNOTE_CONFIG` to use another file. The committed file holds safe local defaults and no
+secrets. Environment variables override the YAML values:
 
-The server searches the current directory and its parents for `config.yaml`. Set
-`FORTNOTE_CONFIG` to use a different file. Environment variables such as `PORT`, `DATABASE_URL`,
-`DATABASE_MAX_CONNECTIONS`, `DATABASE_CONNECTION_TIMEOUT_MS`, `DATABASE_STATEMENT_TIMEOUT_MS`,
-`DATABASE_LOCK_TIMEOUT_MS`, `DATABASE_STARTUP_RETRY_ATTEMPTS`,
-`DATABASE_STARTUP_RETRY_DELAY_MS`, `STORAGE_QUOTA_BYTES`, and `ALLOWED_ORIGIN` override YAML
-values, which keeps secrets and deployment-specific values out of source control.
+| Environment                            | `config.yaml`                      |
+| -------------------------------------- | ---------------------------------- |
+| `HOST`                                 | `server.host`                      |
+| `PORT`                                 | `server.port`                      |
+| `ALLOWED_ORIGIN`                       | `server.allowedOrigin`             |
+| `COOKIE_SECURE`                        | `server.cookieSecure`              |
+| `WEB_ROOT`                             | `server.webRoot`                   |
+| `DATABASE_URL`                         | `database.url`                     |
+| `DATABASE_MAX_CONNECTIONS`             | `database.maxConnections`          |
+| `DATABASE_CONNECTION_TIMEOUT_MS`       | `database.connectionTimeoutMs`     |
+| `DATABASE_STATEMENT_TIMEOUT_MS`        | `database.statementTimeoutMs`      |
+| `DATABASE_LOCK_TIMEOUT_MS`             | `database.lockTimeoutMs`           |
+| `DATABASE_STARTUP_RETRY_ATTEMPTS`      | `database.startupRetryAttempts`    |
+| `DATABASE_STARTUP_RETRY_DELAY_MS`      | `database.startupRetryDelayMs`     |
+| `STORAGE_QUOTA_BYTES`                  | `storage.quotaBytes`               |
+| `MAINTENANCE_BATCH_SIZE`               | `storage.maintenanceBatchSize`     |
+| `CONTENT_UPLOAD_EXPIRY_MS`             | `storage.uploadExpiryMs`           |
+| `JSON_CONTROL_MAX_BYTES`               | `limits.jsonControlMaxBytes`       |
+| `REALTIME_FRAME_MAX_BYTES`             | `limits.realtimeFrameMaxBytes`     |
+| `CONTENT_CHUNK_MAX_BYTES`              | `limits.contentChunkMaxBytes`      |
+| `HISTORY_PAGE_MAX_ITEMS`               | `limits.historyPageMaxItems`       |
+| `HISTORY_PAGE_MAX_BYTES`               | `limits.historyPageMaxBytes`       |
+| `SESSION_IDLE_TIMEOUT_MS`              | `sessions.idleTimeoutMs`           |
+| `SESSION_ABSOLUTE_TIMEOUT_MS`          | `sessions.absoluteTimeoutMs`       |
+| `AUTH_IP_RATE_LIMIT_MAX_ATTEMPTS`      | `auth.ipRateLimitMaxAttempts`      |
+| `AUTH_ACCOUNT_RATE_LIMIT_MAX_ATTEMPTS` | `auth.accountRateLimitMaxAttempts` |
 
-PostgreSQL defaults to 10 pooled connections, a 5-second connection timeout, a 30-second statement
-timeout, and a 5-second lock timeout. Startup makes up to 10 connection attempts one second apart
-before failing; all of these values can be changed with the YAML fields or environment variables
-listed above.
+The database pool defaults to 10 connections, a 5-second connection timeout, a 30-second statement
+timeout, and a 5-second lock timeout. At startup the server tries to connect up to 10 times, one
+second apart.
 
-## Storage and deployment roadmap
+## Database
 
-PostgreSQL stores relational data and encrypted attachment chunks. Attachment chunks use ordinary
-`bytea` rows rather than PostgreSQL large objects. This fits Fortnote's existing bounded,
-encrypted chunks and keeps backup and deletion behavior
-transactional. An S3-compatible attachment backend can be added later through the same storage
-interface.
+PostgreSQL holds all application data. Encrypted attachments are stored as bounded `bytea` chunks
+rather than large objects, so backups and deletions stay transactional.
 
-The staging deployment uses Docker Compose with separate application and PostgreSQL services. The
-application image builds both the web client and API, runs as the unprivileged `node` user, serves
-the client and API from one origin, mounts `config.yaml` read-only, and stores PostgreSQL-mode
-attachments entirely in the database. PostgreSQL data is kept in the `postgres-data` volume; the
-application container has a read-only filesystem and does not need an attachment volume.
+Migrations in `drizzle/` run automatically when the server starts:
 
-Start the complete local stack and open <http://localhost:3001>:
+- `0000_baseline.sql` is generated from `apps/server/src/db/schema.ts`.
+- `0001_folder_integrity.sql` is a custom migration (`drizzle-kit generate --custom`) with the
+  folder ownership triggers, which the schema cannot express. `db:generate` never recreates it.
+
+After changing the schema, add a new migration and apply it to the development database:
 
 ```sh
-docker compose -f compose.postgres.yaml up --build
+pnpm --filter @fortnote/server db:generate
+pnpm --filter @fortnote/server db:migrate
 ```
 
-The committed Compose defaults are for localhost only. For a non-local deployment, set a strong
-database password and a matching connection URL, plus the externally visible HTTPS origin:
+CI fails when `db:generate` would produce a migration that is not committed.
+
+## Testing
+
+Start the disposable test database once. It runs as the `fortnote-test-postgres` container on
+`127.0.0.1:55432`:
+
+```sh
+pnpm test:db:start
+```
+
+| Command                        | What it runs                                                                                            |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `pnpm test`                    | Typecheck, then the shared, client, and server suites. Every server test gets its own database.         |
+| `pnpm e2e`                     | Playwright end-to-end tests in Chromium on four workers, then the API-restart test on its own.          |
+| `pnpm assurance:accessibility` | Accessibility checks with axe.                                                                          |
+| `pnpm assurance:perf`          | Production build and performance run against its own PostgreSQL container. Use `:full` for all samples. |
+| `pnpm smoke:compose`           | Destructive deployment smoke test in an isolated Compose project.                                       |
+
+Install the Playwright browser once with `pnpm exec playwright install chromium`. The end-to-end
+servers use ports 3101 and 5273; set `API_PORT` and `CLIENT_PORT` to change them. Set
+`FORTNOTE_RUN_DOCUMENT_ASSURANCE=1` to include the long document durability journey.
+
+Stop the test database with `pnpm test:db:stop`. To test against another PostgreSQL server, set
+`FORTNOTE_POSTGRES_TEST_URL` to a URL whose user can create databases. Never point it at data you
+want to keep: the tests create, clear, and drop databases.
+
+## Deployment
+
+The Compose defaults are for localhost only. For any other deployment, set a strong database
+password, a matching connection URL, and the public HTTPS origin:
 
 ```sh
 FORTNOTE_POSTGRES_PASSWORD='replace-with-a-strong-password' \
@@ -96,47 +149,18 @@ FORTNOTE_COOKIE_SECURE=true \
 docker compose -f compose.postgres.yaml up -d --build
 ```
 
-`FORTNOTE_POSTGRES_PASSWORD` is passed to PostgreSQL as-is; encode reserved URL characters in the
-password portion of `FORTNOTE_DATABASE_URL`. Prefer a protected environment file or deployment
-secret manager instead of placing credentials in shell history.
+`FORTNOTE_POSTGRES_PASSWORD` is passed to PostgreSQL unchanged, so percent-encode reserved
+characters in the password portion of `FORTNOTE_DATABASE_URL`. Keep credentials in a protected
+environment file or secret manager rather than shell history.
 
-On a host with Docker Compose, run the destructive, isolated deployment smoke test before staging:
+The application container runs as the unprivileged `node` user with a read-only filesystem and
+mounts `config.yaml` read-only. PostgreSQL data lives in the `postgres-data` volume.
 
-```sh
-pnpm smoke:compose
-```
-
-The smoke runner uses a unique Compose project and database volume, chooses unprivileged local
-ports, and removes its stack afterward. It verifies image build and migration, database readiness,
-non-root execution, authentication, note creation, encrypted attachment upload/download, app
-restart, persistence, graceful shutdown, and volume cleanup. Set `FORTNOTE_SMOKE_PORT` and
-`FORTNOTE_SMOKE_POSTGRES_PORT` only when specific unused host ports are required. The runner uses
-Docker when available and otherwise uses Podman; set `FORTNOTE_CONTAINER_ENGINE` to override that
-selection. The selected engine must have a Compose provider installed.
-
-Migrations run automatically before the application becomes ready. After changing
-`apps/server/src/db/schema.ts`, generate a migration and apply it to the development database:
-
-```sh
-pnpm --filter @fortnote/server db:generate
-pnpm --filter @fortnote/server db:migrate
-```
-
-CI regenerates the migrations from the schema and fails when the result differs from `drizzle/`.
-
-`drizzle/` holds a single baseline migration. While the project has no deployed data, a schema
-change may also be folded into that baseline by regenerating it, which requires empty databases:
-
-```sh
-docker compose down -v
-pnpm --filter @fortnote/server db:migrate
-pnpm test:db:stop && pnpm test:db:start
-```
-
-The runtime contract tests in `tests/server/db/postgres-runtime.test.ts` apply migrations to the
-test database, clear it, and verify auth, notes, encrypted attachments, restart and failed-migration
-recovery, and concurrent attachment, content, note, membership, rotation, and event mutations.
-They run as part of `pnpm test`.
+Before staging, run `pnpm smoke:compose` on a host with Docker Compose. It builds the image, then
+checks migrations, readiness, non-root execution, sign-in, notes, encrypted attachments, restart,
+persistence, graceful shutdown, and cleanup, using a unique project, volume, and free local ports.
+It uses Docker when available and Podman otherwise; set `FORTNOTE_CONTAINER_ENGINE` to choose, and
+`FORTNOTE_SMOKE_PORT` or `FORTNOTE_SMOKE_POSTGRES_PORT` to fix the ports.
 
 ## Checks
 
@@ -148,9 +172,9 @@ pnpm test
 pnpm build
 ```
 
-Run `pnpm format` to apply the Prettier formatting that `format:check` enforces. The CI
-workflow in `.github/workflows/ci.yml` runs these checks on every push and pull request against a
-PostgreSQL service.
+`pnpm format` applies the Prettier formatting that `format:check` enforces. The CI workflow in
+`.github/workflows/ci.yml` runs these checks and the migration check against a PostgreSQL service
+on every push and pull request.
 
 ## License
 
