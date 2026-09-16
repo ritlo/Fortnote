@@ -76,18 +76,15 @@ describe("performance assurance calculations", () => {
     ).toBe(3);
   });
 
-  it("isolates performance runs on the selected database", () => {
-    expect(performanceDatabaseEnvironment(undefined, "/tmp/performance.sqlite")).toEqual({
-      DATABASE_PATH: "/tmp/performance.sqlite",
-      DATABASE_PROVIDER: "sqlite"
-    });
+  it("requires an isolated PostgreSQL database for performance runs", () => {
+    expect(() => performanceDatabaseEnvironment(undefined)).toThrow(
+      "FORTNOTE_PERFORMANCE_DATABASE_URL"
+    );
     expect(
       performanceDatabaseEnvironment(
-        "postgresql://fortnote:secret@127.0.0.1:5432/fortnote",
-        "/tmp/performance.sqlite"
+        "postgresql://fortnote:secret@127.0.0.1:5432/fortnote"
       )
     ).toEqual({
-      DATABASE_PROVIDER: "postgres",
       DATABASE_URL: "postgresql://fortnote:secret@127.0.0.1:5432/fortnote"
     });
   });
@@ -179,7 +176,7 @@ describe("performance assurance calculations", () => {
       collaborators: 3,
       cpu: "2-vCPU",
       dataset: "4MiB-focused-document",
-      database: "sqlite",
+      database: "postgres",
       node: "26.1.0",
       os: "linux",
       warmupRuns: 1

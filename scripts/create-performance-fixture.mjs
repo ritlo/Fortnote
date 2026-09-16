@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 
@@ -50,20 +49,16 @@ export function performanceFixtureDefinition(
   };
 }
 
-export function performanceDatabaseEnvironment(postgresUrl, sqlitePath) {
-  return postgresUrl
-    ? {
-        DATABASE_PROVIDER: "postgres",
-        DATABASE_URL: postgresUrl
-      }
-    : {
-        DATABASE_PROVIDER: "sqlite",
-        DATABASE_PATH: sqlitePath
-      };
+export function performanceDatabaseEnvironment(postgresUrl) {
+  if (!postgresUrl) {
+    throw new Error(
+      "FORTNOTE_PERFORMANCE_DATABASE_URL is required; run pnpm assurance:perf to start an isolated PostgreSQL container"
+    );
+  }
+  return { DATABASE_URL: postgresUrl };
 }
 
 async function run() {
-  const fixtureRoot = await mkdtemp(path.join(tmpdir(), "fortnote-performance-"));
   const apiPort = await availablePort();
   let clientPort = await availablePort();
   while (clientPort === apiPort) clientPort = await availablePort();
@@ -78,10 +73,8 @@ async function run() {
     process.env.FORTNOTE_PERFORMANCE_SEED,
     profile
   );
-  const postgresUrl = process.env.FORTNOTE_PERFORMANCE_DATABASE_URL;
   const databaseEnvironment = performanceDatabaseEnvironment(
-    postgresUrl,
-    path.join(fixtureRoot, "performance.sqlite")
+    process.env.FORTNOTE_PERFORMANCE_DATABASE_URL
   );
   await mkdir(outputDirectory, { recursive: true });
 
@@ -89,7 +82,6 @@ async function run() {
     env: {
       ...process.env,
       ...databaseEnvironment,
-      DATA_DIR: path.join(fixtureRoot, "ciphertext"),
       API_PORT: String(apiPort),
       ALLOWED_ORIGIN: `http://127.0.0.1:${String(clientPort)}`,
       CLIENT_PORT: String(clientPort),
@@ -114,11 +106,6 @@ async function run() {
     `${JSON.stringify(definition, null, 2)}\n`,
     "utf8"
   );
-  if (process.env.FORTNOTE_KEEP_PERFORMANCE_FIXTURE !== "1") {
-    await rm(fixtureRoot, { force: true, recursive: true });
-  } else {
-    console.log(`Performance fixture retained at ${fixtureRoot}`);
-  }
   process.exitCode = exitCode;
 }
 

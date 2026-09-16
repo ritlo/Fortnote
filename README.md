@@ -122,6 +122,8 @@ pnpm --filter @fortnote/server db:generate
 pnpm --filter @fortnote/server db:migrate
 ```
 
+CI regenerates the migrations from the schema and fails when the result differs from `drizzle/`.
+
 `drizzle/` holds a single baseline migration. While the project has no deployed data, a schema
 change may also be folded into that baseline by regenerating it, which requires empty databases:
 

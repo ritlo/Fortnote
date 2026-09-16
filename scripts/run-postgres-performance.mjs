@@ -44,9 +44,8 @@ try {
     [path.join(repositoryRoot, "scripts/create-performance-fixture.mjs")],
     {
       ...process.env,
-      DATABASE_PROVIDER: "postgres",
       FORTNOTE_PERFORMANCE_DATABASE_URL: databaseUrl,
-      FORTNOTE_PERFORMANCE_PROFILE: process.env.FORTNOTE_PERFORMANCE_PROFILE ?? "full"
+      FORTNOTE_PERFORMANCE_PROFILE: process.env.FORTNOTE_PERFORMANCE_PROFILE ?? "smoke"
     }
   );
 } finally {

@@ -3,7 +3,6 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -18,7 +17,7 @@ afterEach(() => {
 
 describe("confidentiality inspection CLI", () => {
   it.each([
-    "sqlite",
+    "database-dump",
     "ciphertext-files",
     "http",
     "websocket",
@@ -51,7 +50,7 @@ describe("confidentiality inspection CLI", () => {
     expect(result.status).toBe(0);
     expect(report).toMatchObject({ result: "pass", findings: [] });
     expect(report.inspected).toEqual([
-      "sqlite",
+      "database-dump",
       "ciphertext-files",
       "http",
       "websocket",
@@ -62,18 +61,23 @@ describe("confidentiality inspection CLI", () => {
 });
 
 type Surface =
-  "sqlite" | "ciphertext-files" | "http" | "websocket" | "logs" | "browser-storage";
+  | "database-dump"
+  | "ciphertext-files"
+  | "http"
+  | "websocket"
+  | "logs"
+  | "browser-storage";
 
 interface Fixture {
   browserStorage: string;
   canary: string;
   canaryFile: string;
   ciphertextDirectory: string;
+  databaseDump: string;
   http: string;
   logs: string;
   protectedPayload: string;
   report: string;
-  sqlite: string;
   websocket: string;
 }
 
@@ -95,11 +99,11 @@ function createFixture(leakingSurface: Surface | null): Fixture {
     canary,
     canaryFile: path.join(root, "canaries.txt"),
     ciphertextDirectory: path.join(root, "ciphertext"),
+    databaseDump: path.join(root, "assurance-dump.sql"),
     http: path.join(root, "http.json"),
     logs: path.join(root, "service.log"),
     protectedPayload,
     report: path.join(root, "inspection-report.json"),
-    sqlite: path.join(root, "assurance.sqlite"),
     websocket: path.join(root, "websocket.json")
   };
 
@@ -126,15 +130,15 @@ function createFixture(leakingSurface: Surface | null): Fixture {
       indexedDb: leakingSurface === "browser-storage" ? leakedValue : cleanValue
     })
   );
-  const database = new Database(fixture.sqlite);
-  try {
-    database.exec("CREATE TABLE captured_values (value TEXT NOT NULL)");
-    database
-      .prepare("INSERT INTO captured_values (value) VALUES (?)")
-      .run(leakingSurface === "sqlite" ? leakedValue : cleanValue);
-  } finally {
-    database.close();
-  }
+  writeFileSync(
+    fixture.databaseDump,
+    [
+      "COPY public.notes (id, title_cipher) FROM stdin;",
+      `note-1\t${leakingSurface === "database-dump" ? leakedValue : cleanValue}`,
+      "\\.",
+      ""
+    ].join("\n")
+  );
   return fixture;
 }
 
@@ -145,8 +149,8 @@ function inspect(fixture: Fixture) {
       inspector,
       "--canary-file",
       fixture.canaryFile,
-      "--sqlite",
-      fixture.sqlite,
+      "--database-dump",
+      fixture.databaseDump,
       "--ciphertext-files",
       fixture.ciphertextDirectory,
       "--http",

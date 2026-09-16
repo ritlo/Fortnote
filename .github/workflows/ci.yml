@@ -47,3 +47,13 @@ jobs:
       # Runs the workspace typecheck before the test suites.
       - run: pnpm test
       - run: pnpm build
+      - name: Check committed migrations against the schema
+        run: |
+          pnpm --filter @fortnote/server exec drizzle-kit check --config=../../drizzle.config.ts
+          pnpm --filter @fortnote/server exec drizzle-kit generate --config=../../drizzle.config.ts
+          if [ -n "$(git status --porcelain drizzle)" ]; then
+            echo "drizzle/ does not match apps/server/src/db/schema.ts." >&2
+            echo "Run: pnpm --filter @fortnote/server db:generate" >&2
+            git status --porcelain drizzle >&2
+            exit 1
+          fi

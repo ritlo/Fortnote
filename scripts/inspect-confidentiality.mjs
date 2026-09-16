@@ -12,7 +12,7 @@ import {
 import path from "node:path";
 
 const surfaceOptions = [
-  ["sqlite", "--sqlite"],
+  ["database-dump", "--database-dump"],
   ["ciphertext-files", "--ciphertext-files"],
   ["http", "--http"],
   ["websocket", "--websocket"],
@@ -39,19 +39,12 @@ function parseArguments(argv) {
   return values;
 }
 
-function filesAt(target, includeSqliteSidecars = false) {
-  const candidates = includeSqliteSidecars
-    ? [target, `${target}-wal`, `${target}-shm`]
-    : [target];
-  return candidates.flatMap((candidate) => {
-    if (!existsSync(candidate)) return [];
-    if (!statSync(candidate).isDirectory()) return [candidate];
-    return readdirSync(candidate, { withFileTypes: true })
-      .sort((left, right) =>
-        left.name < right.name ? -1 : left.name > right.name ? 1 : 0
-      )
-      .flatMap((entry) => filesAt(path.join(candidate, entry.name)));
-  });
+function filesAt(target) {
+  if (!existsSync(target)) return [];
+  if (!statSync(target).isDirectory()) return [target];
+  return readdirSync(target, { withFileTypes: true })
+    .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+    .flatMap((entry) => filesAt(path.join(target, entry.name)));
 }
 
 async function containsAny(file, needles) {
@@ -77,7 +70,7 @@ try {
   const findings = [];
   for (const [surface, option] of surfaceOptions) {
     inspected.push(surface);
-    const files = filesAt(options.get(option), surface === "sqlite");
+    const files = filesAt(options.get(option));
     if (files.length === 0) throw new Error(`Inspection target is missing: ${surface}`);
     let detected = false;
     for (const file of files) {

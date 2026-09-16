@@ -215,10 +215,7 @@ test.describe("controlled production performance", () => {
         buildMode: "production",
         collaborators: definition.collaborators,
         cpu: `${String(os.cpus().length)}x ${os.cpus()[0]?.model ?? "unknown"}`,
-        database:
-          process.env.DATABASE_PROVIDER === "postgres"
-            ? "isolated PostgreSQL and database ciphertext storage"
-            : "isolated local SQLite and filesystem ciphertext storage",
+        database: "isolated PostgreSQL and database ciphertext storage",
         dataset: `${String(profile.documentBytes)} focused-document bytes/${String(definition.compactionEdits)} edits`,
         node: process.version,
         os: `${os.platform()} ${os.release()} ${os.arch()}`,
