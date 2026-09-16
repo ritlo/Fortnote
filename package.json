@@ -18,7 +18,7 @@
     "build": "pnpm -r build",
     "dev": "pnpm --filter @fortnote/client dev",
     "dev:server": "pnpm --filter @fortnote/server dev",
-    "e2e": "playwright test --project=chromium",
+    "e2e": "playwright test --project=chromium; parallel=$?; playwright test --project=chromium-server-restart; restart=$?; [ $parallel -eq 0 ] && [ $restart -eq 0 ]",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",

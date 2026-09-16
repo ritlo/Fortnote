@@ -463,7 +463,8 @@ test("syncs edits between two tabs signed in to the same account", async ({
   }
 });
 
-test("converges offline tabs after a lost ack, API restart, and fresh session", async ({
+// Restarts the shared API server, so it runs alone after the parallel suite.
+test("converges offline tabs after a lost ack, API restart, and fresh session @server-restart", async ({
   baseURL,
   browser
 }) => {

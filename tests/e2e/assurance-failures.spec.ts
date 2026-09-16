@@ -372,11 +372,16 @@ async function appendGeneratedText(
         range.collapse(false);
         selection.removeAllRanges();
         selection.addRange(range);
+        // Ordinary words keep line breaking linear; one long unbroken run makes
+        // every edit re-wrap the whole paragraph.
+        const words = "lorem ipsum dolor sit amet ".repeat(
+          Math.ceil((byteLength - value.length) / 27)
+        );
         // eslint-disable-next-line @typescript-eslint/no-deprecated
         return document.execCommand(
           "insertText",
           false,
-          value + "x".repeat(byteLength - value.length)
+          value + words.slice(0, byteLength - value.length)
         );
       },
       { byteLength: bytes, value: prefix }

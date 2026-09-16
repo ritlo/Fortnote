@@ -99,7 +99,9 @@ async function waitForHealth(): Promise<void> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(serverHealthUrl);
+      const response = await fetch(serverHealthUrl, {
+        signal: AbortSignal.timeout(1_000)
+      });
       if (response.ok) {
         return;
       }

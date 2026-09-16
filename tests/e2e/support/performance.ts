@@ -88,7 +88,10 @@ export async function registerPerformanceUser(
   await page.getByLabel("Account password").fill(account.password);
   await page.getByLabel("Confirm password").fill(account.password);
   await page.getByRole("button", { name: "Create encrypted vault" }).click();
-  await expect(page.getByText("Signed in and decrypted")).toBeVisible();
+  // Vault unlock runs Argon2id and loads keys, folders, and notes.
+  await expect(page.getByText("Signed in and decrypted")).toBeVisible({
+    timeout: 30_000
+  });
   await expect(page.getByText("Sync connected")).toBeVisible({ timeout: 30_000 });
   await waitForSharingKey(page);
 }
@@ -102,7 +105,10 @@ export async function signInPerformanceUser(
   await page.getByLabel("Account handle").fill(account.username);
   await page.getByLabel("Account password").fill(account.password);
   await page.getByRole("button", { name: "Sign in and decrypt" }).click();
-  await expect(page.getByText("Signed in and decrypted")).toBeVisible();
+  // Vault unlock runs Argon2id and loads keys, folders, and notes.
+  await expect(page.getByText("Signed in and decrypted")).toBeVisible({
+    timeout: 30_000
+  });
   await expect(page.getByText("Sync connected")).toBeVisible({ timeout: 30_000 });
 }
 
@@ -470,7 +476,12 @@ async function injectGeneratedEditorText(
       if (!replaceExisting) range.collapse(false);
       selection.removeAllRanges();
       selection.addRange(range);
-      const text = textPrefix + "x".repeat(byteLength - textPrefix.length);
+      // Ordinary words keep line breaking linear; one long unbroken run makes
+      // every keystroke re-wrap the whole paragraph.
+      const words = "lorem ipsum dolor sit amet ".repeat(
+        Math.ceil((byteLength - textPrefix.length) / 27)
+      );
+      const text = textPrefix + words.slice(0, byteLength - textPrefix.length);
       // Chromium still exposes this command; it drives the real contenteditable input path.
       // eslint-disable-next-line @typescript-eslint/no-deprecated
       return document.execCommand("insertText", false, text);
