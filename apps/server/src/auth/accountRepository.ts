@@ -90,6 +90,9 @@ export interface RecoverAccountInput {
   rootKeyContextVersion: number;
 }
 
+export type RegisterAccountOutcome =
+  { kind: "registered" } | { kind: "handle-taken" } | { kind: "id-taken" };
+
 export type RecoverAccountOutcome =
   | { kind: "recovered"; token: string; revokedSessionIds: string[] }
   | { kind: "conflict" };
@@ -156,7 +159,7 @@ export interface AccountRepository {
   recoveryParameters(userId: string): Promise<RecoveryParametersRecord | null>;
   authVerifierHash(userId: string): Promise<string | null>;
   recoveryVerifier(userId: string): Promise<RecoveryVerifierRecord | null>;
-  register(input: RegisterAccountInput): Promise<void>;
+  register(input: RegisterAccountInput): Promise<RegisterAccountOutcome>;
   recover(input: RecoverAccountInput): Promise<RecoverAccountOutcome>;
   keyMaterial(userId: string): Promise<KeyMaterialRecord | null>;
   rotateKeyMaterial(input: RotateKeyMaterialInput): Promise<RotateKeyMaterialOutcome>;

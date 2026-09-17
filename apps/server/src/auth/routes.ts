@@ -257,41 +257,45 @@ export function createAuthRouter(context: AppContext): Router {
     const authVerifierHash = await argon2.hash(parsed.data.authVerifier);
     const recoveryAuthVerifierHash = await argon2.hash(parsed.data.recoveryAuthVerifier);
 
-    try {
-      await context.db.accounts.register({
-        user: {
-          id: userId,
-          username: canonicalHandle,
-          displayName,
-          canonicalHandle,
-          authVerifierHash,
-          authKdfSalt: parsed.data.authKdf.salt,
-          authKdfOpsLimit: parsed.data.authKdf.opsLimit,
-          authKdfMemLimit: parsed.data.authKdf.memLimit,
-          authKdfVersion: parsed.data.authKdf.version
-        },
-        keyMaterial: {
-          encryptedRootKey: parsed.data.encryptedRootKey,
-          rootKeyNonce: parsed.data.rootKeyNonce,
-          rootKeyFormatVersion: parsed.data.rootKeyFormatVersion,
-          rootKeyContextVersion: INITIAL_KEY_MATERIAL_VERSION,
-          kdfSalt: parsed.data.vaultKdf.salt,
-          kdfOpsLimit: parsed.data.vaultKdf.opsLimit,
-          kdfMemLimit: parsed.data.vaultKdf.memLimit,
-          kdfVersion: parsed.data.vaultKdf.version,
-          recoveryEncryptedRootKey: parsed.data.recoveryEncryptedRootKey,
-          recoveryRootKeyNonce: parsed.data.recoveryRootKeyNonce,
-          recoveryRootKeyFormatVersion: parsed.data.recoveryRootKeyFormatVersion,
-          recoveryRootKeyContextVersion: INITIAL_KEY_MATERIAL_VERSION,
-          recoveryAuthVerifierHash,
-          recoveryKdfSalt: parsed.data.recoveryKdf.salt,
-          recoveryKdfOpsLimit: parsed.data.recoveryKdf.opsLimit,
-          recoveryKdfMemLimit: parsed.data.recoveryKdf.memLimit,
-          recoveryKdfVersion: parsed.data.recoveryKdf.version
-        }
-      });
-    } catch {
+    const registration = await context.db.accounts.register({
+      user: {
+        id: userId,
+        username: canonicalHandle,
+        displayName,
+        canonicalHandle,
+        authVerifierHash,
+        authKdfSalt: parsed.data.authKdf.salt,
+        authKdfOpsLimit: parsed.data.authKdf.opsLimit,
+        authKdfMemLimit: parsed.data.authKdf.memLimit,
+        authKdfVersion: parsed.data.authKdf.version
+      },
+      keyMaterial: {
+        encryptedRootKey: parsed.data.encryptedRootKey,
+        rootKeyNonce: parsed.data.rootKeyNonce,
+        rootKeyFormatVersion: parsed.data.rootKeyFormatVersion,
+        rootKeyContextVersion: INITIAL_KEY_MATERIAL_VERSION,
+        kdfSalt: parsed.data.vaultKdf.salt,
+        kdfOpsLimit: parsed.data.vaultKdf.opsLimit,
+        kdfMemLimit: parsed.data.vaultKdf.memLimit,
+        kdfVersion: parsed.data.vaultKdf.version,
+        recoveryEncryptedRootKey: parsed.data.recoveryEncryptedRootKey,
+        recoveryRootKeyNonce: parsed.data.recoveryRootKeyNonce,
+        recoveryRootKeyFormatVersion: parsed.data.recoveryRootKeyFormatVersion,
+        recoveryRootKeyContextVersion: INITIAL_KEY_MATERIAL_VERSION,
+        recoveryAuthVerifierHash,
+        recoveryKdfSalt: parsed.data.recoveryKdf.salt,
+        recoveryKdfOpsLimit: parsed.data.recoveryKdf.opsLimit,
+        recoveryKdfMemLimit: parsed.data.recoveryKdf.memLimit,
+        recoveryKdfVersion: parsed.data.recoveryKdf.version
+      }
+    });
+    if (registration.kind === "handle-taken") {
       sendApiError(response, "conflict", "Username is already registered");
+      return;
+    }
+    if (registration.kind === "id-taken") {
+      // Account IDs are random, so a collision needs a new ID rather than a new handle.
+      sendApiError(response, "conflict", "Account could not be created; try again");
       return;
     }
 

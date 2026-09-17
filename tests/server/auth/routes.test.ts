@@ -1,5 +1,5 @@
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createTestApp, csrfHeaders, registerPayload } from "../support/http.js";
 import { testSql } from "../support/database.js";
 
@@ -27,6 +27,44 @@ describe("auth routes", () => {
         recoveryRootKeyContextVersion: 1
       })
     });
+  });
+
+  it("reports registration conflicts by what is already taken", async () => {
+    const app = await createTestApp();
+    const first = registerPayload("conflict_user");
+    await request(app)
+      .post("/api/auth/register")
+      .set(csrfHeaders())
+      .send(first)
+      .expect(201);
+
+    const takenHandle = await request(app)
+      .post("/api/auth/register")
+      .set(csrfHeaders())
+      .send(registerPayload("  Conflict_User "))
+      .expect(409);
+    expect(takenHandle.body.error.message).toBe("Username is already registered");
+
+    const takenId = await request(app)
+      .post("/api/auth/register")
+      .set(csrfHeaders())
+      .send({ ...registerPayload("other_user"), id: first.id })
+      .expect(409);
+    expect(takenId.body.error.message).toBe("Account could not be created; try again");
+  });
+
+  it("does not report database failures during registration as conflicts", async () => {
+    const app = await createTestApp();
+    vi.spyOn(app.locals.db.accounts, "register").mockRejectedValue(
+      new Error("Connection terminated unexpectedly")
+    );
+
+    const response = await request(app)
+      .post("/api/auth/register")
+      .set(csrfHeaders())
+      .send(registerPayload("outage_user"));
+
+    expect(response.status).toBe(500);
   });
 
   it("rejects registrations without a client user id or v2 root envelopes", async () => {

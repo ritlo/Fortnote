@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { uniqueViolationConstraint } from "../db/errors.js";
 import * as schema from "../db/schema.js";
 import type {
   AccountIdentity,
@@ -10,6 +11,7 @@ import type {
   RecoveryParametersRecord,
   RecoverAccountInput,
   RecoverAccountOutcome,
+  RegisterAccountOutcome,
   RecoveryVerifierRecord,
   RegisterAccountInput,
   RotateKeyMaterialInput,
@@ -111,14 +113,25 @@ export class PostgresAccountRepository implements AccountRepository {
     return rows[0] ?? null;
   }
 
-  register(input: RegisterAccountInput): Promise<void> {
-    return this.orm.transaction(async (transaction) => {
-      await transaction.insert(schema.users).values(input.user);
-      await transaction.insert(schema.userKeyMaterial).values({
-        userId: input.user.id,
-        ...input.keyMaterial
+  async register(input: RegisterAccountInput): Promise<RegisterAccountOutcome> {
+    try {
+      await this.orm.transaction(async (transaction) => {
+        await transaction.insert(schema.users).values(input.user);
+        await transaction.insert(schema.userKeyMaterial).values({
+          userId: input.user.id,
+          ...input.keyMaterial
+        });
       });
-    });
+      return { kind: "registered" };
+    } catch (error) {
+      const constraint = uniqueViolationConstraint(error);
+      if (constraint === null) {
+        throw error;
+      }
+      return constraint === "users_pkey"
+        ? { kind: "id-taken" }
+        : { kind: "handle-taken" };
+    }
   }
 
   recover(input: RecoverAccountInput): Promise<RecoverAccountOutcome> {
