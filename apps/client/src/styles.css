@@ -651,6 +651,9 @@ textarea {
 
 .blocknote-surface .bn-inline-content {
   overflow-wrap: anywhere;
+  /* With kerning, Chromium reshapes a long unbroken token at every candidate
+     break, so pasting 100 000 characters took seconds instead of milliseconds. */
+  font-kerning: none;
 }
 
 .blocknote-surface [data-content-type="file"],

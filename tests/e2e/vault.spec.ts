@@ -113,13 +113,31 @@ test("keeps sibling panes aligned with tall editor content", async ({ page }) =>
 
 test("wraps long editor lines within the editor column", async ({ page }) => {
   const account = uniqueAccount("wide-editor");
-  const longLine = `line-${"x".repeat(300)}`;
+  const longToken = `line-${"x".repeat(100_000)}`;
 
   await register(page, account.username, account.password);
   await page.setViewportSize({ width: 1280, height: 800 });
   await createNote(page, `Wide note ${account.suffix}`, "short line");
-  await setEditorText(page, longLine);
-  await expect(blockEditor(page)).toContainText(longLine);
+  const editor = await editableEditor(page);
+  await editor.click();
+  await editor.press("ControlOrMeta+A");
+  const pasteMs = await page.evaluate(
+    (text) =>
+      new Promise<number>((resolve) => {
+        const start = performance.now();
+        // eslint-disable-next-line @typescript-eslint/no-deprecated
+        document.execCommand("insertText", false, text);
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            resolve(performance.now() - start);
+          })
+        );
+      }),
+    longToken
+  );
+  // Wrapping one long unbroken token once took several seconds of layout.
+  expect(pasteMs).toBeLessThan(3_000);
+  await expect(editor).toContainText("line-xxxxxxxxxx");
 
   const layout = await page.locator(".blocknote-surface").evaluate((surface) => {
     const column = surface.closest(".editor-column");
