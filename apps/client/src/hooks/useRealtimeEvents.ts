@@ -15,6 +15,7 @@ import {
   clearCrdtNotes,
   finishCrdtSync,
   isCrdtHistoryUnreadableError,
+  isCrdtUpdateFailure,
   receiveCrdtUpdate,
   removeCrdtNote,
   setCrdtTransport
@@ -260,7 +261,15 @@ export function useRealtimeEvents() {
             return;
           }
           if (message.type === "crdt-binary" || message.type === "crdt-manifest") {
-            void receiveCrdtUpdate(message).catch(() => {
+            void receiveCrdtUpdate(message).catch((error: unknown) => {
+              if (isCrdtUpdateFailure(error, "unavailable")) {
+                setError("Part of this note could not be downloaded; retry to load it.");
+                return;
+              }
+              if (isCrdtUpdateFailure(error, "display")) {
+                setError("The editor could not show a realtime update; reopen the note.");
+                return;
+              }
               // A ciphertext that reaches the binding but cannot be opened is
               // a protection failure, not merely a transport warning. Surface
               // the typed recovery state immediately; the sync terminator may

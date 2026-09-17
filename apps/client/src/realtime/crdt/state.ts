@@ -19,7 +19,8 @@ export interface Binding {
   note: DecryptedNote;
   onChange: (patch: Partial<Pick<DecryptedNote, "title">>) => void;
   pendingUpdateIds: Set<string>;
-  failedUpdateIds: Set<string>;
+  /** Received updates that must be fetched again before the section is complete. */
+  failedUpdateIds: Map<string, CrdtUpdateFailure>;
   receivedServerSequences: Map<string, number>;
   generation: number;
   appliedUpdateCount: number;
@@ -34,6 +35,34 @@ export interface Binding {
   snapshotSeeded: boolean;
   inheritedEpochState: boolean;
   keyEpoch: number;
+}
+
+/**
+ * Why a received update could not become part of the local history. Only
+ * "unreadable" means the ciphertext or its plaintext could not be opened.
+ */
+export type CrdtUpdateFailure = "unreadable" | "unavailable";
+
+export class CrdtUpdateError extends Error {
+  constructor(
+    readonly failure: CrdtUpdateFailure | "display",
+    cause: unknown
+  ) {
+    super(
+      cause instanceof Error ? cause.message : "Realtime update could not be applied",
+      {
+        cause
+      }
+    );
+    this.name = "CrdtUpdateError";
+  }
+}
+
+export function isCrdtUpdateFailure(
+  error: unknown,
+  failure: CrdtUpdateError["failure"]
+): boolean {
+  return error instanceof CrdtUpdateError && error.failure === failure;
 }
 
 export interface BindingHooks {
@@ -75,7 +104,7 @@ export function getOrCreateBinding(
     note: undefined as unknown as DecryptedNote,
     onChange: () => undefined,
     pendingUpdateIds: new Set(epochAdvanced ? [] : (existing?.pendingUpdateIds ?? [])),
-    failedUpdateIds: new Set(existing?.failedUpdateIds ?? []),
+    failedUpdateIds: new Map(existing?.failedUpdateIds ?? []),
     receivedServerSequences: new Map(
       epochAdvanced ? [] : (existing?.receivedServerSequences ?? [])
     ),
@@ -146,8 +175,11 @@ export function seedBinding(binding: Binding, note: DecryptedNote): void {
 }
 
 export function throwIfCrdtHistoryUnreadable(binding: Binding): void {
-  if (binding.failedUpdateIds.size > 0) {
+  if ([...binding.failedUpdateIds.values()].includes("unreadable")) {
     throw new Error("Realtime history could not be decrypted");
+  }
+  if (binding.failedUpdateIds.size > 0) {
+    throw new Error("Realtime history could not be downloaded");
   }
 }
 

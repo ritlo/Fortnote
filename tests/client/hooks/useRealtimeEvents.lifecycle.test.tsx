@@ -30,7 +30,8 @@ const mocks = vi.hoisted(() => ({
   getCursor: vi.fn(),
   loadFolders: vi.fn(),
   loadNotes: vi.fn(),
-  loadNote: vi.fn()
+  loadNote: vi.fn(),
+  receiveCrdtUpdate: vi.fn()
 }));
 
 vi.mock("@client/api", () => ({
@@ -60,6 +61,11 @@ vi.mock("@client/realtime/client", () => ({
   }
 }));
 
+vi.mock("@client/realtime/crdt", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@client/realtime/crdt")>()),
+  receiveCrdtUpdate: mocks.receiveCrdtUpdate
+}));
+
 vi.mock("@client/hooks/useAppData", () => ({
   loadDecryptedNotes: mocks.loadNotes,
   loadDecryptedNote: mocks.loadNote,
@@ -67,6 +73,7 @@ vi.mock("@client/hooks/useAppData", () => ({
 }));
 
 import { useRealtimeEvents } from "@client/hooks/useRealtimeEvents";
+import { CrdtUpdateError } from "@client/realtime/crdt/state";
 
 describe("useRealtimeEvents lifecycle", () => {
   beforeEach(() => {
@@ -107,6 +114,35 @@ describe("useRealtimeEvents lifecycle", () => {
 
     expect(useAppStore.getState().realtimeStatus).toBe("connected");
     expect(first.connection.sendPresence).toHaveBeenCalledWith("note-1", "editing");
+  });
+
+  it("reports only unreadable realtime updates as undecryptable notes", async () => {
+    mocks.getCursor.mockResolvedValue({ cursor: 3 });
+    render(<RealtimeHarness />);
+    await flushEffects();
+    const connection = mocks.connections[0]!;
+    const receive = async (error: CrdtUpdateError) => {
+      mocks.receiveCrdtUpdate.mockRejectedValueOnce(error);
+      act(() => {
+        connection.options.onMessage(manifestMessage());
+      });
+      await flushEffects();
+    };
+
+    await receive(new CrdtUpdateError("unavailable", new Error("503")));
+    expect(useAppStore.getState().noteProtectionFailures).toEqual({});
+    expect(useAppStore.getState().error).toContain("could not be downloaded");
+
+    await receive(
+      new CrdtUpdateError("display", new RangeError("Position out of range"))
+    );
+    expect(useAppStore.getState().noteProtectionFailures).toEqual({});
+    expect(useAppStore.getState().error).toContain("could not show");
+
+    await receive(new CrdtUpdateError("unreadable", new Error("bad cipher")));
+    expect(useAppStore.getState().noteProtectionFailures).toEqual({
+      "note-1": "undecryptable"
+    });
   });
 
   it("preserves local-capacity errors from durable realtime storage", async () => {
@@ -537,4 +573,23 @@ function deferred<T>() {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+function manifestMessage(): RealtimeMessage {
+  return {
+    type: "crdt-manifest",
+    formatVersion: 2,
+    noteId: "note-1",
+    sectionId: "section-1",
+    keyEpoch: 1,
+    updateId: "update-1",
+    manifestId: "manifest-1",
+    uploadId: "upload-1",
+    cryptoOwnerId: "user-1",
+    kind: "update",
+    totalCipherBytes: 1024,
+    chunkCount: 1,
+    manifestHash: "a".repeat(64),
+    serverSequence: 1
+  };
 }

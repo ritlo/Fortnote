@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
+import { ApiRequestError } from "@client/api/http";
 import { decryptCrdtMessage, encryptCrdtMessage } from "@client/cryptoClient";
 import { replaceBlockNoteFragment } from "@client/lib/blockNote";
 import * as contentTransfer from "@client/realtime/contentTransfer";
@@ -10,12 +11,14 @@ import {
   finishCrdtSync,
   getCrdtProvider,
   getCrdtSectionOrder,
+  isCrdtUpdateFailure,
   openCrdtSection,
   openCrdtNote,
   receiveCrdtUpdate,
   releaseCrdtSection,
   replaceCrdtSectionOrder,
   requiresContentTransfer,
+  retryCrdtSection,
   setCrdtTransport,
   snapshotReadyCrdtSection,
   subscribeCrdtSectionChanges,
@@ -225,6 +228,82 @@ describe("CRDT collaboration", () => {
     await receiving;
     expect(downloadContent).toHaveBeenCalledOnce();
     expect(fragmentText(provider.doc)).toContain("Verified remote content");
+  });
+
+  it("keeps a failed manifest download retryable instead of unreadable", async () => {
+    const sectionId = "00000000-0000-4000-8000-000000000002";
+    const current = note({
+      rootSectionId: sectionId,
+      noteKeyBase64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    });
+    const subscribe = vi.fn();
+    setCrdtTransport({
+      downloadContent: vi
+        .fn()
+        .mockRejectedValue(
+          new ApiRequestError(503, "unavailable", "Service unavailable")
+        ),
+      send: vi.fn().mockResolvedValue(undefined),
+      subscribe
+    });
+    openCrdtNote(current, vi.fn());
+
+    const received = receiveCrdtUpdate(manifestUpdate(current, sectionId, 4));
+
+    await expect(received).rejects.toSatisfy((error) =>
+      isCrdtUpdateFailure(error, "unavailable")
+    );
+    await expect(ensureCrdtHistoryReadable(current.id, sectionId)).rejects.toThrow(
+      "could not be downloaded"
+    );
+    expect(retryCrdtSection(current.id, sectionId, current.keyEpoch)).toBe(3);
+    expect(subscribe).toHaveBeenLastCalledWith(
+      current.id,
+      sectionId,
+      current.keyEpoch,
+      3
+    );
+  });
+
+  it("keeps a remote update whose editor observer fails as applied history", async () => {
+    const sectionId = "00000000-0000-4000-8000-000000000002";
+    const current = note({ rootSectionId: sectionId });
+    setCrdtTransport({ send: vi.fn().mockResolvedValue(undefined), subscribe: vi.fn() });
+    openCrdtNote(current, vi.fn());
+    await finishCrdtSync(current.id, current.keyEpoch, sectionId, 0);
+    const provider = getCrdtProvider(current.id, current.keyEpoch, sectionId);
+    const remote = new Y.Doc();
+    setFragmentBody(remote, "Merged remote content");
+    vi.mocked(decryptCrdtMessage).mockResolvedValueOnce(Y.encodeStateAsUpdate(remote));
+    const failView = () => {
+      throw new RangeError("Position 9 out of range");
+    };
+    provider.doc.getXmlFragment(FRAGMENT_KEY).observeDeep(failView);
+
+    await expect(
+      receiveCrdtUpdate(binaryUpdate(current, sectionId, 1))
+    ).rejects.toSatisfy((error) => isCrdtUpdateFailure(error, "display"));
+    provider.doc.getXmlFragment(FRAGMENT_KEY).unobserveDeep(failView);
+
+    expect(fragmentText(provider.doc)).toContain("Merged remote content");
+    await expect(
+      ensureCrdtHistoryReadable(current.id, sectionId)
+    ).resolves.toBeUndefined();
+  });
+
+  it("reports a ciphertext that cannot be opened as unreadable history", async () => {
+    const sectionId = "00000000-0000-4000-8000-000000000002";
+    const current = note({ rootSectionId: sectionId });
+    setCrdtTransport({ send: vi.fn().mockResolvedValue(undefined), subscribe: vi.fn() });
+    openCrdtNote(current, vi.fn());
+    vi.mocked(decryptCrdtMessage).mockRejectedValueOnce(new Error("bad cipher"));
+
+    await expect(
+      receiveCrdtUpdate(binaryUpdate(current, sectionId, 1))
+    ).rejects.toSatisfy((error) => isCrdtUpdateFailure(error, "unreadable"));
+    await expect(ensureCrdtHistoryReadable(current.id, sectionId)).rejects.toThrow(
+      "could not be decrypted"
+    );
   });
 
   it("recovers from corrupt covered history after a verified manifest checkpoint", async () => {
@@ -660,5 +739,49 @@ function received(
     ...(message.checkpointSequenceCutoff === undefined
       ? {}
       : { checkpointSequenceCutoff: message.checkpointSequenceCutoff })
+  };
+}
+
+function manifestUpdate(
+  current: ReturnType<typeof note>,
+  sectionId: string,
+  serverSequence: number
+) {
+  return {
+    type: "crdt-manifest" as const,
+    formatVersion: 2 as const,
+    noteId: current.id,
+    sectionId,
+    keyEpoch: current.keyEpoch,
+    updateId: crypto.randomUUID(),
+    manifestId: crypto.randomUUID(),
+    uploadId: crypto.randomUUID(),
+    cryptoOwnerId: current.cryptoOwnerId,
+    kind: "update" as const,
+    totalCipherBytes: 1024,
+    chunkCount: 1,
+    manifestHash: "a".repeat(64),
+    serverSequence
+  };
+}
+
+function binaryUpdate(
+  current: ReturnType<typeof note>,
+  sectionId: string,
+  serverSequence: number
+): ReceivedBinaryCrdtMessage {
+  return {
+    type: "crdt-binary",
+    formatVersion: 2,
+    kind: "update",
+    updateId: crypto.randomUUID(),
+    noteId: current.id,
+    sectionId,
+    cryptoOwnerId: current.cryptoOwnerId,
+    expectedKeyEpoch: current.keyEpoch,
+    nonce: "nonce",
+    cipherLength: 1,
+    serverSequence,
+    cipher: Uint8Array.of(1)
   };
 }

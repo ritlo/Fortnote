@@ -29,7 +29,7 @@ export {
   waitForCrdtSectionDurable,
   waitForCrdtSectionReady
 } from "./crdt/sectionLifecycle";
-export { isCrdtHistoryUnreadableError } from "./crdt/state";
+export { isCrdtHistoryUnreadableError, isCrdtUpdateFailure } from "./crdt/state";
 export { setCrdtTransport } from "./crdt/runtime";
 export { ensureCrdtHistoryReadable, finishCrdtSync } from "./crdt/synchronization";
 export { requiresContentTransfer } from "./crdt/transport";

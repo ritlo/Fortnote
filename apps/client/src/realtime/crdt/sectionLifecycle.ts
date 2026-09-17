@@ -67,13 +67,13 @@ export function retryCrdtSection(
   if (binding?.keyEpoch !== keyEpoch || binding.failedUpdateIds.size === 0) {
     return null;
   }
-  const failedSequences = [...binding.failedUpdateIds]
+  const failedSequences = [...binding.failedUpdateIds.keys()]
     .map((updateId) => binding.receivedServerSequences.get(updateId))
     .filter((sequence): sequence is number => sequence !== undefined);
   if (failedSequences.length > 0) {
     binding.observedServerSequence = Math.max(0, Math.min(...failedSequences) - 1);
   }
-  for (const updateId of binding.failedUpdateIds) {
+  for (const updateId of binding.failedUpdateIds.keys()) {
     binding.pendingUpdateIds.delete(updateId);
     binding.receivedServerSequences.delete(updateId);
   }
