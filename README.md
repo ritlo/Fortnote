@@ -130,7 +130,8 @@ pnpm test:db:start
 | `pnpm smoke:compose`           | Destructive deployment smoke test in an isolated Compose project.                                       |
 
 Install the Playwright browser once with `pnpm exec playwright install chromium`. The end-to-end
-servers use ports 3101 and 5273; set `API_PORT` and `CLIENT_PORT` to change them. Set
+servers use ports 3101 and 5273; set `API_PORT` and `CLIENT_PORT` to change them, and
+`E2E_WORKERS` to change the number of parallel workers (default 4). Set
 `FORTNOTE_RUN_DOCUMENT_ASSURANCE=1` to include the long document durability journey.
 
 Stop the test database with `pnpm test:db:stop`. To test against another PostgreSQL server, set
@@ -174,8 +175,8 @@ pnpm build
 ```
 
 `pnpm format` applies the Prettier formatting that `format:check` enforces. The CI workflow in
-`.github/workflows/ci.yml` runs these checks and the migration check against a PostgreSQL service
-on every push and pull request.
+`.github/workflows/ci.yml` runs these checks, the migration check, and `pnpm e2e` against
+PostgreSQL services on every push and pull request.
 
 ## License
 

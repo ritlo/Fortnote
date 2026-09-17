@@ -57,3 +57,58 @@ jobs:
             git status --porcelain drizzle >&2
             exit 1
           fi
+
+  e2e:
+    name: End-to-end tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: fortnote
+          POSTGRES_USER: fortnote
+          POSTGRES_PASSWORD: fortnote-ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fortnote -d fortnote"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # The end-to-end API migrates and uses this database directly.
+      FORTNOTE_POSTGRES_TEST_URL: postgresql://fortnote:fortnote-ci@127.0.0.1:5432/fortnote
+      # Runners for private repositories have two vCPUs.
+      E2E_WORKERS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Resolve the Playwright version
+        id: playwright
+        run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install Chromium system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+      - run: pnpm e2e
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: test-results/
+          retention-days: 7

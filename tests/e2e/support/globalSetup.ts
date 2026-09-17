@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import process from "node:process";
 
@@ -24,6 +24,11 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   };
 
   await Promise.all([assertPortFree(apiPort), assertPortFree(clientPort)]);
+  if (!productionPerformance) {
+    // The dev servers import @fortnote/shared from its build output, which a
+    // fresh checkout does not have. The performance run builds everything first.
+    buildSharedPackage();
+  }
   const servers: ManagedServer[] = [];
   const teardown = async () => {
     for (const server of servers.reverse()) {
@@ -60,6 +65,15 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     throw error;
   }
   return teardown;
+}
+
+function buildSharedPackage(): void {
+  const result = spawnSync("pnpm", ["build:shared"], {
+    stdio: ["ignore", "ignore", "inherit"]
+  });
+  if (result.status !== 0) {
+    throw new Error("Building @fortnote/shared failed", { cause: result.error });
+  }
 }
 
 function assertPortFree(port: number): Promise<void> {
