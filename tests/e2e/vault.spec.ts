@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { Buffer } from "node:buffer";
 import { waitForCrdtDurability } from "./support/durability.js";
+import { editableEditor } from "./support/editor.js";
 
 test("creates, edits, searches, trashes, restores, and attaches encrypted content", async ({
   page
@@ -357,7 +358,7 @@ function blockEditor(page: Page) {
 }
 
 async function insertFileBlock(page: Page): Promise<void> {
-  const editor = blockEditor(page);
+  const editor = await editableEditor(page);
   await editor.focus();
   await editor.press("ControlOrMeta+End");
   await editor.press("Enter");
@@ -378,8 +379,7 @@ function waitForAttachmentUpload(page: Page) {
 }
 
 async function setEditorText(page: Page, body: string): Promise<void> {
-  const editor = blockEditor(page);
-  await expect(editor).toBeVisible();
+  const editor = await editableEditor(page);
   await editor.click();
   await editor.press("ControlOrMeta+A");
   await editor.pressSequentially(body);

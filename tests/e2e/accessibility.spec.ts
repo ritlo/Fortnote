@@ -11,6 +11,7 @@ import {
   newAssurancePage,
   uniqueAssuranceAccount
 } from "./support/assurance.js";
+import { editableEditor } from "./support/editor.js";
 
 test("auth and empty vault expose names, keyboard focus, and clean axe results", async ({
   page
@@ -295,7 +296,7 @@ async function waitForSharingKey(page: Page): Promise<void> {
 }
 
 async function appendEditorText(page: Page, text: string): Promise<void> {
-  const editor = page.locator(".block-editor .bn-editor");
+  const editor = await editableEditor(page);
   await editor.focus();
   await editor.press("ControlOrMeta+End");
   await editor.pressSequentially(text);

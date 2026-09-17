@@ -10,6 +10,7 @@ import {
   type Response
 } from "@playwright/test";
 import { waitForCrdtDurability } from "./durability.js";
+import { editableEditor } from "./editor.js";
 
 export interface Account {
   password: string;
@@ -351,8 +352,7 @@ export async function editorText(page: Page): Promise<string> {
 }
 
 export async function setEditorText(page: Page, body: string): Promise<void> {
-  const editor = blockEditor(page);
-  await expect(editor).toBeVisible();
+  const editor = await editableEditor(page);
   await editor.click();
   await editor.press("ControlOrMeta+A");
   await editor.pressSequentially(body);
@@ -423,7 +423,7 @@ export function isMediaApiUrl(url: string): boolean {
 }
 
 export async function insertImageBlock(page: Page): Promise<void> {
-  const editor = blockEditor(page);
+  const editor = await editableEditor(page);
   await editor.focus();
   await editor.press("ControlOrMeta+End");
   await editor.press("Enter");

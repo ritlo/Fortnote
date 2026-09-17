@@ -17,6 +17,7 @@ import {
   shareDocument,
   signInPerformanceUser
 } from "./support/performance.js";
+import { editableEditor } from "./support/editor.js";
 
 const runPerformance = process.env.FORTNOTE_RUN_PERFORMANCE === "1";
 const budgets = {
@@ -314,7 +315,7 @@ async function openOrdinaryNote(page: Page, title: string): Promise<void> {
 }
 
 async function crossCompactionBoundary(page: Page, edits: number): Promise<void> {
-  const editor = page.locator(".block-editor .bn-editor");
+  const editor = await editableEditor(page);
   await editor.focus();
   await editor.press("ControlOrMeta+End");
   for (let edit = 0; edit < edits; edit += 1) await editor.pressSequentially("c");
@@ -327,7 +328,7 @@ async function crossCompactionBoundary(page: Page, edits: number): Promise<void>
 }
 
 async function appendText(page: Page, text: string): Promise<void> {
-  const editor = page.locator(".block-editor .bn-editor");
+  const editor = await editableEditor(page);
   await editor.focus();
   await editor.press("ControlOrMeta+End");
   await editor.pressSequentially(text);

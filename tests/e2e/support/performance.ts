@@ -8,6 +8,7 @@ import {
   type Route
 } from "@playwright/test";
 import { requiresContentTransfer } from "../../../apps/client/src/realtime/crdt.js";
+import { editableEditor } from "./editor.js";
 
 export const MIB = 1024 * 1024;
 export const REPRESENTATIVE_DOCUMENT = {
@@ -464,8 +465,7 @@ async function injectGeneratedEditorText(
   if (!Number.isSafeInteger(bytes) || bytes < prefix.length) {
     throw new Error("Generated editor text size is invalid");
   }
-  await expect(blockEditor(page)).toBeVisible();
-  await blockEditor(page).focus();
+  await (await editableEditor(page)).focus();
   const inserted = await page.evaluate(
     ({ byteLength, textPrefix, replaceExisting }) => {
       const editor = document.querySelector<HTMLElement>(".block-editor .bn-editor");
@@ -492,7 +492,7 @@ async function injectGeneratedEditorText(
 }
 
 async function appendSmallEditorText(page: Page, text: string): Promise<void> {
-  const editor = blockEditor(page);
+  const editor = await editableEditor(page);
   await editor.focus();
   await editor.press("ControlOrMeta+End");
   await editor.pressSequentially(` ${text}`);

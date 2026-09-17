@@ -14,6 +14,7 @@ import {
   type AssuranceAccount
 } from "./support/assurance.js";
 import { waitForCrdtDurability } from "./support/durability.js";
+import { editableEditor } from "./support/editor.js";
 
 test("retains offline work through reconnect and ignores a delayed old-note save", async ({
   page
@@ -165,7 +166,9 @@ test("preserves conflict, undecryptable, stale-epoch, and terminally rejected wo
   });
   await page.reload();
   await signIn(page, account);
-  await openNote(page, title);
+  // The corrupted frame may or may not be the one carrying the conflicting title
+  // edit, so either title can open.
+  await openNote(page, title, titlePattern(title));
   await expect(page.getByRole("alert")).toContainText("This note cannot be decrypted");
   await expectRecoveryActions(page, ["Retry", "Repair access"]);
   await page.getByRole("button", { name: "Retry", exact: true }).click();
@@ -286,11 +289,15 @@ async function createNote(page: Page, title: string): Promise<void> {
   await expect(page.getByRole("button", { name: titlePattern(title) })).toBeVisible();
 }
 
-async function openNote(page: Page, title: string): Promise<void> {
+async function openNote(
+  page: Page,
+  title: string,
+  editorTitle: string | RegExp = title
+): Promise<void> {
   const note = page.getByRole("button", { name: titlePattern(title) });
   await expect(note).toBeVisible({ timeout: 15_000 });
   await note.click();
-  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(title);
+  await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue(editorTitle);
 }
 
 async function shareNote(
@@ -353,7 +360,7 @@ async function waitForSharingKey(page: Page): Promise<void> {
 }
 
 async function appendEditorText(page: Page, text: string): Promise<void> {
-  const editor = blockEditor(page);
+  const editor = await editableEditor(page);
   await editor.focus();
   await editor.press("ControlOrMeta+End");
   await editor.pressSequentially(text);
@@ -364,7 +371,7 @@ async function appendGeneratedText(
   bytes: number,
   prefix: string
 ): Promise<void> {
-  await blockEditor(page).focus();
+  await (await editableEditor(page)).focus();
   expect(
     await page.evaluate(
       ({ byteLength, value }) => {

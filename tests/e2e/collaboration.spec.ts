@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { readStoredAttachment, readStoredNote } from "./support/stored.js";
 import { expect, test, type BrowserContext } from "@playwright/test";
 import { waitForCrdtDurability } from "./support/durability.js";
+import { editableEditor } from "./support/editor.js";
 import {
   blockEditor,
   captureApiTraffic,
@@ -90,8 +91,10 @@ test("syncs a shared note for an online editor and offline viewer", async ({
       timeout: 10_000
     });
 
-    const aliceEditor = blockEditor(alicePage);
-    const bobEditor = blockEditor(bobPage);
+    const [aliceEditor, bobEditor] = await Promise.all([
+      editableEditor(alicePage),
+      editableEditor(bobPage)
+    ]);
     await Promise.all([
       aliceEditor.press("ControlOrMeta+Home"),
       bobEditor.press("ControlOrMeta+End")
@@ -230,7 +233,7 @@ test("syncs and persists collaborative undo and redo", async ({ baseURL, browser
     });
 
     await test.step("synchronize undo and redo", async () => {
-      const editor = blockEditor(alicePage);
+      const editor = await editableEditor(alicePage);
       await editor.press("ControlOrMeta+End");
       await editor.pressSequentially(suffix);
       await waitForCrdtDurability(alicePage);
@@ -438,8 +441,10 @@ test("syncs edits between two tabs signed in to the same account", async ({
       timeout: 10_000
     });
 
-    const firstEditor = blockEditor(firstPage);
-    const secondEditor = blockEditor(secondPage);
+    const [firstEditor, secondEditor] = await Promise.all([
+      editableEditor(firstPage),
+      editableEditor(secondPage)
+    ]);
     await Promise.all([
       firstEditor.press("Control+Home"),
       secondEditor.press("Control+End")
@@ -498,6 +503,11 @@ test("converges offline tabs after a lost ack, API restart, and fresh session @s
     const secondAlicePage = await aliceContext.newPage();
     await signIn(secondAlicePage, alice.username, alice.password);
     await openNote(secondAlicePage, noteTitle);
+    await Promise.all(
+      [firstAlicePage, secondAlicePage, bobPage].map((editorPage) =>
+        editableEditor(editorPage)
+      )
+    );
     droppedAcks.armed = true;
     await blockEditor(firstAlicePage).press("ControlOrMeta+End");
     await blockEditor(firstAlicePage).pressSequentially(` lost-ack-${alice.suffix}`);

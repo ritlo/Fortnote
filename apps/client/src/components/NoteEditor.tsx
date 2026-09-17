@@ -21,7 +21,7 @@ import {
   isAttachmentMimeCompatible
 } from "../lib/attachmentMedia";
 import type { DecryptedNote, NotesView } from "../store/appStore";
-import { useAppStore } from "../store/appStore";
+import { sectionRuntimeKey, useAppStore } from "../store/appStore";
 
 interface NoteEditorProps {
   notesView: NotesView;
@@ -33,6 +33,7 @@ interface NoteEditorProps {
 
 interface BlockNoteFieldProps {
   canEdit: boolean;
+  sectionReady: boolean;
   resolveAttachmentUrl: NoteEditorProps["resolveAttachmentUrl"];
   selectedNote: DecryptedNote;
   sectionId: string;
@@ -41,6 +42,7 @@ interface BlockNoteFieldProps {
 
 function CollaborativeBlockNoteField({
   canEdit,
+  sectionReady,
   resolveAttachmentUrl,
   selectedNote,
   sectionId,
@@ -155,7 +157,13 @@ function CollaborativeBlockNoteField({
         }}
       >
         <div className="blocknote-surface" data-theme="light">
-          <BlockNoteView editor={editor} editable={canEdit} filePanel={false}>
+          {/* Edits made before the section's history arrives are replaced when it
+              does, so content stays read-only until the section has loaded. */}
+          <BlockNoteView
+            editor={editor}
+            editable={canEdit && sectionReady}
+            filePanel={false}
+          >
             {canEdit ? <FilePanelController filePanel={FortnoteFilePanel} /> : null}
           </BlockNoteView>
         </div>
@@ -263,6 +271,13 @@ export function NoteEditor({
     notesView !== "trash";
   const realtimeStatus = useAppStore((state) => state.realtimeStatus);
   const status = useAppStore((state) => state.status);
+  const sectionId = selectedNote?.rootSectionId ?? "root";
+  const sectionReady = useAppStore(
+    (state) =>
+      selectedNote !== null &&
+      state.loadedSections[sectionRuntimeKey(selectedNote.id, sectionId)]?.status ===
+        "ready"
+  );
 
   if (!selectedNote) {
     return (
@@ -272,8 +287,6 @@ export function NoteEditor({
       </div>
     );
   }
-  const sectionId = selectedNote.rootSectionId ?? "root";
-
   const saveLabel =
     status === "Save conflict"
       ? "Changes need review"
@@ -310,6 +323,7 @@ export function NoteEditor({
         <CollaborativeBlockNoteField
           key={`${selectedNote.id}:root:${String(selectedNote.keyEpoch)}:${canEdit ? "edit" : "view"}`}
           canEdit={canEdit}
+          sectionReady={sectionReady}
           resolveAttachmentUrl={resolveAttachmentUrl}
           selectedNote={selectedNote}
           sectionId={sectionId}
