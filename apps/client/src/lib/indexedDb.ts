@@ -25,10 +25,10 @@ import {
   OUTBOX_STORE,
   putRecord,
   requestResult,
+  runTransaction,
   safeOperation,
   SEARCH_INDEX_STORE,
-  SECTION_CACHE_STORE,
-  transactionDone
+  SECTION_CACHE_STORE
 } from "./indexedDb/driver";
 
 export * from "./indexedDb/contracts";
@@ -99,19 +99,12 @@ function createDatabaseApi(
   return {
     name,
     async acknowledgeOutbox(record, serverSequence) {
-      await safeOperation(async () => {
-        const transaction = database.transaction(ACKNOWLEDGEMENT_STORE, "readwrite");
-        const done = transactionDone(transaction);
-        transaction.objectStore(ACKNOWLEDGEMENT_STORE).put({
-          ...outboxIdentity(record),
-          serverSequence,
-          acknowledgedAt: Date.now()
-        } satisfies AcknowledgementRecord);
-        await done;
-      });
-      await safeOperation(async () => {
-        const transaction = database.transaction(OUTBOX_STORE, "readwrite");
-        const done = transactionDone(transaction);
+      await putRecord(database, ACKNOWLEDGEMENT_STORE, {
+        ...outboxIdentity(record),
+        serverSequence,
+        acknowledgedAt: Date.now()
+      } satisfies AcknowledgementRecord);
+      await runTransaction(database, OUTBOX_STORE, "readwrite", async (transaction) => {
         const store = transaction.objectStore(OUTBOX_STORE);
         const current = await requestResult(
           store.get(outboxKey(record)) as IDBRequest<EncryptedOutboxRecord | undefined>
@@ -119,64 +112,52 @@ function createDatabaseApi(
         if (current?.state !== "terminal-rejected") {
           store.delete(outboxKey(record));
         }
-        await done;
       });
       notify({ store: "acknowledgements", userId: record.userId });
     },
     async acquireLease(scopeKey, ownerId, now, durationMs) {
-      const acquired = await safeOperation(async () => {
-        const transaction = database.transaction(LEASE_STORE, "readwrite");
-        const done = transactionDone(transaction);
-        const store = transaction.objectStore(LEASE_STORE);
-        const current = await requestResult(
-          store.get(scopeKey) as IDBRequest<LeaseRecord | undefined>
-        );
-        if (current && current.ownerId !== ownerId && current.expiresAt > now) {
-          await done;
-          return false;
+      const acquired = await runTransaction(
+        database,
+        LEASE_STORE,
+        "readwrite",
+        async (transaction) => {
+          const store = transaction.objectStore(LEASE_STORE);
+          const current = await requestResult(
+            store.get(scopeKey) as IDBRequest<LeaseRecord | undefined>
+          );
+          if (current && current.ownerId !== ownerId && current.expiresAt > now) {
+            return false;
+          }
+          store.put({
+            scopeKey,
+            userId: accountFromScope(scopeKey),
+            ownerId,
+            expiresAt: now + durationMs
+          } satisfies LeaseRecord);
+          return true;
         }
-        store.put({
-          scopeKey,
-          userId: accountFromScope(scopeKey),
-          ownerId,
-          expiresAt: now + durationMs
-        } satisfies LeaseRecord);
-        await done;
-        return true;
-      });
+      );
       if (acquired) {
         notify({ store: "leases", userId: accountFromScope(scopeKey) });
       }
       return acquired;
     },
     async clearAccount(userId) {
-      await safeOperation(async () => {
-        const transaction = database.transaction(
-          [
-            OUTBOX_STORE,
-            ACKNOWLEDGEMENT_STORE,
-            SECTION_CACHE_STORE,
-            LEASE_STORE,
-            CONTENT_TRANSFER_STORE,
-            SEARCH_INDEX_STORE
-          ],
-          "readwrite"
-        );
-        const done = transactionDone(transaction);
-        for (const storeName of [
-          OUTBOX_STORE,
-          ACKNOWLEDGEMENT_STORE,
-          SECTION_CACHE_STORE,
-          LEASE_STORE,
-          CONTENT_TRANSFER_STORE,
-          SEARCH_INDEX_STORE
-        ]) {
+      const storeNames = [
+        OUTBOX_STORE,
+        ACKNOWLEDGEMENT_STORE,
+        SECTION_CACHE_STORE,
+        LEASE_STORE,
+        CONTENT_TRANSFER_STORE,
+        SEARCH_INDEX_STORE
+      ];
+      await runTransaction(database, storeNames, "readwrite", (transaction) => {
+        for (const storeName of storeNames) {
           deleteIndexEntries(
             transaction.objectStore(storeName).index("byUserId"),
             userId
           );
         }
-        await done;
       });
       notify({ store: "outbox", userId });
       notify({ store: "section-cache", userId });
@@ -189,9 +170,7 @@ function createDatabaseApi(
       notify({ store: "content-transfers", userId });
     },
     async deleteOutboxFence(fence) {
-      await safeOperation(async () => {
-        const transaction = database.transaction(OUTBOX_STORE, "readwrite");
-        const done = transactionDone(transaction);
+      await runTransaction(database, OUTBOX_STORE, "readwrite", async (transaction) => {
         const store = transaction.objectStore(OUTBOX_STORE);
         const records = await requestResult(
           store.getAll() as IDBRequest<EncryptedOutboxRecord[]>
@@ -201,7 +180,6 @@ function createDatabaseApi(
           .forEach((record) => {
             store.delete(outboxKey(record));
           });
-        await done;
       });
       notify({ store: "outbox", userId: fence.userId });
     },
@@ -222,12 +200,13 @@ function createDatabaseApi(
       ) {
         throw new IndexedDbOperationError();
       }
-      const selected = await safeOperation(async () => {
-        const transaction = database.transaction(SECTION_CACHE_STORE, "readwrite");
-        const done = transactionDone(transaction);
-        const store = transaction.objectStore(SECTION_CACHE_STORE);
-        const selectedRecords = await new Promise<SectionCacheRecord[]>(
-          (resolve, reject) => {
+      const selected = await runTransaction(
+        database,
+        SECTION_CACHE_STORE,
+        "readwrite",
+        (transaction) => {
+          const store = transaction.objectStore(SECTION_CACHE_STORE);
+          return new Promise<SectionCacheRecord[]>((resolve, reject) => {
             const request = store.index("byUserId").getAll(userId) as IDBRequest<
               SectionCacheRecord[]
             >;
@@ -262,11 +241,9 @@ function createDatabaseApi(
             request.onerror = () => {
               reject(idbError(request.error));
             };
-          }
-        );
-        await done;
-        return selectedRecords;
-      });
+          });
+        }
+      );
       if (selected.length > 0) {
         notify({ store: "section-cache", userId });
       }
@@ -332,26 +309,28 @@ function createDatabaseApi(
       );
     },
     async preserveOutboxFence(fence, reason, rejectedAt) {
-      const retained = await safeOperation(async () => {
-        const transaction = database.transaction(OUTBOX_STORE, "readwrite");
-        const done = transactionDone(transaction);
-        const store = transaction.objectStore(OUTBOX_STORE);
-        const records = await requestResult(
-          store.getAll() as IDBRequest<EncryptedOutboxRecord[]>
-        );
-        const matching = records
-          .filter((record) => matchesOutboxFence(record, fence))
-          .map((record) => ({
-            ...record,
-            state: "terminal-rejected" as const,
-            terminalReason: reason,
-            terminalRejectedAt: record.terminalRejectedAt ?? rejectedAt,
-            updatedAt: rejectedAt
-          }));
-        matching.forEach((record) => store.put(record));
-        await done;
-        return matching;
-      });
+      const retained = await runTransaction(
+        database,
+        OUTBOX_STORE,
+        "readwrite",
+        async (transaction) => {
+          const store = transaction.objectStore(OUTBOX_STORE);
+          const records = await requestResult(
+            store.getAll() as IDBRequest<EncryptedOutboxRecord[]>
+          );
+          const matching = records
+            .filter((record) => matchesOutboxFence(record, fence))
+            .map((record) => ({
+              ...record,
+              state: "terminal-rejected" as const,
+              terminalReason: reason,
+              terminalRejectedAt: record.terminalRejectedAt ?? rejectedAt,
+              updatedAt: rejectedAt
+            }));
+          matching.forEach((record) => store.put(record));
+          return matching;
+        }
+      );
       if (retained.length > 0) {
         notify({ store: "outbox", userId: fence.userId });
       }
@@ -374,23 +353,24 @@ function createDatabaseApi(
       notify({ store: "content-transfers", userId: record.userId });
     },
     async putSearchIndexSection(record) {
-      const stored = await safeOperation(async () => {
-        const transaction = database.transaction(SEARCH_INDEX_STORE, "readwrite");
-        const done = transactionDone(transaction);
-        const store = transaction.objectStore(SEARCH_INDEX_STORE);
-        const current = await requestResult(
-          store.get(searchIndexKey(record)) as IDBRequest<
-            ProtectedSearchIndexRecord | undefined
-          >
-        );
-        if (current && current.indexedSequence > record.indexedSequence) {
-          await done;
-          return false;
+      const stored = await runTransaction(
+        database,
+        SEARCH_INDEX_STORE,
+        "readwrite",
+        async (transaction) => {
+          const store = transaction.objectStore(SEARCH_INDEX_STORE);
+          const current = await requestResult(
+            store.get(searchIndexKey(record)) as IDBRequest<
+              ProtectedSearchIndexRecord | undefined
+            >
+          );
+          if (current && current.indexedSequence > record.indexedSequence) {
+            return false;
+          }
+          store.put(record);
+          return true;
         }
-        store.put(record);
-        await done;
-        return true;
-      });
+      );
       if (stored) {
         notify({ store: "search-index", userId: record.userId });
       }

@@ -1,5 +1,8 @@
-import { indexedDB as fakeIndexedDb } from "fake-indexeddb";
-import { afterEach, describe, expect, it } from "vitest";
+import {
+  IDBObjectStore as FakeObjectStore,
+  indexedDB as fakeIndexedDb
+} from "fake-indexeddb";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   IndexedDbCapacityError,
   normalizeIndexedDbError,
@@ -92,6 +95,51 @@ describe("protected IndexedDB storage", () => {
     expect(normalized).toBeInstanceOf(IndexedDbCapacityError);
     expect(normalized.message).toBe("Protected browser storage is full");
     expect(normalized.message).not.toContain("secret");
+  });
+
+  it("rolls back a partially queued write when the browser rejects a record", async () => {
+    const database = await openDatabase();
+    const first = outboxRecord({ updateId: "first" });
+    const second = outboxRecord({ updateId: "second" });
+    await database.putOutbox(first);
+    await database.putOutbox(second);
+    const unhandled: unknown[] = [];
+    const recordUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", recordUnhandled);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const original = FakeObjectStore.prototype.put;
+    const put = vi.spyOn(FakeObjectStore.prototype, "put");
+    let puts = 0;
+    put.mockImplementation(function (this: IDBObjectStore, ...args) {
+      puts += 1;
+      if (puts >= 2) {
+        throw new DOMException("Browser quota exhausted", "QuotaExceededError");
+      }
+      return original.apply(this, args);
+    });
+
+    try {
+      await expect(
+        database.preserveOutboxFence(first, "stale-epoch", 5)
+      ).rejects.toBeInstanceOf(IndexedDbCapacityError);
+      await expect(
+        database.putOutbox(outboxRecord({ updateId: "third" }))
+      ).rejects.toBeInstanceOf(IndexedDbCapacityError);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    } finally {
+      put.mockRestore();
+      process.off("unhandledRejection", recordUnhandled);
+    }
+
+    const stored = await database.listOutbox("user-a");
+    expect(stored.map(({ updateId, state }) => ({ updateId, state }))).toEqual(
+      expect.arrayContaining([
+        { updateId: "first", state: "queued" },
+        { updateId: "second", state: "queued" }
+      ])
+    );
+    expect(stored).toHaveLength(2);
+    expect(unhandled).toEqual([]);
   });
 
   it("evicts least-recently-used cache entries but never pending work", async () => {

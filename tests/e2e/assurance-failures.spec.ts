@@ -29,6 +29,10 @@ test("retains offline work through reconnect and ignores a delayed old-note save
   await waitForCrdtDurability(page);
   await createNote(page, second);
   await openNote(page, first);
+  // Go offline only after the reopened note has loaded, not while it downloads.
+  await expect(page.locator(".collaboration-status")).toContainText(
+    "Saved and synchronized"
+  );
 
   await page.context().setOffline(true);
   await appendEditorText(page, ` offline-${account.suffix}`);

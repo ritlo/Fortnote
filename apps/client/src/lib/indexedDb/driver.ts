@@ -50,36 +50,62 @@ function ensureStore(
   }
 }
 
-export async function getRecord<T>(
+/**
+ * Runs one IndexedDB transaction and settles only after it commits or aborts.
+ * Any failure aborts the transaction, so requests queued before the failure are
+ * never partially committed, and the abort is awaited so it cannot surface later
+ * as an unhandled rejection.
+ */
+export async function runTransaction<T>(
+  database: IDBDatabase,
+  storeNames: string | string[],
+  mode: IDBTransactionMode,
+  operation: (transaction: IDBTransaction) => T | Promise<T>
+): Promise<T> {
+  return safeOperation(async () => {
+    const transaction = database.transaction(storeNames, mode);
+    const done = transactionDone(transaction);
+    try {
+      const result = await operation(transaction);
+      await done;
+      return result;
+    } catch (error) {
+      try {
+        transaction.abort();
+      } catch {
+        // The transaction may already have entered its terminal state.
+      }
+      await done.catch(() => undefined);
+      throw error;
+    }
+  });
+}
+
+export function getRecord<T>(
   database: IDBDatabase,
   storeName: string,
   key: IDBValidKey
 ): Promise<T | null> {
-  return safeOperation(async () => {
-    const transaction = database.transaction(storeName, "readonly");
+  return runTransaction(database, storeName, "readonly", async (transaction) => {
     const result = await requestResult(
       transaction.objectStore(storeName).get(key) as IDBRequest<T | undefined>
     );
-    await transactionDone(transaction);
     return result ?? null;
   });
 }
 
-export async function listByUser<T>(
+export function listByUser<T>(
   database: IDBDatabase,
   storeName: string,
   userId: string
 ): Promise<T[]> {
-  return safeOperation(async () => {
-    const transaction = database.transaction(storeName, "readonly");
-    const result = await requestResult(
+  return runTransaction(database, storeName, "readonly", (transaction) =>
+    requestResult(
       transaction.objectStore(storeName).index("byUserId").getAll(userId) as IDBRequest<
         T[]
       >
-    );
-    await transactionDone(transaction);
-    return result;
-  });
+    )
+  );
 }
 
 export async function putRecord(
@@ -87,20 +113,8 @@ export async function putRecord(
   storeName: string,
   record: object
 ): Promise<void> {
-  await safeOperation(async () => {
-    const transaction = database.transaction(storeName, "readwrite");
-    try {
-      const done = transactionDone(transaction);
-      transaction.objectStore(storeName).put(record);
-      await done;
-    } catch (error) {
-      try {
-        transaction.abort();
-      } catch {
-        // The transaction may already have entered its terminal state.
-      }
-      throw error;
-    }
+  await runTransaction(database, storeName, "readwrite", (transaction) => {
+    transaction.objectStore(storeName).put(record);
   });
 }
 
@@ -109,11 +123,8 @@ export async function deleteRecord(
   storeName: string,
   key: IDBValidKey
 ): Promise<void> {
-  await safeOperation(async () => {
-    const transaction = database.transaction(storeName, "readwrite");
-    const done = transactionDone(transaction);
+  await runTransaction(database, storeName, "readwrite", (transaction) => {
     transaction.objectStore(storeName).delete(key);
-    await done;
   });
 }
 
