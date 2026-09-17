@@ -12,6 +12,7 @@ RUN apt-get update \
 RUN corepack enable && corepack prepare pnpm@11.6.0 --activate
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches patches
 COPY apps/client/package.json apps/client/package.json
 COPY apps/server/package.json apps/server/package.json
 COPY packages/shared/package.json packages/shared/package.json

@@ -1,0 +1,54 @@
+diff --git a/dist/y-prosemirror.cjs b/dist/y-prosemirror.cjs
+index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..6333643890b50a2258e0644b9deee0fcf6cf2d56 100644
+--- a/dist/y-prosemirror.cjs
++++ b/dist/y-prosemirror.cjs
+@@ -331,7 +331,9 @@ const restoreRelativeSelection = (tr, relSel, binding) => {
+         relSel.anchor,
+         binding.mapping
+       );
+-      tr.setSelection(prosemirrorState.NodeSelection.create(tr.doc, anchor));
++      if (anchor !== null && anchor < tr.doc.content.size) {
++        tr.setSelection(prosemirrorState.NodeSelection.create(tr.doc, anchor));
++      }
+     } else {
+       const anchor = relativePositionToAbsolutePosition(
+         binding.doc,
+@@ -345,7 +347,10 @@ const restoreRelativeSelection = (tr, relSel, binding) => {
+         relSel.head,
+         binding.mapping
+       );
+-      if (anchor !== null && head !== null) {
++      // A stale mapping can place the restored selection past the rebuilt
++      // document (yjs/y-prosemirror#272); keep the mapped selection instead.
++      const size = tr.doc.content.size;
++      if (anchor !== null && head !== null && anchor <= size && head <= size) {
+         const sel = prosemirrorState.TextSelection.between(tr.doc.resolve(anchor), tr.doc.resolve(head));
+         tr.setSelection(sel);
+       }
+diff --git a/src/plugins/sync-plugin.js b/src/plugins/sync-plugin.js
+index dccfb76918c8c70fe5a5b12372cdabcc9d8c58dd..62c61b7519a2cf01c3179c865ae28e403284bc3e 100644
+--- a/src/plugins/sync-plugin.js
++++ b/src/plugins/sync-plugin.js
+@@ -257,7 +257,9 @@ const restoreRelativeSelection = (tr, relSel, binding) => {
+         relSel.anchor,
+         binding.mapping
+       )
+-      tr.setSelection(NodeSelection.create(tr.doc, anchor))
++      if (anchor !== null && anchor < tr.doc.content.size) {
++        tr.setSelection(NodeSelection.create(tr.doc, anchor))
++      }
+     } else {
+       const anchor = relativePositionToAbsolutePosition(
+         binding.doc,
+@@ -271,7 +273,10 @@ const restoreRelativeSelection = (tr, relSel, binding) => {
+         relSel.head,
+         binding.mapping
+       )
+-      if (anchor !== null && head !== null) {
++      // A stale mapping can place the restored selection past the rebuilt
++      // document (yjs/y-prosemirror#272); keep the mapped selection instead.
++      const size = tr.doc.content.size
++      if (anchor !== null && head !== null && anchor <= size && head <= size) {
+         const sel = TextSelection.between(tr.doc.resolve(anchor), tr.doc.resolve(head))
+         tr.setSelection(sel)
+       }
