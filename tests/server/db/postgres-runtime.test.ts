@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
@@ -9,10 +10,15 @@ import {
   removeOrphanContentObjectsPage
 } from "@server/content/maintenance.js";
 import { createApplicationDatabase } from "@server/db/client.js";
-import { createDatabaseResources } from "@server/db/client.js";
+import {
+  createDatabaseResources,
+  findMigrationsDirectory,
+  type DatabaseResources
+} from "@server/db/client.js";
 import type { ApplicationDatabase } from "@server/db/types.js";
 import { createApp } from "@server/http/app.js";
 import { readStoredAttachment, readStoredNote } from "../../e2e/support/stored.js";
+import { createTestDatabaseConfig } from "../support/database.js";
 import {
   csrfHeaders,
   folderPayload,
@@ -286,6 +292,37 @@ describe("PostgreSQL startup lifecycle", () => {
     } finally {
       await database?.close();
       await harness.cleanup();
+    }
+  });
+
+  it("serializes migrations when several servers start on an empty database", async () => {
+    const testDatabase = await createTestDatabaseConfig();
+    const started: DatabaseResources[] = [];
+    try {
+      const results = await Promise.allSettled(
+        Array.from({ length: 4 }, () =>
+          createDatabaseResources({ ...testDatabase.database, maxConnections: 1 })
+        )
+      );
+      for (const result of results) {
+        if (result.status === "fulfilled") {
+          started.push(result.value);
+        }
+      }
+      expect(results.map(({ status }) => status)).toEqual(Array(4).fill("fulfilled"));
+      const applied = await started[0]!.pool.query<{ count: number }>(
+        'SELECT COUNT(*)::integer AS count FROM drizzle."__drizzle_migrations"'
+      );
+      const journal = JSON.parse(
+        await readFile(
+          join(findMigrationsDirectory(process.cwd()), "meta/_journal.json"),
+          "utf8"
+        )
+      ) as { entries: unknown[] };
+      expect(applied.rows[0]?.count).toBe(journal.entries.length);
+    } finally {
+      await Promise.all(started.map((resources) => resources.close()));
+      await testDatabase.dispose();
     }
   });
 

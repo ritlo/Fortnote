@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { Pool } from "pg";
+import { Client, Pool } from "pg";
 import { PostgresAttachmentMetadataRepository } from "../attachments/postgresMetadataRepository.js";
 import { PostgresAttachmentMutationRepository } from "../attachments/postgresMutationRepository.js";
 import { PostgresAttachmentStorage } from "../attachments/postgresStorage.js";
@@ -28,6 +28,9 @@ import { logInfo } from "../observability/log.js";
 import type { ApplicationDatabase, Database } from "./types.js";
 import * as schema from "./schema.js";
 
+/** Arbitrary application-wide key for pg_advisory_lock around migrations. */
+const MIGRATION_LOCK_KEY = 7_214_402_119;
+
 export interface DatabaseResources {
   pool: Pool;
   orm: Database;
@@ -52,11 +55,13 @@ export async function createDatabaseResources(
   try {
     await waitForDatabase(pool, config.startupRetryAttempts, config.startupRetryDelayMs);
     const migrationsStartedAt = performance.now();
-    await migrate(orm, {
-      migrationsFolder:
-        options.migrationsDirectory ??
-        findMigrationsDirectory(options.cwd ?? process.cwd())
-    });
+    await withMigrationLock(config, () =>
+      migrate(orm, {
+        migrationsFolder:
+          options.migrationsDirectory ??
+          findMigrationsDirectory(options.cwd ?? process.cwd())
+      })
+    );
     logInfo("database.migrations.completed", {
       durationMs: Math.max(0, Math.round(performance.now() - migrationsStartedAt))
     });
@@ -115,6 +120,34 @@ export async function createApplicationDatabase(
     },
     close: () => resources.close()
   };
+}
+
+/**
+ * Holds a session advisory lock while migrations run, so servers starting
+ * together apply each migration once instead of racing on the same tables.
+ * The lock uses its own connection so migrations still get a pooled one when
+ * the pool has a single connection, and waiting servers block without a
+ * timeout until the first one finishes.
+ */
+async function withMigrationLock(
+  config: DatabaseConfig,
+  run: () => Promise<void>
+): Promise<void> {
+  const client = new Client({
+    connectionString: config.url,
+    connectionTimeoutMillis: config.connectionTimeoutMs
+  });
+  await client.connect();
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_KEY]);
+    try {
+      await run();
+    } finally {
+      await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY]);
+    }
+  } finally {
+    await client.end();
+  }
 }
 
 export function findMigrationsDirectory(startDirectory: string): string {
