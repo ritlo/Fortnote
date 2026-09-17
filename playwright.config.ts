@@ -22,6 +22,9 @@ export default defineConfig({
     {
       name: "chromium",
       testIgnore: ["accessibility.spec.ts", "performance.spec.ts"],
+      // Each project clears its own output directory, so separate directories keep
+      // one run's failure traces when pnpm e2e starts the next project.
+      outputDir: "test-results/chromium",
       grepInvert: /@server-restart/,
       fullyParallel: true,
       workers: parallelWorkers,
@@ -30,6 +33,7 @@ export default defineConfig({
     {
       name: "chromium-server-restart",
       testIgnore: ["accessibility.spec.ts", "performance.spec.ts"],
+      outputDir: "test-results/server-restart",
       grep: /@server-restart/,
       workers: 1,
       use: { ...devices["Desktop Chrome"] }

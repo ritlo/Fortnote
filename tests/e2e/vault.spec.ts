@@ -56,10 +56,29 @@ test("creates, edits, searches, trashes, restores, and attaches encrypted conten
   await expect(attachmentDialog.getByText("Preview is ready to download.")).toBeVisible();
   await attachmentDialog.getByRole("button", { name: "Close attachments" }).click();
 
+  // Hold the move until Trash has loaded, as when someone opens Trash straight away.
+  let releaseMove!: () => void;
+  const moveHeld = new Promise<void>((resolve) => {
+    releaseMove = resolve;
+  });
+  await page.route("**/api/notes/*", async (route) => {
+    if (route.request().method() !== "DELETE") {
+      await route.fallback();
+      return;
+    }
+    await moveHeld;
+    await route.continue();
+  });
   await page.getByRole("button", { name: "More note actions" }).click();
   await page.getByRole("menuitem", { name: "Move to trash" }).click();
+  const trashLoaded = page.waitForResponse(
+    (response) => response.url().includes("/api/notes?deleted=true") && response.ok()
+  );
   await page.getByRole("button", { name: "Trash" }).click();
+  await trashLoaded;
+  releaseMove();
   await expect(page.locator(".note-card", { hasText: noteTitle })).toBeVisible();
+  await page.unroute("**/api/notes/*");
   await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Redo", exact: true })).toHaveCount(0);

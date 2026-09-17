@@ -69,6 +69,49 @@ describe("note lifecycle actions", () => {
     expect(useAppStore.getState().selectedNoteId).toBe(nextInFolder.id);
   });
 
+  it("shows a trashed note when trash opened before the move finished", async () => {
+    const current = note({ id: "note-current" });
+    const other = note({ id: "note-other" });
+    useAppStore.setState({
+      notes: [current, other],
+      selectedFolderId: null,
+      selectedNoteId: current.id,
+      trashNotes: []
+    });
+    let finishDelete!: () => void;
+    mocks.deleteNote.mockImplementationOnce(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finishDelete = () => {
+            resolve(undefined);
+          };
+        })
+    );
+    const { result } = renderHook(() => useNoteActions(current));
+
+    let moving!: Promise<void>;
+    act(() => {
+      moving = result.current.moveSelectedToTrash();
+    });
+    await waitForAssertion(() => {
+      expect(mocks.deleteNote).toHaveBeenCalledWith(current.id);
+    });
+    // The trash list loads while the delete is still in flight, so it cannot
+    // include the note, and this tab's own trash event is never replayed to it.
+    await act(async () => result.current.openTrash());
+    await act(async () => {
+      finishDelete();
+      await moving;
+    });
+
+    const state = useAppStore.getState();
+    expect(state.notes.map(({ id }) => id)).toEqual([other.id]);
+    expect(state.trashNotes).toEqual([
+      expect.objectContaining({ id: current.id, isDeleted: true })
+    ]);
+    expect(state.selectedNoteId).toBe(current.id);
+  });
+
   it("selects the next visible note when moving the selected note out of its folder", async () => {
     const current = note({ id: "note-current", folderId: "folder-1" });
     const nextInFolder = note({ id: "note-next", folderId: "folder-1" });

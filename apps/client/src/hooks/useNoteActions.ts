@@ -214,15 +214,25 @@ export function useNoteActions(selectedNote: DecryptedNote | null) {
       setError(null);
       await deleteNote(selectedNote.id);
       setNotes((current) => current.filter((note) => note.id !== selectedNote.id));
-      const activeFolderId = useAppStore.getState().selectedFolderId;
-      const nextVisibleNote = useAppStore
-        .getState()
-        .notes.find(
+      // This tab never receives its own trash event, so a trash list loaded while
+      // the delete was in flight would otherwise stay without the note.
+      setTrashNotes((current) => [
+        { ...selectedNote, isDeleted: true, updatedAt: new Date().toISOString() },
+        ...current.filter((note) => note.id !== selectedNote.id)
+      ]);
+      const state = useAppStore.getState();
+      if (state.notesView === "trash") {
+        if (!state.trashNotes.some((note) => note.id === state.selectedNoteId)) {
+          setSelectedNoteId(selectedNote.id);
+        }
+      } else {
+        const nextVisibleNote = state.notes.find(
           (note) =>
             note.id !== selectedNote.id &&
-            (activeFolderId === null || note.folderId === activeFolderId)
+            (state.selectedFolderId === null || note.folderId === state.selectedFolderId)
         );
-      setSelectedNoteId(nextVisibleNote?.id ?? null);
+        setSelectedNoteId(nextVisibleNote?.id ?? null);
+      }
       setStatus("Note moved to trash");
     } catch (deleteError) {
       setStatus("Delete failed");
