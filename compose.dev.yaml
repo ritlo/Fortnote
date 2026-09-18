@@ -1,0 +1,32 @@
+# PostgreSQL for local development, where the API and client run on the host with
+# pnpm dev:server and pnpm dev. It is a separate project from compose.yaml, so its
+# data never mixes with the full stack's.
+#
+#   docker compose -f compose.dev.yaml up -d    start (data persists)
+#   docker compose -f compose.dev.yaml down     stop
+#   docker compose -f compose.dev.yaml down -v  stop and delete the data
+name: fortnote-dev
+
+services:
+  postgres:
+    image: docker.io/library/postgres:18-alpine
+    environment:
+      POSTGRES_DB: fortnote
+      POSTGRES_USER: fortnote
+      POSTGRES_PASSWORD: fortnote-local
+      PGDATA: /var/lib/postgresql/18/docker
+    # A non-default port avoids clashing with a PostgreSQL already on 5432.
+    # config.yaml connects here.
+    ports:
+      - "127.0.0.1:${FORTNOTE_DEV_POSTGRES_PORT:-55433}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fortnote -d fortnote"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  postgres-data:

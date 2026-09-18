@@ -22,18 +22,31 @@ attachment files and names are encrypted in the browser before they reach the se
 ## Run the full stack
 
 ```sh
-docker compose -f compose.postgres.yaml up --build
+docker compose up --build
 ```
 
 Open <http://localhost:3001>. The application container builds the client and API, serves both
 from one origin, and stores all data, including encrypted attachments, in the `postgres` service.
+Only the application port is published; set `FORTNOTE_PORT` to change it. PostgreSQL is reachable
+only from the application container. For a database shell, run
+`docker compose exec postgres psql -U fortnote`.
+
+To delete all data, remove the database volume:
+
+```sh
+docker compose down -v
+```
 
 ## Development
 
 ```sh
 pnpm install
-docker compose -f compose.postgres.yaml up -d postgres
+docker compose -f compose.dev.yaml up -d
 ```
+
+This starts a separate development database on `127.0.0.1:55433`, which `config.yaml` points at.
+It keeps its data between runs and never shares it with the full stack. Set
+`FORTNOTE_DEV_POSTGRES_PORT` to publish it on another port, and set `DATABASE_URL` to match.
 
 Then run the API and the web client in separate terminals:
 
@@ -48,11 +61,8 @@ pnpm dev
 Open <http://localhost:5173>. The API listens on port 3001 and applies database migrations before
 it accepts requests; the Vite dev server proxies `/api` to it.
 
-To delete all local data, remove the database volume:
-
-```sh
-docker compose -f compose.postgres.yaml down -v
-```
+Stop the development database with `docker compose -f compose.dev.yaml down`, or add `-v` to
+delete its data as well.
 
 ## Configuration
 
@@ -148,7 +158,7 @@ FORTNOTE_POSTGRES_PASSWORD='replace-with-a-strong-password' \
 FORTNOTE_DATABASE_URL='postgresql://fortnote:URL_ENCODED_PASSWORD@postgres:5432/fortnote' \
 FORTNOTE_ALLOWED_ORIGIN='https://notes.example.com' \
 FORTNOTE_COOKIE_SECURE=true \
-docker compose -f compose.postgres.yaml up -d --build
+docker compose up -d --build
 ```
 
 `FORTNOTE_POSTGRES_PASSWORD` is passed to PostgreSQL unchanged, so percent-encode reserved
@@ -160,9 +170,9 @@ mounts `config.yaml` read-only. PostgreSQL data lives in the `postgres-data` vol
 
 Before staging, run `pnpm smoke:compose` on a host with Docker Compose. It builds the image, then
 checks migrations, readiness, non-root execution, sign-in, notes, encrypted attachments, restart,
-persistence, graceful shutdown, and cleanup, using a unique project, volume, and free local ports.
+persistence, graceful shutdown, and cleanup, using a unique project, volume, and free local port.
 It uses Docker when available and Podman otherwise; set `FORTNOTE_CONTAINER_ENGINE` to choose, and
-`FORTNOTE_SMOKE_PORT` or `FORTNOTE_SMOKE_POSTGRES_PORT` to fix the ports.
+`FORTNOTE_SMOKE_PORT` to fix the application port.
 
 ## Checks
 

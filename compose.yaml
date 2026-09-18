@@ -46,8 +46,8 @@ services:
       POSTGRES_USER: fortnote
       POSTGRES_PASSWORD: ${FORTNOTE_POSTGRES_PASSWORD:-fortnote-local}
       PGDATA: /var/lib/postgresql/18/docker
-    ports:
-      - "127.0.0.1:${FORTNOTE_POSTGRES_PORT:-5432}:5432"
+    # Not published: the app reaches it on the Compose network. For a shell, run
+    # docker compose exec postgres psql -U fortnote
     volumes:
       - postgres-data:/var/lib/postgresql
     healthcheck:

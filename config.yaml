@@ -8,10 +8,10 @@ server:
   webRoot: null
 
 database:
-  # Matches the postgres service in compose.postgres.yaml. DATABASE_URL overrides it.
+  # Matches the development database in compose.dev.yaml. DATABASE_URL overrides it.
   # Also supports maxConnections, connectionTimeoutMs, statementTimeoutMs, lockTimeoutMs,
   # startupRetryAttempts, and startupRetryDelayMs.
-  url: postgresql://fortnote:fortnote-local@127.0.0.1:5432/fortnote
+  url: postgresql://fortnote:fortnote-local@127.0.0.1:55433/fortnote
 
 storage:
   quotaBytes: 10737418240

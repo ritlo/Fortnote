@@ -5,7 +5,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const composeFile = path.join(repositoryRoot, "compose.postgres.yaml");
+const composeFile = path.join(repositoryRoot, "compose.yaml");
 const containerEngine = selectContainerEngine(process.env.FORTNOTE_CONTAINER_ENGINE);
 const projectName = `fortnote-smoke-${String(process.pid)}-${String(Date.now())}`;
 const port = smokePort(
@@ -13,14 +13,6 @@ const port = smokePort(
   "FORTNOTE_SMOKE_PORT",
   32_000 + (process.pid % 10_000)
 );
-const postgresPort = smokePort(
-  process.env.FORTNOTE_SMOKE_POSTGRES_PORT,
-  "FORTNOTE_SMOKE_POSTGRES_PORT",
-  52_000 + (process.pid % 10_000)
-);
-if (postgresPort === port) {
-  throw new Error("The application and PostgreSQL smoke ports must differ");
-}
 const baseUrl = `http://127.0.0.1:${String(port)}`;
 const databasePassword = crypto.randomBytes(24).toString("hex");
 const composeEnvironment = {
@@ -31,7 +23,6 @@ const composeEnvironment = {
     `postgresql://fortnote:${encodeURIComponent(databasePassword)}` +
     "@postgres:5432/fortnote",
   FORTNOTE_PORT: String(port),
-  FORTNOTE_POSTGRES_PORT: String(postgresPort),
   FORTNOTE_POSTGRES_PASSWORD: databasePassword
 };
 const composeArguments = [
