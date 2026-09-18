@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
+import { CONTENT_SECURITY_POLICY_DIRECTIVES } from "@shared/contentSecurityPolicy.js";
 import { createTestApp, csrfHeaders, registerAgent } from "../support/http.js";
 import {
   createOperationalErrorRecord,
@@ -59,17 +60,25 @@ describe("createApp", () => {
     }
   });
 
-  it("sets a strict content security policy", async () => {
+  it("sends the shared content security policy with strict script rules", async () => {
     const app = await createTestApp();
 
     const response = await request(app).get("/api/health").expect(200);
-    const csp = response.headers["content-security-policy"]!;
+    const directives = new Map(
+      response.headers["content-security-policy"]!.split(";").map((directive) => {
+        const [name = "", ...sources] = directive.trim().split(/\s+/u);
+        return [name, sources];
+      })
+    );
 
-    expect(csp).toContain("default-src 'self'");
-    expect(csp).toContain("script-src 'self'");
-    expect(csp).toContain("object-src 'none'");
-    expect(csp).toContain("frame-ancestors 'none'");
-    expect(csp).not.toContain("'unsafe-inline'");
+    for (const [name, sources] of Object.entries(CONTENT_SECURITY_POLICY_DIRECTIVES)) {
+      expect(directives.get(name), name).toEqual([...sources]);
+    }
+    // WebAssembly is allowed for libsodium, but inline and eval'd scripts are not.
+    expect(directives.get("script-src")).not.toContain("'unsafe-inline'");
+    expect(directives.get("script-src")).not.toContain("'unsafe-eval'");
+    expect(directives.get("object-src")).toEqual(["'none'"]);
+    expect(directives.get("frame-ancestors")).toEqual(["'none'"]);
   });
 
   it("marks authenticated API responses no-store and returns correlation IDs", async () => {

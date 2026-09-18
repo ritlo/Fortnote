@@ -1,6 +1,7 @@
 import express, { type ErrorRequestHandler } from "express";
 import helmet from "helmet";
 import path from "node:path";
+import { CONTENT_SECURITY_POLICY_DIRECTIVES } from "@fortnote/shared";
 import type { ApplicationDatabase } from "../db/types.js";
 import type { ServerConfig } from "../config.js";
 import type { RealtimePublisher } from "../realtime/types.js";
@@ -28,17 +29,12 @@ export function createApp(context: AppContext) {
     helmet({
       contentSecurityPolicy: {
         directives: {
-          defaultSrc: ["'self'"],
-          baseUri: ["'self'"],
-          connectSrc: ["'self'"],
-          fontSrc: ["'self'"],
-          formAction: ["'self'"],
-          frameAncestors: ["'none'"],
-          imgSrc: ["'self'", "data:"],
-          mediaSrc: ["'self'"],
-          objectSrc: ["'none'"],
-          scriptSrc: ["'self'"],
-          styleSrc: ["'self'"],
+          ...Object.fromEntries(
+            Object.entries(CONTENT_SECURITY_POLICY_DIRECTIVES).map(([name, sources]) => [
+              name,
+              [...sources]
+            ])
+          ),
           upgradeInsecureRequests: []
         }
       }

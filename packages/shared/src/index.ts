@@ -3,5 +3,6 @@ export const LIMITS = {
   maxUserStorageBytes: 250 * 1024 * 1024
 } as const;
 
+export * from "./contentSecurityPolicy.js";
 export * from "./crypto.js";
 export * from "./crdt.js";

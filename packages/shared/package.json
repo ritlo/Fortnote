@@ -8,6 +8,16 @@
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./content-security-policy": {
+      "types": "./dist/contentSecurityPolicy.d.ts",
+      "default": "./dist/contentSecurityPolicy.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "eslint .",
