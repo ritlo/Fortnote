@@ -93,7 +93,7 @@ export async function registerPerformanceUser(
   await expect(page.getByText("Signed in and decrypted")).toBeVisible({
     timeout: 30_000
   });
-  await expect(page.getByText("Sync connected")).toBeVisible({ timeout: 30_000 });
+  await expectRealtimeConnected(page);
   await waitForSharingKey(page);
 }
 
@@ -110,7 +110,7 @@ export async function signInPerformanceUser(
   await expect(page.getByText("Signed in and decrypted")).toBeVisible({
     timeout: 30_000
   });
-  await expect(page.getByText("Sync connected")).toBeVisible({ timeout: 30_000 });
+  await expectRealtimeConnected(page);
 }
 
 export function captureJsonControlRequests(page: Page) {
@@ -394,12 +394,7 @@ export async function exerciseIndependentOfflineEdits(input: {
   await expect(blockEditor(input.ownerPage)).not.toContainText(collaboratorMarker);
 
   await input.collaboratorPage.context().setOffline(false);
-  await expect(input.collaboratorPage.locator(".sync-pill")).toContainText(
-    "Sync connected",
-    {
-      timeout: 30_000
-    }
-  );
+  await expectRealtimeConnected(input.collaboratorPage);
   await expect(blockEditor(input.ownerPage)).toContainText(collaboratorMarker, {
     timeout: 60_000
   });
@@ -575,4 +570,12 @@ function positiveInteger(value: string | undefined, fallback: number): number {
     throw new Error("Document profile values must be positive integers");
   }
   return parsed;
+}
+
+async function expectRealtimeConnected(page: Page): Promise<void> {
+  await expect(page.locator(".notes-pane")).toHaveAttribute(
+    "data-realtime-status",
+    "connected",
+    { timeout: 30_000 }
+  );
 }

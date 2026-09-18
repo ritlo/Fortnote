@@ -141,6 +141,24 @@ p {
   font-weight: 700;
 }
 
+.collaboration-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.collaboration-status-saved::before {
+  background: #1f9d55;
+}
+
+.collaboration-status-offline,
+.collaboration-status-reconnecting {
+  color: #7a5d0b;
+}
+
 .collaboration-status progress {
   max-width: 180px;
 }
@@ -590,22 +608,26 @@ textarea {
   display: grid;
   align-content: start;
   gap: 12px;
-  padding: 18px;
+  padding: 24px clamp(4px, 3vw, 26px);
 }
 
 .editor-title-row {
   display: flex;
   align-items: center;
   gap: 12px;
+  margin-bottom: 4px;
 }
 
+/* The title's inline padding matches the editor's, so both start on one edge. */
 .editor-title-input {
   flex: 1;
-  font-size: 1.25rem;
-  font-weight: 700;
+  min-width: 0;
+  font-size: clamp(1.5rem, 1rem + 2.5vw, 2rem);
+  font-weight: 800;
+  line-height: 1.2;
   border: none;
-  border-radius: 4px;
-  padding: 4px 8px;
+  border-radius: 6px;
+  padding: 4px 22px;
   background: transparent;
   color: var(--text);
 }
@@ -615,18 +637,80 @@ textarea {
   outline-offset: 2px;
 }
 
-.editor-save-status {
-  font-size: 0.78rem;
-  color: var(--muted);
+.history-controls {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-right: 22px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: white;
+}
+
+.history-controls button {
+  position: relative;
+  width: 36px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.history-controls button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.history-controls button:last-child {
+  border-left: 1px solid var(--line);
+  border-radius: 0 6px 6px 0;
+}
+
+.history-controls button:hover:not(:disabled) {
+  background: #e8f4f2;
+}
+
+.history-controls button:disabled {
+  color: #9aa59c;
+}
+
+.history-controls button:focus-visible {
+  z-index: 1;
+}
+
+.history-tooltip {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: var(--text);
+  color: white;
+  font-size: 12px;
   white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+/* The last control sits at the column's edge, so its tooltip aligns right to stay on screen. */
+.history-controls button:last-child .history-tooltip {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+.history-controls button:hover:not(:disabled) .history-tooltip,
+.history-controls button:focus-visible .history-tooltip {
+  opacity: 1;
 }
 
 .blocknote-surface {
   color-scheme: light;
   color: var(--text);
   background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 9px;
   overflow: hidden;
 }
 
@@ -642,7 +726,14 @@ textarea {
 }
 
 .blocknote-surface .bn-editor {
-  padding: 18px 22px 28px;
+  padding: 4px 22px 28px;
+}
+
+/* Drawn inside the surface, whose overflow would otherwise clip the ring. */
+.blocknote-surface .bn-editor:focus-visible {
+  outline-width: 2px;
+  outline-offset: -2px;
+  border-radius: 8px;
 }
 
 .blocknote-surface .bn-block-content {
@@ -660,10 +751,6 @@ textarea {
 .blocknote-surface [data-content-type="image"] {
   border-color: #b9dad5;
   background: #f7fbfa;
-}
-
-.editor-history-controls {
-  justify-content: flex-end;
 }
 
 .settings-panel {
@@ -830,6 +917,15 @@ textarea {
   .editor-column,
   .settings-panel {
     padding: 12px;
+  }
+
+  .editor-title-input,
+  .blocknote-surface .bn-editor {
+    padding-inline: 8px;
+  }
+
+  .history-controls {
+    margin-right: 0;
   }
 
   .pane-header {

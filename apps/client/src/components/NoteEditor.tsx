@@ -1,5 +1,5 @@
-import { FileText } from "lucide-react";
-import { useEffect, useState } from "react";
+import { FileText, Redo2, Undo2 } from "lucide-react";
+import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import {
   EmbedTab,
   FilePanelController,
@@ -33,6 +33,7 @@ interface NoteEditorProps {
 
 interface BlockNoteFieldProps {
   canEdit: boolean;
+  title: ReactNode;
   resolveAttachmentUrl: NoteEditorProps["resolveAttachmentUrl"];
   selectedNote: DecryptedNote;
   sectionId: string;
@@ -41,6 +42,7 @@ interface BlockNoteFieldProps {
 
 function CollaborativeBlockNoteField({
   canEdit,
+  title,
   resolveAttachmentUrl,
   selectedNote,
   sectionId,
@@ -78,7 +80,10 @@ function CollaborativeBlockNoteField({
       : {})
   }) as unknown as BlockNoteEditor<BlockSchema>;
   useEffect(() => {
-    restoreDevelopmentUndoManager(editor);
+    reattachUndoManager(editor);
+    return editor.onMount(() => {
+      reattachUndoManager(editor);
+    });
   }, [editor]);
 
   // Edits made before the section's history first arrives are replaced when it
@@ -138,62 +143,109 @@ function CollaborativeBlockNoteField({
 
   return (
     <>
-      {canEdit ? (
-        <div className="action-row editor-history-controls">
-          <button
-            className="text-button"
-            type="button"
-            onMouseDown={(event) => {
-              event.preventDefault();
-            }}
-            onClick={() => {
-              editor.undo();
-            }}
-          >
-            Undo
-          </button>
-          <button
-            className="text-button"
-            type="button"
-            onMouseDown={(event) => {
-              event.preventDefault();
-            }}
-            onClick={() => {
-              editor.redo();
-            }}
-          >
-            Redo
-          </button>
-        </div>
-      ) : null}
-      <div
-        onFocusCapture={() => {
-          restoreDevelopmentUndoManager(editor);
-        }}
-      >
-        <div className="blocknote-surface" data-theme="light">
-          <BlockNoteView
-            editor={editor}
-            editable={canEdit && historyLoaded}
-            filePanel={false}
-          >
-            {canEdit ? <FilePanelController filePanel={FortnoteFilePanel} /> : null}
-          </BlockNoteView>
-        </div>
+      <div className="editor-title-row">
+        {title}
+        {canEdit ? <HistoryControls editor={editor} /> : null}
+      </div>
+      <div className="blocknote-surface" data-theme="light">
+        <BlockNoteView
+          editor={editor}
+          editable={canEdit && historyLoaded}
+          filePanel={false}
+        >
+          {canEdit ? <FilePanelController filePanel={FortnoteFilePanel} /> : null}
+        </BlockNoteView>
       </div>
     </>
   );
 }
 
-function restoreDevelopmentUndoManager(editor: BlockNoteEditor<BlockSchema>): void {
-  if (!import.meta.env.DEV) {
-    return;
-  }
+function HistoryControls({ editor }: { editor: BlockNoteEditor<BlockSchema> }) {
+  const [history, setHistory] = useState(() => historyAvailability(editor));
+  useEffect(() => {
+    // Remounting the editor destroys the undo manager's event listeners (see
+    // reattachUndoManager), so its stacks are read after each editor change
+    // instead. Yjs updates the stacks after the editor applies an undo, so the
+    // read waits for that transaction to finish.
+    const refresh = () => {
+      setHistory(historyAvailability(editor));
+    };
+    refresh();
+    return editor.onChange(() => {
+      queueMicrotask(refresh);
+    });
+  }, [editor]);
+
+  const run = (action: () => void) => {
+    action();
+    setHistory(historyAvailability(editor));
+  };
+  const keepEditorFocus = (event: MouseEvent) => {
+    event.preventDefault();
+  };
+
+  return (
+    <div className="history-controls" role="group" aria-label="Edit history">
+      <button
+        type="button"
+        aria-label="Undo"
+        aria-keyshortcuts="Control+Z Meta+Z"
+        disabled={!history.canUndo}
+        onMouseDown={keepEditorFocus}
+        onClick={() => {
+          run(() => editor.undo());
+        }}
+      >
+        <Undo2 size={17} aria-hidden="true" />
+        <span className="history-tooltip" aria-hidden="true">
+          Undo (Ctrl+Z)
+        </span>
+      </button>
+      <button
+        type="button"
+        aria-label="Redo"
+        aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z"
+        disabled={!history.canRedo}
+        onMouseDown={keepEditorFocus}
+        onClick={() => {
+          run(() => editor.redo());
+        }}
+      >
+        <Redo2 size={17} aria-hidden="true" />
+        <span className="history-tooltip" aria-hidden="true">
+          Redo (Ctrl+Shift+Z)
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function historyAvailability(editor: BlockNoteEditor<BlockSchema>): {
+  canUndo: boolean;
+  canRedo: boolean;
+} {
+  const undoManager = findUndoManager(editor);
+  return {
+    canUndo: (undoManager?.undoStack.length ?? 0) > 0,
+    canRedo: (undoManager?.redoStack.length ?? 0) > 0
+  };
+}
+
+function findUndoManager(
+  editor: BlockNoteEditor<BlockSchema>
+): Y.UndoManager | undefined {
   const state = editor.prosemirrorState;
   const undoState = state.plugins
     .find((plugin) => (plugin as unknown as { key: string }).key === "y-undo$")
     ?.getState(state) as { undoManager: Y.UndoManager } | undefined;
-  const undoManager = undoState?.undoManager;
+  return undoState?.undoManager;
+}
+
+// BlockNote remounts its view when `editable` changes (and twice under
+// StrictMode). y-prosemirror destroys the undo manager with the old view but
+// keeps it in the editor state, so the new view would stop recording history.
+function reattachUndoManager(editor: BlockNoteEditor<BlockSchema>): void {
+  const undoManager = findUndoManager(editor);
   const scope = undoManager?.scope[0];
   const doc = scope && "doc" in scope ? scope.doc : scope;
   if (!undoManager || !doc) {
@@ -282,8 +334,6 @@ export function NoteEditor({
     selectedNote?.role !== undefined &&
     selectedNote.role !== "viewer" &&
     notesView !== "trash";
-  const realtimeStatus = useAppStore((state) => state.realtimeStatus);
-  const status = useAppStore((state) => state.status);
 
   if (!selectedNote) {
     return (
@@ -295,42 +345,31 @@ export function NoteEditor({
   }
   const sectionId = selectedNote.rootSectionId ?? "root";
 
-  const saveLabel =
-    status === "Save conflict"
-      ? "Changes need review"
-      : status === "Save failed"
-        ? "Save failed"
-        : realtimeStatus === "disconnected"
-          ? "Offline — changes kept on this device"
-          : status === "Ready" ||
-              status === "Note encrypted and saved" ||
-              status === "Note shared"
-            ? "Saved and synchronized"
-            : "Saving…";
+  // Save and sync state is shown once, in the editor header's collaboration status.
+  const title = (
+    <>
+      <label className="visually-hidden" htmlFor="note-title-input">
+        Title
+      </label>
+      <input
+        id="note-title-input"
+        className="editor-title-input"
+        value={selectedNote.title}
+        disabled={!canEdit}
+        onChange={(event) => {
+          updateSelectedNote({ title: event.target.value });
+        }}
+      />
+    </>
+  );
 
   return (
     <div className="editor-column">
-      <div className="editor-title-row">
-        <label className="visually-hidden" htmlFor="note-title-input">
-          Title
-        </label>
-        <input
-          id="note-title-input"
-          className="editor-title-input"
-          value={selectedNote.title}
-          disabled={!canEdit}
-          onChange={(event) => {
-            updateSelectedNote({ title: event.target.value });
-          }}
-        />
-        <span className="editor-save-status" aria-live="polite">
-          {saveLabel}
-        </span>
-      </div>
       <div className="block-editor">
         <CollaborativeBlockNoteField
           key={`${selectedNote.id}:root:${String(selectedNote.keyEpoch)}:${canEdit ? "edit" : "view"}`}
           canEdit={canEdit}
+          title={title}
           resolveAttachmentUrl={resolveAttachmentUrl}
           selectedNote={selectedNote}
           sectionId={sectionId}

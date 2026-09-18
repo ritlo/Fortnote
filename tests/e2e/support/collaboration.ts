@@ -457,7 +457,8 @@ export async function waitForNoteSave(page: Page) {
       response.url().includes("/api/notes/") &&
       response.ok()
   );
-  await expect(page.locator(".status-pill")).toHaveText("Ready");
+  // The notes list shows a status only while work is pending.
+  await expect(page.locator(".status-pill")).toHaveCount(0);
   return response;
 }
 

@@ -54,7 +54,7 @@ export function NotesPane({
   const [newNoteDialogOpen, setNewNoteDialogOpen] = useState(false);
 
   return (
-    <section className="notes-pane">
+    <section className="notes-pane" data-realtime-status={realtimeStatus}>
       <NewNoteDialog
         folders={folders}
         open={newNoteDialogOpen}
@@ -113,10 +113,18 @@ export function NotesPane({
           status={searchIndexStatus}
         />
       ) : null}
-      <div className="status-row">
-        <div className="status-pill">{status}</div>
-        <div className={`sync-pill ${realtimeStatus}`}>{syncLabel(realtimeStatus)}</div>
-      </div>
+      {/* Only feedback and connection problems appear here; the editor header shows
+          the steady save and sync state. */}
+      {status !== "Ready" || syncNeedsAttention(realtimeStatus) ? (
+        <div className="status-row">
+          {status !== "Ready" ? <div className="status-pill">{status}</div> : null}
+          {syncNeedsAttention(realtimeStatus) ? (
+            <div className={`sync-pill ${realtimeStatus}`}>
+              {syncLabel(realtimeStatus)}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {error ? <p className="pane-error">{error}</p> : null}
       {recoverySecret ? (
         <p className="recovery-code">Recovery key: {recoverySecret}</p>
@@ -485,15 +493,12 @@ function formatNoteMetadata(updatedAt: string, folderName: string): string {
   return `${updatedLabel} · ${folderName}`;
 }
 
-function syncLabel(status: RealtimeStatus): string {
-  switch (status) {
-    case "connected":
-      return "Sync connected";
-    case "connecting":
-      return "Sync connecting";
-    case "disconnected":
-      return "Sync offline";
-    case "idle":
-      return "Sync idle";
-  }
+function syncNeedsAttention(
+  status: RealtimeStatus
+): status is "connecting" | "disconnected" {
+  return status === "connecting" || status === "disconnected";
+}
+
+function syncLabel(status: "connecting" | "disconnected"): string {
+  return status === "connecting" ? "Sync connecting" : "Sync offline";
 }

@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { StrictMode, type ComponentType, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as Y from "yjs";
 import type { DecryptedNote } from "@client/store/appStore";
 import type { AttachmentSummary } from "@client/api";
 import { useAppStore } from "@client/store/appStore";
@@ -20,8 +21,10 @@ const mocks = vi.hoisted(() => ({
       }
     ],
     getBlock: vi.fn(() => ({ id: "media-block", type: "image", props: {} })),
+    onChange: vi.fn<(callback: () => void) => () => void>(() => () => undefined),
+    onMount: vi.fn<(callback: () => void) => () => void>(() => () => undefined),
     prosemirrorState: {
-      plugins: []
+      plugins: [] as unknown[]
     },
     redo: vi.fn(),
     schema: {
@@ -122,6 +125,7 @@ describe("NoteEditor simplified editor", () => {
     vi.clearAllMocks();
     mocks.createOptions.length = 0;
     mocks.provider.isSynced = true;
+    mocks.editor.prosemirrorState.plugins = [];
     mocks.getProvider.mockReturnValue(mocks.provider);
     useAppStore.setState({
       selectedNoteId: "note-1",
@@ -178,12 +182,6 @@ describe("NoteEditor simplified editor", () => {
     ).toBe(true);
   });
 
-  it("shows compact save/sync state", () => {
-    useAppStore.setState({ status: "Ready" });
-    renderEditor(note());
-    expect(screen.getByText("Saved and synchronized")).toBeTruthy();
-  });
-
   it("updates editor status and last-saved metadata after content is delivered", () => {
     const originalUpdatedAt = "2026-07-15T00:00:00.000Z";
     const current = note({ updatedAt: originalUpdatedAt });
@@ -200,35 +198,82 @@ describe("NoteEditor simplified editor", () => {
     act(() => {
       saveStateHandler?.("saving");
     });
-    expect(screen.getByText("Saving…")).toBeTruthy();
+    expect(useAppStore.getState().status).toBe("Saving encrypted note");
 
     act(() => {
       saveStateHandler?.("saved");
     });
-    expect(screen.getByText("Saved and synchronized")).toBeTruthy();
+    expect(useAppStore.getState().status).toBe("Ready");
     expect(useAppStore.getState().notes[0]?.updatedAt).not.toBe(originalUpdatedAt);
   });
 
-  it("shows conflict state", () => {
-    useAppStore.setState({
-      error: "Conflict detected",
-      status: "Save conflict"
-    });
+  it("leaves save and sync state to the editor header", () => {
+    useAppStore.setState({ realtimeStatus: "disconnected", status: "Save conflict" });
     renderEditor(note());
-    expect(screen.getByText("Changes need review")).toBeTruthy();
-  });
-
-  it("shows offline state", () => {
-    useAppStore.setState({ realtimeStatus: "disconnected" });
-    renderEditor(note());
-    expect(screen.getByText("Offline — changes kept on this device")).toBeTruthy();
-  });
-
-  it("does not claim synchronization when ready status is offline", () => {
-    useAppStore.setState({ realtimeStatus: "disconnected", status: "Ready" });
-    renderEditor(note());
-    expect(screen.getByText("Offline — changes kept on this device")).toBeTruthy();
     expect(screen.queryByText("Saved and synchronized")).toBeNull();
+    expect(screen.queryByText("Changes need review")).toBeNull();
+    expect(screen.queryByText("Offline — changes kept on this device")).toBeNull();
+  });
+
+  it("enables undo and redo from the editor history", async () => {
+    const undoManager = {
+      scope: [],
+      undoStack: [] as unknown[],
+      redoStack: [] as unknown[]
+    };
+    mocks.editor.prosemirrorState.plugins = [
+      { key: "y-undo$", getState: () => ({ undoManager }) }
+    ];
+    renderEditor(note());
+    const undo = screen.getByRole<HTMLButtonElement>("button", { name: "Undo" });
+    const redo = screen.getByRole<HTMLButtonElement>("button", { name: "Redo" });
+    expect(undo.disabled).toBe(true);
+    expect(redo.disabled).toBe(true);
+
+    const [notifyChange] = mocks.editor.onChange.mock.calls.at(-1)!;
+    undoManager.undoStack.push({});
+    await act(async () => {
+      notifyChange();
+      await Promise.resolve();
+    });
+    expect(undo.disabled).toBe(false);
+    expect(redo.disabled).toBe(true);
+
+    mocks.editor.undo.mockImplementationOnce(() => {
+      undoManager.redoStack.push(undoManager.undoStack.pop());
+    });
+    fireEvent.click(undo);
+    expect(mocks.editor.undo).toHaveBeenCalledOnce();
+    expect(undo.disabled).toBe(true);
+    expect(redo.disabled).toBe(false);
+  });
+
+  it("keeps recording history after the editor view remounts", () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment("document");
+    const undoManager = new Y.UndoManager(fragment, {
+      trackedOrigins: new Set(["editor"])
+    });
+    mocks.editor.prosemirrorState.plugins = [
+      { key: "y-undo$", getState: () => ({ undoManager }) }
+    ];
+    renderEditor(note());
+
+    // y-prosemirror destroys the manager along with the unmounted view.
+    undoManager.destroy();
+    const [notifyMount] = mocks.editor.onMount.mock.calls.at(-1)!;
+    notifyMount();
+    doc.transact(() => {
+      fragment.insert(0, [new Y.XmlText("typed")]);
+    }, "editor");
+
+    expect(undoManager.undoStack).toHaveLength(1);
+  });
+
+  it("does not offer undo and redo to viewers", () => {
+    renderEditor(note({ role: "viewer" }));
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Redo" })).toBeNull();
   });
 
   it("does not expose standalone attachment panel", () => {
@@ -287,6 +332,7 @@ describe("NoteEditor inline attachment states", () => {
     vi.clearAllMocks();
     mocks.createOptions.length = 0;
     mocks.provider.isSynced = true;
+    mocks.editor.prosemirrorState.plugins = [];
     mocks.getProvider.mockReturnValue(mocks.provider);
     useAppStore.setState({
       selectedNoteId: "note-1",

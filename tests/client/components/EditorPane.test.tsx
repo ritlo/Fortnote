@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
     document: [{ id: "block", type: "paragraph", props: {}, content: [], children: [] }],
     getBlock: vi.fn(() => ({ id: "block", type: "paragraph", props: {} })),
     prosemirrorState: { plugins: [] },
+    onChange: vi.fn(() => () => undefined),
+    onMount: vi.fn(() => () => undefined),
     redo: vi.fn(),
     schema: { blockSpecs: {} },
     undo: vi.fn(),
