@@ -3,9 +3,9 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { StrictMode, type ComponentType, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DecryptedNote, LoadedSectionState } from "@client/store/appStore";
+import type { DecryptedNote } from "@client/store/appStore";
 import type { AttachmentSummary } from "@client/api";
-import { sectionRuntimeKey, useAppStore } from "@client/store/appStore";
+import { useAppStore } from "@client/store/appStore";
 
 const mocks = vi.hoisted(() => ({
   createOptions: [] as unknown[],
@@ -121,10 +121,9 @@ describe("NoteEditor simplified editor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.createOptions.length = 0;
-    mocks.provider.isSynced = false;
+    mocks.provider.isSynced = true;
     mocks.getProvider.mockReturnValue(mocks.provider);
     useAppStore.setState({
-      loadedSections: sectionState("ready"),
       selectedNoteId: "note-1",
       user: { id: "alice", username: "alice" }
     });
@@ -150,13 +149,16 @@ describe("NoteEditor simplified editor", () => {
     expect(screen.getByTestId("block-note").closest(".blocknote-surface")).toBeTruthy();
   });
 
-  it("keeps content read-only until its encrypted section has loaded", () => {
-    useAppStore.setState({ loadedSections: sectionState("loading") });
+  it("keeps content read-only until its section history has loaded", () => {
+    mocks.provider.isSynced = false;
     renderEditor(note());
     expect(screen.getByTestId("block-note").getAttribute("data-editable")).toBe("false");
 
+    const [, markSynced] = mocks.provider.on.mock.calls.find(
+      ([event]) => event === "synced"
+    ) as [string, () => void];
     act(() => {
-      useAppStore.setState({ loadedSections: sectionState("ready") });
+      markSynced();
     });
     expect(screen.getByTestId("block-note").getAttribute("data-editable")).toBe("true");
   });
@@ -284,10 +286,9 @@ describe("NoteEditor inline attachment states", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.createOptions.length = 0;
-    mocks.provider.isSynced = false;
+    mocks.provider.isSynced = true;
     mocks.getProvider.mockReturnValue(mocks.provider);
     useAppStore.setState({
-      loadedSections: sectionState("ready"),
       selectedNoteId: "note-1",
       user: { id: "alice", username: "alice" }
     });
@@ -439,19 +440,6 @@ function renderEditor(
       uploadSelectedAttachment={vi.fn()}
     />
   );
-}
-
-function sectionState(status: LoadedSectionState["status"]) {
-  return {
-    [sectionRuntimeKey("note-1", "root")]: {
-      noteId: "note-1",
-      sectionId: "root",
-      keyEpoch: 1,
-      status,
-      currentSequence: 0,
-      prefetched: false
-    }
-  };
 }
 
 function note(overrides: Partial<DecryptedNote> = {}): DecryptedNote {

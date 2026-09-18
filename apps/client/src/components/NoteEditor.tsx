@@ -21,7 +21,7 @@ import {
   isAttachmentMimeCompatible
 } from "../lib/attachmentMedia";
 import type { DecryptedNote, NotesView } from "../store/appStore";
-import { sectionRuntimeKey, useAppStore } from "../store/appStore";
+import { useAppStore } from "../store/appStore";
 
 interface NoteEditorProps {
   notesView: NotesView;
@@ -33,7 +33,6 @@ interface NoteEditorProps {
 
 interface BlockNoteFieldProps {
   canEdit: boolean;
-  sectionReady: boolean;
   resolveAttachmentUrl: NoteEditorProps["resolveAttachmentUrl"];
   selectedNote: DecryptedNote;
   sectionId: string;
@@ -42,7 +41,6 @@ interface BlockNoteFieldProps {
 
 function CollaborativeBlockNoteField({
   canEdit,
-  sectionReady,
   resolveAttachmentUrl,
   selectedNote,
   sectionId,
@@ -82,6 +80,23 @@ function CollaborativeBlockNoteField({
   useEffect(() => {
     restoreDevelopmentUndoManager(editor);
   }, [editor]);
+
+  // Edits made before the section's history first arrives are replaced when it
+  // does, so content stays read-only until then. Later reconnects resume into
+  // the same document and keep it editable.
+  const [historyLoaded, setHistoryLoaded] = useState(provider.isSynced);
+  useEffect(() => {
+    const markLoaded = () => {
+      setHistoryLoaded(true);
+    };
+    if (provider.isSynced) {
+      markLoaded();
+    }
+    provider.on("synced", markLoaded);
+    return () => {
+      provider.off("synced", markLoaded);
+    };
+  }, [provider]);
 
   const setError = useAppStore((state) => state.setError);
   const setNotes = useAppStore((state) => state.setNotes);
@@ -157,11 +172,9 @@ function CollaborativeBlockNoteField({
         }}
       >
         <div className="blocknote-surface" data-theme="light">
-          {/* Edits made before the section's history arrives are replaced when it
-              does, so content stays read-only until the section has loaded. */}
           <BlockNoteView
             editor={editor}
-            editable={canEdit && sectionReady}
+            editable={canEdit && historyLoaded}
             filePanel={false}
           >
             {canEdit ? <FilePanelController filePanel={FortnoteFilePanel} /> : null}
@@ -271,13 +284,6 @@ export function NoteEditor({
     notesView !== "trash";
   const realtimeStatus = useAppStore((state) => state.realtimeStatus);
   const status = useAppStore((state) => state.status);
-  const sectionId = selectedNote?.rootSectionId ?? "root";
-  const sectionReady = useAppStore(
-    (state) =>
-      selectedNote !== null &&
-      state.loadedSections[sectionRuntimeKey(selectedNote.id, sectionId)]?.status ===
-        "ready"
-  );
 
   if (!selectedNote) {
     return (
@@ -287,6 +293,8 @@ export function NoteEditor({
       </div>
     );
   }
+  const sectionId = selectedNote.rootSectionId ?? "root";
+
   const saveLabel =
     status === "Save conflict"
       ? "Changes need review"
@@ -323,7 +331,6 @@ export function NoteEditor({
         <CollaborativeBlockNoteField
           key={`${selectedNote.id}:root:${String(selectedNote.keyEpoch)}:${canEdit ? "edit" : "view"}`}
           canEdit={canEdit}
-          sectionReady={sectionReady}
           resolveAttachmentUrl={resolveAttachmentUrl}
           selectedNote={selectedNote}
           sectionId={sectionId}
