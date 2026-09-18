@@ -38,6 +38,9 @@ export default defineConfig({
     ]
   },
   test: {
+    // Server tests create a database per test and hash credentials with argon2, so
+    // on shared CI runners some take several times longer than the 5 s default.
+    testTimeout: 30_000,
     include: [
       "tests/client/**/*.test.{ts,tsx}",
       "tests/server/**/*.test.{ts,tsx}",
