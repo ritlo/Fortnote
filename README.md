@@ -1,5 +1,7 @@
 # Fortnote
 
+<img width="1887" height="929" alt="image" src="https://github.com/user-attachments/assets/abb7f82c-5ee7-44f6-bd31-e32ea5bbbc18" />
+
 Fortnote is a self-hosted notes application with end-to-end encryption, realtime collaboration,
 sharing, encrypted attachments, and account recovery. Note content, titles, folder names, and
 attachment files and names are encrypted in the browser before they reach the server.
