@@ -276,6 +276,32 @@ describe("NoteEditor simplified editor", () => {
     expect(screen.queryByRole("button", { name: "Redo" })).toBeNull();
   });
 
+  it("reports editing presence while the note has focus", () => {
+    const { unmount } = renderEditor(note());
+    const title = screen.getByLabelText("Title");
+    const presence = () => useAppStore.getState().localPresenceState;
+
+    fireEvent.focus(title);
+    expect(presence()).toBe("editing");
+
+    // Moving focus within the note keeps the editing state.
+    fireEvent.blur(title, { relatedTarget: document.querySelector(".block-editor div") });
+    expect(presence()).toBe("editing");
+
+    fireEvent.blur(title, { relatedTarget: document.body });
+    expect(presence()).toBe("idle");
+
+    fireEvent.focus(title);
+    unmount();
+    expect(presence()).toBe("idle");
+  });
+
+  it("does not report viewers as editing", () => {
+    renderEditor(note({ role: "viewer" }));
+    fireEvent.focus(screen.getByLabelText("Title"));
+    expect(useAppStore.getState().localPresenceState).toBe("idle");
+  });
+
   it("does not expose standalone attachment panel", () => {
     renderEditor(note());
     expect(screen.queryByRole("heading", { name: "Attachments" })).toBeNull();

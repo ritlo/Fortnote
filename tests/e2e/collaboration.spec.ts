@@ -85,6 +85,10 @@ test("syncs a shared note for an online editor and offline viewer", async ({
     ).toContainText("active", { timeout: 10_000 });
     await expect(alicePage.getByText(/^Last saved/)).toHaveCount(0);
     await closeShareDialog(alicePage);
+    await expect(alicePage.locator(".presence-summary")).toHaveText(
+      `${bob.username} editing`,
+      { timeout: 10_000 }
+    );
 
     await editSelectedNote(alicePage, aliceBody);
     await expect(blockEditor(bobPage)).toContainText(aliceBody, {

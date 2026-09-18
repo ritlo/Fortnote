@@ -334,6 +334,15 @@ export function NoteEditor({
     selectedNote?.role !== undefined &&
     selectedNote.role !== "viewer" &&
     notesView !== "trash";
+  const setLocalPresenceState = useAppStore((state) => state.setLocalPresenceState);
+  const selectedNoteId = selectedNote?.id;
+  // Collaborators see this user as editing while focus is anywhere in the note.
+  useEffect(
+    () => () => {
+      setLocalPresenceState("idle");
+    },
+    [canEdit, selectedNoteId, setLocalPresenceState]
+  );
 
   if (!selectedNote) {
     return (
@@ -365,7 +374,19 @@ export function NoteEditor({
 
   return (
     <div className="editor-column">
-      <div className="block-editor">
+      <div
+        className="block-editor"
+        onFocus={() => {
+          if (canEdit) {
+            setLocalPresenceState("editing");
+          }
+        }}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) {
+            setLocalPresenceState("idle");
+          }
+        }}
+      >
         <CollaborativeBlockNoteField
           key={`${selectedNote.id}:root:${String(selectedNote.keyEpoch)}:${canEdit ? "edit" : "view"}`}
           canEdit={canEdit}
